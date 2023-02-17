@@ -91,6 +91,10 @@ using Test
     @test getMZ(Frag([Residue('P'), Residue('E'), Residue('P'), Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")], 'p', 2)) == getMZ(Frag("PEPTIDEK[+8.014199]", 'p', 2, isotope = 0))
 
     #########
+    #Tests for 'FragFilter' Struct 
+    #########
+
+    #########
     #Tests for 'Precursor' Struct 
     #########
     @test getMZ(Precursor("PEPTIDE", 2))
@@ -110,12 +114,52 @@ using Test
     #Get the length b3 ion
     @test length(getFrags(test_prec)) = 3
     test_frags = getFrags(test_prec)
-    @test length(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1, test_frags)]) = 3
-    @test getMass(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1, test_frags)]) = 3
+    @test length(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1 && length(frag) == 3, test_frags)]) = 3
+    @test getMZ(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1 && length(frag) == 3, test_frags)]) = 324.155397
 
+    #Sort the fragments from high mass to low mass
+    #Use constructor to get this effect
+    #sort!(test_frags, by = frag -> getMZ(frag), rev = true)
+    sort!(test_frags, rev = true)
+    #y6+1
+    @test getMZ(first(getFrags(test_prec))) == 703.314476
+    @test getType(first(getFrags(test_prec))) == 'y'
+    @test length(first(getFrags(test_prec))) == 6
+    @test getCharge(first(getFrags(test_prec))) == 1
+    #b3+2
+    @test getMZ(last(getFrags(test_prec))) == 162.581336
+    @test getMZ(last(getFrags(test_prec))) == 'b'
+    @test length(last(getFrags(test_prec))) == 3
+    @test getCharge(last(getFrags(test_prec))) == 2
+    #Sort low to high
+    sort!(test_frags, rev = false)
+    #b2+2
+    @test getMZ(first(getFrags(test_prec))) == 162.581336
+    #y6+1
+    @test getMZ(last(getFrags(test_prec))) == 703.314476
 
-    frag!(test_prec)
-    @test length(getFrags(test_prec))=21
+    #Get b3-b4 ions and all y ions 2 or greater
+    #FragFilter({'b'=> ("low" => 3, "")}
+    #    'b' => ("low" => 3, "high" => 4, "max_charge" => 2), 
+    #    'y' => ("low" => 3, "high" => 4, "max_charge" => 2),
+    #    )
+    test_frag_filter = FragFilter(type = 'b', low = 3, high = 4, max_charge = 1) + FragFilter(type = 'y', low = 3, high = ∞, max_charge = 2) 
+    frag!(test_prec, test_frag_filter)
+    sort!(test_frags)
+    @test length(getFrags(test_prec)) = 2 + 9
+    @test map(frag -> getMZ(frag), getFrags(test_prec)) == [
+                                                            188.589358, #y3+2
+                                                            239.113198, #y4+2
+                                                            287.639580, #y5+2
+                                                            324.155397, #b3+1
+                                                            352.160876, #y6+2
+                                                            376.171441, #y3+1
+                                                            425.203075, #b4+1
+                                                            477.219119, #y4+1
+                                                            574.271883, #y5+1
+                                                            703.314476  #y6+1
+                                                            ]
+
     
     #Compare to Skyline
 
