@@ -204,3 +204,4 @@ struct Precursor
     mods::Array{String, 1}
 end
 
+print("hello")
