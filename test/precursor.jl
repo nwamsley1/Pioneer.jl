@@ -26,7 +26,7 @@ end
     #Should throw an error
     @test getAA(Residue("K")) == AA('K')
     @test getAA(Residue('K')) == AA('K')
-    @test getMod(Residue("K")) == Mod("K")
+    @test getMod(Residue("K")) == Mod()
     @test getMod(Residue('K')) == Mod()
 
 
@@ -142,19 +142,63 @@ end
 #     frag!(test_prec, test_frag_filter)
 #     sort!(test_frags)
 #     @test length(getFrags(test_prec)) = 2 + 9
-#     @test map(frag -> getMZ(frag), getFrags(test_prec)) == [
-#                                                             188.589358, #y3+2
-#                                                             239.113198, #y4+2
-#                                                             287.639580, #y5+2
-#                                                             324.155397, #b3+1
-#                                                             352.160876, #y6+2
-#                                                             376.171441, #y3+1
-#                                                             425.203075, #b4+1
-#                                                             477.219119, #y4+1
-#                                                             574.271883, #y5+1
-#                                                             703.314476  #y6+1
-#                                                             ]
+    
+frags = Array{NamedTuple, 1}([
+            (ion_type = 'y', ind = Int32(3), charge = Int32(2)),
+            (ion_type = 'y', ind = Int32(4), charge = Int32(2)),
+            (ion_type = 'y', ind = Int32(5), charge = Int32(2)),
+            (ion_type = 'b', ind = Int32(3), charge = Int32(1)),
+            (ion_type = 'y', ind = Int32(6), charge = Int32(2)),
+            (ion_type = 'y', ind = Int32(3), charge = Int32(1)),
+            (ion_type = 'b', ind = Int32(4), charge = Int32(1)),
+            (ion_type = 'y', ind = Int32(4), charge = Int32(1)),
+            (ion_type = 'y', ind = Int32(5), charge = Int32(1)),
+            (ion_type = 'y', ind = Int32(6), charge = Int32(1))])
+    
+    
+test_frags_a = frag!(Peptide("PEPTIDE", Int32(3), default_mods), frags, default_mods)
+known_frags_a = [
+    188.589358, #y3+2
+    239.113198, #y4+2
+    287.639580, #y5+2
+    324.155397, #b3+1
+    352.160876, #y6+2
+    376.171441, #y3+1
+    425.203075, #b4+1
+    477.219119, #y4+1
+    574.271883, #y5+1
+    703.314476  #y6+1
+    ]
+pep = Peptide("PEPTIDE", Int32(3), default_mods)
+residues_ = getResidues(pep, default_mods)
+#N = 100.000
+#test = @timed for i in 1:N
+    #frag!(pep, frags, default_mods)
+#    map(frag -> getFrag(residues_, frag), frags)
+#end 
+#println!(test, "total")
+#println!(test/N, "per frag")
+#N = 249966409
+N = 100000
+#test = @timed Threads.@threads for i in 1:N
+#    #Frag(TIDEK_mod, 'y', Int32(2))
+#    map(frag -> getFrag(residues_, frag), frags)
+#end 
+#println(test.time, " total")
+#println(test.time/(10*N), "per frag")
+#println("for ", N, " frags")
+test = Vector{String}(["C[Carb]TIDEK[+8.014199]" for x in 1:10000000])
+#function test(pep, frags, default_mods::Dict{String, Float32})
+#    #map(frag -> getFrag(residues_, frag), frags)
+#    Threads.@threads for i in 1:N
+#        frag!(pep, frags, default_mods)
+#    end
+#end
 
+@time Threads.@threads testfun(test, default_mods) #end
+
+@test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
+@test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
     
 #     #Compare to Skyline
 

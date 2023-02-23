@@ -133,9 +133,21 @@ Residue(aa::Char) = Residue(AA(aa))
 
 Residue(aa::AA, mod::Mod) = Residue(aa::AA, mod, getMass(mod)+getMass(aa))
 
-Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(AA(residue[1]), Mod(residue, mods_dict))
+function Residue(residue::String, mods_dict::Dict{String, Float32}) 
+    if length(residue)>1
+        Residue(AA(residue[1]), Mod(residue, mods_dict))
+    else
+        Residue(AA(residue[1]), Mod())
+    end
+end
+function Residue(residue::String)
+    if length(residue)>1
+        Residue(AA(residue[1]), Mod(residue))
+    else
+        Residue(AA(residue[1]), Mod())
+    end
+end
 
-Residue(residue::String) = Residue(AA(residue[1]), Mod(residue))
 
 Residue(residue::String, mod_mass::Float32) = Residue(AA(residue[1]), Mod(residue, mod_mass))
 
@@ -195,13 +207,83 @@ export getIso
 ##########
 #Precursor
 ##########
-struct Precursor
+mutable struct Peptide
     sequence::String
     fragments::Array{Frag, 1}
     charge::Int32
     mz::Float32
-    length::Int32
     mods::Array{String, 1}
+    function Peptide(sequence::String, charge::Int32, mods_dict::Dict{String, Float32})
+        new(
+            sequence,
+            Array{Frag, 1}(),
+            charge,
+            getMZ(Frag(map(mod -> Residue(sequence[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)), 'p', charge)),
+            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence))
+        )
+    end
+
 end
 
+getSequence(peptide::Peptide) = peptide.sequence
+
+function getResidues(peptide::Peptide, mods_dict::Dict{String, Float32})
+    map(mod -> Residue(getSequence(peptide)[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", getSequence(peptide)))
+end
+
+function getResidues(peptide::String, mods_dict::Dict{String, Float32})
+    map(mod -> Residue(peptide[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", peptide))
+end
+
+function getFrag(residues::Vector{Residue}, frag::NamedTuple)
+    #get combinations of b, y, and p ions and charges that don't violate the filters
+    #Loop through them. 
+    if frag.ion_type == 'b'
+        Frag(residues[1:frag.ind], frag.ion_type, frag.charge)
+    elseif frag.ion_type == 'y'
+        Frag(reverse(reverse(residues)[1:frag.ind]), frag.ion_type, frag.charge)
+    elseif frag.ion_type == 'p'
+        Frag(residues, frag.ion_type, frag.charge, frag.isotope)
+    else
+        throw(ErrorException(string("Ion type ", frag.ion_type," not recognized")))
+    end
+end
+
+struct frag_ind
+    frag_mz::Float32,
+    prec_mz::Float32,
+    prec_id::Int32,
+    type::Char,
+    charge::Int32,
+    ind::Int32
+end
+
+function getIons(modifier::Float32)
+    (cumsum(residue->getMass(residue), residues[b_start:]) + PROTON*charge + isotope*NEUTRON)/charge
+return
+function getBIons(residues::Vector{Residues}, b_start::Int32, charges::Vector{Int32})
+    (cumsum(residue->getMass(residue), residues[b_start:]) + PROTON*charge + isotope*NEUTRON)/charge
+            frag_ind(
+                    sum(residue->getMass(residue), residues) + PROTON*charge + isotope*NEUTRON)/charge
+                    ,charge, type, , isotope)
+        end
+    end
+    new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + H2O + isotope*NEUTRON)/charge, isotope)
+end
+function getFrags(residues::Vector{Residue}, frag)
+
+function frag!(peptide::Peptide, frags::Vector{NamedTuple}, mods_dict::Dict{String, Float32})
+    peptide.fragments = map(frag -> getFrag(getResidues(peptide, mods_dict), frag), frags)
+end
+
+#function frag!(precursor::Peptide, frag_filter::String)
+    #frag_filter "b(1-2;1-N);y(1-2;1-N);p(2-4;0-2)"
+    #
+
+#end
+export getFrag
+export Peptide
+export frag!
+export getResidues
+print(Peptide("C[Carb]TIDEK[+8.014199]", Int32(2), default_mods))
 print("hello")
