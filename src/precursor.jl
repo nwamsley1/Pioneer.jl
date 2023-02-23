@@ -197,7 +197,7 @@ export getIso
 ##########
 struct Precursor
     sequence::String
-    fragments::Array{Fragments, 1}
+    fragments::Array{Frag, 1}
     charge::Int32
     mz::Float32
     length::Int32
