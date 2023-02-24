@@ -41,33 +41,32 @@ end
     # #Tests for 'Ion' types 'Transition' and 'Precursor'
     # #########
     TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
-    TIDE_y_1 = Transition(TIDE,   #residues::Array{Residue, 1}
+    TIDE_y_1 = Transition(TIDE,     #residues::Array{Residue, 1}
                           Int32(0), #prec_mz::Float32
                           'y',      #pep_id::Int32  
                           Int32(1), #ion_type::char
-                          Int32(0), #charge::Int32
-                          Int32(4)  #ind::Int32
+                          Int32(0)  #isotope::Int32
     )
     println("hello")
     println(TIDE_y_1)
     @test Tol(getFragMZ(TIDE_y_1), 477.219119)
 
 
-    TIDE_y_2 = Transition(TIDE, Int32(0), 'y', Int32(2),  Int32(0),  Int32(4))
+    TIDE_y_2 = Transition(TIDE, Int32(0), 'y', Int32(2),  Int32(0))
     @test Tol(getFragMZ(TIDE_y_2), 239.113198)
 
 
     PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
 
-    PEP_b_1 = Transition(PEP, Int32(0), 'b', Int32(1),  Int32(0),  Int32(3) )
-    PEP_b_2 = Transition(PEP, Int32(0), 'b', Int32(2),  Int32(0),  Int32(3) )
+    PEP_b_1 = Transition(PEP, Int32(0), 'b', Int32(1),  Int32(0))
+    PEP_b_2 = Transition(PEP, Int32(0), 'b', Int32(2),  Int32(0))
     @test Tol(getFragMZ(PEP_b_1), 324.155397)
     @test Tol(getFragMZ(PEP_b_2), 162.581336)
 
 
     TIDEK_mod = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
-    TIDEK_mod_y_1 = Transition(TIDEK_mod, Int32(0), 'y', Int32(1),  Int32(0),  Int32(5) )
-    TIDEK_mod_y_2 = Transition(TIDEK_mod, Int32(0), 'y', Int32(2),  Int32(0),  Int32(5) )
+    TIDEK_mod_y_1 = Transition(TIDEK_mod, Int32(0), 'y', Int32(1),  Int32(0))
+    TIDEK_mod_y_2 = Transition(TIDEK_mod, Int32(0), 'y', Int32(2),  Int32(0))
     @test Tol(getFragMZ(TIDEK_mod_y_1), 613.328281)
     @test Tol(getFragMZ(TIDEK_mod_y_2), 307.167779)
 
