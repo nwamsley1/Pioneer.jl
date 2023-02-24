@@ -140,12 +140,12 @@ export getAA
 export default_mods
 
 ##########
-#Frag
+#Frag, Transition, Precursor
 ##########
 #Abstract Frag type and concrete daugher types Transition and Precursor
-abstract type Frag end
+abstract type Ion end
 
-struct Transition <: Frag
+struct Transition <: Ion
     frag_mz::Float32
     prec_mz::Float32
     pep_id::Int32
@@ -155,26 +155,7 @@ struct Transition <: Frag
     ind::Int32
 end
 
-function Transition()
-end
-
-Transition(residues::Vector{Residue}, )
-# struct Frag
-#     charge::Int32
-#     type::Char
-#     mz::Float32
-#     isotope::Int32
-#     function Frag(residues::Array{Residue, 1}, type::Char, charge::Int32, isotope::Int32)
-#         if type=='b'
-#             new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + isotope*NEUTRON)/charge, isotope)
-#         elseif type∈('y','p')
-#             new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + H2O + isotope*NEUTRON)/charge, isotope)
-#         #Could add functionality for a/x/c/z ions here
-#         end
-#     end
-# end
-
-struct Precursor <: Frag
+struct Precursor <: Ion
     mz::Float32
     charge::Int32
     iosotope::Int32
@@ -198,18 +179,22 @@ end
 
 
 #Getter Functions
-getFragMZ(frag::Frag) = frag.frag_mz
+getFragMZ(ion::Ion) = ion.frag_mz
 getPrecMZ(transition::Transition) = transition.prec_mz
 getMZ(precursor::Precursor) = precursor.mz
-getPepID(frag::Frag) = frag.pep_id
+getPepID(ion::Ion) = ion.pep_id
 getIonType(transition::Transition) = transition.ion_type
 getIonType(precursor::Precursor) = 'p'
-getCharge(frag::Frag) = frag.charge
-getIsotope(frag::Frag) = frag.isotope
+getCharge(ion::Ion) = ion.charge
+getIsotope(ion::Ion) = ion.isotope
 
 function getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, modifier::Float32, ion_type::Char, start::Int32, charge::Int32, isotope::Int32)
     function __getFragIons__(residues::Array{Residue, 1}, modifier::Float32, charge::Int32, isotope::Int32)
-        enumerate((cumsum(map(residue->getMass(residue), residues) .+ (modifier + isotope*NEUTRON)))/charge)
+        enumerate((
+                    cumsum(
+                            map(residue->getMass(residue), residues) .+ (modifier + isotope*NEUTRON)
+                          )
+                    )/charge)
     end
     map(frag -> FragInd(frag[2], prec_mz, pep_id, ion_type, charge, isotope, Int32(frag[1])+start), __getFragIons__(residues[start:end], modifier, charge, isotope))
 end
@@ -264,28 +249,25 @@ end
 
 getFragIons(residues::Array{Residue, 1},
             pep_id::Int32, charge::Int32, isotope::Int32, y_start::Int32, b_start::Int32
-           ) = getFragIons(residues,
+            ) = getFragIons(residues,
                            PrecursorMZ(residues, charge, isotope),
                            pep_id, charge, isotope, y_start, b_start)
 
 
-
+#Get all b and y ions at each charge state and isotope specified. 
 getFragIons(residues::Array{Residue, 1}, pep_id::Int32,
-            charges::Vector{Int32}, 
-            isotopes::Vector{Int32}, 
+            charges::Array{Int32}, 
+            isotopes::Array{Int32}, 
             y_start::Int32, b_start::Int32) = getFragIons.(residues, pep_id,
                                                            charges, isotopes, y_start, b_start)
 
-#If no isotopes specified
+#Same as above for when no isotopes specified
 getFragIons(residues::Array{Residue, 1}, 
             pep_id::Int32, 
-            charges::Vector{Int32}, 
+            charges::Array{Int32}, 
             y_start::Int32, b_start::Int32) = getFragIons.(residues, pep_id, charges, [Int32(0)], y_start, b_start)
 
-
 #Can provide a list of named tuples to specify exactly which fragments to get
-
-Frag(residues::Array{Residue, 1}, type::Char, charge::Int32) = Frag(residues, type, charge, Int32(0))
 
 
 export Frag
@@ -295,35 +277,63 @@ export getType
 export getIso
 
 ##########
-#Precursor
+#Peptide
 ##########
-mutable struct Peptide
-    sequence::String
-    fragments::Array{Frag, 1}
-    charge::Int32
-    mz::Float32
+abstract type AbstractPeptide end
+
+mutable struct TargetPeptide <: AbstractPeptide
+    sequence::String,
+    unmodified_sequence::String
+    transitions::Array{Transition, 1}
+    precursors::Array{Precursors, 1}
     mods::Array{String, 1}
-    function Peptide(sequence::String, charge::Int32, mods_dict::Dict{String, Float32})
+    isotope_label::String
+    function TargetPeptide(sequence::String, charge::Int32, isotope_label::String, mods_dict::Dict{String, Float32})
         new(
-            sequence,
-            Array{Frag, 1}(),
-            charge,
-            getMZ(Frag(map(mod -> Residue(sequence[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)), 'p', charge)),
-            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence))
+            sequence, #sequence
+            replace(sequence, r"(\[.*?\])"=>"") #unmodified_sequence
+            Array{Transition, 1}(), #transitions
+            Array{Precursor, 1}(), #precursors
+            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence)) #Mods
+            isotope_label #isotope_label
         )
     end
-
 end
 
-getSequence(peptide::Peptide) = peptide.sequence
+getSequence(pep::AbsractPeptide) = pep.sequence
 
-function getResidues(peptide::Peptide, mods_dict::Dict{String, Float32})
-    map(mod -> Residue(getSequence(peptide)[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", getSequence(peptide)))
+function frag!(residues::Array{Residue, 1}, prec_id::Int32, charges::Array{Int32, 1}, isotopes::Array{Int32, 1}, y_start::Int32, b_start::Int32)
+    peptide.transitions = getFragIons(residues, 
+                                      prec_id, charges, isotopes, y_start, b_start
+                                     )
+    peptide.precursors = getPrecursors(residues,
+                                       charges, isotopes, pep_id
+                                       )
 end
 
-function getResidues(peptide::String, mods_dict::Dict{String, Float32})
-    map(mod -> Residue(peptide[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", peptide))
-end
+frag!(peptide::AbstractPeptide, mods_dict::Dict{String, Float32}, 
+      prec_id::Int32, charges::Array{Int32, 1}, 
+      isotopes::Array{Int32, 1}, y_start::Int32, b_start::Int32) = frag!(getResidues(getSequence(peptide), mods_dict), 
+                                                                         prec_id, charges, 
+                                                                         isotopes, y_start, b_start)
+
+#getMZ(Frag(map(mod -> Residue(sequence[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)), 'p', charge)),
+# mutable struct Peptide <: AbstractPeptide
+#     sequence::String,
+#     unmodified_sequence::String
+#     transitions::Array{Transition, 1}
+#     precursors::Array{Precursors, 1}
+#     mods::Array{String, 1}
+#     function Peptide(sequence::String, charge::Int32, mods_dict::Dict{String, Float32})
+#         new(
+#             sequence,
+#             Array{Frag, 1}(),
+#             charge,
+#             getMZ(Frag(map(mod -> Residue(sequence[mod], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)), 'p', charge)),
+#             map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence))
+#         )
+#     end
+# end
 
 function getFrag(residues::Vector{Residue}, frag::NamedTuple)
     #get combinations of b, y, and p ions and charges that don't violate the filters
@@ -362,3 +372,25 @@ export getFragIons
 export FragInd
 print(Peptide("C[Carb]TIDEK[+8.014199]", Int32(2), default_mods))
 print("hello")
+
+
+# function Transition(residues::Vector{Residue}, frag_ions::NamedTuple)
+#     if frag_ions.type=='b'
+#         Transition()
+#     elseif frag_ions.type=='y'
+#     end
+# end
+# # struct Frag
+# #     charge::Int32
+# #     type::Char
+# #     mz::Float32
+# #     isotope::Int32
+# #     function Frag(residues::Array{Residue, 1}, type::Char, charge::Int32, isotope::Int32)
+# #         if type=='b'
+# #             new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + isotope*NEUTRON)/charge, isotope)
+# #         elseif type∈('y','p')
+# #             new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + H2O + isotope*NEUTRON)/charge, isotope)
+# #         #Could add functionality for a/x/c/z ions here
+# #         end
+# #     end
+# end
