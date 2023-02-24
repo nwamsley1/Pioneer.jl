@@ -179,7 +179,7 @@ residues_ = getResidues(pep, default_mods)
 #println!(test, "total")
 #println!(test/N, "per frag")
 #N = 249966409
-N = 100000
+#N = 100000
 #test = @timed Threads.@threads for i in 1:N
 #    #Frag(TIDEK_mod, 'y', Int32(2))
 #    map(frag -> getFrag(residues_, frag), frags)
@@ -187,15 +187,35 @@ N = 100000
 #println(test.time, " total")
 #println(test.time/(10*N), "per frag")
 #println("for ", N, " frags")
-test = Vector{String}(["C[Carb]TIDEK[+8.014199]" for x in 1:10000000])
+@time test = map(pep-> getResidues(pep, default_mods), Vector{String}(["C[Carb]TIDEK[+8.014199]" for x in 1:1000000]))
 #function test(pep, frags, default_mods::Dict{String, Float32})
 #    #map(frag -> getFrag(residues_, frag), frags)
 #    Threads.@threads for i in 1:N
 #        frag!(pep, frags, default_mods)
 #    end
 #end
+@time for charge in [Int32(1), Int32(2)]
+        for ion_type in ['b','y']
+            for pep in test
+                getFragIons(pep, 
+                            Float32(100.0), 
+                            Int32(1), 
+                            PROTON*Int32(1),
+                            ion_type, 
+                            charge,
+                            Int32(0))
 
-@time Threads.@threads testfun(test, default_mods) #end
+                getFragIons(reverse(pep), 
+                            Float32(100.0), 
+                            Int32(1), 
+                            PROTON*Int32(1) + H2O,
+                            ion_type, 
+                            charge,
+                            Int32(0))
+            end
+        end
+    end
+#@time Threads.@threads testfun(test, default_mods) #end
 
 @test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
 @test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false

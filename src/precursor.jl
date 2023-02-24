@@ -249,28 +249,24 @@ function getFrag(residues::Vector{Residue}, frag::NamedTuple)
     end
 end
 
-struct frag_ind
-    frag_mz::Float32,
-    prec_mz::Float32,
-    prec_id::Int32,
-    type::Char,
-    charge::Int32,
+struct FragInd
+    frag_mz::Float32
+    prec_mz::Float32
+    prec_id::Int32
+    ion_type::Char
+    charge::Int32
+    iosotope::Int32
     ind::Int32
 end
 
-function getIons(modifier::Float32)
-    (cumsum(residue->getMass(residue), residues[b_start:]) + PROTON*charge + isotope*NEUTRON)/charge
-return
-function getBIons(residues::Vector{Residues}, b_start::Int32, charges::Vector{Int32})
-    (cumsum(residue->getMass(residue), residues[b_start:]) + PROTON*charge + isotope*NEUTRON)/charge
-            frag_ind(
-                    sum(residue->getMass(residue), residues) + PROTON*charge + isotope*NEUTRON)/charge
-                    ,charge, type, , isotope)
-        end
+function getFragIons(residues::Vector{Residue}, prec_mz::Float32, prec_id::Int32, modifier::Float32, ion_type::Char, charge::Int32, isotope::Int32)
+    function __getFragIons__(residues::Vector{Residue}, modifier::Float32, charge::Int32, isotope::Int32)
+        (cumsum(map(residue->getMass(residue), residues) .+ (modifier + isotope*NEUTRON)))/charge
     end
-    new(charge, type, (sum(residue->getMass(residue), residues) + PROTON*charge + H2O + isotope*NEUTRON)/charge, isotope)
+
+    map(frag -> FragInd(frag[2], prec_mz, prec_id, ion_type, charge, isotope, Int32(frag[1])), enumerate(__getFragIons__(residues, modifier, charge, isotope)))
 end
-function getFrags(residues::Vector{Residue}, frag)
+
 
 function frag!(peptide::Peptide, frags::Vector{NamedTuple}, mods_dict::Dict{String, Float32})
     peptide.fragments = map(frag -> getFrag(getResidues(peptide, mods_dict), frag), frags)
@@ -285,5 +281,10 @@ export getFrag
 export Peptide
 export frag!
 export getResidues
+export PROTON
+export H2O
+export NEUTRON
+export getFragIons
+export FragInd
 print(Peptide("C[Carb]TIDEK[+8.014199]", Int32(2), default_mods))
 print("hello")
