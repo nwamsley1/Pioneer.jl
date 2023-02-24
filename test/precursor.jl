@@ -42,59 +42,56 @@ end
     # #########
     TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
     TIDE_y_1 = Transition(TIDE,   #residues::Array{Residue, 1}
-                        Int32(0), #prec_mz::Float32
-                        'y',      #pep_id::Int32  
-                        Int32(1), #ion_type::char
-                        Int32(0), #charge::Int32
-                        Int32(0)  #
-                        )
-
+                          Int32(0), #prec_mz::Float32
+                          'y',      #pep_id::Int32  
+                          Int32(1), #ion_type::char
+                          Int32(0), #charge::Int32
+                          Int32(4)  #ind::Int32
+    )
+    println("hello")
+    println(TIDE_y_1)
     @test Tol(getFragMZ(TIDE_y_1), 477.219119)
 
 
-    TIDE_y_2 = Transition(TIDE, 
-                            Int32(0), 
-                            'y', 
-                            Int32(2), 
-                            Int32(0), 
-                            Int32(0)
-                            )
-
+    TIDE_y_2 = Transition(TIDE, Int32(0), 'y', Int32(2),  Int32(0),  Int32(4))
     @test Tol(getFragMZ(TIDE_y_2), 239.113198)
 
 
     PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
-    @test Tol(getMZ(Frag(PEP, 'b', Int32(1))), 324.155397)
-    @test Tol(getMZ(Frag(PEP, 'b', Int32(2))), 162.581336)
+
+    PEP_b_1 = Transition(PEP, Int32(0), 'b', Int32(1),  Int32(0),  Int32(3) )
+    PEP_b_2 = Transition(PEP, Int32(0), 'b', Int32(2),  Int32(0),  Int32(3) )
+    @test Tol(getFragMZ(PEP_b_1), 324.155397)
+    @test Tol(getFragMZ(PEP_b_2), 162.581336)
+
 
     TIDEK_mod = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
-    @test Tol(getMZ(Frag(TIDEK_mod, 'y', Int32(1))), 613.328281)
-    @test Tol(getMZ(Frag(TIDEK_mod, 'y', Int32(2))), 307.167779)
+    TIDEK_mod_y_1 = Transition(TIDEK_mod, Int32(0), 'y', Int32(1),  Int32(0),  Int32(5) )
+    TIDEK_mod_y_2 = Transition(TIDEK_mod, Int32(0), 'y', Int32(2),  Int32(0),  Int32(5) )
+    @test Tol(getFragMZ(TIDEK_mod_y_1), 613.328281)
+    @test Tol(getFragMZ(TIDEK_mod_y_2), 307.167779)
 
+    #Tests for PrecursorMZ
     PEPTIDE = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
                                  Residue('T') , Residue('I'), Residue('D'), 
                                  Residue('E')])
     
     # #Can Specify [M+0], [M+1], or [M+2]
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(2),Int32(0))), 400.687258)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(2),Int32(1))), 401.188771)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(2),Int32(2))), 401.690036)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(0)), 400.687258)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(1)), 401.188771)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(2)), 401.690036)
 
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(3),Int32(0))), 267.460597)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(3),Int32(1))), 267.79494)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',Int32(3),Int32(2))), 268.129116)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(0)), 267.460597)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(1)), 267.79494)
+    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(2)), 268.129116)
 
     PEPTIDEK_mod = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
                                       Residue('T') , Residue('I'), Residue('D'), 
                                       Residue('E'), Residue("K[+8.014199]")])
 
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',Int32(2),Int32(0))), 468.741839)
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',Int32(2),Int32(1))), 469.243364)
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',Int32(2),Int32(2))), 469.74462)                                      
-
-    #@time for i in 1:100000000
-    #    Frag(TIDEK_mod, 'y', Int32(2))
-    #end 
+    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(0)), 468.741839)
+    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(1)), 469.243364)
+    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(2)), 469.74462)                                     
 
     # #########
     # #Tests for 'FragFilter' Struct 
@@ -154,55 +151,56 @@ end
 #     sort!(test_frags)
 #     @test length(getFrags(test_prec)) = 2 + 9
     
-frags = Array{NamedTuple, 1}([
-            (ion_type = 'y', ind = Int32(3), charge = Int32(2)),
-            (ion_type = 'y', ind = Int32(4), charge = Int32(2)),
-            (ion_type = 'y', ind = Int32(5), charge = Int32(2)),
-            (ion_type = 'b', ind = Int32(3), charge = Int32(1)),
-            (ion_type = 'y', ind = Int32(6), charge = Int32(2)),
-            (ion_type = 'y', ind = Int32(3), charge = Int32(1)),
-            (ion_type = 'b', ind = Int32(4), charge = Int32(1)),
-            (ion_type = 'y', ind = Int32(4), charge = Int32(1)),
-            (ion_type = 'y', ind = Int32(5), charge = Int32(1)),
-            (ion_type = 'y', ind = Int32(6), charge = Int32(1))])
+# frags = Array{NamedTuple, 1}([
+#             (ion_type = 'y', ind = Int32(3), charge = Int32(2)),
+#             (ion_type = 'y', ind = Int32(4), charge = Int32(2)),
+#             (ion_type = 'y', ind = Int32(5), charge = Int32(2)),
+#             (ion_type = 'b', ind = Int32(3), charge = Int32(1)),
+#             (ion_type = 'y', ind = Int32(6), charge = Int32(2)),
+#             (ion_type = 'y', ind = Int32(3), charge = Int32(1)),
+#             (ion_type = 'b', ind = Int32(4), charge = Int32(1)),
+#             (ion_type = 'y', ind = Int32(4), charge = Int32(1)),
+#             (ion_type = 'y', ind = Int32(5), charge = Int32(1)),
+#             (ion_type = 'y', ind = Int32(6), charge = Int32(1))])
     
     
-test_frags_a = frag!(Peptide("PEPTIDE", Int32(3), default_mods), frags, default_mods)
-known_frags_a = [
-    188.589358, #y3+2
-    239.113198, #y4+2
-    287.639580, #y5+2
-    324.155397, #b3+1
-    352.160876, #y6+2
-    376.171441, #y3+1
-    425.203075, #b4+1
-    477.219119, #y4+1
-    574.271883, #y5+1
-    703.314476  #y6+1
-    ]
-pep = Peptide("PEPTIDE", Int32(3), default_mods)
-residues_ = getResidues(pep, default_mods)
-#N = 100.000
-#test = @timed for i in 1:N
-    #frag!(pep, frags, default_mods)
-#    map(frag -> getFrag(residues_, frag), frags)
-#end 
-#println!(test, "total")
-#println!(test/N, "per frag")
-#N = 249966409
-#N = 100000
-#test = @timed Threads.@threads for i in 1:N
-#    #Frag(TIDEK_mod, 'y', Int32(2))
-#    map(frag -> getFrag(residues_, frag), frags)
-#end 
-#println(test.time, " total")
-#println(test.time/(10*N), "per frag")
-#println("for ", N, " frags")
-#@time Threads.@threads testfun(test, default_mods) #end
+# test_frags_a = frag!(Peptide("PEPTIDE", Int32(3), default_mods), frags, default_mods)
+# known_frags_a = [
+#     188.589358, #y3+2
+#     239.113198, #y4+2
+#     287.639580, #y5+2
+#     324.155397, #b3+1
+#     352.160876, #y6+2
+#     376.171441, #y3+1
+#     425.203075, #b4+1
+#     477.219119, #y4+1
+#     574.271883, #y5+1
+#     703.314476  #y6+1
+#     ]
+# pep = Peptide("PEPTIDE", Int32(3), default_mods)
+# residues_ = getResidues(pep, default_mods)
+# #N = 100.000
+# #test = @timed for i in 1:N
+#     #frag!(pep, frags, default_mods)
+# #    map(frag -> getFrag(residues_, frag), frags)
+# #end 
+# #println!(test, "total")
+# #println!(test/N, "per frag")
+# #N = 249966409
+# #N = 100000
+# #test = @timed Threads.@threads for i in 1:N
+# #    #Frag(TIDEK_mod, 'y', Int32(2))
+# #    map(frag -> getFrag(residues_, frag), frags)
+# #end 
+# #println(test.time, " total")
+# #println(test.time/(10*N), "per frag")
+# #println("for ", N, " frags")
+# #@time Threads.@threads testfun(test, default_mods) #end
 
-@test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
-@test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
+# @test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
+# @test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
     
-#     #Compare to Skyline
+# #     #Compare to Skyline
 
+# end
 end

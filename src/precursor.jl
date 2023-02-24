@@ -22,33 +22,31 @@ struct AA
     mass::Float32
     #Constructor for amino acid. Restric inputs
     #to valid amino acid symbols and assign correct mass
-    const AA_to_mass =
-    Dict{Char, Float32}(
-        'A' => 71.03711,
-        'R' => 156.10111,
-        'N' => 114.04293,
-        'D' => 115.02694,
-        'C' => 103.00919,
-        'E' => 129.04259,
-        'Q' => 128.05858,
-        'G' => 57.02146,
-        'H' => 137.05891,
-        'I' => 113.08406,
-        'L' => 113.08406,
-        'K' => 128.09496,
-        'M' => 131.04049,
-        'F' => 147.06841,
-        'P' => 97.05276,
-        'S' => 87.03203,
-        'T' => 101.04768,
-        'W' => 186.07931,
-        'Y' => 163.06333,
-        'V' => 99.06841,
-        'U' => 150.95363,
-        'O' => 237.14773
-    
-        )
     function AA(aa::Char)
+        AA_to_mass = Dict{Char, Float32}(
+            'A' => 71.03711,
+            'R' => 156.10111,
+            'N' => 114.04293,
+            'D' => 115.02694,
+            'C' => 103.00919,
+            'E' => 129.04259,
+            'Q' => 128.05858,
+            'G' => 57.02146,
+            'H' => 137.05891,
+            'I' => 113.08406,
+            'L' => 113.08406,
+            'K' => 128.09496,
+            'M' => 131.04049,
+            'F' => 147.06841,
+            'P' => 97.05276,
+            'S' => 87.03203,
+            'T' => 101.04768,
+            'W' => 186.07931,
+            'Y' => 163.06333,
+            'V' => 99.06841,
+            'U' => 150.95363,
+            'O' => 237.14773
+            )
         m = try
             AA_to_mass[aa]
         catch
@@ -161,11 +159,6 @@ struct Transition <: Ion
     ind::Int32
 end
 
-function Transition(tran::NamedTuple)
-    if tran.tion_type == 'b'
-        Transition(tran.frag_mz, tran.prec_mz, tran.pep_id, tran.ion_type, tran.charge, tran.isotope, tran.ind)
-end
-
 struct Precursor <: Ion
     mz::Float32
     charge::Int32
@@ -209,15 +202,13 @@ function getY_ION_MODIFIER(charge::Int32)
 end
 export getY_ION_MODIFIER
 
-function getFragIonMZ(residues::Array{Residue, 1}, modifier::Float32, charge::Int32, isotope::Int32)              
-    sum(map(residue->getMass(residue), residues) .+ (modifier + isotope*NEUTRON))/charge
-end
-export getFragIonMZ
-
-function Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, ion_type::char, charge::Int32, isotope::Int32, ind::Int32)
+function Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, ion_type::Char, charge::Int32, isotope::Int32, ind::Int32)
+    function getFragIonMZ(residues::Array{Residue, 1}, modifier::Float32, charge::Int32, isotope::Int32)              
+        (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
+    end
     #get combinations of b, y, and p ions and charges that don't violate the filters
     #Loop through them. 
-    if frag.ion_type == 'b'
+    if ion_type == 'b'
         Transition(
                     getFragIonMZ(residues[1:ind], getB_ION_MODIFIER(charge), charge, isotope), #frag_mz
                     prec_mz,
@@ -227,7 +218,12 @@ function Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32
                     isotope,
                     ind
                 )       
-    elseif frag.ion_type == 'y'
+    elseif ion_type == 'y'
+        println("hello world")
+        println(residues)
+        println(reverse(residues)[1:ind])
+        println(getFragIonMZ(reverse(residues)[1:ind], getY_ION_MODIFIER(charge), charge, isotope))
+        println("hello world again")
         Transition(
                     getFragIonMZ(reverse(residues)[1:ind], getY_ION_MODIFIER(charge), charge, isotope),
                     prec_mz,
@@ -242,7 +238,8 @@ function Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32
     end
 end
 
-function Transition(residues::Array{Residue, 1}, pep_id::Int32, ion_type::char, charge::Int32, isotope::Int32, ind::Int32)
+function Transition(residues::Array{Residue, 1}, pep_id::Int32, ion_type::Char, charge::Int32, isotope::Int32, ind::Int32)
+    println("precursor ", PrecursorMZ(residues, charge, isotope))
     Transition(residues, PrecursorMZ(residues, charge, isotope), pep_id, ion_type, charge, isotope, ind)
 end
 
@@ -354,28 +351,28 @@ export getFragIonMZ
 abstract type AbstractPeptide end
 
 mutable struct TargetPeptide <: AbstractPeptide
-    sequence::String,
+    sequence::String
     unmodified_sequence::String
-    residues::Array{Residues, 1}
-    transitions::Vector{Transition, 1}
-    precursors::Vector{Precursors, 1}
+    residues::Array{Residue, 1}
+    transitions::Vector{Transition}
+    precursors::Vector{Precursor}
     mods::Array{String, 1}
     isotope_label::String
-    function TargetPeptide(sequence::String, charge::Int32, isotope_label::String, mods_dict::Dict{String, Float32})
+    function TargetPeptide(sequence::String, isotope_label::String, mods_dict::Dict{String, Float32})
         new(
             sequence, #sequence
-            replace(sequence, r"(\[.*?\])"=>"") #unmodified_sequence
+            replace(sequence, r"(\[.*?\])"=>""), #unmodified_sequence
             getResidues(sequence, mods_dict), #residues
             Array{Transition, 1}(), #transitions
             Array{Precursor, 1}(), #precursors
-            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence)) #Mods
-            isotope_label #isotope_label
+            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence)), #Mods
+            isotope_label #isotope_label.
         )
     end
 end
 
 getResidues(peptide::AbstractPeptide) = peptide.residues
-getSequence(pep::AbsractPeptide) = pep.sequence
+getSequence(pep::AbstractPeptide) = pep.sequence
 
 
 function frag!(peptide::AbstractPeptide, prec_id::Int32, prec_charges::Array{Int32, 1}, charges::Array{Int32, 1}, isotopes::Array{Int32, 1}, y_start::Int32, b_start::Int32)
@@ -387,8 +384,8 @@ function frag!(peptide::AbstractPeptide, prec_id::Int32, prec_charges::Array{Int
                                        )
 end
 
-function addFrag!(peptide::Peptide, prec_mz::Float32, pep_id::Int32, ion_type::char, charge::Int32, isotope::Int32, ind::Int32)
-    push!(peptide.transitions, Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, ion_type::char, charge::Int32, isotope::Int32, ind::Int32))
+function addFrag!(peptide::AbstractPeptide, prec_mz::Float32, pep_id::Int32, ion_type::Char, charge::Int32, isotope::Int32, ind::Int32)
+    push!(peptide.transitions, Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, ion_type::Char, charge::Int32, isotope::Int32, ind::Int32))
 end
 
 export Transition
@@ -396,5 +393,5 @@ export Precursor
 export AbstractPeptide
 export TargetPeptide
 
-print(Peptide("C[Carb]TIDEK[+8.014199]", Int32(2), default_mods))
-print("hello")
+#print(Peptide("C[Carb]TIDEK[+8.014199]", Int32(2), default_mods))
+#print("hello")
