@@ -242,6 +242,10 @@ function Transition(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32
     end
 end
 
+function Transition(residues::Array{Residue, 1}, pep_id::Int32, ion_type::char, charge::Int32, isotope::Int32, ind::Int32)
+    Transition(residues, PrecursorMZ(residues, charge, isotope), pep_id, ion_type, charge, isotope, ind)
+end
+
 function getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, pep_id::Int32, modifier::Float32, ion_type::Char, start::Int32, charge::Int32, isotope::Int32)
     function __getFragIons__(residues::Array{Residue, 1}, modifier::Float32, charge::Int32, isotope::Int32)
         enumerate((

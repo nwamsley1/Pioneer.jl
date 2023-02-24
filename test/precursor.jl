@@ -24,33 +24,44 @@ end
     #Tests for 'Residue' Struct 
     #########
     #Should throw an error
-    @test getAA(Residue("K")) == AA('K')
-    @test getAA(Residue('K')) == AA('K')
-    @test getMod(Residue("K")) == Mod()
-    @test getMod(Residue('K')) == Mod()
+    @test Tol(getMass(Residue("K")), getMass(AA('K')))
 
+    @test Tol(getMass(Residue('K')), getMass(AA('K')))
 
-    @test getAA(Residue("K[+8.014199]")) == AA('K')
     @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass(AA('K')))
-    #@test getMod(Residue("K[+8.014199]")) == Mod("K[+8.014199]", 8.014199)
 
-    @test getAA(Residue("K", Float32(8.014199))) == AA('K')
     @test Tol(getMass(Residue("K", Float32(8.014199))), 8.014199 + getMass(AA('K')))
-    #@test getMod(Residue("K", Float32(8.014199))) == Mod("K", 8.014199)
 
     #"C[Carb]" should be a build in modification, which users could add to 
-    @test getAA(Residue("C[Carb]", default_mods)) == AA('C')
     @test Tol(getMass(Residue("C[Carb]", default_mods)), 57.021464 + getMass(AA('C')))
-    @test getMod(Residue("C[Carb]", default_mods)) == Mod("C[Carb]", default_mods)
 
     @test_throws ErrorException("C[asdf] could not be parsed as given") getMod(Residue("C[asdf]")) 
     
     # #########
-    # #Tests for 'Frag' Struct 
+    # #Tests for 'Ion' types 'Transition' and 'Precursor'
     # #########
     TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
-    @test Tol(getMZ(Frag(TIDE, 'y', Int32(1))), 477.219119)
-    @test Tol(getMZ(Frag(TIDE, 'y', Int32(2))), 239.113198)
+    TIDE_y_1 = Transition(TIDE,   #residues::Array{Residue, 1}
+                        Int32(0), #prec_mz::Float32
+                        'y',      #pep_id::Int32  
+                        Int32(1), #ion_type::char
+                        Int32(0), #charge::Int32
+                        Int32(0)  #
+                        )
+
+    @test Tol(getFragMZ(TIDE_y_1), 477.219119)
+
+
+    TIDE_y_2 = Transition(TIDE, 
+                            Int32(0), 
+                            'y', 
+                            Int32(2), 
+                            Int32(0), 
+                            Int32(0)
+                            )
+
+    @test Tol(getFragMZ(TIDE_y_2), 239.113198)
+
 
     PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
     @test Tol(getMZ(Frag(PEP, 'b', Int32(1))), 324.155397)
@@ -187,34 +198,6 @@ residues_ = getResidues(pep, default_mods)
 #println(test.time, " total")
 #println(test.time/(10*N), "per frag")
 #println("for ", N, " frags")
-@time test = map(pep-> getResidues(pep, default_mods), Vector{String}(["C[Carb]TIDEK[+8.014199]" for x in 1:1000000]))
-#function test(pep, frags, default_mods::Dict{String, Float32})
-#    #map(frag -> getFrag(residues_, frag), frags)
-#    Threads.@threads for i in 1:N
-#        frag!(pep, frags, default_mods)
-#    end
-#end
-@time for charge in [Int32(1), Int32(2)]
-        for ion_type in ['b','y']
-            for pep in test
-                getFragIons(pep, 
-                            Float32(100.0), 
-                            Int32(1), 
-                            PROTON*Int32(1),
-                            ion_type, 
-                            charge,
-                            Int32(0))
-
-                getFragIons(reverse(pep), 
-                            Float32(100.0), 
-                            Int32(1), 
-                            PROTON*Int32(1) + H2O,
-                            ion_type, 
-                            charge,
-                            Int32(0))
-            end
-        end
-    end
 #@time Threads.@threads testfun(test, default_mods) #end
 
 @test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
