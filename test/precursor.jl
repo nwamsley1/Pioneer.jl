@@ -4,7 +4,7 @@ using Test
 function Tol(a, b, ppm = 1)
     abs(a-b)<(ppm*minimum((a, b))/10000)
 end
-@testset "Titus.jl" begin
+@testset "precursor.jl" begin
 
     
     @test 1==1# Write your tests here.
@@ -41,32 +41,35 @@ end
     # #Tests for 'Ion' types 'Transition' and 'Precursor'
     # #########
     TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
-    TIDE_y_1 = Transition(TIDE,     #residues::Array{Residue, 1}
-                          Int32(0), #prec_mz::Float32
-                          'y',      #pep_id::Int32  
-                          Int32(1), #ion_type::char
-                          Int32(0)  #isotope::Int32
-    )
-    println("hello")
-    println(TIDE_y_1)
+    TIDE_y_1 = Transition(TIDE,       #residues::Array{Residue, 1}
+                          Float32(0), #prec_mz::Float32
+                          'y',        #ion_type::char  
+                          Int32(1)) #charge::Int32
+
+    @test TIDE_y_1 == Transition("TIDE", Float32(0),  'y', Int32(1))
+
     @test Tol(getFragMZ(TIDE_y_1), 477.219119)
 
 
-    TIDE_y_2 = Transition(TIDE, Int32(0), 'y', Int32(2),  Int32(0))
+    TIDE_y_2 = Transition(TIDE, Float32(0), 'y', Int32(2))
     @test Tol(getFragMZ(TIDE_y_2), 239.113198)
 
 
     PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
 
-    PEP_b_1 = Transition(PEP, Int32(0), 'b', Int32(1),  Int32(0))
-    PEP_b_2 = Transition(PEP, Int32(0), 'b', Int32(2),  Int32(0))
+    PEP_b_1 = Transition(PEP, Float32(0), 'b', Int32(1))
+    PEP_b_2 = Transition(PEP, Float32(0), 'b', Int32(2))
     @test Tol(getFragMZ(PEP_b_1), 324.155397)
     @test Tol(getFragMZ(PEP_b_2), 162.581336)
 
 
     TIDEK_mod = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
-    TIDEK_mod_y_1 = Transition(TIDEK_mod, Int32(0), 'y', Int32(1),  Int32(0))
-    TIDEK_mod_y_2 = Transition(TIDEK_mod, Int32(0), 'y', Int32(2),  Int32(0))
+    TIDEK_mod_y_1 = Transition(TIDEK_mod, Float32(0), 'y', Int32(1))
+    TIDEK_mod_y_2 = Transition(TIDEK_mod, Float32(0), 'y', Int32(2))
+
+    @test TIDEK_mod_y_1  == Transition("TIDEK[+8.014199]", Float32(0),  'y', Int32(1))
+    @test TIDEK_mod_y_1  == Transition("PEPTIDEK[+8.014199]", Float32(0),  'y', Int32(1), Int32(5))
+    
     @test Tol(getFragMZ(TIDEK_mod_y_1), 613.328281)
     @test Tol(getFragMZ(TIDEK_mod_y_2), 307.167779)
 
@@ -76,21 +79,24 @@ end
                                  Residue('E')])
     
     # #Can Specify [M+0], [M+1], or [M+2]
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(0)), 400.687258)
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(1)), 401.188771)
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(2),Int32(2)), 401.690036)
+    @test Tol(getMZ(Precursor(PEPTIDE,Int32(2))), 400.687258)
+    @test Tol(getMZ(Precursor(PEPTIDE, #residues::Array{Residue, 1}
+                                Int32(2),#charge::Int32
+                                Int32(1) #isotope::Int32
+                                )), 401.188771)
+    @test Tol(getMZ(Precursor(PEPTIDE, Int32(2), Int32(2))), 401.690036)
 
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(0)), 267.460597)
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(1)), 267.79494)
-    @test Tol(PrecursorMZ(PEPTIDE,Int32(3),Int32(2)), 268.129116)
+    @test Tol(getMZ(Precursor(PEPTIDE, Int32(3), Int32(0))), 267.460597)
+    @test Tol(getMZ(Precursor(PEPTIDE, Int32(3), Int32(1))), 267.79494)
+    @test Tol(getMZ(Precursor(PEPTIDE, Int32(3), Int32(2))), 268.129116)
 
     PEPTIDEK_mod = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
                                       Residue('T') , Residue('I'), Residue('D'), 
                                       Residue('E'), Residue("K[+8.014199]")])
 
-    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(0)), 468.741839)
-    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(1)), 469.243364)
-    @test Tol(PrecursorMZ(PEPTIDEK_mod ,Int32(2),Int32(2)), 469.74462)                                     
+    @test Tol(getMZ(Precursor(PEPTIDEK_mod, Int32(2), Int32(0))), 468.741839)
+    @test Tol(getMZ(Precursor(PEPTIDEK_mod, Int32(2), Int32(1))), 469.243364)
+    @test Tol(getMZ(Precursor(PEPTIDEK_mod, Int32(2), Int32(2))), 469.74462)                                     
 
     # #########
     # #Tests for 'FragFilter' Struct 
