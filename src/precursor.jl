@@ -333,27 +333,38 @@ function getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, prec_id::Int
 end
 
 getFragIons(residues::Array{Residue, 1},
-            pep_id::Int32, prec_charge::Int32, charge::Int32, isotope::Int32, y_start::Int32, b_start::Int32
+            prec_id::Int32, prec_charge::Int32, charge::Int32, isotope::Int32, y_start::Int32, b_start::Int32
             ) = getFragIons(residues,
                            PrecursorMZ(residues, prec_charge, isotope),
-                           pep_id, charge, isotope, y_start, b_start)
+                           prec_id, charge, isotope, y_start, b_start)
 
 
 #Get all b and y ions at each charge state and isotope specified. 
-getFragIons(residues::Array{Residue, 1}, pep_id::Int32,
+getFragIons(residues::Array{Residue, 1}, prec_id::Int32,
             prec_charges::Array{Int32},
             charges::Array{Int32}, 
             isotopes::Array{Int32}, 
-            y_start::Int32, b_start::Int32) = getFragIons.(residues, pep_id, prec_charges,
+            y_start::Int32, b_start::Int32) = getFragIons.(residues, prec_id, prec_charges,
                                                            charges, isotopes, y_start, b_start)
 
 #Same as above for when no isotopes specified
 getFragIons(residues::Array{Residue, 1}, 
-            pep_id::Int32, 
+            prec_id::Int32, 
             prec_charges::Array{Int32},
             charges::Array{Int32}, 
-            y_start::Int32, b_start::Int32) = getFragIons.(residues, pep_id, prec_charges, charges, 
+            y_start::Int32, b_start::Int32) = getFragIons.(residues, prec_id, prec_charges, charges, 
                                                             [Int32(0)], #isotopes
+                                                           y_start, b_start)
+
+#Same as above for when no isotopes specified
+getFragIons(residues::Array{Residue, 1}, 
+            precursor::Precursor, 
+            charges::Array{Int32}, 
+            y_start::Int32, b_start::Int32) = getFragIons.(residues, 
+                                                           getMZ(precursor),
+                                                           getID(precursor),
+                                                           charges, 
+                                                           [Int32(0)], #isotopes
                                                            y_start, b_start)
 
 #Can provide a list of named tuples to specify exactly which fragments to get
@@ -404,13 +415,18 @@ getResidues(precursor::AbstractPrecursor) = precursor.residues
 getSequence(pep::AbstractPrecursor) = pep.sequence
 
 
-function frag!(peptide::AbstractPrecursor, prec_id::Int32, prec_charges::Array{Int32, 1}, charges::Array{Int32, 1}, isotopes::Array{Int32, 1}, y_start::Int32, b_start::Int32)
+function frag!(precursor::AbstractPrecursor, prec_charge::Float32, prec_id::Int32, charges::Array{Int32, 1}, isotopes::Array{Int32, 1}, y_start::Int32, b_start::Int32)
+
+    peptide.precursor = getPrecursor(getResidues(precursor),
+                                    prec_charge, isotopes, pep_id
+                                    )
+
     peptide.transitions = getFragIons(getResidues(peptide), 
-                                      prec_id, prec_chargres, charges, isotopes, y_start, b_start
+                                      prec_id, 
+                                      Array{Int32, 1}[getMZ(getPrecursor(precursor))], 
+                                      charges, isotopes, y_start, b_start
                                      )
-    peptide.precursors = getPrecursors(getResidues(peptide),
-                                       prec_charges, isotopes, pep_id
-                                       )
+
 end
 
 function addFrag!(peptide::AbstractPeptide, prec_mz::Float32, pep_id::Int32, ion_type::Char, charge::Int32, isotope::Int32, ind::Int32)
