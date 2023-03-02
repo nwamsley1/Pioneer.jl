@@ -265,6 +265,7 @@ function Transition(residues::Array{Residue, 1}, prec_mz::Float32, ion_type::Cha
     function getFragIonMZ(residues::Array{Residue, 1}, modifier::Float32, charge::Int32, isotope::Int32)              
         (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
     end
+    print("hello")
     if ion_type == 'b'
         Transition(
                     getIonMZ(residues[1:ind], charge, modifier = getIonModifier(ion_type, charge), isotope = isotope), #frag_mz
@@ -290,6 +291,7 @@ get the residues array from these using getResidues.
 (link to getResidues)
 """
 function Transition(sequence::String, prec_mz::Float32, ion_type::Char, charge::Int32; mods_dict::Dict{String, Float32} = default_mods, isotope::Int32 = Int32(0), prec_id::Int32 = Int32(0))
+    print("hellow")
     residues = getResidues(sequence, mods_dict)
     Transition(residues, 
                                                     prec_mz, 
@@ -339,11 +341,13 @@ function getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, prec_id::Int
     #function getSlices(start::Int, residues::Array{Residue, 1})
     #    enumerate([residues[slice] for slice in [range(1, start+i) for i in range(0, length(residues)-start)]])
     #end
-    map(frag -> Transition(frag[2], #frag_mz
-                            prec_mz, prec_id, ion_type, charge,
-                            frag[1]+start - 1, #ind. 3 for y3+n ion.
-                        isotope), 
+    map(frag -> Transition(frag[2]::Float32, #frag_mz
+                            prec_mz::Float32, prec_id::Int32, ion_type::Char, charge::Int32,
+                            (frag[1]+start - 1)::Int, #ind. 3 for y3+n ion.
+                            #ststart -1,
+                        isotope::Int32), 
                         enumerate(getAllIonMZ(residues, charge, start = start, modifier = ion_mods[ion_type] + PROTON*charge, isotope = isotope))
+                        #getAllIonMZ(residues, charge, start = start, modifier = ion_mods[ion_type] + PROTON*charge, isotope = isotope)
         )
 end
 
@@ -360,8 +364,8 @@ export getPrecursors
 #Get all b and y ions 
 function getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, prec_id::Int32; charge::Int32 = Int32(1), isotope::Int32 = Int32(0), y_start::Int = 3, b_start::Int = 3)
     vcat(
-        getFragIons(residues, prec_mz,prec_id, 'b', b_start, charge, isotope),
-        getFragIons(reverse(residues), prec_mz,prec_id, 'y', y_start, charge, isotope)
+        getFragIons(residues, prec_mz,prec_id, 'b', b_start, charge, isotope)#,
+        #getFragIons(reverse(residues), prec_mz,prec_id, 'y', y_start, charge, isotope)
         #getFragIons(residues, prec_mz,prec_id, 'y', y_start, charge, isotope)
         )
 end
