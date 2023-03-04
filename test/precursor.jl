@@ -98,7 +98,6 @@ end
     @test Tol(getMZ(Precursor(PEPTIDEK_mod, Int32(2), Int32(1))), 469.243364)
     @test Tol(getMZ(Precursor(PEPTIDEK_mod, Int32(2), Int32(2))), 469.74462)                                     
 
-    
     # #########
     # #Tests for 'FragFilter' Struct 
     # #########
