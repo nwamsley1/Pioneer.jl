@@ -11,28 +11,37 @@ lightMZ = getMZ(Precursor(getResidues("VGVNGFGR"), UInt8(2)))
 heavyMZ = getMZ(Precursor(getResidues("VGVNGFGR[+10.008269]"), UInt8(2)))
 
 
-function getSub(mean::Float32, ppm::Float32, array::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}})
+#function getSub(mean::Float32, array::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}; ppm::Float32)
+#    findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
+#end
+
+#For testing purposes easier to accept AbstractRray rather 
+#than concrete type even if less performant
+function getSub(mean::Float32, array::AbstractArray; ppm::Float32)
     findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
 end
+
 export getSub
 #ms1_indices = Set(map(x->x.ms1, heavy_adresses))∩Set(map(x->x.ms1, light_adresses))
 
-function getScanAdresses(scan_order::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}})
+#function getScanAdresses(scan_order::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}})
+function getScanAdresses(scan_order::AbstractArray)
     scan_adresses = Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}(undef,length(scan_order)) 
     ms1 = 0
     msn = 0
     for scan in enumerate(scan_order)
         if scan[2] == 1
             ms1 += 1
+            msn = 0
             scan_adresses[scan[1]] = (scan_index = scan[1], ms1 = ms1, msn = msn)
-            msn=0
         else
-            scan_adresses[scan[1]] = (scan_index = scan[1], ms1 = ms1, msn = msn)
             msn+=1
+            scan_adresses[scan[1]] = (scan_index = scan[1], ms1 = ms1, msn = msn)
         end
     end
     scan_adresses
 end
+
 export getScanAdresses
 function getScanCycleUnion(scan_adresses_1::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
                            scan_adresses_2::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}
@@ -140,4 +149,4 @@ test_intensities =  Vector{Union{Missing, Float32}}([missing for x in test_masse
 test_ppm = Float32(20.0)
 test_mz = getMzFeatures(Vector{Float32}([151.67221f0, 700.0, 894.0938f0]), Float32(20.0))
 test_mz = getMzFeatures(Vector{Float32}(sort(rand(1000)*1000)), Float32(20.0))
-getHits(test_mz, test_ppm, test_masses, test_intensities)
+#getHits(test_mz, test_ppm, test_masses, test_intensities)
