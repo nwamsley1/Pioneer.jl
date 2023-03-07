@@ -167,6 +167,8 @@ struct Transition <: Ion
     ind::UInt8 #for b3+1 ion, the "ind" is 3
     charge::UInt8
     iosotope::UInt8#diference in number of neutrons between the monoisotopic
+    #Internal constructor that makes lower 
+    #and upper mz bounds given an optionall ppm tolerance. 
 end
 
 struct Precursor <: Ion
@@ -176,6 +178,8 @@ struct Precursor <: Ion
     iosotope::UInt32 #diference in number of neutrons between the monoisotopic
     prec_id::Int32 
     pep_id::Int32
+    #Internal constructor that makes lower 
+    #and upper mz bounds given an optionall ppm tolerance. 
 end
 
 function Precursor()

@@ -108,4 +108,7 @@ NRF2_Survey = Arrow.Table("../data/parquet/Nrf2_SQ_052122_survey.arrow")
     #getIntegrationBounds
     ########
 
+    test_masses = Vector{Float32}([151.67221f0, 700.0, 894.0938f0])
+    #test_mz = Vector{Float32}([])
+
 end
