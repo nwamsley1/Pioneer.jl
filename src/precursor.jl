@@ -163,7 +163,7 @@ struct MzFeature
     low::Float32
     high::Float32
     function MzFeature(mono::Float32; ppm::Float32 = Float32(20))
-        new(mono, mono + mono/(Float32(1000000.0)*ppm), mono + mono/(Float32(1000000.0)*ppm))
+        new(mono, mono*(1 - ppm/Float32(1000000.0)), mono*(1 + ppm/Float32(1000000.0)))
     end
 end
 
@@ -192,9 +192,9 @@ struct Precursor <: Ion
     prec_id::UInt32 
     prot_ids::Vector{UInt32}
     function Precursor(residues::Vector{Residue}, mz::Float32, charge::UInt8, isotope::UInt8, prec_id::UInt32, prot_ids::Vector{UInt32}; ppm = Float32(20))
-        new(Precursor(residues, MzFeature(mz, ppm = ppm), 
+        new(residues, MzFeature(mz, ppm = ppm), 
                        charge, isotope, prec_id, prot_ids)
-            )
+            
     end
     #Internal constructor that makes lower 
     #and upper mz bounds given an optionall ppm tolerance. 
@@ -202,10 +202,12 @@ end
 
 getMZ(mz_feature::MzFeature) = mz_feature.mono
 getLow(mz_feature::MzFeature) = mz_feature.low
-getLow(mz_feature::MzFeature) = mz_feature.high
+getHigh(mz_feature::MzFeature) = mz_feature.high
 
 getMZFeature(ion::Ion) = ion.mz
 getMZ(ion::Ion) = getMZ(getMZFeature(ion))
+getLow(ion::Ion) = getLow(getMZFeature(ion))
+getHigh(ion::Ion) = getHigh(getMZFeature(ion))
 
 getPepID(ion::Ion) = ion.prec_id
 
@@ -214,6 +216,10 @@ getCharge(ion::Ion) = ion.charge
 getIsotope(ion::Ion) = ion.isotope
 getResidues(precursor::Precursor) = precursor.residues
 getProtID(precursor::Precursor) = precursor.prot_ids
+
+import Base.length
+
+length(precursor::Precursor) = length(getResidues(precursor))
 
 function Precursor()
     Precursor(Vector{Residue}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0))
@@ -281,8 +287,8 @@ Alternate constructor for the `Precursor` struct. Can accept a string representa
 and convert to residues `Array{Residue, 1}`. 
 (link to getResidues())
 """
-Precursor(sequence::String, mods_dict::Dict{String, Float32}, 
-            charge::UInt8, isotope::UInt8 = UInt8(0), 
+Precursor(sequence::String; mods_dict::Dict{String, Float32} = Dict{String, Float32}(), 
+            charge::UInt8 = UInt8(2), isotope::UInt8 = UInt8(0), 
             prec_id::UInt32 = UInt32(0), prot_ids::Vector{UInt32} = Vector{UInt32}([])
         ) = Precursor(getResidues(sequence, mods_dict), charge, isotope, prec_id, prot_ids)
 
@@ -417,7 +423,9 @@ export getYIons
 export getPrecursors
 export getFragIons
 export getFragIonMZ
-
+export getResidues
+export MzFeature
+export getHigh, getLow, MzFeature
 ##########
 #Peptide
 ##########

@@ -1,8 +1,8 @@
 using Titus
 using Test
 
-function Tol(a, b, ppm = 1)
-    abs(a-b)<=(ppm*minimum((a, b))/10000)
+function Tol(a, b, ppm = 2)
+    abs(a-b)<=(ppm*minimum((a, b))/1000000)
 end
 @testset "Titus.jl" begin
 
@@ -78,14 +78,27 @@ end
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(0)), 468.741839)
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(1)), 469.243364)
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(2)), 469.74462)                                      
+    #########
+    #Tests for 'MzFeature' Struct 
+    #########
 
     #########
     #Tests for 'Precursor' Struct 
     #########
-    @test getMZ(Precursor("PEPTIDE", 2))
-    @test getMZ(Precursor("PEPTIDE", 3))
-    @test getMZ(Precursor("PEPTIDE", 4))
-    @test length(Precursor("PEPTIDE", 4))
+    PEPTIDE_2 = Precursor("PEPTIDE", charge = UInt8(2))
+    PEPTIDE_3 = Precursor("PEPTIDE", charge = UInt8(3))
+    @test Tol(getMZ(PEPTIDE_2), 400.687258)
+    @test Tol(getMZ(PEPTIDE_3), 267.460597)
+    @test Tol(getHigh(PEPTIDE_2), 400.687258*(1 + 20/1000000))
+    @test Tol(getHigh(PEPTIDE_3), 267.460597*(1 + 20/1000000))
+    @test Tol(getLow(PEPTIDE_2), 400.687258*(1 - 20/1000000))
+    @test Tol(getLow(PEPTIDE_3), 267.460597*(1 - 20/1000000))
+    @test getResidues(PEPTIDE_2) == getResidues("PEPTIDE")
+    @test getCharge(PEPTIDE_2) == UInt8(2)
+    @test getCharge(PEPTIDE_3) == UInt8(3)
+    #########
+    #Tests for 'Transition' Struct 
+    #########
 
 
 #     @test getSequence(Precursor("PEPTIDE", 4))
