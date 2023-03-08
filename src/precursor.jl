@@ -106,9 +106,8 @@ function Mod(mod::String, mods_dict::Dict{String, Float32})
         throw(ErrorException("$mod could not be parsed as given"))
     end 
 end
-
+Mod(string::String) = Mod(string, Dict{String, Float32}())
 #Optionally parse mods without a mods_dict
-Mod(mod::String) = Mod(0.0)
 Mod(name::Char) = Mod(0.0)
 Mod() = Mod(0.0)
 #Getter Functions
@@ -159,32 +158,61 @@ export default_mods
 #Abstract Frag type and concrete daugher types Transition and Precursor
 abstract type Ion end
 
+struct MzFeature <: Ion
+    mono::Float32
+    low::Float32
+    high::Float32
+    function MzFeature(mono::Float32; ppm::Float32 = Float32(20))
+        new(mono, mono + mono/(Float32(1000000.0)*ppm), mono + mono/(Float32(1000000.0)*ppm))
+    end
+end
+
+MzFeature() = MzFeature(Float32(0.0))
 struct Transition <: Ion
-    frag_mz::Float32
-    prec_mz::Float32
-    prec_id::Int32 #Integer referencing the precursor
+    mz::MzFeature
+    prec_id::UInt32 #Integer referencing the precursor
     ion_type::Char #'y' or 'b'. Could use others. 
     ind::UInt8 #for b3+1 ion, the "ind" is 3
     charge::UInt8
     iosotope::UInt8#diference in number of neutrons between the monoisotopic
+    function Transition(frag_mz::Float32, prec_id::Int32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm = Float32(20))
+        new(Transition(MzFeature(frag_mz, ppm = ppm), 
+                       prec_id, ion_type, ind, charge, isotope)
+                       )
+    end
     #Internal constructor that makes lower 
     #and upper mz bounds given an optionall ppm tolerance. 
 end
 
 struct Precursor <: Ion
-    residues::Array{Residue, 1}
-    mz::Float32
+    residues::Vector{Residue, 1}
+    mz::MzFeature
     charge::UInt32
     iosotope::UInt32 #diference in number of neutrons between the monoisotopic
-    prec_id::Int32 
-    pep_id::Int32
+    prec_id::UInt32 
+    pep_ids::Vector{UInt32, 1}
+    function Precursor(residues::Vector{Residue, 1}, mz::Float32, charge::UInt8, isotope::UInt8, prec_id::UInt32, pep_id::UInt32; ppm = Float32(20))
+        new(Precursor(residues, MzFeature(mz, ppm = ppm), 
+                       charge, isotope, prec_id, pep_id)
+            )
+    end
     #Internal constructor that makes lower 
     #and upper mz bounds given an optionall ppm tolerance. 
 end
 
 function Precursor()
-    Precursor(Array{Residue, 1}(), Float32(0), UInt8(0), UInt8(0), Int32(0), Int32(0))
+    Precursor(Array{Residue, 1}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0))
 end
+
+function getIonModifier(ion_type::Char, charge::UInt8)::Float32
+    ion_mods = Dict{Char, Float32}(
+        'y' => H2O,
+        'b' => Float32(0),
+        'p' => H2O,
+    )
+    return ion_mods[ion_type] + PROTON*charge
+end
+
 """
     getIonMZ(residues::Array{Residue, 1}, charge::Int32; modifier::Float32 = PROTON*charge + H2O, isotope::Int32 = Int32(0))
 
@@ -203,6 +231,14 @@ function getIonMZ(residues::Array{Residue, 1}, charge::UInt8; modifier::Float32 
     (modifier + isotope*NEUTRON) #Add Proton and H2O
     )/charge #Divide mass by charge
 end
+
+function getIonMZ(residues::Array{Residue, 1}, ion_type::Char, charge::UInt8; isotope::UInt8 = UInt8(0))
+    (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
+    (getIonModifier(ion_type, charge) + isotope*NEUTRON) #Add Proton and H2O
+    )/charge #Divide mass by charge
+end
+
+
 export getIonMZ
 #Constructor for precursor
 """
@@ -232,7 +268,7 @@ and convert to residues `Array{Residue, 1}`.
 """
 Precursor(sequence::String, mods_dict::Dict{String, Float32}, 
             charge::UInt8, isotope::UInt8 = UInt8(0), 
-            prec_id::Int32 = Int32(0), pep_id::Int32 = Int32(0)
+            prec_id::UInt32 = UInt32(0), pep_id::UInt32 = UInt32(0)
         ) = Precursor(getResidues(sequence, mods_dict), charge, isotope, prec_id, pep_id)
 
 #Getter Functions
@@ -248,14 +284,6 @@ getIsotope(ion::Ion) = ion.isotope
 getResidues(precursor::Precursor) = precursor.residues
 getPrecID(ion::Ion) = ion.prec_id
 
-function getIonModifier(ion_type::Char, charge::UInt8)::Float32
-    ion_mods = Dict{Char, Float32}(
-        'y' => H2O,
-        'b' => Float32(0),
-        'p' => H2O,
-    )
-    return ion_mods[ion_type] + PROTON*charge
-end
 
 """
     Transition(residues::Array{Residue, 1}, prec_mz::Float32, ion_type::Char, charge::Int32, ind::Int32, isotope::Int32 = Int32(0), prec_id::Int32 = Int32(0))
@@ -269,18 +297,17 @@ function Transition(residues::Array{Residue, 1}, prec_mz::Float32, ion_type::Cha
     function getFragIonMZ(residues::Array{Residue, 1}, modifier::Float32, charge::UInt8, isotope::UInt8)              
         (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
     end
-    print("hello")
     if ion_type == 'b'
         Transition(
                     getIonMZ(residues[1:ind], charge, modifier = getIonModifier(ion_type, charge), isotope = isotope), #frag_mz
-                    prec_mz, prec_id,ion_type,ind,charge,isotope
+                    prec_id,ion_type,ind,charge,isotope
                 )       
     elseif ion_type == 'y'
         #Default modifier gives the correct fragment mz for a 'y' ion.
         #Only need to reverse the sequence to get y ions. 
         Transition(
                     getIonMZ(reverse(residues)[1:ind], charge, isotope = isotope),
-                    prec_mz, prec_id,ion_type,ind,charge,isotope
+                    prec_id,ion_type,ind,charge,isotope
         )     
     else
         throw(ErrorException(string("Ion type ", ion_type," not recognized")))
@@ -326,7 +353,7 @@ end
 Returns an `Array{Transition, 1}`. For the specific ion type and charge state (yn+2 for example) gets all fragment ions from start to the end. 
 """
 function getAllIonMZ(residues::Array{Residue, 1}, charge::UInt8; start::Int = 3, modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))::Array{Float32, 1}
-    (@view(cumsum((map(residue->getMass(residue), residues)))[start:end]).+ #Sum residue masses
+    (cumsum((map(residue->getMass(residue), @view(residues[start:end])))).+ #Sum residue masses
     (modifier + isotope*NEUTRON) #Add Proton and H2O
     )./charge #Divide mass by charge
 end

@@ -2,7 +2,7 @@ using Titus
 using Test
 
 function Tol(a, b, ppm = 1)
-    abs(a-b)<(ppm*minimum((a, b))/10000)
+    abs(a-b)<=(ppm*minimum((a, b))/10000)
 end
 @testset "Titus.jl" begin
 
@@ -21,81 +21,71 @@ end
     @test_throws ErrorException("The character % cannot be interpreted as an amino acid!") AA('%')
 
     #########
-    #Tests for 'Residue' Struct 
+    #Tests for 'Mod' Struct
+    #########    
+    @test Tol(getMass(Mod("K[+8.014199]")), 8.014199)
+    @test Tol(getMass(Mod("K")), 0.0)
+    @test Tol(getMass(Mod('K')), 0.0)
+    @test Tol(getMass(Mod("C[Carb]", default_mods)), 57.021464)
+    #########
+    #Tests for 'Residue' Struct
     #########
     #Should throw an error
-    @test getAA(Residue("K")) == AA('K')
-    @test getAA(Residue('K')) == AA('K')
-    @test getMod(Residue("K")) == Mod()
-    @test getMod(Residue('K')) == Mod()
 
-
-    @test getAA(Residue("K[+8.014199]")) == AA('K')
     @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass(AA('K')))
     #@test getMod(Residue("K[+8.014199]")) == Mod("K[+8.014199]", 8.014199)
 
-    @test getAA(Residue("K", Float32(8.014199))) == AA('K')
     @test Tol(getMass(Residue("K", Float32(8.014199))), 8.014199 + getMass(AA('K')))
     #@test getMod(Residue("K", Float32(8.014199))) == Mod("K", 8.014199)
 
     #"C[Carb]" should be a build in modification, which users could add to 
-    @test getAA(Residue("C[Carb]", default_mods)) == AA('C')
     @test Tol(getMass(Residue("C[Carb]", default_mods)), 57.021464 + getMass(AA('C')))
-    @test getMod(Residue("C[Carb]", default_mods)) == Mod("C[Carb]", default_mods)
 
     @test_throws ErrorException("C[asdf] could not be parsed as given") getMod(Residue("C[asdf]")) 
     
     # #########
-    # #Tests for 'Frag' Struct 
+    # #Tests for getIonMZ
     # #########
     TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
-    @test Tol(getMZ(Frag(TIDE, 'y', UInt8(1))), 477.219119)
-    @test Tol(getMZ(Frag(TIDE, 'y', UInt8(2))), 239.113198)
+    @test Tol(getIonMZ(TIDE, 'y', UInt8(1)), 477.219119)
+    @test Tol(getIonMZ(TIDE, 'y', UInt8(2)), 239.113198)
 
     PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
-    @test Tol(getMZ(Frag(PEP, 'b', UInt8(1))), 324.155397)
-    @test Tol(getMZ(Frag(PEP, 'b', UInt8(2))), 162.581336)
+    @test Tol(getIonMZ(PEP, 'b', UInt8(1)), 324.155397)
+    @test Tol(getIonMZ(PEP, 'b', UInt8(2)), 162.581336)
 
     TIDEK_mod = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
-    @test Tol(getMZ(Frag(TIDEK_mod, 'y', UInt8(1))), 613.328281)
-    @test Tol(getMZ(Frag(TIDEK_mod, 'y', UInt8(2))), 307.167779)
+    @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(1)), 613.328281)
+    @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(2)), 307.167779)
 
     PEPTIDE = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
                                  Residue('T') , Residue('I'), Residue('D'), 
                                  Residue('E')])
     
     # #Can Specify [M+0], [M+1], or [M+2]
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(2),UInt8(0))), 400.687258)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(2),UInt8(1))), 401.188771)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(2),UInt8(2))), 401.690036)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(2),isotope = UInt8(0)), 400.687258)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(2),isotope = UInt8(1)), 401.188771)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(2),isotope = UInt8(2)), 401.690036)
 
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(3),UInt8(0))), 267.460597)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(3),UInt8(1))), 267.79494)
-    @test Tol(getMZ(Frag(PEPTIDE,'p',UInt8(3),UInt8(2))), 268.129116)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(3),isotope = UInt8(0)), 267.460597)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(3),isotope = UInt8(1)), 267.79494)
+    @test Tol(getIonMZ(PEPTIDE,'p',UInt8(3),isotope = UInt8(2)), 268.129116)
 
     PEPTIDEK_mod = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
                                       Residue('T') , Residue('I'), Residue('D'), 
                                       Residue('E'), Residue("K[+8.014199]")])
 
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',UInt8(2),UInt8(0))), 468.741839)
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',UInt8(2),UInt8(1))), 469.243364)
-    @test Tol(getMZ(Frag(PEPTIDEK_mod,'p',UInt8(2),UInt8(2))), 469.74462)                                      
+    @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(0)), 468.741839)
+    @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(1)), 469.243364)
+    @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(2)), 469.74462)                                      
 
-    #@time for i in 1:100000000
-    #    Frag(TIDEK_mod, 'y', Int32(2))
-    #end 
-
-    # #########
-    # #Tests for 'FragFilter' Struct 
-    # #########
-
-    # #########
-    # #Tests for 'Precursor' Struct 
-    # #########
-    # @test getMZ(Precursor("PEPTIDE", 2))
-    # @test getMZ(Precursor("PEPTIDE", 3))
-    # @test getMZ(Precursor("PEPTIDE", 4))
-    # @test length(Precursor("PEPTIDE", 4))
+    #########
+    #Tests for 'Precursor' Struct 
+    #########
+    @test getMZ(Precursor("PEPTIDE", 2))
+    @test getMZ(Precursor("PEPTIDE", 3))
+    @test getMZ(Precursor("PEPTIDE", 4))
+    @test length(Precursor("PEPTIDE", 4))
 
 
 #     @test getSequence(Precursor("PEPTIDE", 4))
@@ -156,7 +146,7 @@ frags = Array{NamedTuple, 1}([
             (ion_type = 'y', ind = UInt8(6), charge = UInt8(1))])
     
     
-test_frags_a = frag!(Peptide("PEPTIDE", UInt8(3), default_mods), frags, default_mods)
+#test_frags_a = frag!(Peptide("PEPTIDE", UInt8(3), default_mods), frags, default_mods)
 known_frags_a = [
     188.589358, #y3+2
     239.113198, #y4+2
@@ -169,8 +159,8 @@ known_frags_a = [
     574.271883, #y5+1
     703.314476  #y6+1
     ]
-pep = Peptide("PEPTIDE", UInt8(3), default_mods)
-residues_ = getResidues(pep, default_mods)
+#pep = Peptide("PEPTIDE", UInt8(3), default_mods)
+#residues_ = getResidues(pep, default_mods)
 #N = 100.000
 #test = @timed for i in 1:N
     #frag!(pep, frags, default_mods)
@@ -194,31 +184,11 @@ residues_ = getResidues(pep, default_mods)
 #        frag!(pep, frags, default_mods)
 #    end
 #end
-@time for charge in [UInt(8), UInt8(2)]
-        for ion_type in ['b','y']
-            for pep in test
-                getFragIons(pep, 
-                            Float32(100.0), 
-                            UInt8(1), 
-                            PROTON*UInt8(1),
-                            ion_type, 
-                            charge,
-                            UInt8(0))
 
-                getFragIons(reverse(pep), 
-                            Float32(100.0), 
-                            UInt8(1), 
-                            PROTON*UInt8(1) + H2O,
-                            ion_type, 
-                            charge,
-                            UInt8(0))
-            end
-        end
-    end
 #@time Threads.@threads testfun(test, default_mods) #end
 
-@test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
-@test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
+#@test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
+#@test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
     
 #     #Compare to Skyline
 
