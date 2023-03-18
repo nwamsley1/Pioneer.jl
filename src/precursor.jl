@@ -363,9 +363,12 @@ get the residues array from these using getResidues.
 Returns an `Array{Transition, 1}`. For the specific ion type and charge state (yn+2 for example) gets all fragment ions from start to the end. 
 """
 function getAllIonMZ(residues::Vector{Residue}, charge::UInt8; start::Int = 3, modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))::Array{Float32, 1}
-    (cumsum((map(residue->getMass(residue), @view(residues[start:end])))).+ #Sum residue masses
+    #(cumsum((map(residue->getMass(residue), @view(residues[start:end])))).+ #Sum residue masses
+    #(modifier + isotope*NEUTRON) #Add Proton and H2O
+    #)./charge #Divide mass by charge
+    ((cumsum((map(residue->getMass(residue), residues))).+ #Sum residue masses
     (modifier + isotope*NEUTRON) #Add Proton and H2O
-    )./charge #Divide mass by charge
+    )./charge)[start:end] #Divide mass by charge
 end
 
 export getAllIonMz
@@ -393,7 +396,7 @@ export getPrecursors
 #Get all b and y ions 
 function getFragIons(residues::Vector{Residue}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
     vcat(
-        getAllIonMZ(residues,charge, start = b_start, modifier = getIonModifier('b', charge), isotope = isotope),#,
+        getAllIonMZ(residues, charge, start = b_start, modifier = getIonModifier('b', charge), isotope = isotope),#,
         getAllIonMZ(reverse(residues), charge, start = y_start, modifier = getIonModifier('y', charge), isotope = isotope)
         #getFragIons(residues, prec_mz,prec_id, 'y', y_start, charge, isotope)
         )
