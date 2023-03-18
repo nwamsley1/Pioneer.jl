@@ -85,22 +85,50 @@ end
     #########
     #Tests for 'Precursor' Struct 
     #########
-    PEPTIDE_2 = Precursor("PEPTIDE", charge = UInt8(2))
-    PEPTIDE_3 = Precursor("PEPTIDE", charge = UInt8(3))
-    @test Tol(getMZ(PEPTIDE_2), 400.687258)
-    @test Tol(getMZ(PEPTIDE_3), 267.460597)
-    @test Tol(getHigh(PEPTIDE_2), 400.687258*(1 + 20/1000000))
-    @test Tol(getHigh(PEPTIDE_3), 267.460597*(1 + 20/1000000))
-    @test Tol(getLow(PEPTIDE_2), 400.687258*(1 - 20/1000000))
-    @test Tol(getLow(PEPTIDE_3), 267.460597*(1 - 20/1000000))
+    PEPTIDE_1 = Precursor("PEPTIDE", charge = UInt8(2))
+    PEPTIDE_2 = Precursor("PEPTIDE", charge = UInt8(3))
+    PEPTIDE_3 = Precursor("C[+57.021464]PEC[+57.021464]PTIDE", charge = UInt8(3))
+    @test Tol(getMZ(PEPTIDE_1), 400.687258)
+    @test Tol(getMZ(PEPTIDE_2), 267.460597)
+    @test Tol(getMZ(PEPTIDE_3), 374.147696)
+    @test Tol(getHigh(PEPTIDE_1), 400.687258*(1 + 20/1000000))
+    @test Tol(getHigh(PEPTIDE_2), 267.460597*(1 + 20/1000000))
+    @test Tol(getHigh(PEPTIDE_3), 374.147696*(1 + 20/1000000))
+    @test Tol(getLow(PEPTIDE_1), 400.687258*(1 - 20/1000000))
+    @test Tol(getLow(PEPTIDE_2), 267.460597*(1 - 20/1000000))
+    @test Tol(getLow(PEPTIDE_3), 374.147696*(1 - 20/1000000))
     @test getResidues(PEPTIDE_2) == getResidues("PEPTIDE")
-    @test getCharge(PEPTIDE_2) == UInt8(2)
+    @test getResidues(PEPTIDE_3) == getResidues("C[+57.021464]PEC[+57.021464]PTIDE")
+    @test getCharge(PEPTIDE_1) == UInt8(2)
     @test getCharge(PEPTIDE_3) == UInt8(3)
     #########
     #Tests for 'Transition' Struct 
     #########
-
-
+    #PEPTIDE_1_res = getResidues(PEPTIDE_1)
+    PEPTIDE_3_res = getResidues(PEPTIDE_3)
+    #b2+1
+    @test Tol(getMZ(Transition(PEPTIDE_3_res, ion_type = 'b', ind = UInt8(2))), 258.090688)
+    #b4+2
+    @test Tol(getMZ(Transition(PEPTIDE_3_res, ion_type = 'b', ind = UInt8(4), charge = UInt8(2))), 274.085603)
+    #y2+1
+    @test Tol(getMZ(Transition(PEPTIDE_3_res, ion_type = 'y', ind = UInt8(2))), 263.087377)
+    #y5+2
+    @test Tol(getMZ(Transition(PEPTIDE_3_res, ion_type = 'y', ind = UInt8(5), charge = UInt8(2))), 287.63958)
+    #########
+    #Tests for 'getFragIons' function and methods
+    #########
+    PEPTIDE_frags_charge1 = sort(Float32[
+    227.102633, # b2+1
+    324.155397, # b3+1
+    425.203075, # b4+1
+    538.287139, # b5+1
+    653.314082, # b6+1
+    263.087377, # y2+1
+    376.171441, # y3+1
+    477.219119, # y4+1
+    574.271883, # y5+1
+    703.314476, # y6+1
+    ])
 #     @test getSequence(Precursor("PEPTIDE", 4))
 #     @test getResidues(map(v -> getAA(Residue(v)), "PEPTIDE")) = [AA('P'), AA('E'), AA('P'), AA('T'), AA('I'), AA('D'), AA('E')]
 

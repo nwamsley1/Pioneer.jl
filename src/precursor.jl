@@ -176,9 +176,10 @@ struct Transition <: Ion
     charge::UInt8
     iosotope::UInt8 #diference in number of neutrons between the monoisotopic
     function Transition(frag_mz::Float32, prec_id::UInt32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm = Float32(20))
-        new(Transition(MzFeature(frag_mz, ppm = ppm), 
-                       prec_id, ion_type, ind, charge, isotope)
+        new(MzFeature(frag_mz, ppm = ppm), 
+                       prec_id, ion_type, ind, charge, isotope
                        )
+                       
     end
     #Internal constructor that makes lower 
     #and upper mz bounds given an optionall ppm tolerance. 
@@ -303,11 +304,11 @@ Constructor for the `Transition` struct. Given a list of amino acids, the precur
 fragment position, isotope, and precursor id, returns a Transition with the correct fragment mz.  
 (link to other usages)
 """
-function Transition(residues::Vector{Residue}, ion_type::Char, charge::UInt8; ind::UInt8 = UInt8(length(residues)), isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
-
-    function getFragIonMZ(residues::Vector{Residue}, modifier::Float32, charge::UInt8, isotope::UInt8)              
-        (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
-    end
+function Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UInt8 = UInt8(1), ind::UInt8 = UInt8(length(residues)), isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
+    #function Transition(frag_mz::Float32, prec_id::UInt32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm = Float32(20))
+    #function getFragIonMZ(residues::Vector{Residue}, modifier::Float32, charge::UInt8, isotope::UInt8)              
+    #    (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
+    #end
     if ion_type == 'b'
         Transition(
                     getIonMZ(residues[1:ind], charge, modifier = getIonModifier(ion_type, charge), isotope = isotope), #frag_mz
@@ -332,25 +333,25 @@ Constructor for the `Transition` struct. Accepts a sequence string and mods_dict
 get the residues array from these using getResidues. 
 (link to getResidues)
 """
-function Transition(sequence::String, ion_type::Char, charge::UInt8; mods_dict::Dict{String, Float32} = default_mods, isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
-    print("hellow")
-    residues = getResidues(sequence, mods_dict)
-    Transition(residues, 
-                                                    ion_type, 
-                                                    charge, 
-                                                    ind = UInt8(length(residues)),
-                                                    isotope = isotope, 
-                                                    prec_id = prec_id)
-end
-#Change order of arguments in transition to reflect y2+1 type, ind, charge
-function Transition(sequence::String, ion_type::Char, charge::UInt8, ind::UInt8; mods_dict::Dict{String, Float32} = default_mods, isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
-    Transition(getResidues(sequence, mods_dict), 
-                                                    ion_type, 
-                                                    charge, 
-                                                    ind = ind,
-                                                    isotope = isotope, 
-                                                    prec_id = prec_id)
-end
+#function Transition(sequence::String, ion_type::Char, charge::UInt8; mods_dict::Dict{String, Float32} = default_mods, isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
+#    print("hellow")
+#    residues = getResidues(sequence, mods_dict)
+#    Transition(residues, 
+#                                                    ion_type, 
+#                                                    charge, 
+#                                                    ind = UInt8(length(residues)),
+#                                                    isotope = isotope, 
+#                                                    prec_id = prec_id)
+#end
+##Change order of arguments in transition to reflect y2+1 type, ind, charge
+#function Transition(sequence::String, ion_type::Char, charge::UInt8, ind::UInt8; mods_dict::Dict{String, Float32} = default_mods, isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
+#    Transition(getResidues(sequence, mods_dict), 
+#                                                    ion_type, 
+#                                                    charge, 
+##                                                    ind = ind,
+#                                                    isotope = isotope, 
+#                                                    prec_id = prec_id)
+#end
 #unction getIonMZ(residues::Array{Residue, 1}, charge::Int32; modifier::Float32 = PROTON*charge + H2O, isotope::Int32 = Int32(0))
 #    (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
 #    (modifier + isotope*NEUTRON) #Add Proton and H2O
@@ -367,6 +368,8 @@ function getAllIonMZ(residues::Vector{Residue}, charge::UInt8; start::Int = 3, m
     )./charge #Divide mass by charge
 end
 
+export getAllIonMz
+
 function getFragIons(residues::Vector{Residue}, prec_id::UInt32, ion_type::Char, start::Int, charge::UInt8, isotope::UInt8)::Array{Transition, 1}
     map(frag -> Transition(frag[2]::Float32
                             , prec_id::UInt32, ion_type::Char, charge::UInt8,
@@ -380,7 +383,6 @@ end
 
 #Shorthands for getting precursors, b ions, and y ions
 #Vector of precursors for given charge states and isotopes
-#Really need to test this. 
 getPrecursors(residues::Vector{Residue}, 
               charges::Vector{UInt8}, 
               isotopes::Vector{UInt8}, 
@@ -389,17 +391,16 @@ getPrecursors(residues::Vector{Residue},
 export getPrecursors
 
 #Get all b and y ions 
-function getFragIons(residues::Vector{Residue}, prec_id::Int32; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
+function getFragIons(residues::Vector{Residue}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
     vcat(
-        getFragIons(residues,prec_id, 'b', b_start, charge, isotope),#,
-        getFragIons(reverse(residues),prec_id, 'y', y_start, charge, isotope)
+        getAllIonMZ(residues,charge, start = b_start, modifier = getIonModifier('b', charge), isotope = isotope),#,
+        getAllIonMZ(reverse(residues), charge, start = y_start, modifier = getIonModifier('y', charge), isotope = isotope)
         #getFragIons(residues, prec_mz,prec_id, 'y', y_start, charge, isotope)
         )
 end
 
 getFragIons(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3
             ) = getFragIons(getResidues(precursor),
-                            getPrecID(precursor),
                             charge = charge, isotope = isotope, y_start = y_start, b_start = b_start
             )
 
