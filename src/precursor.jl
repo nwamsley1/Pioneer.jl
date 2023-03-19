@@ -326,18 +326,8 @@ function Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UIn
     end
 end
 
-"""
-    Transition(sequence::String, mods_dict::Dict{String, Float32}, precursor::Precursor, ion_type::Char, charge::Int32, isotope::Int32 = Int32(0),  prec_id::Int32 = Int32(0))
 
-Constructor for the `Transition` struct. Accepts a sequence string and mods_dict as objects. Can
-get the residues array from these using getResidues. 
-(link to getResidues)
-"""
-"""
-    getFragIons(residues::Array{Residue, 1}, prec_mz::Float32, prec_id::Int32, modifier::Float32, ion_type::Char, start::Int32, charge::Int32, isotope::Int32)
 
-Returns an `Array{Transition, 1}`. For the specific ion type and charge state (yn+2 for example) gets all fragment ions from start to the end. 
-"""
 function getIonSeries(residues::Vector{Residue}, charge::UInt8; start::Int = 3, modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))
     N = length(residues)
     cumulative_mass = zeros(Float32, N)
@@ -355,12 +345,8 @@ function getIonSeries(residues::Vector{Residue}, charge::UInt8; start::Int = 3, 
 end
 
 function getFragIons(residues::Vector{Residue}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
-    b_ions = getIonSeries(residues, charge, start = b_start, modifier =  PROTON*charge, isotope = isotope)
-    y_ions = getIonSeries(reverse(residues), charge, start = y_start, modifier = H2O + PROTON*charge, isotope = isotope)
-    ions = Vector{Float32}(undef, length(b_ions) + length(y_ions))
-    ions[1:length(b_ions)] .= b_ions
-    ions[length(y_ions)+1:length(ions)] .= y_ions
-    ions
+    vcat(getIonSeries(residues, charge, start = b_start, modifier =  PROTON*charge, isotope = isotope),
+    getIonSeries(reverse(residues), charge, start = y_start, modifier = H2O + PROTON*charge, isotope = isotope))
 end
 
 getFragIons(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3
@@ -376,7 +362,7 @@ function getTransitionSeries(precursor::Precursor, charge::UInt8 = UInt8(1); ion
                             #ststart -1,
                         isotope), 
                         enumerate(
-                                getAllIonMZ(getResidues(precursor), 
+                                getIonSeries(getResidues(precursor), 
                                               charge, isotope = isotope,
                                               start = start, 
                                               modifier = modifier
@@ -384,11 +370,13 @@ function getTransitionSeries(precursor::Precursor, charge::UInt8 = UInt8(1); ion
                                 )
         )
 end
+
 function getTransitions(precursor::Precursor; prec_id::UInt32 = UInt32(0), charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
     vcat(getTransitionSeries(precursor, charge, ion_type = 'b', prec_id = prec_id, isotope = isotope, start = b_start, modifier = PROTON*charge),
     getTransitionSeries(precursor, charge, ion_type = 'y', prec_id = prec_id, isotope = isotope, start = y_start, modifier = H2O + PROTON*charge))
 end
 
+export getTransitions
 #Shorthands for getting precursors, b ions, and y ions
 #Vector of precursors for given charge states and isotopes
 getPrecursors(residues::Vector{Residue}, 

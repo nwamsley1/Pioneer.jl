@@ -129,120 +129,33 @@ end
     574.271883, # y5+1
     703.314476, # y6+1
     ])
+    compare_frags = zip(sort(getFragIons(PEPTIDE_1, charge = UInt8(1), 
+                                        b_start = 2, y_start = 2
+                                        )), 
+                        PEPTIDE_frags_charge1
+                        )
+    @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
     PEPTIDE_frags_charge2 = sort(Float32[
-        227.102633, # b2+1
-        324.155397, # b3+1
-        425.203075, # b4+1
-        538.287139, # b5+1
-        653.314082, # b6+1]
-        263.087377, # y2+1
-        376.171441, # y3+1
-        477.219119, # y4+1
-        574.271883, # y5+1
-        703.314476, # y6+1
+        162.581336, # b3+1
+        213.105176, # b4+1
+        269.647208, # b5+1
+        327.160679, # b6+1
+        188.589358, # y3+1
+        239.113198, # y4+1
+        287.63958, # y5+1
+        352.160876, # y6+1
         ])
-#     @test getSequence(Precursor("PEPTIDE", 4))
-#     @test getResidues(map(v -> getAA(Residue(v)), "PEPTIDE")) = [AA('P'), AA('E'), AA('P'), AA('T'), AA('I'), AA('D'), AA('E')]
+        compare_frags = zip(sort(getFragIons(PEPTIDE_1, charge = UInt8(2), 
+                            b_start = 2, y_start = 2
+                            )), 
+                            PEPTIDE_frags_charge2
+                            )
+      @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
 
-#     test_prec = Precursor("PEPTIDE", 3)
+      compare_frags = zip(sort([getMZ(x) for x in getTransitions(PEPTIDE_1, charge = UInt8(2), y_start = 2, b_start = 2)]), 
+      PEPTIDE_frags_charge2
+      )
 
-#     frag!(test_prec)
-#     @test length(getFrags(test_prec))=21
-
-#     #Get the length b3 ion
-#     @test length(getFrags(test_prec)) = 3
-#     test_frags = getFrags(test_prec)
-#     @test length(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1 && length(frag) == 3, test_frags)]) = 3
-#     @test getMZ(test_frags[findall(frag -> getType(frag) == 'b' && getCharge(frag) == 1 && length(frag) == 3, test_frags)]) = 324.155397
-
-#     #Sort the fragments from high mass to low mass
-#     #Use constructor to get this effect
-#     #sort!(test_frags, by = frag -> getMZ(frag), rev = true)
-#     sort!(test_frags, rev = true)
-#     #y6+1
-#     @test getMZ(first(getFrags(test_prec))) == 703.314476
-#     @test getType(first(getFrags(test_prec))) == 'y'
-#     @test length(first(getFrags(test_prec))) == 6
-#     @test getCharge(first(getFrags(test_prec))) == 1
-#     #b3+2
-#     @test getMZ(last(getFrags(test_prec))) == 162.581336
-#     @test getMZ(last(getFrags(test_prec))) == 'b'
-#     @test length(last(getFrags(test_prec))) == 3
-#     @test getCharge(last(getFrags(test_prec))) == 2
-#     #Sort low to high
-#     sort!(test_frags, rev = false)
-#     #b2+2
-#     @test getMZ(first(getFrags(test_prec))) == 162.581336
-#     #y6+1
-#     @test getMZ(last(getFrags(test_prec))) == 703.314476
-
-#     #Get b3-b4 ions and all y ions 2 or greater
-#     #FragFilter({'b'=> ("low" => 3, "")}
-#     #    'b' => ("low" => 3, "high" => 4, "max_charge" => 2), 
-#     #    'y' => ("low" => 3, "high" => 4, "max_charge" => 2),
-#     #    )
-#     test_frag_filter = FragFilter(type = 'b', low = 3, high = 4, max_charge = 1) + FragFilter(type = 'y', low = 3, high = ∞, max_charge = 2) 
-#     frag!(test_prec, test_frag_filter)
-#     sort!(test_frags)
-#     @test length(getFrags(test_prec)) = 2 + 9
-    
-frags = Array{NamedTuple, 1}([
-            (ion_type = 'y', ind = UInt8(3), charge = UInt8(2)),
-            (ion_type = 'y', ind = UInt8(4), charge = UInt8(2)),
-            (ion_type = 'y', ind = UInt8(5), charge = UInt8(2)),
-            (ion_type = 'b', ind = UInt8(3), charge = UInt8(1)),
-            (ion_type = 'y', ind = UInt8(6), charge = UInt8(2)),
-            (ion_type = 'y', ind = UInt8(3), charge = UInt8(1)),
-            (ion_type = 'b', ind = UInt8(4), charge = UInt8(1)),
-            (ion_type = 'y', ind = UInt8(4), charge = UInt8(1)),
-            (ion_type = 'y', ind = UInt8(5), charge = UInt8(1)),
-            (ion_type = 'y', ind = UInt8(6), charge = UInt8(1))])
-    
-    
-#test_frags_a = frag!(Peptide("PEPTIDE", UInt8(3), default_mods), frags, default_mods)
-known_frags_a = [
-    188.589358, #y3+2
-    239.113198, #y4+2
-    287.639580, #y5+2
-    324.155397, #b3+1
-    352.160876, #y6+2
-    376.171441, #y3+1
-    425.203075, #b4+1
-    477.219119, #y4+1
-    574.271883, #y5+1
-    703.314476  #y6+1
-    ]
-#pep = Peptide("PEPTIDE", UInt8(3), default_mods)
-#residues_ = getResidues(pep, default_mods)
-#N = 100.000
-#test = @timed for i in 1:N
-    #frag!(pep, frags, default_mods)
-#    map(frag -> getFrag(residues_, frag), frags)
-#end 
-#println!(test, "total")
-#println!(test/N, "per frag")
-#N = 249966409
-#N = 100000
-#test = @timed Threads.@threads for i in 1:N
-#    #Frag(TIDEK_mod, 'y', Int32(2))
-#    map(frag -> getFrag(residues_, frag), frags)
-#end 
-#println(test.time, " total")
-#println(test.time/(10*N), "per frag")
-#println("for ", N, " frags")
-#@time test = map(pep-> getResidues(pep, default_mods), Vector{String}(["C[Carb]TIDEK[+8.014199]" for x in 1:1000000]))
-#function test(pep, frags, default_mods::Dict{String, Float32})
-#    #map(frag -> getFrag(residues_, frag), frags)
-#    Threads.@threads for i in 1:N
-#        frag!(pep, frags, default_mods)
-#    end
-#end
-
-#@time Threads.@threads testfun(test, default_mods) #end
-
-#@test all(map(f -> Tol(f...), zip(known_frags_a, map(frag -> getMZ(frag), test_frags_a))))
-#@test all(map(f -> Tol(f...), zip(reverse(known_frags_a), map(frag -> getMZ(frag), test_frags_a)))) == false
-    
-#     #Compare to Skyline
+      @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
 
 end
