@@ -247,6 +247,20 @@ function getIonMZ(residues::Vector{Residue}, charge::UInt8; modifier::Float32 = 
     )/charge #Divide mass by charge
 end
 
+function getIonMZ(residues::Vector{Residue}, ion_type::Char, charge::UInt8; isotope::UInt8 = UInt8(0))
+    #modifier should be "PROTON*charge + H2O" for 'p' and 'y' ions
+    #and "PROTON*charge" for 'b' ions. 
+    if ion_type == 'b'
+        (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
+        (PROTON*charge + isotope*NEUTRON) #Add Proton and H2O
+        )/charge #Divide mass by charge
+    elseif ion_type ∈ ('y','p')
+        (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
+        (PROTON*charge + H2O + isotope*NEUTRON) #Add Proton and H2O
+        )/charge #Divide mass by charge
+    end
+end 
+
 export getIonMZ
 #Constructor for precursor
 """
@@ -303,7 +317,7 @@ function Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UIn
     #end
     if ion_type == 'b'
         Transition(
-                    getIonMZ(residues[1:ind], charge, modifier = getIonModifier(ion_type, charge), isotope = isotope), #frag_mz
+                    getIonMZ(residues[1:ind], charge, modifier = PROTON*charge, isotope = isotope), #frag_mz
                     prec_id,ion_type,ind,charge,isotope
                 )       
     elseif ion_type == 'y'
