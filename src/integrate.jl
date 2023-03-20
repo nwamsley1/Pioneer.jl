@@ -103,20 +103,21 @@ export getIntegrationBounds
 #function getHits(mass_list::Vector{Float32}, ppm::Float32, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
 
 
-function getHits!(test::Array{Float32, 3}, MzFeatures::Vector{NamedTuple{(:low, :mass, :high), Tuple{Float32, Float32, Float32}}}, 
+function getHits(Transitions::Vector{Transition}, 
     masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
+    results = Dict{Int64, NamedTuple{(:mass, :error), Tuple{Vector{Float32}, Vector{Float32}}}}()
     #MzFeatures = getMzFeatures(mass_list, ppm)
-    feature = 1
+    transition = 1
     peak = 1
-    while (peak <= length(masses)) & (feature <= length(MzFeatures))
-        if masses[peak ] > MzFeatures[feature].low#, MzFeatures[feature].low) > MzFeatures[feature].low
-            if masses[peak] < MzFeatures[feature].high# , MzFeatures[feature].high) < MzFeatures[feature].high
+    while (peak <= length(masses)) & (transition <= length(Transitions))
+        if masses[peak ] > getLow(Transitions[transition])#, MzFeatures[feature].low) > MzFeatures[feature].low
+            if masses[peak] < getHigh(Transitions[transition])# , MzFeatures[feature].high) < MzFeatures[feature].high
                 #"masses[peak] is in the range(low, high), "
                 #There could be multiple peaks in the tolerance and we want to 
                 #choose the one that is closest in mass
                 smallest_diff = masses[peak]#abs(coalesce(masses[peak], MzFeatures[feature].mass) - MzFeatures[feature].mass)
                 i = 0
-                @inbounds while masses[peak+1+i] < MzFeatures[feature].high#coalesce(masses[peak+1+i], MzFeatures[feature].high) < MzFeatures[feature].high
+                @inbounds while masses[peak+1+i] < getHigh(Transitions[transition])#coalesce(masses[peak+1+i], MzFeatures[feature].high) < MzFeatures[feature].high
                     new_diff = masses[peak+1+i] #abs(coalesce(masses[peak+1+i],-MzFeatures[feature].mass)  - MzFeatures[feature].mass)
                     if new_diff < smallest_diff
                         smallest_diff = new_diff
@@ -125,25 +126,42 @@ function getHits!(test::Array{Float32, 3}, MzFeatures::Vector{NamedTuple{(:low, 
                     end
                     i+=1
                 end
+                prec_id = getPrecID(Transitions[transition])
+                if !haskey(results, prec_id)
+                    results[prec_id] = (mass = Float32[], error = Float32[])
+                end
+                push!(results[prec_id].mass, getMZ(Transitions[transition]))
+                push!(results[prec_id].error, 1e6*(smallest_diff - getMZ(Transitions[transition])))/getMZ(Transitions[transition])
+               #new_dict = Dict{String, Any}(
+               #     "a"=>intensities[peak],
+               #     "b"=>intensities[peak],
+               #                     )
                 #test[1,1] = intensities[peak]#, MzFeatures[feature].mass-masses[peak])
                 #test[2,1] = masses[peak]
                 #test[3,1] = 1e6*(smallest_diff - MzFeatures[feature].mass)/MzFeatures[feature].mass
                 #@view(test[:,1]) = [intensities[peak], Float32(peak)]
                 #test[2] .= (intensities[peak], MzFeatures[feature].mass-masses[peak])
-                feature += 1
+                transition += 1
                 continue
             end
-            feature += 1
+            transition += 1
             continue
         end
         peak+=1
         #println(peak)
         #println(feature)
     end
+    results
 end
 
-
-
+test_features = [Transition(getResidues("PEPTIDE"), prec_id = UInt32(1), ppm = Float32(10000)),
+                 Transition(getResidues("PEPTIDER"), charge = UInt8(2), prec_id = UInt32(1), ppm = Float32(10000))]
+lower_bound = 400.0
+upper_bound = 1000.0
+n = 1000
+test_masses = sort(Vector{Union{Missing, Float32}}(lower_bound .+ rand(Float32, n) .* (upper_bound - lower_bound)))
+push!(test_masses, getMZ(test_features[1]))
+test_masses = sort(test_masses)
 export getHits
 function getMzFeatures(mass_list::Vector{Float32}, ppm::Float32)
      (map(x->(low=x-(x/Float32(1000000.0))*ppm, mass = x, high=x+(x/Float32(1000000.0))*ppm), mass_list))
