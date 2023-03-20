@@ -101,22 +101,23 @@ export getIntegrationBounds
 #function getHits(mass_list::Vector{Float32}, ppm::Float64, masses::MappedArray{Float32, 1, Vector{Union{Missing, Float32}}, MappedArrays.var"#7#9"{Float32}, MappedArrays.var"#8#10"{Union{Missing, Float32}}}, 
 #    intensities::MappedArray{Float32, 1, Vector{Union{Missing, Float32}}, MappedArrays.var"#7#9"{Float32}, MappedArrays.var"#8#10"{Union{Missing, Float32}}})
 #function getHits(mass_list::Vector{Float32}, ppm::Float32, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
-function getHits(MzFeatures::Vector{NamedTuple{(:low, :mass, :high), Tuple{Float32, Float32, Float32}}}, 
-    ppm::Float32, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
+
+
+function getHits!(test::Array{Float32, 3}, MzFeatures::Vector{NamedTuple{(:low, :mass, :high), Tuple{Float32, Float32, Float32}}}, 
+    masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
     #MzFeatures = getMzFeatures(mass_list, ppm)
     feature = 1
     peak = 1
-    #println("test");
     while (peak <= length(masses)) & (feature <= length(MzFeatures))
-        if coalesce(masses[peak], MzFeatures[feature].low) > MzFeatures[feature].low
-            if coalesce(masses[peak], MzFeatures[feature].high) < MzFeatures[feature].high
+        if masses[peak ] > MzFeatures[feature].low#, MzFeatures[feature].low) > MzFeatures[feature].low
+            if masses[peak] < MzFeatures[feature].high# , MzFeatures[feature].high) < MzFeatures[feature].high
                 #"masses[peak] is in the range(low, high), "
                 #There could be multiple peaks in the tolerance and we want to 
                 #choose the one that is closest in mass
-                smallest_diff = abs(coalesce(masses[peak],MzFeatures[feature].mass) - MzFeatures[feature].mass)
+                smallest_diff = masses[peak]#abs(coalesce(masses[peak], MzFeatures[feature].mass) - MzFeatures[feature].mass)
                 i = 0
-                @inbounds while coalesce(masses[peak+1+i], MzFeatures[feature].high) < MzFeatures[feature].high
-                    new_diff = abs(coalesce(masses[peak+1+i],-MzFeatures[feature].mass)  - MzFeatures[feature].mass)
+                @inbounds while masses[peak+1+i] < MzFeatures[feature].high#coalesce(masses[peak+1+i], MzFeatures[feature].high) < MzFeatures[feature].high
+                    new_diff = masses[peak+1+i] #abs(coalesce(masses[peak+1+i],-MzFeatures[feature].mass)  - MzFeatures[feature].mass)
                     if new_diff < smallest_diff
                         smallest_diff = new_diff
                         peak = peak+1+i
@@ -124,7 +125,11 @@ function getHits(MzFeatures::Vector{NamedTuple{(:low, :mass, :high), Tuple{Float
                     end
                     i+=1
                 end
-                #println(MzFeatures[feature].mass, " has mass ", masses[peak], " and intensity ", intensities[peak])
+                #test[1,1] = intensities[peak]#, MzFeatures[feature].mass-masses[peak])
+                #test[2,1] = masses[peak]
+                #test[3,1] = 1e6*(smallest_diff - MzFeatures[feature].mass)/MzFeatures[feature].mass
+                #@view(test[:,1]) = [intensities[peak], Float32(peak)]
+                #test[2] .= (intensities[peak], MzFeatures[feature].mass-masses[peak])
                 feature += 1
                 continue
             end
@@ -136,6 +141,9 @@ function getHits(MzFeatures::Vector{NamedTuple{(:low, :mass, :high), Tuple{Float
         #println(feature)
     end
 end
+
+
+
 export getHits
 function getMzFeatures(mass_list::Vector{Float32}, ppm::Float32)
      (map(x->(low=x-(x/Float32(1000000.0))*ppm, mass = x, high=x+(x/Float32(1000000.0))*ppm), mass_list))
@@ -144,9 +152,63 @@ export getMzFeatures
 test_masses =  Vector{Union{Missing, Float32}}(
     [151.67221f0, missing, 894.0937f0, 894.0938f0, 894.0939f0])
 
+lower_bound = 400.0
+upper_bound = 1000.0
+n = 1000
+test_masses = sort(Vector{Union{Missing, Float32}}(lower_bound .+ rand(Float32, n) .* (upper_bound - lower_bound)))
+test_features = getMzFeatures(sort(Vector{Float32}(lower_bound .+ rand(Float32, 100) .* (upper_bound - lower_bound))),
+Float32(20.0))
+#@btime getHitsOld(test_features, Float32(20.0), test_masses, test_masses)
+
 
 test_intensities =  Vector{Union{Missing, Float32}}([missing for x in test_masses])
 test_ppm = Float32(20.0)
 test_mz = getMzFeatures(Vector{Float32}([151.67221f0, 700.0, 894.0938f0]), Float32(20.0))
 test_mz = getMzFeatures(Vector{Float32}(sort(rand(1000)*1000)), Float32(20.0))
 #getHits(test_mz, test_ppm, test_masses, test_intensities)
+
+#=
+function integrate2(MzFeatures, masses, intensities)
+    n = length(masses)
+    m = length(MzFeatures)
+    integrated_intensities = zeros(Float32, m)
+    peak_idx = 1
+    for i in 1:n
+        mz = masses[i]
+        while peak_idx <= m && MzFeatures[peak_idx].mass < mz
+            peak_idx += 1
+        end
+        if peak_idx > m
+            break
+        end
+        if MzFeatures[peak_idx].mass == mz
+            intensity = intensities[i]
+            while peak_idx <= m && MzFeatures[peak_idx].mass == mz
+                integrated_intensities[peak_idx] += intensity
+                peak_idx += 1
+            end
+        end
+    end
+    return integrated_intensities
+end
+
+function integrate2_turbo(MzFeatures, masses, intensities)
+    n = length(masses)
+    m = length(MzFeatures)
+    integrated_intensities = zeros(Float32, m)
+    peak_idx = 1
+    @turbo for i=1:n_peaks
+        mz = peak_list[i].mz
+        intensity = intensities[i]
+        peak_idx = findfirst(x -> x.mass >= mz, MzFeatures)
+        if peak_idx === nothing
+            continue
+        end
+        while peak_idx <= m && (MzFeatures[peak_idx]).mass == mz
+            integrated_intensities[peak_idx] = add_fast(intensity, integrated_intensities[peak_idx])
+            peak_idx += 1
+        end
+    end
+    return integrated_intensities
+end
+=#
