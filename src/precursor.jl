@@ -226,15 +226,6 @@ function Precursor()
     Precursor(Vector{Residue}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0))
 end
 
-function getIonModifier(ion_type::Char, charge::UInt8)::Float32
-    ion_mods = Dict{Char, Float32}(
-        'y' => H2O,
-        'b' => Float32(0),
-        'p' => H2O,
-    )
-    return ion_mods[ion_type] + PROTON*charge
-end
-
 """
     getIonMZ(residues::Array{Residue, 1}, charge::Int32; modifier::Float32 = PROTON*charge + H2O, isotope::Int32 = Int32(0))
 
@@ -249,17 +240,12 @@ The isotope state is the difference in the number of isotopes from the monoisoto
 state. For a monoisotopic precurosr, `isotope` should equal the default value of zero. 
 """
 function getIonMZ(residues::Vector{Residue}, charge::UInt8; modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))
+    #modifier should be "PROTON*charge + H2O" for 'p' and 'y' ions
+    #and "PROTON*charge" for 'b' ions. 
     (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
     (modifier + isotope*NEUTRON) #Add Proton and H2O
     )/charge #Divide mass by charge
 end
-
-function getIonMZ(residues::Vector{Residue}, ion_type::Char, charge::UInt8; isotope::UInt8 = UInt8(0))
-    (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
-    (getIonModifier(ion_type, charge) + isotope*NEUTRON) #Add Proton and H2O
-    )/charge #Divide mass by charge
-end
-
 
 export getIonMZ
 #Constructor for precursor
@@ -294,7 +280,13 @@ Precursor(sequence::String; mods_dict::Dict{String, Float32} = Dict{String, Floa
         ) = Precursor(getResidues(sequence, mods_dict), charge, isotope, prec_id, prot_ids)
 
 #Getter Functions
+#Shorthands for getting precursors, b ions, and y ions
+#Vector of precursors for given charge states and isotopes
+function getPrecursors(residues::Vector{Residue}; charges::Vector{UInt8} = UInt8[1,2],isotopes::Vector{UInt8}=UInt8[0],pep_id::UInt32=UInt32(0),prot_ids::Vector{UInt32} = Vector{UInt32}([]))
+    [Precursor(residues, charge, isotope, pep_id, prot_ids) for charge in charges for isotope in isotopes]
+end
 
+export getPrecursors
 
 
 """
@@ -354,6 +346,10 @@ getFragIons(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UIn
                             charge = charge, isotope = isotope, y_start = y_start, b_start = b_start
             )
 
+function getFragIons(precursor::Precursor,charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3)
+    vec(hcat([getFragIons(getResidues(precursor), charge = charge, isotope = isotope, y_start = y_start, b_start = b_start) for charge in charges for isotope in isotopes]...))
+end 
+
 export getAllIonMz
 function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::Float32 = H2O + PROTON*charge)
         map(transition -> Transition(transition[2]::Float32
@@ -376,15 +372,12 @@ function getTransitions(precursor::Precursor; charge::UInt8 = UInt8(1), isotope:
     getTransitionSeries(reverse(getResidues(precursor)), charge, ion_type = 'y', prec_id = getPrecID(precursor), isotope = isotope, start = y_start, modifier = H2O + PROTON*charge))
 end
 
-export getTransitions
-#Shorthands for getting precursors, b ions, and y ions
-#Vector of precursors for given charge states and isotopes
-getPrecursors(residues::Vector{Residue}, 
-              charges::Vector{UInt8}, 
-              isotopes::Vector{UInt8}, 
-              pep_id::UInt32) = Precursor.(residues, charges, isotopes, pep_id)
+function getTransitions(precursor::Precursor, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3)
+    vec(hcat([getTransitions(precursor, charge = charge, isotope = isotope, y_start = y_start, b_start = b_start) for charge in charges for isotope in isotopes]...))
+end
 
-export getPrecursors
+export getTransitions
+
 
 #Can provide a list of named tuples to specify exactly which fragments to get
 export Ion
