@@ -105,62 +105,108 @@ export getIntegrationBounds
 
 function getHits(Transitions::Vector{Transition}, 
     masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
-    results = Dict{Int64, NamedTuple{(:mass, :error), Tuple{Vector{Float32}, Vector{Float32}}}}()
-    #MzFeatures = getMzFeatures(mass_list, ppm)
-    transition = 1
-    peak = 1
+    results = Dict{Int64, NamedTuple{(:mass, :error, :index), Tuple{Vector{Float32}, Vector{Float32}, Vector{Int}}}}()
+
+    peak, transition = 1, 1
     while (peak <= length(masses)) & (transition <= length(Transitions))
-        if masses[peak ] > getLow(Transitions[transition])#, MzFeatures[feature].low) > MzFeatures[feature].low
-            if masses[peak] < getHigh(Transitions[transition])# , MzFeatures[feature].high) < MzFeatures[feature].high
-                #"masses[peak] is in the range(low, high), "
+        #Is the peak within the tolerance of the transition m/z?
+        if (masses[peak] >= getLow(Transitions[transition])) & (masses[peak] <= getHigh(Transitions[transition]))
+
+            #There could be multiple peaks in the tolerance and we want to 
+            #choose the one that is closest in m/z to the the current transition m/z. 
+            smallest_diff = abs(masses[peak] - getMZ(Transitions[transition]))
+            best_peak = peak
+            i = 0
+            @inbounds while masses[peak + 1 + i] <= getHigh(Transitions[transition])
+                new_diff = abs(masses[peak  + 1 + i] - getMZ(Transitions[transition]))
+                if new_diff < smallest_diff
+                    smallest_diff = new_diff
+                    best_peak = peak + 1 + i
+                end
+                i+=1
+            end
+            prec_id = getPrecID(Transitions[transition])
+            if !haskey(results, prec_id)
+                results[prec_id] = (mass = Float32[], error = Float32[], index = Int[])
+            end
+            push!(results[prec_id].mass, getMZ(Transitions[transition]))
+            push!(results[prec_id].error, 1e6*(masses[best_peak] - getMZ(Transitions[transition])))/getMZ(Transitions[transition])
+            if best_peak == 70
+                println(transition)
+                println(Transitions[transition])
+                println(masses[best_peak])
+            end
+            #push!(results[prec_id].type, getIonType(Transitions[transition]))
+            push!(results[prec_id].index, best_peak)
+            transition += 1
+            continue
+        end
+        peak+=1
+    end
+    results
+end
+
+function getHits(Transitions::Vector{Transition}, 
+    masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, n_offsets::Int = 75)
+    #results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Int64, Float32, Int64, Float32, Float64, Vector{Float32}}}}()
+    results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Vector{Int64},Vector{Float32}, Vector{Int64}, Vector{Float32}, Vector{Float64}, Vector{Tuple{Float32,Char}}}}}()
+    δs = map(x->x*0.0001, -n_offsets:n_offsets)
+    for δ in δs
+        peak, transition = 1, 1
+        while (peak <= length(masses)) & (transition <= length(Transitions))
+            #Is the peak within the tolerance of the transition m/z?
+            if (masses[peak]+ δ >= getLow(Transitions[transition])) & (masses[peak]+ δ <= getHigh(Transitions[transition]))
+
                 #There could be multiple peaks in the tolerance and we want to 
-                #choose the one that is closest in mass
-                smallest_diff = masses[peak]#abs(coalesce(masses[peak], MzFeatures[feature].mass) - MzFeatures[feature].mass)
+                #choose the one that is closest in m/z to the the current transition m/z. 
+                smallest_diff = abs(masses[peak]+ δ - getMZ(Transitions[transition]))
+                best_peak = peak
                 i = 0
-                @inbounds while masses[peak+1+i] < getHigh(Transitions[transition])#coalesce(masses[peak+1+i], MzFeatures[feature].high) < MzFeatures[feature].high
-                    new_diff = masses[peak+1+i] #abs(coalesce(masses[peak+1+i],-MzFeatures[feature].mass)  - MzFeatures[feature].mass)
+                @inbounds while masses[peak + 1 + i]+ δ <= getHigh(Transitions[transition])
+                    new_diff = abs(masses[peak  + 1 + i] + δ - getMZ(Transitions[transition]))
                     if new_diff < smallest_diff
                         smallest_diff = new_diff
-                        peak = peak+1+i
-                        i = 0
+                        best_peak = peak + 1 + i
                     end
                     i+=1
                 end
                 prec_id = getPrecID(Transitions[transition])
                 if !haskey(results, prec_id)
-                    results[prec_id] = (mass = Float32[], error = Float32[])
+                    results[prec_id] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[])
                 end
-                push!(results[prec_id].mass, getMZ(Transitions[transition]))
-                push!(results[prec_id].error, 1e6*(smallest_diff - getMZ(Transitions[transition])))/getMZ(Transitions[transition])
-               #new_dict = Dict{String, Any}(
-               #     "a"=>intensities[peak],
-               #     "b"=>intensities[peak],
-               #                     )
-                #test[1,1] = intensities[peak]#, MzFeatures[feature].mass-masses[peak])
-                #test[2,1] = masses[peak]
-                #test[3,1] = 1e6*(smallest_diff - MzFeatures[feature].mass)/MzFeatures[feature].mass
-                #@view(test[:,1]) = [intensities[peak], Float32(peak)]
-                #test[2] .= (intensities[peak], MzFeatures[feature].mass-masses[peak])
+                if getIonType(Transitions[transition]) == 'b'
+                    results[prec_id].b_count[1] += 1
+                    results[prec_id].b_int[1] += intensities[best_peak]
+                elseif getIonType(Transitions[transition]) == 'y'
+                    results[prec_id].y_count[1] += 1
+                    results[prec_id].y_int[1] += intensities[best_peak]
+                end
+                results[prec_id].error[1] += abs(masses[best_peak] - getMZ(Transitions[transition]))
+                #push!(results[prec_id].intensities, (intensities[best_peak], getIonType(Transitions[transition])))
                 transition += 1
                 continue
             end
-            transition += 1
-            continue
+            peak+=1
         end
-        peak+=1
-        #println(peak)
-        #println(feature)
     end
     results
 end
 
 test_features = [Transition(getResidues("PEPTIDE"), prec_id = UInt32(1), ppm = Float32(10000)),
                  Transition(getResidues("PEPTIDER"), charge = UInt8(2), prec_id = UInt32(1), ppm = Float32(10000))]
+test_peps = ["MGKVKVGVNG", "FGRIGRLVTR", "AAFNSGKVDI", "VAINDPFIDL", "NYMVYMFQYD", "STHGKFHGTV", "KAENGKLVIN"]
+using Base.Iterators
+test_features = [x for x in flatten([ getTransitions(Precursor(pep[2], prec_id = UInt32(pep[1])), charge = UInt8(2), y_start = 2, b_start = 2) for pep in enumerate(test_peps)])]
+#test_features = getTransitions(Precursor("PEPTIDE", prec_id = UInt32(1)), charge = UInt8(2), y_start = 2, b_start = 2)
+#append!(test_features, getTransitions(Precursor("PEPTIDE", prec_id = UInt32(2)), charge = UInt8(1), y_start = 2, b_start = 2))
+sort!(test_features, by = transition -> getMZ(transition))
 lower_bound = 400.0
 upper_bound = 1000.0
 n = 1000
 test_masses = sort(Vector{Union{Missing, Float32}}(lower_bound .+ rand(Float32, n) .* (upper_bound - lower_bound)))
-push!(test_masses, getMZ(test_features[1]))
+for t in test_features
+    push!(test_masses, getMZ(t))
+end
 test_masses = sort(test_masses)
 export getHits
 function getMzFeatures(mass_list::Vector{Float32}, ppm::Float32)
