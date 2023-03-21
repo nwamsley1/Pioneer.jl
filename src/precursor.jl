@@ -308,6 +308,7 @@ Type that represents transition (fragment ion of a peptide)
 ### GetterMethods
 
 - getIonType(transition::Transition) = transition.ion_type
+- getInd(transition::Transition) = transition.ind
 """
 struct Transition <: Ion
     mz::MzFeature
@@ -354,6 +355,7 @@ function Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UIn
 end
 
 getIonType(transition::Transition) = transition.ion_type
+getInd(transition::Transition) = transition.ind
 
 """
 Precursor <: Ion
@@ -719,8 +721,8 @@ end
 export getAllIonMz
 function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::Float32 = H2O + PROTON*charge)
         map(transition -> Transition(transition[2]::Float32
-                            , prec_id, ion_type, charge,
-                            UInt8(transition[1]+start - 1), #ind. 3 for y3+n ion.
+                            , prec_id, ion_type, UInt8(transition[1]+start - 1),
+                            charge, #ind. 3 for y3+n ion.
                             #ststart -1,
                         isotope), 
                         enumerate(

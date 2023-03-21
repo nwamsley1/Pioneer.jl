@@ -175,9 +175,12 @@ struct FastXTandem <: Feature
     b_int::Vector{Float32}
     y_count::Vector{Int64}
     y_int::Vector{Float32}
+    last_y::Vector{UInt8}
+    y_start::Vector{UInt8}
+    longest_y::Vector{UInt8}
     error::Vector{Float64}
 end
-FastXTandem() = FastXTandem([0], [Float32(0)], [0], [Float32(0)], [Float64(0)])
+FastXTandem() = FastXTandem([0], [Float32(0)], [0], [Float32(0)], [UInt8(0)], [UInt8(0)], [UInt8(0)], [Float64(0)])
 
 function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
     if getIonType(transition) == 'b'
@@ -186,11 +189,23 @@ function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union
     elseif getIonType(transition) == 'y'
         score.y_count[1] += 1
         score.y_int[1] += intensity
+        if score.longest_y[1] == 0
+            score.y_start[1] = getInd(transition)
+            score.last_y[1] = getInd(transition) - 1
+        end
+        if (getInd(transition)-score.last_y[1]) == 1
+            if (getInd(transition) - score.y_start[1]) > score.longest_y[1]
+                longest_y[1] = getInd(transition) - score.y_start[1]
+            else
+                score.y_start[1] = getInd(transition)
+            end
+        end
     end
     score.error[1] += abs(mass - getMZ(transition))
     #push!(results[prec_id].intensities, (intensities[best_peak]))
     #push!(results[prec_id].test, getIonType(Transitions[transition]))
 end
+
 using SpecialFunctions
 function Score(score::FastXTandem)
     (lgamma(score.b_count[1]) + 
@@ -211,7 +226,7 @@ function getHits!(results, δs, Transitions::Vector{Transition},
                 if !haskey(results, prec_id)
                     results[prec_id] = FastXTandem()
                 end
-                Score!(results[prec_id], Transitions[transition], masses[best_peak], intensities[best_peak]);
+                ModifyFeatures!(results[prec_id], Transitions[transition], masses[best_peak], intensities[best_peak]);
                 transition += 1
                 continue
             end
@@ -220,8 +235,6 @@ function getHits!(results, δs, Transitions::Vector{Transition},
     end
 end
 
-test_features = [Transition(getResidues("PEPTIDE"), prec_id = UInt32(1), ppm = Float32(10000)),
-                 Transition(getResidues("PEPTIDER"), charge = UInt8(2), prec_id = UInt32(1), ppm = Float32(10000))]
 test_peps = ["MGKVKVGVNG", "FGRIGRLVTR", "AAFNSGKVDI", "VAINDPFIDL", "NYMVYMFQYD", "STHGKFHGTV", "KAENGKLVIN"]
 using Base.Iterators
 test_features = [x for x in flatten([ getTransitions(Precursor(pep[2], prec_id = UInt32(pep[1])), charge = UInt8(2), y_start = 2, b_start = 2) for pep in enumerate(test_peps)])]
