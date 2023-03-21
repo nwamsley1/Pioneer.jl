@@ -145,31 +145,40 @@ function getHits(Transitions::Vector{Transition},
     end
     results
 end
+function getNearest(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, peak::Int, transition::Int; δ = 0.01)
+    smallest_diff = abs(masses[peak]+ δ - getMZ(Transitions[transition]))
+    best_peak = peak
+    i = 0
+    @inbounds while masses[peak + 1 + i]+ δ <= getHigh(Transitions[transition])
+        new_diff = abs(masses[peak  + 1 + i] + δ - getMZ(Transitions[transition]))
+        if new_diff < smallest_diff
+            smallest_diff = new_diff
+            best_peak = peak + 1 + i
+        end
+        i+=1
+    end
+    best_peak
+end
 
-function getHits(Transitions::Vector{Transition}, 
-    masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, n_offsets::Int = 75)
+test = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities, :test), Tuple{Vector{Int64},Vector{Float32}, Vector{Int64}, Vector{Float32}, Vector{Float64}, Vector{Float32}, Vector{Char}}}}()
+for i in 1:10
+    test[i] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[], test = Char[])
+end
+δs = map(x->x*0.0001, -n_offsets:n_offsets)
+δs = map(x->x*0.0001, 0:0)
+
+function getHits!(results, δs, Transitions::Vector{Transition}, 
+    masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
     #results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Int64, Float32, Int64, Float32, Float64, Vector{Float32}}}}()
-    results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Vector{Int64},Vector{Float32}, Vector{Int64}, Vector{Float32}, Vector{Float64}, Vector{Tuple{Float32,Char}}}}}()
-    δs = map(x->x*0.0001, -n_offsets:n_offsets)
+    #results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Vector{Int64},Vector{Float32}, Vector{Int64}, Vector{Float32}, Vector{Float64}, Vector{Tuple{Float32,Char}}}}}()
+    #results = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :intensities), Tuple{Vector{Int64},Vector{Float32}, Vector{Int64}, Vector{Float32}, Vector{Float64}, Vector{Float32}}}}()
+    #results = @SVector [(b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[]) for i in 1:10]
     for δ in δs
         peak, transition = 1, 1
         while (peak <= length(masses)) & (transition <= length(Transitions))
             #Is the peak within the tolerance of the transition m/z?
             if (masses[peak]+ δ >= getLow(Transitions[transition])) & (masses[peak]+ δ <= getHigh(Transitions[transition]))
-
-                #There could be multiple peaks in the tolerance and we want to 
-                #choose the one that is closest in m/z to the the current transition m/z. 
-                smallest_diff = abs(masses[peak]+ δ - getMZ(Transitions[transition]))
-                best_peak = peak
-                i = 0
-                @inbounds while masses[peak + 1 + i]+ δ <= getHigh(Transitions[transition])
-                    new_diff = abs(masses[peak  + 1 + i] + δ - getMZ(Transitions[transition]))
-                    if new_diff < smallest_diff
-                        smallest_diff = new_diff
-                        best_peak = peak + 1 + i
-                    end
-                    i+=1
-                end
+                best_peak = getNearest(Transitions, masses, intensities, peak, transition, δ=δ)
                 prec_id = getPrecID(Transitions[transition])
                 if !haskey(results, prec_id)
                     results[prec_id] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[])
@@ -182,7 +191,9 @@ function getHits(Transitions::Vector{Transition},
                     results[prec_id].y_int[1] += intensities[best_peak]
                 end
                 results[prec_id].error[1] += abs(masses[best_peak] - getMZ(Transitions[transition]))
-                #push!(results[prec_id].intensities, (intensities[best_peak], getIonType(Transitions[transition])))
+                push!(results[prec_id].intensities, (intensities[best_peak]))
+                push!(results[prec_id].test, getIonType(Transitions[transition]))
+                #push!(results[prec_id].intensities, (intensities[best_peak]))
                 transition += 1
                 continue
             end
@@ -191,7 +202,38 @@ function getHits(Transitions::Vector{Transition},
     end
     results
 end
-
+function getHits(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, n_offsets::Int = 75)
+    results = @SVector [(b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[]) for i in 1:10]
+    δs = map(x->x*0.0001, -n_offsets:n_offsets)
+    for δ in δs
+        for (i, transition) in enumerate(Transitions)
+            for (j, peak) in enumerate(@views masses)
+                if peak + δ < getLow(transition)
+                    continue
+                end
+                if peak + δ > getHigh(transition)
+                    break
+                end
+                best_peak = getNearest(Transitions, masses, intensities, j, i, δ=δ)
+                prec_id = getPrecID(transition)
+                if results[prec_id].intensities === nothing
+                    results[prec_id] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[])
+                end
+                if getIonType(transition) == 'b'
+                    results[prec_id].b_count[1] += 1
+                    results[prec_id].b_int[1] += intensities[best_peak]
+                elseif getIonType(transition) == 'y'
+                    results[prec_id].y_count[1] += 1
+                    results[prec_id].y_int[1] += intensities[best_peak]
+                end
+                results[prec_id].error[1] += abs(masses[best_peak] - getMZ(transition))
+                push!(results[prec_id].intensities, (intensities[best_peak]))#, getIonType(transition)))
+                break
+            end
+        end
+    end
+    results
+end
 test_features = [Transition(getResidues("PEPTIDE"), prec_id = UInt32(1), ppm = Float32(10000)),
                  Transition(getResidues("PEPTIDER"), charge = UInt8(2), prec_id = UInt32(1), ppm = Float32(10000))]
 test_peps = ["MGKVKVGVNG", "FGRIGRLVTR", "AAFNSGKVDI", "VAINDPFIDL", "NYMVYMFQYD", "STHGKFHGTV", "KAENGKLVIN"]
