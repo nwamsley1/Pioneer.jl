@@ -164,8 +164,31 @@ test = Dict{Int64, NamedTuple{(:b_count, :b_int, :y_count, :y_int, :error, :inte
 for i in 1:10
     test[i] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[], test = Char[])
 end
-δs = map(x->x*0.0001, -n_offsets:n_offsets)
+δs = map(x->x*0.0001, -75:75)
 δs = map(x->x*0.0001, 0:0)
+results = Dict{Int64, FastXTandem}()
+
+struct FastXTandem
+    b_count::Vector{Int64}
+    b_int::Vector{Float32}
+    y_count::Vector{Int64}
+    y_int::Vector{Float32}
+    error::Vector{Float64}
+end
+FastXTandem() = FastXTandem([0], [Float32(0)], [0], [Float32(0)], [Float64(0)])
+
+function FastXTandem!(score::FastXTandem, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
+    if getIonType(transition) == 'b'
+        score.b_count[1] += 1
+        score.b_int[1] += intensity
+    elseif getIonType(transition) == 'y'
+        score.y_count[1] += 1
+        score.y_int[1] += intensity
+    end
+    score.error[1] += abs(mass - getMZ(transition))
+    #push!(results[prec_id].intensities, (intensities[best_peak]))
+    #push!(results[prec_id].test, getIonType(Transitions[transition]))
+end
 
 function getHits!(results, δs, Transitions::Vector{Transition}, 
     masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
@@ -181,19 +204,9 @@ function getHits!(results, δs, Transitions::Vector{Transition},
                 best_peak = getNearest(Transitions, masses, intensities, peak, transition, δ=δ)
                 prec_id = getPrecID(Transitions[transition])
                 if !haskey(results, prec_id)
-                    results[prec_id] = (b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[])
+                    results[prec_id] = FastXTandem()
                 end
-                if getIonType(Transitions[transition]) == 'b'
-                    results[prec_id].b_count[1] += 1
-                    results[prec_id].b_int[1] += intensities[best_peak]
-                elseif getIonType(Transitions[transition]) == 'y'
-                    results[prec_id].y_count[1] += 1
-                    results[prec_id].y_int[1] += intensities[best_peak]
-                end
-                results[prec_id].error[1] += abs(masses[best_peak] - getMZ(Transitions[transition]))
-                push!(results[prec_id].intensities, (intensities[best_peak]))
-                push!(results[prec_id].test, getIonType(Transitions[transition]))
-                #push!(results[prec_id].intensities, (intensities[best_peak]))
+                FastXTandem!(results[prec_id], Transitions[transition], masses[best_peak], intensities[best_peak]);
                 transition += 1
                 continue
             end
@@ -202,6 +215,7 @@ function getHits!(results, δs, Transitions::Vector{Transition},
     end
     results
 end
+
 function getHits(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, n_offsets::Int = 75)
     results = @SVector [(b_count = [0], b_int = [Float32(0)], y_count = [0], y_int = [Float32(0)], error = [Float64(0)], intensities = Float32[]) for i in 1:10]
     δs = map(x->x*0.0001, -n_offsets:n_offsets)
