@@ -10,7 +10,7 @@ include("precursor.jl")
 lightMZ = getMZ(Precursor(getResidues("VGVNGFGR"), UInt8(2)))
 heavyMZ = getMZ(Precursor(getResidues("VGVNGFGR[+10.008269]"), UInt8(2)))
 
-
+getTransitions(getMZ(Precursor("VGVNGFGR", charge = UInt8(2))))
 #function getSub(mean::Float32, array::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}; ppm::Float32)
 #    findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
 #end
@@ -235,31 +235,6 @@ function getHits!(results, δs, Transitions::Vector{Transition},
     end
 end
 
-
-
-mutable struct FragmentMatch
-    transition::Transition
-    intensity::Float32
-    mass::Float32
-    count::UInt8
-    scan_id::Int64
-end
-FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0)
-
-function ScoreFragmentMatches(matches::Vector{FragmentMatch})
-    results = UnorderedDictionary{UInt32, FastXTandem}()
-    for match in matches
-        if !isassigned(results, getPrecID(match.transition))
-            insert!(results, getPrecID(match.transition), FastXTandem())
-        end
-        ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.mass, match.intensity)
-    end
-end
-
-import Base.uninitialized
-function Base.uninitialized(::Type{FragmentMatch})
-    return FragmentMatch()
-end
 Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 function getHits(δs, Transitions::Vector{Transition}, 
     masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})

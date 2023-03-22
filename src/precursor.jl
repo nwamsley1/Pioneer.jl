@@ -719,12 +719,12 @@ function getFragIons(precursor::Precursor,charges::Vector{UInt8}, isotopes::Vect
 end 
 
 export getAllIonMz
-function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::Float32 = H2O + PROTON*charge)
+function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::Float32 = H2O + PROTON*charge, ppm = Float32(20.0))
         map(transition -> Transition(transition[2]::Float32
                             , prec_id, ion_type, UInt8(transition[1]+start - 1),
-                            charge, #ind. 3 for y3+n ion.
+                            charge,#ind. 3 for y3+n ion.
                             #ststart -1,
-                        isotope), 
+                        isotope, ppm = ppm), 
                         enumerate(
                                 getIonSeries(residues, 
                                               charge, isotope = isotope,
@@ -735,13 +735,13 @@ function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1)
         )
 end
 
-function getTransitions(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
-    vcat(getTransitionSeries(getResidues(precursor), charge, ion_type = 'b', prec_id = getPrecID(precursor), isotope = isotope, start = b_start, modifier = PROTON*charge),
-    getTransitionSeries(reverse(getResidues(precursor)), charge, ion_type = 'y', prec_id = getPrecID(precursor), isotope = isotope, start = y_start, modifier = H2O + PROTON*charge))
+function getTransitions(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3, ppm = Float32(20.0))
+    vcat(getTransitionSeries(getResidues(precursor), charge, ion_type = 'b', prec_id = getPrecID(precursor), isotope = isotope, start = b_start, modifier = PROTON*charge, ppm = ppm),
+    getTransitionSeries(reverse(getResidues(precursor)), charge, ion_type = 'y', prec_id = getPrecID(precursor), isotope = isotope, start = y_start, modifier = H2O + PROTON*charge, ppm = ppm))
 end
 
-function getTransitions(precursor::Precursor, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3)
-    vec(hcat([getTransitions(precursor, charge = charge, isotope = isotope, y_start = y_start, b_start = b_start) for charge in charges for isotope in isotopes]...))
+function getTransitions(precursor::Precursor, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm = Float32(20.0))
+    vec(hcat([getTransitions(precursor, charge = charge, isotope = isotope, y_start = y_start, b_start = b_start, ppm= ppm) for charge in charges for isotope in isotopes]...))
 end
 
 export getTransitions
