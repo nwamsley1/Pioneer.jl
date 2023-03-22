@@ -326,7 +326,7 @@ struct Transition <: Ion
     #Internal constructor that makes lower 
     #and upper mz bounds given an optionall ppm tolerance. 
 end
-
+Transition() = Transition(Float32(0.0), UInt32(0), '_', UInt8(0), UInt8(0), UInt8(0))
 """
     Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UInt8 = UInt8(1), ind::UInt8 = UInt8(length(residues)), isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
     

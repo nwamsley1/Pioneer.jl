@@ -166,42 +166,42 @@ for i in 1:10
 end
 δs = map(x->x*0.0001, -75:75)
 δs = map(x->x*0.0001, 0:0)
-results = Dict{Int64, FastXTandem}()
-
+results = UnorderedDictionary{UInt32, FastXTandem}()
 abstract type Feature end
 
-struct FastXTandem <: Feature
-    b_count::Vector{Int64}
-    b_int::Vector{Float32}
-    y_count::Vector{Int64}
-    y_int::Vector{Float32}
-    last_y::Vector{UInt8}
-    y_start::Vector{UInt8}
-    longest_y::Vector{UInt8}
-    error::Vector{Float64}
+mutable struct FastXTandem <: Feature
+    b_count::Int64
+    b_int::Float32
+    y_count::Int64
+    y_int::Float32
+    last_y::UInt8
+    y_start::UInt8
+    longest_y::Int8
+    error::Float64
 end
-FastXTandem() = FastXTandem([0], [Float32(0)], [0], [Float32(0)], [UInt8(0)], [UInt8(0)], [UInt8(0)], [Float64(0)])
+
+FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), UInt8(0), UInt8(0), UInt8(0), Float64(0))
 
 function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
     if getIonType(transition) == 'b'
-        score.b_count[1] += 1
-        score.b_int[1] += intensity
+        score.b_count += 1
+        score.b_int += intensity
     elseif getIonType(transition) == 'y'
-        score.y_count[1] += 1
-        score.y_int[1] += intensity
-        if score.longest_y[1] == 0
-            score.y_start[1] = getInd(transition)
-            score.last_y[1] = getInd(transition) - 1
+        score.y_count += 1
+        score.y_int += intensity
+        if score.longest_y == 0
+            score.y_start = getInd(transition)
+            score.last_y = getInd(transition) - 1
         end
-        if (getInd(transition)-score.last_y[1]) == 1
-            if (getInd(transition) - score.y_start[1]) > score.longest_y[1]
-                longest_y[1] = getInd(transition) - score.y_start[1]
+        if (getInd(transition)-score.last_y) == 1
+            if (getInd(transition) - score.y_start) > score.longest_y
+                score.longest_y = getInd(transition) - score.y_start
             else
-                score.y_start[1] = getInd(transition)
+                score.y_start = getInd(transition)
             end
         end
     end
-    score.error[1] += abs(mass - getMZ(transition))
+    score.error += abs(mass - getMZ(transition))
     #push!(results[prec_id].intensities, (intensities[best_peak]))
     #push!(results[prec_id].test, getIonType(Transitions[transition]))
 end
@@ -223,8 +223,8 @@ function getHits!(results, δs, Transitions::Vector{Transition},
             if (masses[peak]+ δ >= getLow(Transitions[transition])) & (masses[peak]+ δ <= getHigh(Transitions[transition]))
                 best_peak = getNearest(Transitions, masses, intensities, peak, transition, δ=δ)
                 prec_id = getPrecID(Transitions[transition])
-                if !haskey(results, prec_id)
-                    results[prec_id] = FastXTandem()
+                if !isassigned(results, prec_id)
+                    insert!(results, prec_id, FastXTandem())
                 end
                 ModifyFeatures!(results[prec_id], Transitions[transition], masses[best_peak], intensities[best_peak]);
                 transition += 1
@@ -234,6 +234,58 @@ function getHits!(results, δs, Transitions::Vector{Transition},
         end
     end
 end
+
+
+
+mutable struct FragmentMatch
+    transition::Transition
+    intensity::Float32
+    mass::Float32
+    count::UInt8
+    scan_id::Int64
+end
+FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0)
+
+function ScoreFragmentMatches(matches::Vector{FragmentMatch})
+    results = UnorderedDictionary{UInt32, FastXTandem}()
+    for match in matches
+        if !isassigned(results, getPrecID(match.transition))
+            insert!(results, getPrecID(match.transition), FastXTandem())
+        end
+        ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.mass, match.intensity)
+    end
+end
+
+import Base.uninitialized
+function Base.uninitialized(::Type{FragmentMatch})
+    return FragmentMatch()
+end
+Base.zero(::Type{FragmentMatch}) = FragmentMatch()
+function getHits(δs, Transitions::Vector{Transition}, 
+    masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
+    #hits = zeros(FragmentMatch, length(Transitions))
+    hits =  [FragmentMatch() for x in 1:length(Transitions)]
+    for δ in δs
+        peak, transition = 1, 1
+        while (peak <= length(masses)) & (transition <= length(Transitions))
+            #Is the peak within the tolerance of the transition m/z?
+            if (masses[peak]+ δ >= getLow(Transitions[transition])) & (masses[peak]+ δ <= getHigh(Transitions[transition]))
+                best_peak = getNearest(Transitions, masses, intensities, peak, transition, δ=δ)
+                prec_id = getPrecID(Transitions[transition])
+                hits[transition].transition = Transitions[transition]
+                hits[transition].intensity += intensities[best_peak]
+                hits[transition].count += 1
+                hits[transition].scan_id = best_peak
+                transition += 1
+                continue
+            end
+            peak+=1
+        end
+    end
+    hits
+end
+
+
 
 test_peps = ["MGKVKVGVNG", "FGRIGRLVTR", "AAFNSGKVDI", "VAINDPFIDL", "NYMVYMFQYD", "STHGKFHGTV", "KAENGKLVIN"]
 using Base.Iterators
