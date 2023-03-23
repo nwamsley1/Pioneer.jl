@@ -5,7 +5,7 @@ Type that represents a match between a fragment ion and a mass spectrum peak
 
 ### Fields
 
-- transition::Transition -- Represents the fragment ion
+- transition::Transition -- Represents a fragment ion
 - intensity::Float32 -- Intensity of the matching peak
 - match_mz::Float32 -- M/Z of the matching empirical peak. 
     NOT the transition mass and may differ from getMZ(transition) by some error
@@ -51,49 +51,44 @@ getInd(f::FragmentMatch) = getInd(f.transition)
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
 
-Get the mz ratio of an ion
+Finds the `peak` (index of `masses`) nearest in mass to the `transition` but still within the tolerance (getLow(transition)<masses[peak]<getHigh(transition)). 
+Starts searching at initially supplied `peak` and increases the index until outside the tolerance. There could be multiple peaks within the tolerance, 
+and this function selects the one with the lowest mass error to the fragment ion. 
 
 ### Input
 
-- `residues::Vector{Residue}`: -- List of amino acid residues in the peptide ion
-- `charge::UInt8` -- Charge of the ion
-- `modifier::Float32=PROTON*charge + H2O` -- Added to the mass of the ion
-- `isotope::UInt8=UInt8(0)` -- Diference in the number of isotopes from the monoisotopic ion. 
+- `transition::Transition`: -- Represents a fragment ion
+- `masses::Vector{Union{Missing, Float32}}` -- Mass list from a centroided mass spectrum. MUST BE SORTED IN ASCENDING ORDER. 
+- `peak::Int` -- An index for a mass in `masses`
+- `δ` -- A mass offset that can be applied to each mass in `masses` 
 
 ### Output
 
-A Float32 representing the mass-to-charge ratio (m/z) of an ion
+An Int representing the index of the m/z in `masses` nearest in m/z to that of the fragment m/z. 
 
 ### Notes
 
-The `modifier` argument ought to depend on the kind of ion. For B ions PROTON*charge is appropriate,
-but for 'y' or precursor ions, PROTON*charge + H2O would be appropriate.
+- It is assumed that masses is sorted in ascending order. 
+- In practice, when called from `matchPeaks!`, masses[peak] will already be within the fragment m/z tolerance.
+ Usually there will not be another peak in `masses` where this is true, but it is possible for multiple peaks to
+ fall within the tolerance. The purpose of this function is to select the best peak (closes in mass) when this happens.  
 
 ### Algorithm 
 
-Sum the amino acid residue masses, add `modifier` + isotope*NEUTRON and then divide the total by the charge. 
-
 ### Examples 
-
-#Gets the b6+1 ion MZ
-```julia-repl
-julia> getIonMZ(getResidues("PEPTIDE")[1:6], UInt8(1), modifier = PROTON)
-653.314f0
-```
-#Gets the y6+1 ion MZ
-```julia-repl
-julia> getIonMZ(reverse(getResidues("PEPTIDE"))[1:6], UInt8(1))
-703.3144f0
-```
 
 """
 function getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
+    #Shorthand to check for BoundsError on `masses`
+    boundsCheck() = peak + 1 + i > length(masses)
+
     smallest_diff = abs(masses[peak]+ δ - getMZ(transition))
     best_peak = peak
     i = 0
-    if peak + 1 + i > length(masses)
-        return best_peak
-    end
+    if boundsCheck() return best_peak end
+    #Iterate through peaks in  `masses` until a peak is encountered that is 
+    #greater in m/z than the upper bound of the `transition` tolerance 
+    #or until there are no more masses to check. Keep track of the best peak/transition match. 
     while (masses[peak + 1 + i]+ δ <= getHigh(transition))
         new_diff = abs(masses[peak  + 1 + i] + δ - getMZ(transition))
         if new_diff < smallest_diff
@@ -101,28 +96,95 @@ function getNearest(transition::Transition, masses::Vector{Union{Missing, Float3
             best_peak = peak + 1 + i
         end
         i+=1
-        if peak + 1 + i > length(masses)
-            break
-        end
+        if boundsCheck() break end
     end
     best_peak
 end
 
-function setFragmentMatch!(hits::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)
+"""
+    setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)  
+
+Adds a FragmentMatch to `matches` if `match` is not an index in `matches`, otherwise, updates the match.
+
+### Input
+
+- `hits::Vector{FragmentMatch}`: -- Represents a fragment ion
+- `match::Int` -- Index of the match. Must be <=N+1 where N is length(hits) 
+- `mass::Float32` -- m/z of the emperical peak matched to the transition
+- `intensity::Float32` -- intensity of the emperical peak matched to the transition
+- `peak_ind` -- unique index of the emperical peak matched to the transition
+
+### Output
+
+Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new FragmentMatch at `matches[match]`
+
+### Notes
+
+- Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
+    This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
+    only be added to `matches` and existing ones never modified. 
+- Recording the `peak_ind` could be useful when scoring a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
+    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be researched but excluding FragmentMatches corresponding
+    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum. 
+
+### Algorithm 
+
+### Examples 
+
+"""
+function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)
     function updateFragmentMatch!(match::FragmentMatch, mass::Float32, intensity::Float32, peak_ind::Int64)
         match.intensity += intensity
         match.mass = mass
         match.count += 1
         match.peak_ind = peak_ind
     end
-    if isassigned(hits, match)
+    if isassigned(matches, match)
         updateFragmentMatch!(hits[match], mass, intensity, peak_ind)
     else
-        push!(hits, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind))
+        push!(matches, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind))
     end
 end
 
+"""
+    function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
+
+Finds the best matching peak in a mass spectrum for each transition/fragment ion supplied. Modifies
+
+### Input
+
+- `matches::Vector{FragmentMatch}`: -- A list representing fragment ions that match peaks in the mass spectrum (`masses`)
+- `Transitions::Vector{Transition` -- A list of fragment ions to search for in the spectrum (`masses`). MUST BE SORTED IN ASCENDING ORDER BY `getMZ(transition)`
+- `masses::Vector{Union{Missing, Float32}}` -- Mass list from a centroided mass spectrum. MUST BE SORTED IN ASCENDING ORDER.
+- `intensities::Vector{Union{Missing, Float32}}` -- The intensity list from a centroided mass spectrum. Must be the same length as `masses`
+- `δ::Float64` -- A mass offset that can be applied to each mass in `masses`
+
+### Output
+
+Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new FragmentMatch at `matches[match]`
+
+### Notes
+
+- Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
+    This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
+    only be added to `matches` and existing ones never modified. 
+- Recording the `peak_ind` could be useful when scoring a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
+    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be researched but excluding FragmentMatches corresponding
+    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum. 
+- `masses` and `intensities` contain type unions Union{Missing, Float32}. This method does nothing to check for Missing values, and indeed,
+    it is assumed that there are none, and the presence of any Missing values will cause an error. The reason for the type union is an idiosyncracy
+    of the Arrow.jl package and how it implements nested data types in Arrow files. 
+
+### Algorithm 
+
+### Examples 
+
+"""
 function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)
+
+    #match is a running count of the number of transitions that have been matched to a peak
+    #This is not necessarily the same as `transition` because some (perhaps most)
+    #transitions will not match to any peak. 
     peak, transition, match = 1, 1, 1
     while (peak <= length(masses)) & (transition <= length(Transitions))
         #Is the peak within the tolerance of the transition m/z?
