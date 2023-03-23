@@ -356,7 +356,7 @@ end
 
 getIonType(transition::Transition) = transition.ion_type
 getInd(transition::Transition) = transition.ind
-
+export getIonType, getInd
 """
 Precursor <: Ion
 
