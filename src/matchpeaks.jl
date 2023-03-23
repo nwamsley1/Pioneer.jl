@@ -123,9 +123,9 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 - Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
     This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
     only be added to `matches` and existing ones never modified. 
-- Recording the `peak_ind` could be useful when scoring a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
-    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be researched but excluding FragmentMatches corresponding
-    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum. 
+- Recording the `peak_ind` could be useful, for example, "chimeric" scoring of a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
+    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be rescored but excluding FragmentMatches corresponding
+    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum (making an additional call to `matchPeaks`). 
 
 ### Algorithm 
 
@@ -149,7 +149,9 @@ end
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
 
-Finds the best matching peak in a mass spectrum for each transition/fragment ion supplied. Modifies
+Finds the best matching peak in a mass spectrum for each transition/fragment ion supplied if the match is within the fragment tolerance. 
+    Adds each FragmentMatch to `matches` if not already present. Otherwise, 
+    modifies an existing match (see setFragmentMatch!).
 
 ### Input
 
@@ -168,14 +170,18 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 - Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
     This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
     only be added to `matches` and existing ones never modified. 
-- Recording the `peak_ind` could be useful when scoring a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
-    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be researched but excluding FragmentMatches corresponding
-    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum. 
+- The fragment tolerance is specified by each `Transition`. A `Transition<:Ion` has a field `mz::MzFeature` which specifies the monoisotopic mass
+    and also upper and lower bounds (the tolerance). See getLow(ion::Ion) and getHigh(ion::Ion). This is why the user need not supply a fragment tolerance to `matchPeaks!` 
 - `masses` and `intensities` contain type unions Union{Missing, Float32}. This method does nothing to check for Missing values, and indeed,
     it is assumed that there are none, and the presence of any Missing values will cause an error. The reason for the type union is an idiosyncracy
     of the Arrow.jl package and how it implements nested data types in Arrow files. 
 
 ### Algorithm 
+
+Given a list of fragment ions and a centroided mass spectrum both sorted by m/z, it is efficient to search the spetrum for matches in a "single pass"
+through the spectrum. If there are T transitions and P peaks should be O(T+P). If there are multiple peaks within the tolerance for a given 
+fragment ion, the peak closest in m/z to the fragment ion is chosen. It is possible to assign the same peak to multiple fragment ions, but 
+each fragment ion is only assigned to 0 or 1 peaks. 
 
 ### Examples 
 
@@ -190,15 +196,19 @@ function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transit
         #Is the peak within the tolerance of the transition m/z?
         if (masses[peak]+ δ >= getLow(Transitions[transition]))
             if (masses[peak]+ δ <= getHigh(Transitions[transition]))
+                #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
                 best_peak = getNearest(Transitions[transition], masses, peak, δ=δ)
                 setFragmentMatch!(matches, match, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak);
                 transition += 1
                 match += 1
                 continue
             end
+            #Important that this is also within the first if statement. 
+            #Need to check the next fragment against the current peak. 
             transition += 1
             continue
         end
+        #No additional matches possible for the current peak. Move on to the next. 
         peak+=1
     end
 end
