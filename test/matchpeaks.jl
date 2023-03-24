@@ -1,4 +1,4 @@
-using Titus
+#using Titus
 using Test
 using Tables, Arrow, Base.Iterators
 #=println(pwd())
@@ -66,6 +66,58 @@ end
 test_masses = sort(test_masses)
 δs = map(x->x*0.0001, 0:0)
 =#
+function Tol(a, b, ppm = 2)
+    abs(a-b)<=(ppm*minimum((a, b))/1000000)
+end
+
 @testset "Titus.jl" begin
-    
+    ##########
+    #FragmentMatch
+    ##########
+
+    test_fragment_match = FragmentMatch()
+
+    @test Tol(getMZ(test_fragment_match), 0.0)
+    ##########
+    #getNearest
+    ##########
+
+    #Transition with a mass of 324.15536f0. 
+    #At 20 ppm the lower and upper bounds are 324.1489f0 and 324.16183f0)
+    test_t = getTransitions(Precursor("PEPTIDE"))[1]
+    #The first three elements in `test_masses` are within the mass tolerance.
+    #Element 2 is the closest in m/z to `test_t`. Element 4 is outside the tolerance
+    test_masses = Vector{Union{Missing, Float32}}([324.1490f0, 324.15636f0, 324.15736f0, 324.16185f0])
+    @test getNearest(test_t, test_masses, 1) == 2
+
+    #This time we will supply an argument peak = 3. This means the search will
+    #start at the third element. In this case Element 3 is the closest in m/z to `test_t`
+    #and element 4 is outside the m/z tolerance. This is the more typical case. 
+    @test getNearest(test_t, test_masses, 3) == 3
+
+    ##########
+    #setFragmentMatch
+    ##########    
+
+    #Use the empty test_fragment_match from earlier
+    @test Tol(test_fragment_match.count, 0)
+    @test Tol(test_fragment_match.match_mz, 0)
+    @test Tol(test_fragment_match.intensity, 0)
+    @test Tol(test_fragment_match.peak_ind, 0)
+
+    setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2)
+    @test Tol(test_fragment_match.count, 1)
+    @test Tol(test_fragment_match.match_mz, test_masses[2])
+    @test Tol(test_fragment_match.count, 1)
+    @test Tol(test_fragment_match.peak_ind, 2)
+
+    for i in 1:10
+        setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2)
+    end
+
+    @test Tol(test_fragment_match.count, 11)
+
+    ##########
+    #matchPeaks!
+    ##########      
 end

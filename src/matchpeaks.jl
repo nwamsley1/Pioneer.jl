@@ -1,3 +1,4 @@
+using Dictionaries
 """
     FragmentMatch
 
@@ -78,13 +79,14 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
-    #Shorthand to check for BoundsError on `masses`
-    boundsCheck() = peak + 1 + i > length(masses)
+function getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.00)
 
     smallest_diff = abs(masses[peak]+ δ - getMZ(transition))
     best_peak = peak
     i = 0
+
+    #Shorthand to check for BoundsError on `masses`
+    boundsCheck() = peak + 1 + i > length(masses)
     if boundsCheck() return best_peak end
     #Iterate through peaks in  `masses` until a peak is encountered that is 
     #greater in m/z than the upper bound of the `transition` tolerance 
@@ -135,12 +137,12 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)
     function updateFragmentMatch!(match::FragmentMatch, mass::Float32, intensity::Float32, peak_ind::Int64)
         match.intensity += intensity
-        match.mass = mass
+        match.match_mz = mass
         match.count += 1
         match.peak_ind = peak_ind
     end
     if isassigned(matches, match)
-        updateFragmentMatch!(hits[match], mass, intensity, peak_ind)
+        updateFragmentMatch!(matches[match], mass, intensity, peak_ind)
     else
         push!(matches, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind))
     end
@@ -213,6 +215,36 @@ function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transit
     end
 end
 
+"""
+    function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
+
+A wrapper for calling `matchPeaks` at different to search spectra at a list of mass offset. 
+    Each all to `matchPeaks` Finds the best matching peak in a mass spectrum for each transition/fragment ion supplied if the match is within the fragment tolerance. 
+    Adds each FragmentMatch to `matches` if not already present. Otherwise, modifies an existing match (see setFragmentMatch!). (see `matchPeaks` for additional details)
+
+### Input
+
+- `matches::Vector{FragmentMatch}`: -- A list representing fragment ions that match peaks in the mass spectrum (`masses`)
+- `Transitions::Vector{Transition` -- A list of fragment ions to search for in the spectrum (`masses`). MUST BE SORTED IN ASCENDING ORDER BY `getMZ(transition)`
+- `masses::Vector{Union{Missing, Float32}}` -- Mass list from a centroided mass spectrum. MUST BE SORTED IN ASCENDING ORDER.
+- `intensities::Vector{Union{Missing, Float32}}` -- The intensity list from a centroided mass spectrum. Must be the same length as `masses`
+- `δ::Float64` -- A mass offset that can be applied to each mass in `masses`
+
+### Output
+
+Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new FragmentMatch at `matches[match]`
+
+### Notes
+
+- Searching a mass spectrum many times at different mass offsets could be useful for caculating cross correlation scores. 
+
+### Algorithm 
+
+    See `matchPeaks`
+
+### Examples 
+
+"""
 function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}; δs::Vector{Float64} = [0.0])
     hits = Vector{FragmentMatch}()
     for δ in δs
@@ -221,9 +253,33 @@ function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missin
     hits
 end
 
-abstract type Feature end
+"""
+    PSM
 
-mutable struct FastXTandem <: Feature
+    Every concrete instance of type `T` that inherits from `PSM` (peptide spectrum match) should implement the following methods:
+
+- ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, `T`}, matches::Vector{FragmentMatch})). 
+- ModifyFeatures!(score::`T`, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
+- makePSMsDict((::`T`) - Creats the score dictionary 
+- Score!(PSMs_dict::Dict, unscored_PSMs::Vector{`T`}) - Calculates features for each PSM  in Vector{`T`} and adds them to the score dictionary. (See examples)
+
+### Examples
+PSM_dict =  makeScoreDict(`T`)
+Dict(
+                :FeatureA => [],
+                :FeatureB => [],
+                ...
+                )
+Score!(PSM_dict, `Vector{T<:PSMFeatures}`)
+            Dict(
+                :FeatureA => [a, a, ...],
+                :FeatureB => [b, b, ...],
+                ...
+                )
+"""
+abstract type PSM end
+
+mutable struct FastXTandem <: PSM
     b_count::Int64
     b_int::Float32
     y_count::Int64
@@ -276,18 +332,34 @@ function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union
 end
 
 using SpecialFunctions
-function Score(score::FastXTandem)
 
-    function logfac(N)
-        N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
-    end
-    
-    (abs(logfac(max(1, score.b_count))) + 
-     abs(logfac(max(1, score.y_count))) + 
-     log(score.y_int*score.b_int)
+function makePSMsDict(::FastXTandem)
+    Dict(
+        :hyperscore => Float64[]
+        #:Δhyperscore => Float64[]
+        :error => Float64[]
+        :y_ladder => Int8[]
     )
 end
 
-function logfac(N)
-    N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
+function Score!(PSMs_dict::Dict, unscored_PSMs::Vector{FastXTandem})
+    #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
+    #log(Nb!Ny!∑Ib∑Iy)
+    function HyperScore(score::FastXTandem)
+        #Ramanujan's approximation for log(!n)
+        function logfac(N)
+            N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
+        end
+        (abs(logfac(max(1, score.b_count))) + 
+        abs(logfac(max(1, score.y_count))) + 
+        log(score.y_int*score.b_int)
+        )
+    end
+    for PSM in unscored_PSMs
+        append!(PSMs_dict[:hyperscore], HyperScore(PSM))
+        append!(PSMs_dict[:error], PSM.longest_y)
+        append!(PSMs_dict[:y_ladder], PSM.longest_y)
+    end
 end
+
+export FragmentMatch, getNearest
