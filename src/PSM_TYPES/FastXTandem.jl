@@ -7,9 +7,10 @@ mutable struct FastXTandem <: PSM
     y_int::Float32
     y_ions::Set{UInt8}
     error::Float64
+    precursor_idx::Int32
 end
 
-FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0))
+FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), Int32(0))
 results = UnorderedDictionary{UInt32, FastXTandem}()
 #Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 
@@ -36,6 +37,7 @@ function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union
         push!(score.y_ions, getInd(transition))
     end
     score.error += abs(mass - getMZ(transition))
+    score.precursor_idx = getPrecID(transition)
     #push!(results[prec_id].intensities, (intensities[best_peak]))
     #push!(results[prec_id].test, getIonType(Transitions[transition]))
 end
@@ -47,11 +49,13 @@ function makePSMsDict(::FastXTandem)
         :hyperscore => Float64[],
         #:Δhyperscore => Float64[]
         :error => Float64[],
-        :y_ladder => Int8[]
+        :y_ladder => Int8[],
+        :scan_idx => Int64[],
+        :precursor_idx => Int32[]
     )
 end
 
-function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, FastXTandem})
+function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, FastXTandem}; scan_idx::Int64 = 0)
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::FastXTandem)
@@ -102,5 +106,7 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, Fast
         append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
         append!(PSMs_dict[:error], unscored_PSMs[key].error)
         append!(PSMs_dict[:y_ladder], getLongestY(unscored_PSMs[key].y_ions))
+        append!(PSMs_dict[:scan_idx], scan_idx)
+        append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)
     end
 end
