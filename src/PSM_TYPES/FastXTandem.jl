@@ -23,7 +23,7 @@ function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem}
         if !isassigned(results, getPrecID(match.transition))
             insert!(results, getPrecID(match.transition), FastXTandem())
         end
-        ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.mass, match.intensity)
+        ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.match_mz, match.intensity)
     end
     #results
 end
