@@ -1,4 +1,5 @@
 using Dictionaries
+export FragmentMatch, getNearest, matchPeaks, matchPeaks!
 """
     FragmentMatch
 
@@ -48,6 +49,11 @@ getCharge(f::FragmentMatch) = getCharge(f.transition)
 getIsotope(f::FragmentMatch) = getIsotope(f.transition)
 getIonType(f::FragmentMatch) = getIonType(f.transition)
 getInd(f::FragmentMatch) = getInd(f.transition)
+getPeakInd(f::FragmentMatch) = f.peak_ind
+getIntensity(f::FragmentMatch) = f.intensity
+getCount(f::FragmentMatch) = f.count
+export getMZ, getLow, getHigh, getPrecID, getCharge, getIsotope
+export getIonType, getInd, getPeakInd, getIntensity, getCount
 
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
@@ -246,120 +252,12 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 
 """
 function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}; δs::Vector{Float64} = [0.0])
-    hits = Vector{FragmentMatch}()
+    matches = Vector{FragmentMatch}()
     for δ in δs
         matchPeaks!(matches, Transitions, masses, intensities, δ)
     end
-    hits
+    matches
 end
 
-"""
-    PSM
-
-    Every concrete instance of type `T` that inherits from `PSM` (peptide spectrum match) should implement the following methods:
-
-- ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, `T`}, matches::Vector{FragmentMatch})). 
-- ModifyFeatures!(score::`T`, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
-- makePSMsDict((::`T`) - Creats the score dictionary 
-- Score!(PSMs_dict::Dict, unscored_PSMs::Vector{`T`}) - Calculates features for each PSM  in Vector{`T`} and adds them to the score dictionary. (See examples)
-
-### Examples
-PSM_dict =  makeScoreDict(`T`)
-Dict(
-                :FeatureA => [],
-                :FeatureB => [],
-                ...
-                )
-Score!(PSM_dict, `Vector{T<:PSMFeatures}`)
-            Dict(
-                :FeatureA => [a, a, ...],
-                :FeatureB => [b, b, ...],
-                ...
-                )
-"""
-abstract type PSM end
-
-mutable struct FastXTandem <: PSM
-    b_count::Int64
-    b_int::Float32
-    y_count::Int64
-    y_int::Float32
-    last_y::UInt8
-    y_start::UInt8
-    longest_y::Int8
-    error::Float64
-end
-
-FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), UInt8(0), UInt8(0), UInt8(0), Float64(0))
-results = UnorderedDictionary{UInt32, FastXTandem}()
-#Base.zero(::Type{FragmentMatch}) = FragmentMatch()
-
-
-
-function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem}, matches::Vector{FragmentMatch})
-    #UnorderedDictionary{UInt32, FastXTandem}()
-    for match in matches
-        if !isassigned(results, getPrecID(match.transition))
-            insert!(results, getPrecID(match.transition), FastXTandem())
-        end
-        ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.mass, match.intensity)
-    end
-    #results
-end
-
-function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
-    if getIonType(transition) == 'b'
-        score.b_count += 1
-        score.b_int += intensity
-    elseif getIonType(transition) == 'y'
-        score.y_count += 1
-        score.y_int += intensity
-        if score.longest_y == 0
-            score.y_start = getInd(transition)
-            score.last_y = getInd(transition) - 1
-        end
-        if (getInd(transition)-score.last_y) == 1
-            if (getInd(transition) - score.y_start) > score.longest_y
-                score.longest_y = getInd(transition) - score.y_start
-            else
-                score.y_start = getInd(transition)
-            end
-        end
-    end
-    score.error += abs(mass - getMZ(transition))
-    #push!(results[prec_id].intensities, (intensities[best_peak]))
-    #push!(results[prec_id].test, getIonType(Transitions[transition]))
-end
-
-using SpecialFunctions
-
-function makePSMsDict(::FastXTandem)
-    Dict(
-        :hyperscore => Float64[]
-        #:Δhyperscore => Float64[]
-        :error => Float64[]
-        :y_ladder => Int8[]
-    )
-end
-
-function Score!(PSMs_dict::Dict, unscored_PSMs::Vector{FastXTandem})
-    #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
-    #log(Nb!Ny!∑Ib∑Iy)
-    function HyperScore(score::FastXTandem)
-        #Ramanujan's approximation for log(!n)
-        function logfac(N)
-            N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
-        end
-        (abs(logfac(max(1, score.b_count))) + 
-        abs(logfac(max(1, score.y_count))) + 
-        log(score.y_int*score.b_int)
-        )
-    end
-    for PSM in unscored_PSMs
-        append!(PSMs_dict[:hyperscore], HyperScore(PSM))
-        append!(PSMs_dict[:error], PSM.longest_y)
-        append!(PSMs_dict[:y_ladder], PSM.longest_y)
-    end
-end
 
 export FragmentMatch, getNearest

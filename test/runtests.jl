@@ -1,4 +1,6 @@
 #include("integrate.jl")
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
+include("precursor.jl")
 include("matchpeaks.jl")
+include("PSM_TYPES/FastXTandem.jl")

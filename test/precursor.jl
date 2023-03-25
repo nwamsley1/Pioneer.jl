@@ -1,10 +1,10 @@
-using Titus
+#using Titus
 using Test
 
 function Tol(a, b, ppm = 2)
     abs(a-b)<=(ppm*minimum((a, b))/1000000)
 end
-@testset "Titus.jl" begin
+@testset "precursor.jl" begin
 
     
     @test 1==1# Write your tests here.
