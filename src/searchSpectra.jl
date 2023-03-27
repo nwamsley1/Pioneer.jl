@@ -1,4 +1,4 @@
-#Need a method that gets the appropriate precursors/transitions for each
+#=#Need a method that gets the appropriate precursors/transitions for each
 #Scan. That might be unique to each method/pipeline. 
 using Arrow 
 #function CheckRawData(RAW::Arrow.Table)#
@@ -46,3 +46,4 @@ for precursor in Precursors
 #also b_start, y_start etc. 
 getTransitions!()
 end
+=#

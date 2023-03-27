@@ -451,6 +451,7 @@ Precursor(sequence::String; mods_dict::Dict{String, Float32} = Dict{String, Floa
 Precursor() = Precursor(Vector{Residue}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0))
 
 getResidues(precursor::Precursor) = precursor.residues
+addProtein(precursor::Precursor) = push!(precursor.pep_id)
 
 import Base.length
 length(precursor::Precursor) = length(getResidues(precursor))
