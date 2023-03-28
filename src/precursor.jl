@@ -201,8 +201,10 @@ Residue(residue::String, mod_mass::Float32) = Residue(getMass(AA(residue[1])) + 
 
 Residue(residue::Char, mod_mass::Float32) = Residue(getMass(AA(residue)) + mod_mass)
 
-function getResidues(sequence::String, mods_dict::Dict{String, Float32} = default_mods)
-    map(residue -> Residue(sequence[residue], mods_dict), findall(r"[A-Z]\[.*?\]|[A-Z]", sequence))
+function getResidues(sequence::String, mods_dict::Dict{String, Float32} = test_mods)
+    matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
+    residues = [Residue(sequence[m], mods_dict) for m in matches]
+    residues
 end
 
 #Getter methods

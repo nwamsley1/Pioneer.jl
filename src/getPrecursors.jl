@@ -38,6 +38,11 @@ Dict{String, Float32}(
     "Hlys" => Float32(8)
 )
 
+function test()
+    for i in precursor_table.id_to_pep
+        getResidues(i.sequence, test_mods)
+    end
+end
 precursor_table = PrecursorTable()
 using Combinatorics
 function readfile(precursor_table)
@@ -47,7 +52,6 @@ function readfile(precursor_table)
         pep_id = UInt32(1)
         prot_id = UInt32(1)
         timetaken = @elapsed for l in enumerate(eachline(f))
-            println(l);
             linecounter += UInt32(1);
             #println(linecounter)
             protein, peptide = [string(x) for x in split(l[2], "\t")];
@@ -60,6 +64,8 @@ function readfile(precursor_table)
             if !containsPepGroup(precursor_table, peptide)
                 pepGroup_id += UInt32(1);
                 newPeptideGroup!(peptide, pepGroup_id, protein, precursor_table);
+                #precursor_table.id_to_prot[precursor_table.prot_to_id[protein]]
+                addPepGroupToProtein!(precursor_table, protein, peptide);
                 #Need to apply the variable mods and add peptides. 
                 pep_id = applyMods!(var_mods,
                                     peptide,
@@ -68,17 +74,21 @@ function readfile(precursor_table)
                                     pep_id,
                                     n = 2);
             else
-                println("test ", l[1])
+                #println("test ", l[1])
                 #Checks if the current protein is assigned to the current peptide group
                 #Adds the protien ID if not. 
                 addProteinToPepGroup!(precursor_table, protein, peptide);
                 addPepGroupToProtein!(precursor_table, protein, peptide);
             end
         end
-        (timetaken, linecounter)
+        #(timetaken, linecounter)
     end
 end
 
+function test()
+    precursor_table = PrecursorTable()
+    readfile(precursor_table)
+end
 open("./data/NRF2_SIL.txt") do f
     timetaken = @elapsed for l in enumerate(eachline(f))
         println(l)
