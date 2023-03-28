@@ -39,44 +39,59 @@ Dict{String, Float32}(
 )
 
 precursor_table = PrecursorTable()
-
-totaltime, totallines = open("./data/NRF2_SIL.txt") do f
-    linecounter = 0
-    pep_group_id = UInt32(1)
-    pep_id = UInt32(1)
-    prot_id = UInt32(1)
-    timetaken = @elapsed for l in enumerate(eachline(f))
-        linecounter += UInt32(1)
-        #println(linecounter)
-        protein, peptide_seq = [string(x) for x in split(l[2], "\t")];
-        #Apply fixed modifications
-        peptide_seq = fixedMods(peptide_seq, fixed_mods)
-        if !isassigned(precursor_table.prot_id, protein)
-            prot_id += UInt32(1);
-            addProtein!(protein, prot_id, precursor_table);
+using Combinatorics
+function readfile(precursor_table)
+    open("./data/NRF2_SIL.txt") do f
+        linecounter = 0
+        pepGroup_id = UInt32(1)
+        pep_id = UInt32(1)
+        prot_id = UInt32(1)
+        timetaken = @elapsed for l in enumerate(eachline(f))
+            println(l);
+            linecounter += UInt32(1);
+            #println(linecounter)
+            protein, peptide = [string(x) for x in split(l[2], "\t")];
+            #Apply fixed modifications
+            peptide = fixedMods(peptide, fixed_mods);
+            if !containsProt(precursor_table, protein)
+                prot_id += UInt32(1);
+                newProtein!(protein, prot_id, precursor_table);
+            end
+            if !containsPepGroup(precursor_table, peptide)
+                pepGroup_id += UInt32(1);
+                newPeptideGroup!(peptide, pepGroup_id, protein, precursor_table);
+                #Need to apply the variable mods and add peptides. 
+                pep_id = applyMods!(var_mods,
+                                    peptide,
+                                    precursor_table.id_to_pep,
+                                    pepGroup_id,
+                                    pep_id,
+                                    n = 2);
+            else
+                println("test ", l[1])
+                #Checks if the current protein is assigned to the current peptide group
+                #Adds the protien ID if not. 
+                addProteinToPepGroup!(precursor_table, protein, peptide);
+                addPepGroupToProtein!(precursor_table, protein, peptide);
+            end
         end
-        if !isassigned(precursor_table.pep_group_id, peptide_seq)
-            pep_group_id += UInt32(1);
-            addPeptideGroup!(peptide_seq, pep_group_id, prot_id, precursor_table)
-            #Need to apply the variable mods and add peptides. 
-            applyMods!(var_mods,
-                       peptide_seq,
-                       p.pep_id,
-                       pep_group_id,
-                       2)
-        else
-            #Checks if the current protein is assigned to the current peptide group
-            #Adds the protien ID if not. 
-            addProteinToPepGroup!(precursor_table, protein, peptide)
-            break
-        end
+        (timetaken, linecounter)
     end
-    (timetaken, linecounter)
 end
 
-function fixedMods(peptide::String, fixed_mods::Vector{Pair{Regex, String}})
-    replace("PEPTIKDEK", fixed_mods[1])
+open("./data/NRF2_SIL.txt") do f
+    timetaken = @elapsed for l in enumerate(eachline(f))
+        println(l)
+    end
 end
+
+function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
+    for mod in fixed_mods
+        peptide = replace(peptide, mod[:p]=>mod[:r])
+    end
+    peptide
+end
+
 function variableMods(peptide::String, fixed_mods::Vector{Pair{Regex, String}})
 
 end
@@ -117,7 +132,6 @@ function matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}
     matches
 end
 
-
 @btime getMatches(regexes, replacements, input_string)
 
 function applyVariableMods!(matches::Vector{Tuple{UnitRange{Int64}, String}}, input_string::String, precursors::UnorderedDictionary{UInt32, Peptide}, group_id::UInt32, pep_id::UInt32, n::Int)
@@ -145,17 +159,8 @@ function applyVariableMods!(matches::Vector{Tuple{UnitRange{Int64}, String}}, in
     pep_id
     #out
 end
-#How can we prevent double modification in some cases?
-#If we want lysine formyltaion and acetylation as variable mods in the 
-#same experiment, obviously those mods don't coeixt? Prabably just need to add a step that checks.  
-function applyFixedMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string)
-    for pattern in patterns
-        input_string = replace(input_string, pattern[:p]=>pattern[:r])
-    end
-    input_string
-end
 
-function applyMods!(var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String, peptides::UnorderedDictionary{UInt32, Peptide}, group_id::UInt32, pep_id::UInt32; n::Int = 3)
+function applyMods!(var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String, peptides::UnorderedDictionary{UInt32, Peptide}, group_id::UInt32, pep_id::UInt32; n::Int = 3)
     applyVariableMods!(matchVarMods(var_mods, input_string),
                     input_string,
                     peptides,
