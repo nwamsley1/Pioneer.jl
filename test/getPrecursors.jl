@@ -2,11 +2,22 @@
 using Dictionaries 
 fixed_mods = [(p=r"C", r="C[Carb]")]
 var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+input_string = "PEPTICKDECK"
+
+test_mods::Dict{String, Float32} = 
+Dict{String, Float32}(
+    "Carb" => Float32(57.021464),
+    "Harg" => Float32(10),
+    "Hlys" => Float32(8)
+)
+precursor_table = PrecursorTable()
+using Combinatorics
+
 struct PeptideGroup
     prot_ids::Set{UInt32}
 end
 
-function addProt!(pg::PeptideGroup, prot_id::UInt32)
+function addProtID!(pg::PeptideGroup, prot_id::UInt32)
     push!(pg.prot_ids, prot_id)
 end
 
@@ -46,7 +57,7 @@ PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, Peptide}()
                                     )
 
-containsProt(p::PrecursorTable, protein::String) = isassigned(p.prot_to_id, protein)
+containsProt(p::PrecursorTable, protein::AbstractString) = isassigned(p.prot_to_id, protein)
 containsPepGroup(p::PrecursorTable, peptide::String) = isassigned(p.pepGroup_to_id, peptide)
 getProtID(p::PrecursorTable, protein::String) = p.prot_to_id[protein]
 getPepGroupID(p::PrecursorTable, peptide::String) = p.pepGroup_to_id[peptide]
@@ -73,7 +84,7 @@ end
     Adds a map from prot_id top protein
     and from protien to prot_id
 """
-function newProtein!(protein::String, prot_id::UInt32, precursor_table::PrecursorTable)
+function addNewProtein!(protein::String, prot_id::UInt32, precursor_table::PrecursorTable)
     insertProtID!(precursor_table, protein, prot_id);
     insertProt!(precursor_table, protein, prot_id);
 end
@@ -124,7 +135,7 @@ function applyVariableMods!(matches::Vector{Tuple{UnitRange{Int64}, String}}, in
             push!(output_str, input_string[index:end])
             #append!(out, [join(output_str)])
             pep_id += UInt32(1);
-            insert!(precursors, pep_id, Peptide(input_string, group_id));
+            insert!(precursors, pep_id, Peptide(join(output_str), group_id));
         end
     end
     pep_id += UInt32(1);

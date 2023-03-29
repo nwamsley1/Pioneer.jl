@@ -1,182 +1,28 @@
-using Dictionaries
-
-struct Peptide
-    sequence::String
-    prot_ids::Set{UInt32}
-    pep_group_id::UInt32
-end
-
-Peptide() = Peptide("", Set{UInt32}(), UInt32(0))
-
-struct PrecursorTable
-    prot_id_string::UnorderedDictionary{UInt32, String}
-    pep_group_id_string::UnorderedDictionary{UInt32, String}
-    pep_id::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptides
-    #pred_id_prec::Dictionary{UInt32, Precursor} #Vector of precursors
-    peptide_groups::Set{String} #Set of peptide groups (unmodified peptide sequences)
-    proteins::Set{String} #Set of protein names
-end
-
-PrecursorTable() = PrecursorTable(
-                                    UnorderedDictionary{UInt32, String}(),
-                                    UnorderedDictionary{UInt32, String}(),
-                                    UnorderedDictionary{UInt32, Peptide}(),
-                                    Set{String}(),
-                                    Set{String}()
-                                    )
-
-function getPrecursors(file::String)
-
-#readdlm("./data/NRF2_SIL.txt", '\t', String)
-    readdlm(file, '\t', String)
-end
-
-test_mods::Dict{String, Float32} = 
-Dict{String, Float32}(
-    "Carb" => Float32(57.021464),
-    "Harg" => Float32(10),
-    "Hlys" => Float32(8)
-)
-
-function test()
-    for i in precursor_table.id_to_pep
-        getResidues(i.sequence, test_mods)
-    end
-end
-precursor_table = PrecursorTable()
-using Combinatorics
-function readfile(precursor_table)
-    open("./data/NRF2_SIL.txt") do f
-        linecounter = 0
-        pepGroup_id = UInt32(1)
-        pep_id = UInt32(1)
-        prot_id = UInt32(1)
-        timetaken = @elapsed for l in enumerate(eachline(f))
-            linecounter += UInt32(1);
-            #println(linecounter)
-            protein, peptide = [string(x) for x in split(l[2], "\t")];
-            #Apply fixed modifications
-            peptide = fixedMods(peptide, fixed_mods);
-            if !containsProt(precursor_table, protein)
-                prot_id += UInt32(1);
-                newProtein!(protein, prot_id, precursor_table);
+function buildPrecursorTable!(ptable::PrecursorTable, n::Int, f_path::String)
+    open(f_path) do f #"./data/NRF2_SIL.txt"
+        pepGroup_id, pep_id, prot_id = UInt32(1), UInt32(1), UInt32(1)
+        timetaken = @elapsed for (row, protein_peptide) in enumerate(eachline(f))
+            protein, peptide = map(string, split(protein_peptide, "\t")); #Parse input "PROTEIN_NAME\tPEPTIDE_SEQUENCE"
+            peptide = fixedMods(peptide, fixed_mods); #Apply fixed modifications
+            if !containsProt(ptable, protein) #If the protien hasn't been encountered,
+                prot_id += UInt32(1);                  #then add it to the hash table
+                addNewProtein!(protein, prot_id, ptable);
             end
-            if !containsPepGroup(precursor_table, peptide)
-                pepGroup_id += UInt32(1);
-                newPeptideGroup!(peptide, pepGroup_id, protein, precursor_table);
-                #precursor_table.id_to_prot[precursor_table.prot_to_id[protein]]
-                addPepGroupToProtein!(precursor_table, protein, peptide);
-                #Need to apply the variable mods and add peptides. 
-                pep_id = applyMods!(var_mods,
-                                    peptide,
-                                    precursor_table.id_to_pep,
+            if !containsPepGroup(ptable, peptide) #If the peptide hasn't been encountered,
+                pepGroup_id += UInt32(1);                  #then do
+                newPeptideGroup!(peptide, pepGroup_id, protein, ptable); #add it to the hash table,
+                addPepGroupToProtein!(ptable, protein, peptide); #add a new peptide group to the protein,
+                pep_id = applyMods!(var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
+                                    peptide,               #and increase the pep_id for each variable mod applied 
+                                    ptable.id_to_pep,
                                     pepGroup_id,
                                     pep_id,
-                                    n = 2);
-            else
-                #println("test ", l[1])
-                #Checks if the current protein is assigned to the current peptide group
-                #Adds the protien ID if not. 
-                addProteinToPepGroup!(precursor_table, protein, peptide);
-                addPepGroupToProtein!(precursor_table, protein, peptide);
+                                    n = 2); #
+            else #If this peptide has been encountered before, we don't need to apply the variable modes. Instead,
+                addProteinToPepGroup!(ptable, protein, peptide); #Add the current protein to this peptide group
+                addPepGroupToProtein!(ptable, protein, peptide); #Add the current peptide group to this protein
             end
         end
-        #(timetaken, linecounter)
+        println("Time to build precursor table ", timetaken);
     end
 end
-
-function test()
-    precursor_table = PrecursorTable()
-    readfile(precursor_table)
-end
-open("./data/NRF2_SIL.txt") do f
-    timetaken = @elapsed for l in enumerate(eachline(f))
-        println(l)
-    end
-end
-
-function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
-    for mod in fixed_mods
-        peptide = replace(peptide, mod[:p]=>mod[:r])
-    end
-    peptide
-end
-
-function variableMods(peptide::String, fixed_mods::Vector{Pair{Regex, String}})
-
-end
-
-totaltime, totallines = open("./data/NRF2_SIL.txt") do f
-    linecounter = 0
-    timetaken = @elapsed for l in enumerate(eachline(f))
-        linecounter += 1
-        println(linecounter)
-        a, b = split(l[2], "\t")
-    end
-    (timetaken, linecounter)
-end
-
-using IterTools
-
-# Define the regular expressions and replacement strings
-using Combinatorics
-
-# Define the regular expressions and replacement strings
-# Define the regular expressions and replacement strings
-var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
-fixed_mods = [(p=r"C", r="C[Carb]")]
-#replacements = ["[+11]","[+10]", "[+8]", "[+2]"]
-# Define the input string
-input_string = "PEPTICKDECK"
-x = String[]
-
-# Get all matches for each regular expression
-function matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String)
-    matches = Vector{Tuple{UnitRange{Int64}, String}}()
-    for pattern in patterns
-        regex_matches = findall(pattern[:p], input_string)
-        for match in regex_matches
-            push!(matches, (match, pattern[:r]))
-        end
-    end
-    matches
-end
-
-@btime getMatches(regexes, replacements, input_string)
-
-function applyVariableMods!(matches::Vector{Tuple{UnitRange{Int64}, String}}, input_string::String, precursors::UnorderedDictionary{UInt32, Peptide}, group_id::UInt32, pep_id::UInt32, n::Int)
-    #out = Vector{String}(undef, length(all_combinations))
-    # Apply the replacements to the input string for each combination
-    for N in 1:min(n, length(matches))
-        for (i, combination) in enumerate(combinations(matches, N))
-
-            sort!(combination, by=match->match[1][end]);
-            output_str = [""]#nput_string[1:combination[1][1][1]]
-            index = 1
-            for mod in combination
-                push!(output_str, input_string[index:mod[1][1]])
-                push!(output_str, mod[2])
-                index = mod[1][1]+1
-            end
-            push!(output_str, input_string[index:end])
-            #append!(out, [join(output_str)])
-            pep_id += UInt32(1);
-            insert!(precursors, Peptide(input_string, group_id), pep_id);
-        end
-    end
-    pep_id += UInt32(1);
-    insert!(precursors, Peptide(input_string, group_id), pep_id)
-    pep_id
-    #out
-end
-
-function applyMods!(var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String, peptides::UnorderedDictionary{UInt32, Peptide}, group_id::UInt32, pep_id::UInt32; n::Int = 3)
-    applyVariableMods!(matchVarMods(var_mods, input_string),
-                    input_string,
-                    peptides,
-                    group_id,
-                    pep_id,
-                    n
-                    )
-end
-#What about groups of mutually exclusive variable mods?
