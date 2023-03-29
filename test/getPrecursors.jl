@@ -9,7 +9,6 @@ end
     ##########
     #Protein
     ##########
-
     tprot = Protein("TEST_PROTEIN")
     for i in 1:10
         addPepGroup!(tprot, UInt32(i))
@@ -19,6 +18,10 @@ end
     ##########
     #fixedMods
     ##########
+    fixed_mods = [(p=r"C", r="C[Carb]")]
+    @test fixedMods("CARACHTER", fixed_mods) == "C[Carb]ARAC[Carb]HTER"
+    fixed_mods = [(p=r"C", r="C[Carb]"), (p=r"A", r="A[mod A]")]
+    @test fixedMods("RATRACE", fixed_mods) == "RA[mod A]TRA[mod A]C[Carb]E"
 
     ##########
     #matchVarMods/appyMods!
@@ -230,12 +233,20 @@ end
 
     @test issorted(getPrecursors(testPtable), by=x->getMZ(x))
 
-    #@test testPtable.
+    """
+        Apply to real world data. We have a list of 260 peptides from 90 proteins 
+    from the NRF2 SIL peptide array. 
+    """
+    testPtable = PrecursorTable()
+    fixed_mods = [(p=r"C", r="C[Carb]")]
+    var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+    buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/NRF2_SIL.txt")
+    getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
+    @test length(getIDToPepGroup(testPtable)) == 260
+    @test length(getPrecursors(testPtable)) == 260*2*3 #2 because each protein ends in a variably modifiable K or R. 3 because 3 charge states. 
 
-    #x = PrecursorTable()
-    #buildPrecursorTable!(x, fixed_mods, var_mods, 2, "../data/NRF2_SIL.txt")
-    #getPrecursors!(x, UInt8[2, 3, 4], UInt8[0], test_mods)
-    #@btime getPrecursors!(x, UInt8[2, 3, 4], UInt8[0], test_mods)
-
+    @test getProtNamesFromPepSeq(testPtable, "LAIEAGFR") == Set(["AKR1C1","AKR1C2","AKR1C3"]) 
+    @test Set(getPepSeqsFromProt(testPtable, "CD8A")) == Set(["AAEGLDTQR", "TWNLGETVELK", "LGDTFVLTLSDFR"])
+    @test Set(getPepSeqsFromProt(testPtable, "ZNF746")) == Set(["LLSLEGR", "GQPLPTPPAPPDPFK"])
 
 end

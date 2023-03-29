@@ -5,9 +5,11 @@ export buildPrecursorTable!, getPrecursors!
 
 struct PeptideGroup
     prot_ids::Set{UInt32}
+    sequence::String
 end
 
-PeptideGroup() = PeptideGroup(Set{UInt32}())
+PeptideGroup() = PeptideGroup(Set{UInt32}(), "")
+getSeq(p::PeptideGroup) = p.sequence
 getProtIDs(p::PeptideGroup) = p.prot_ids
 export getProtIds
 
@@ -73,11 +75,17 @@ getProt(p::PrecursorTable, prot_id::UInt32) = p.id_to_prot[prot_id]
 getPepGroupID(p::PrecursorTable, peptide::String) = p.pepGroup_to_id[peptide]
 getPepGroup(p::PrecursorTable, pepGroup_id::UInt32) = p.id_to_pepGroup[pepGroup_id]
 getPep(p::PrecursorTable, pep_id::UInt32) = p.id_to_pep[pep_id]
+getProtNamesFromPepSeq(p::PrecursorTable, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupID(p, peptide)))])
+getPepGroupsFromProt(p::PrecursorTable, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtID(p, protein)))]
+getPepSeqsFromProt(p::PrecursorTable, protein::String) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, protein)]
+getPepGroupsFromProt(p::PrecursorTable, prot_id::UInt32) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, prot_id))]
+getPepSeqsFromProt(p::PrecursorTable, prot_id::UInt32) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, prot_id)]
+export getProtID, getProt, getPepGroupID, getPepGroup, getPep
 
 insertProtID!(p::PrecursorTable, protein::String, prot_id::UInt32) = insert!(p.prot_to_id, protein, prot_id)
 insertProt!(p::PrecursorTable, protein::String, prot_id::UInt32) = insert!(p.id_to_prot, prot_id, Protein(protein))
 insertPepGroupID!(p::PrecursorTable, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
-insertPepGroup!(p::PrecursorTable, protein::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein))))
+insertPepGroup!(p::PrecursorTable, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), peptide))
 
 #PeptideGroup(p::PrecursorTable, protein::String) = PeptideGroup(Set(getProtID(p, protein)))
 
@@ -110,7 +118,7 @@ end
 """
 function addNewPeptideGroup!(peptide::String, pepGroup_id::UInt32, protein::String, precursor_table::PrecursorTable)
         insertPepGroupID!(precursor_table, peptide, pepGroup_id);
-        insertPepGroup!(precursor_table, protein, pepGroup_id)
+        insertPepGroup!(precursor_table, protein, peptide, pepGroup_id)
 end
 
 function matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String)
@@ -177,6 +185,8 @@ function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tupl
     end
     peptide
 end
+
+export fixedMods
 
 #For tomorrow. Make this function. Make it sort the precursors. Also make tests for this module.
 function getPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
