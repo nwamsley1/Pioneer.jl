@@ -1,37 +1,15 @@
-function buildPrecursorTable!(ptable::PrecursorTable, n::Int, f_path::String)
-    open(f_path) do f #"./data/NRF2_SIL.txt"
-        pepGroup_id, pep_id, prot_id = UInt32(1), UInt32(1), UInt32(1)
-        timetaken = @elapsed for (row, protein_peptide) in enumerate(eachline(f))
-            protein, peptide = map(string, split(protein_peptide, "\t")); #Parse input "PROTEIN_NAME\tPEPTIDE_SEQUENCE"
-            peptide = fixedMods(peptide, fixed_mods); #Apply fixed modifications
-            if !containsProt(ptable, protein) #If the protien hasn't been encountered,
-                prot_id += UInt32(1);                  #then add it to the hash table
-                addNewProtein!(protein, prot_id, ptable);
-            end
-            if !containsPepGroup(ptable, peptide) #If the peptide hasn't been encountered,
-                pepGroup_id += UInt32(1);                  #then do
-                addNewPeptideGroup!(peptide, pepGroup_id, protein, ptable); #add it to the hash table,
-                addPepGroupToProtein!(ptable, protein, peptide); #add a new peptide group to the protein,
-                pep_id = applyMods!(var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
-                                    peptide,               #and increase the pep_id for each variable mod applied 
-                                    ptable.id_to_pep,
-                                    pepGroup_id,
-                                    pep_id,
-                                    n = 2); #
-            else #If this peptide has been encountered before, we don't need to apply the variable modes. Instead,
-                addProteinToPepGroup!(ptable, protein, peptide); #Add the current protein to this peptide group
-                addPepGroupToProtein!(ptable, protein, peptide); #Add the current peptide group to this protein
-            end
-        end
-        println("Time to build precursor table ", timetaken);
-    end
-end
+include("./precursor.jl");
+using Combinatorics, Dictionaries
+
+export buildPrecursorTable!, getPrecursors!
 
 struct PeptideGroup
     prot_ids::Set{UInt32}
 end
 
 PeptideGroup() = PeptideGroup(Set{UInt32}())
+getProtIDs(p::PeptideGroup) = p.prot_ids
+export getProtIds
 
 function addProtID!(pg::PeptideGroup, prot_id::UInt32)
     push!(pg.prot_ids, prot_id)
@@ -52,17 +30,29 @@ struct Protein
     pep_group_ids::Set{UInt32}
 end
 
+getPepGroupIDs(p::Protein) = p.pep_group_ids
+getName(p::Protein) = p.name
 Protein(name::String) = Protein(name, Set{UInt32}())
 addPepGroup!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
 
-struct PrecursorTable
+export getPepGroupIDs, getName
+mutable struct PrecursorTable
     id_to_prot::UnorderedDictionary{UInt32, Protein}
     prot_to_id::UnorderedDictionary{String, UInt32}
     id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
     pepGroup_to_id::UnorderedDictionary{String, UInt32}
     id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
-    id_to_prec::Dictionary{UInt32, Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
+    precursors::Vector{Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
 end
+
+getIDToProt(p::PrecursorTable) = p.id_to_prot
+getProtToID(p::PrecursorTable) = p.prot_to_id
+getIDToPepGroup(p::PrecursorTable) = p.id_to_pepGroup
+getPepGroupToID(p::PrecursorTable) = p.pepGroup_to_id
+getIDToPep(p::PrecursorTable) = p.id_to_pep
+getPrecursors(p::PrecursorTable) = p.precursors
+
+export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getPrecursors
 
 PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, Protein}(),
@@ -70,7 +60,7 @@ PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, PeptideGroup}(),
                                     UnorderedDictionary{String, UInt32}(),
                                     UnorderedDictionary{UInt32, Peptide}(),
-                                    Dictionary{UInt32, Precursor}())
+                                    Vector{Precursor}())
 
 containsProt(p::PrecursorTable, protein::AbstractString) = isassigned(p.prot_to_id, protein)
 containsProtID(p::PrecursorTable, prot_id::UInt32) = isassigned(p.id_to_prot, prot_id)
@@ -154,16 +144,17 @@ function applyVariableMods!(matches::Vector{Tuple{UnitRange{Int64}, String}}, un
                    pep_id::UInt32) = insert!(peptides, pep_id, Peptide(seq, group_id))
 
     #Peptide with 0 variable mods. 
-    pep_id += UInt32(1);
+    #pep_id += UInt32(1);
     insertPeptide!(peptides, unmod_seq, group_id, pep_id);
-
+    pep_id += UInt32(1);
     # Apply the replacements to the input string for each combination
     for N in 1:min(n, length(matches)) #Apply 1:min(n, length(matches)) variable mods
         for combination in combinations(matches, N) #Each combination of "N" variable mods
             sort!(combination, by=match->match[1][end]); #Sort applied variable mods in order of appearance in "unmod_seq". 
             modified_seq = applyMods(combination, unmod_seq) #Get the modified sequence for the given combination of mods
+            #pep_id += UInt32(1);
+            insertPeptide!(peptides, join(modified_seq), group_id, pep_id);
             pep_id += UInt32(1);
-            insertPeptide!(peptides, modified_seq, group_id, pep_id);
         end
     end
     pep_id
@@ -178,6 +169,7 @@ function applyMods!(var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}
                     n
                     )
 end
+export applyMods!
 
 function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
     for mod in fixed_mods
@@ -186,7 +178,47 @@ function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tupl
     peptide
 end
 
-#For tomorrow. Make this function. Make it sort the precursors. Also make tests for this module. 
+#For tomorrow. Make this function. Make it sort the precursors. Also make tests for this module.
 function getPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
+    prec_id = UInt32(1)
+    for (pep_id, peptide) in pairs(ptable.id_to_pep)
+        for charge in charges, isotope in isotopes
+            push!(ptable.precursors, Precursor(peptide.sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict))
+            prec_id+= UInt32(1)
+        end
+    end
+    sort!(ptable.precursors, by=p->getMZ(p))
+end
 
+function buildPrecursorTable!(ptable::PrecursorTable, 
+                              fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+                              var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+                              n::Int, f_path::String)
+    open(f_path) do f #"./data/NRF2_SIL.txt"
+        pepGroup_id, pep_id, prot_id = UInt32(1), UInt32(1), UInt32(1)
+        timetaken = @elapsed for (row, protein_peptide) in enumerate(eachline(f))
+            protein, peptide = map(string, split(protein_peptide, "\t")); #Parse input "PROTEIN_NAME\tPEPTIDE_SEQUENCE"
+            peptide = fixedMods(peptide, fixed_mods); #Apply fixed modifications
+            if !containsProt(ptable, protein) #If the protien hasn't been encountered,
+                #then add it to the hash table
+                addNewProtein!(protein, prot_id, ptable);
+                prot_id += UInt32(1);  
+            end
+            if !containsPepGroup(ptable, peptide) #If the peptide hasn't been encountered, then
+                addNewPeptideGroup!(peptide, pepGroup_id, protein, ptable); #add it to the hash table,
+                addPepGroupToProtein!(ptable, protein, peptide); #add a new peptide group to the protein,
+                pep_id = applyMods!(var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
+                                    peptide,               #and increase the pep_id for each variable mod applied 
+                                    ptable.id_to_pep,
+                                    pepGroup_id,
+                                    pep_id,
+                                    n = n); #
+                pepGroup_id += UInt32(1); 
+            else #If this peptide has been encountered before, we don't need to apply the variable modes. Instead,
+                addProteinToPepGroup!(ptable, protein, peptide); #Add the current protein to this peptide group
+                addPepGroupToProtein!(ptable, protein, peptide); #Add the current peptide group to this protein
+            end
+        end
+        println("Time to build precursor table ", timetaken);
+    end
 end
