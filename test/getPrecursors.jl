@@ -17,6 +17,8 @@ struct PeptideGroup
     prot_ids::Set{UInt32}
 end
 
+PeptideGroup() = PeptideGroup("", Set{UInt32}(), UInt32(0))
+
 function addProtID!(pg::PeptideGroup, prot_id::UInt32)
     push!(pg.prot_ids, prot_id)
 end
@@ -39,7 +41,7 @@ end
 Protein(name::String) = Protein(name, Set{UInt32}())
 addPepGroup!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
 
-PeptideGroup() = PeptideGroup("", Set{UInt32}(), UInt32(0))
+
 
 struct PrecursorTable
     id_to_prot::UnorderedDictionary{UInt32, Protein}
@@ -72,7 +74,7 @@ addPepGroup!(p::PrecursorTable, prot_id::UInt32, pep_group_id::UInt32) = addPepG
 
 #Adds the protein_id to the pep group if not already included. 
 function addProteinToPepGroup!(p::PrecursorTable, protein::String, peptide::String)
-    addProt!(getPepGroup(p, getPepGroupID(p, peptide)), getProtID(p, protein))
+    addProtID!(getPepGroup(p, getPepGroupID(p, peptide)), getProtID(p, protein))
 end
 
 #Adds the pep_group_id to the protein if not already included. 
