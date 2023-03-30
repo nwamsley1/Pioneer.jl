@@ -3,6 +3,30 @@ using Combinatorics, Dictionaries
 
 export buildPrecursorTable!, getPrecursors!
 
+
+"""
+    PeptideGroup
+
+Type that represents an unmodified peptide 
+
+### Fields
+
+- prot_ids::Set{UInt32} -- Set of identifiers for proteins that contain the peptide group. 
+- sequence::String -- Sequence of the peptide group
+
+### Examples
+
+- `PeptideGroup() = PeptideGroup(Set{UInt32}(), "")` -- constructor for an placeholder 
+
+### GetterMethods
+
+- getSeq(p::PeptideGroup) = p.sequence
+- getProtIDs(p::PeptideGroup) = p.prot_ids
+
+### Methods
+
+- addProtID!(pg::PeptideGroup, prot_id::UInt32)
+"""
 struct PeptideGroup
     prot_ids::Set{UInt32}
     sequence::String
@@ -17,8 +41,25 @@ function addProtID!(pg::PeptideGroup, prot_id::UInt32)
     push!(pg.prot_ids, prot_id)
 end
 
-getProtIDs(p::PeptideGroup) = p.prot_ids
+"""
+    Peptide
 
+Type that represents a peptide
+
+### Fields
+
+- sequence::String -- Sequence of the peptide
+- pep_group_id::UInt32-- Identifier of the `PeptideGroup` to which the peptide belongs. 
+
+### GetterMethods
+
+- getSeq(p::Peptide) = p.sequence
+- getGroupID(p::Peptide) = p.pep_group_id
+
+### Methods
+
+- addProtID!(pg::PeptideGroup, prot_id::UInt32)
+"""
 struct Peptide
     sequence::String
     pep_group_id::UInt32
@@ -27,17 +68,93 @@ end
 getSeq(p::Peptide) = p.sequence
 getGroupID(p::Peptide) = p.pep_group_id
 
+"""
+    Protein
+
+Type that represents a protein
+
+### Fields
+
+- sequence::String -- Sequence of the peptide
+- pep_group_id::UInt32-- Identifier of the `PeptideGroup` to which the peptide belongs. 
+
+### Examples
+
+- `Protein(name::String) = Protein(name, Set{UInt32}())` -- constructor for an placeholder 
+
+### GetterMethods
+
+- getPepGroupIDs(p::Protein) = p.pep_group_ids
+- getName(p::Protein) = p.name
+
+### Methods
+
+- addPepGroup!(p::Protein, pep_group_id::UInt32)
+"""
 struct Protein
     name::String
     pep_group_ids::Set{UInt32}
 end
 
+Protein(name::String) = Protein(name, Set{UInt32}())
+
 getPepGroupIDs(p::Protein) = p.pep_group_ids
 getName(p::Protein) = p.name
-Protein(name::String) = Protein(name, Set{UInt32}())
+
 addPepGroup!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
 
 export getPepGroupIDs, getName
+
+"""
+    PrecursorTable
+
+Data Structure that represents relations between precursors, peptides, peptide groups, and proteins
+
+### Fields
+
+- id_to_prot::UnorderedDictionary{UInt32, Protein} -- Maps from a protien identifier to a Protein
+- prot_to_id::UnorderedDictionary{String, UInt32} -- Maps from a protein name to a protein identifier
+- id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup} -- Maps a PeptideGroup identifier to a PeptideGroup
+- pepGroup_to_id::UnorderedDictionary{String, UInt32} -- Maps a PeptideGroup name/sequence to an identifier
+- id_to_pep::UnorderedDictionary{UInt32, Peptide} -- Maps a peptide identifier to a peptide
+- precursors::Vector{Precursor} -- Precursor has fields `pep_id` and `prec_id`. `pep_id`s are keys for `id_to_pep`
+
+### Examples
+
+- `PrecursorTable() = PrecursorTable(
+    UnorderedDictionary{UInt32, Protein}(),
+    UnorderedDictionary{String, UInt32}(),
+    UnorderedDictionary{UInt32, PeptideGroup}(),
+    UnorderedDictionary{String, UInt32}(),
+    UnorderedDictionary{UInt32, Peptide}(),
+    Vector{Precursor}())` -- constructor for a placeholder 
+
+### GetterMethods
+
+- getIDToProt(p::PrecursorTable)
+- getProtToID(p::PrecursorTable) 
+- getIDToPepGroup(p::PrecursorTable) 
+- getPepGroupToID(p::PrecursorTable)
+- getIDToPep(p::PrecursorTable)
+- getPrecursors(p::PrecursorTable)
+- getProtID(p::PrecursorTable, protein::String)
+- getProt(p::PrecursorTable, prot_id::UInt32)
+- getPepGroupID(p::PrecursorTable, peptide::String)
+- getPepGroup(p::PrecursorTable, pepGroup_id::UInt32)
+- getPep(p::PrecursorTable, pep_id::UInt32)
+- getProtNamesFromPepSeq(p::PrecursorTable, peptide::String)
+- getPepGroupsFromProt(p::PrecursorTable, protein::String)
+- getPepSeqsFromProt(p::PrecursorTable, protein::String)
+- getPepGroupsFromProt(p::PrecursorTable, prot_id::UInt32)
+- getPepSeqsFromProt(p::PrecursorTable, prot_id::UInt32)
+
+### Methods
+
+insertProtID!(p::PrecursorTable, protein::String, prot_id::UInt32)
+insertProt!(p::PrecursorTable, protein::String, prot_id::UInt32)
+insertPepGroupID!(p::PrecursorTable, peptide::String, pepGroup_id::UInt32)
+insertPepGroup!(p::PrecursorTable, protein::String, peptide::String, pepGroup_id::UInt32)
+"""
 mutable struct PrecursorTable
     id_to_prot::UnorderedDictionary{UInt32, Protein}
     prot_to_id::UnorderedDictionary{String, UInt32}
