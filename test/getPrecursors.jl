@@ -37,7 +37,7 @@ end
                                                     (8:8, "[modE]"),
                                                     (10:10, "[modE]")])
     #Two or fewer variable modifications
-    applyMods!(var_mods, test_pep, test_peps_dict, group_id, pep_id, n=2);
+    applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=2);
     @test Set(map(pep->getSeq(pep), test_peps_dict)) == Set([
                                                             "PEPEPCPEPEP",
                                                             "PEPEPC[modC]PEPEP",
@@ -60,7 +60,7 @@ end
     test_peps_dict = UnorderedDictionary{UInt32, Peptide}()
     group_id = UInt32(1)
     pep_id = UInt32(1)
-    applyMods!(var_mods, test_pep, test_peps_dict, group_id, pep_id, n=1);
+    applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=1);
     @test Set(map(pep->getSeq(pep), test_peps_dict)) == Set([
                                                             "PEPEPCPEPEP",
                                                             "PEPEPC[modC]PEPEP",
@@ -83,7 +83,7 @@ end
     @test Set(matchVarMods(var_mods, test_pep)) == Set([(3:3, "[special P]"),
                                                     (7:7, "[C-term K]")])
 
-    applyMods!(var_mods, test_pep, test_peps_dict, group_id, pep_id, n=2);
+    applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=2);
 
     @test Set(map(pep->getSeq(pep), test_peps_dict)) == Set([
                                                             "PEPRKPK",
@@ -109,7 +109,7 @@ end
                                                         (6:6, "[methyl K]"),
                                                         (6:6, "[C-term K]")])
 
-    applyMods!(var_mods, test_pep, test_peps_dict, group_id, pep_id, n=2);
+    applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=2);
     
     @test Set(map(pep->getSeq(pep), test_peps_dict)) == Set([
                                                             "KARENK",
