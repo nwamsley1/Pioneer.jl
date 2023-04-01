@@ -146,7 +146,7 @@ end
 
 MatchedPrecursor() = MatchedPrecursor(Float32(0), 0, Float32[], UnorderedDictionary{String, Vector{Float32}}(), (scan_idx = 0, name = String[], mz = Float32[], intensity = Float32[]))
 
-function initMatchedPrecursorS(bestPSMs::DataFrame)
+function initMatchedPrecursors(bestPSMs::DataFrame)
     matched_precursors = UnorderedDictionary{UInt32, MatchedPrecursor}()
     for pep in eachrow(bestPSMs)
         insert!(matched_precursors, 
@@ -158,36 +158,39 @@ function initMatchedPrecursorS(bestPSMs::DataFrame)
                 (scan_idx = pep[:scan_idx], name = Vector{String}(), mz = Float32[], intensity = Float32[])))
 
     end
+    matched_precursors
 end
 
 NRF2_Survey = Arrow.Table("./data/parquet/Nrf2_SQ_052122_survey.arrow")
 params = (upper_tol = 0.5, lower_tol = 0.5, δs = [0.0], b_start = 3, y_start = 3, prec_charges = UInt8[2,3,4], 
 isotopes = UInt8[0], transition_charges = UInt8[1,2], fragment_ppm = Float32(40))
 scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitionsPRM, params)
+bestPSMs = ProcessPSMs(scored, testPtable, NRF2_Survey, UInt8(5))
+matched_precursors = initMatchedPrecursors(bestPSMs)
+getMatchedPrecursors(matched_precursors, matches, NRF2_Survey)
 #need to get maximum MS1 in the vicinity. 
 
 #need to get RT estimate for each peptide. 
-
-function getMatchedPrecursors(fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table)
+function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table, rt_tol::Float64)
 
     """
         getTransitionName(transition::UnorderedDictionary{String, Vector{Float32}}) 
     """
-    function getTransitionName(transition::UnorderedDictionary{String, Vector{Float32}})
+    function getTransitionName(transition::Transition)
         string(transition.ion_type)*string(transition.ind)*"+"*string(transition.charge)
     end
 
-    function getBestPSMs!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch})
+    function getBestPSMs!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch})
 
-        function addScanToPrecursor!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, match::FragmentMatch, fragment_name::String, prec_id::UInt32)
+        function addScanToPrecursor!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, match::FragmentMatch, fragment_name::String, prec_id::UInt32)
             
-            function assignPrecursor!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, fragment_name::String)
-                if !isassigned(matched_precursors[prec_id].transitions, fragment_name)
-                    insert!(matched_precursors[prec_id].transitions, fragment_name, Float32[])
+            function assignPrecursor!(matched_precursor::MatchedPrecursor, fragment_name::String)
+                if !isassigned(matched_precursor.transitions, fragment_name)
+                    insert!(matched_precursor.transitions, fragment_name, Float32[])
                 end
             end
 
-            assignPrecursor!(matched_precursors, fragment_name);
+            assignPrecursor!(matched_precursors[prec_id], fragment_name);
 
             if match.scan_idx == matched_precursors[prec_id].best_psm[:scan_idx]
                 push!(matched_precursors[prec_id].best_psm[:mz], match.match_mz)
@@ -208,39 +211,38 @@ function getMatchedPrecursors(fragment_matches::Vector{FragmentMatch}, MS_TABLE:
 
     end
 
-    function addTransition(matched_precursor::MatchedPrecursor, match::FragmentMatch)
-        if match.scan_idx>matched_precursors.last_scan_idx[1]
-            matched_precursors.last_scan_idx[1]=match.scan_idx
-            append!(matched_precursors.rts, observed_rt)
-            for key in keys(matched_precursors.transitions)
-                append!(matched_precursors.transitions[key],Float32(0))
+    function addTransition(matched_precursor::MatchedPrecursor, match::FragmentMatch, rt::Float64)
+        if match.scan_idx>matched_precursor.last_scan_idx[1]
+            matched_precursor.last_scan_idx[1]=match.scan_idx
+            append!(matched_precursor.rts, rt)
+            for key in keys(matched_precursor.transitions)
+                append!(matched_precursor.transitions[key],Float32(0))
             end
         end
         matched_precursor.transitions[getTransitionName(match.transition)][end] = match.intensity
     end
 
-    function isInRTWindow(matched_precursor::MatchedPrecursor, MS_TABLE::Arrow.Table, rt_tol::Float64)
+    function isInRTWindow(matched_precursor::MatchedPrecursor, rt, rt_tol::Float64)
         best_rt = matched_precursor.rt
-        observed_rt = MS_Table[:retentionTime][matched_precursor.scan_idx]
-        return (abs(observed_rt- best_rt)<rt_tol)
+        return (abs(rt- best_rt)<rt_tol)
     end
 
-    function addTransitionIntensities!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table)
+    function addTransitionIntensities!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table, rt_tol::Float64)
         for match in matches
             prec_id = match.transition.prec_id
+            if !isassigned(matched_precursors, prec_id) continue end
             matched_precursor = matched_precursors[prec_id]
-            if !isassigned(test_dict, prec_id) continue end
             for match in matches
-                if isInRTWindow(matched_precursor, MS_TABLE, rt_tol) 
-                    addTransition(matched_precursor, match) 
+                rt = MS_TABLE[:retentionTime][match.scan_idx]
+                if isInRTWindow(matched_precursor, rt, rt_tol) 
+                    addTransition(matched_precursor, match, rt) 
                 end
             end
         end
     end
 
-    matched_precursors = UnorderedDictionary{UInt32, MatchedPrecursor}()
     getBestPSMs!(matched_precursors, fragment_matches)
-    addTransitionIntensities!(matched_precursors, matches, MS_TABLE)
+    addTransitionIntensities!(matched_precursors, matches, MS_TABLE, rt_tol)
     return matched_precursors 
 
 end
