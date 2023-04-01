@@ -52,14 +52,17 @@ function SearchRAW(spectra::Arrow.Table, precursorList::Vector{Precursor}, selec
     (scored_PSMs, allFragmentMatches)
 end
 
-function selectTransitions(window_center::Float32, precursorList::Vector{Precursor}, params)
-    lower_bound = window_center - params[:lower_tol]
-    upper_bound = window_center + params[:upper_tol]
+function selectTransitionsPRM(window_center::Float32, precursorList::Vector{Precursor}, params)
+
+    function getPrecursors(window_center::Float32, precursorList::Vector{Precursor}, params)
+        l_bnd, u_bnd = window_center - params[:lower_tol], window_center + params[:upper_tol]
+        start, stop = searchsortedfirst(precursorList, l_bnd,lt=(t,x)->getMZ(t)<x), searchsortedlast(precursorList, u_bnd,lt=(x,t)->getMZ(t)>x)
+        return @view(precursorList[start:stop])
+    end
+
     transitions = Vector{Transition}();
-    #get all precursors in the tolerance. 
-    start = searchsortedfirst(precursorList, lower_bound,lt=(t,x)->getMZ(t)<x)
-    stop = searchsortedlast(precursorList, upper_bound,lt=(x,t)->getMZ(t)>x)
-    for precursor in @view(precursorList[start:stop])
+
+    for precursor in getPrecursors(window_center, precursorList, params)
         for charge in params[:transition_charges], isotope in params[:isotopes]
             append!(transitions, getTransitions(precursor, 
                                                 charge = charge, 
@@ -69,11 +72,23 @@ function selectTransitions(window_center::Float32, precursorList::Vector{Precurs
                                                 ppm = params[:fragment_ppm]))
         end
     end
+
     sort!(transitions, by=x->getMZ(x))
+
     transitions
 end
-#getMZ(testPtable.precursors[searchsortedfirst(testPtable.precursors, 481.89746f0 - 0.5, lt=(t, x)->getMZ(t)<x)])
-#getMZ(testPtable.precursors[searchsortedlast(testPtable.precursors, 481.89746f0 + 0.5,lt=(x,t)->getMZ(t)>x)])
+
+function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+        var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+        n::Int, 
+        f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},
+        mass_mods::Dict{String, Float32})
+    ptable = PrecursorTable()
+    buildPrecursorTable(ptable, fixed_mods, var_mods, n, f_path)
+    addPrecursors!(ptable, charges, isotopes, mass_mods)
+    return ptable
+end
+
 testPtable = PrecursorTable()
 fixed_mods = [(p=r"C", r="C[Carb]"),
 (p=r"K$", r="K[Hlys]"),
@@ -89,22 +104,41 @@ Dict{String, Float32}(
 )
 using Tables
 using DataFrames
+
+function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+                       var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+                       n::Int, 
+                       f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},
+                       mass_mods::Dict{String, Float32})
+    ptable = PrecursorTable()
+    buildPrecursorTable(ptable, fixed_mods, var_mods, n, f_path)
+    addPrecursors!(ptable, charges, isotopes, mass_mods)
+    return ptable
+end
+
+testPtable = PrecursorTable()
 buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "./data/NRF2_SIL.txt")
-getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
+addPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
+
+function ScorePrecursorsPRM(ptable::PrecursorTable, raw_path::String, params)
+    MS_TABLE = Arrow.Table(raw_path)
+    SearchRaw(MS_TABLE, ptable, selectTransitionsPRM, params)
+end
+
+function ProcessPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABLE::Arrow.Table, min_ion_count::UInt8)
+    PSMs = DataFrame(PSMs)
+    filter!(row -> row.total_ions >= min_ion_count, PSMs);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)
+    PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, :pep_idx))
+    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :retentionTime)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(testPtable.id_to_pep[psm[:pep_idx]])) => :sequence)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort(collect(getProtNamesFromPepSeq(ptable, psm[:sequence]))), "|")) => :proteinNames)
+    PSMs
+end
 NRF2_Survey = Arrow.Table("./data/parquet/Nrf2_SQ_052122_survey.arrow")
 params = (upper_tol = 0.5, lower_tol = 0.5, δs = [0.0], b_start = 3, y_start = 3, prec_charges = UInt8[2,3,4], 
 isotopes = UInt8[0], transition_charges = UInt8[1,2], fragment_ppm = Float32(40))
-scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitions, params)
-scored = DataFrame(scored)
-scored = filter(row -> row.total_ions >= UInt8(5), scored)
-scored = transform(scored, AsTable(:) => ByRow(x -> getPepIDFromPrecID(testPtable, x[:precursor_idx])) => :pep_idx)
-
-#Only rows where hyperscore is maximal for each peptide 
-scored = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(scored, :pep_idx))
-sort!(scored, [:total_ions])
-scored = transform(scored, AsTable(:) => ByRow(x -> NRF2_Survey[:retentionTime][x[:scan_idx]]) => :retentionTime)
-scored = transform(scored, AsTable(:) => ByRow(x -> getSeq(testPtable.id_to_pep[x[:pep_idx]])) => :sequence)
-scored = transform(scored, AsTable(:) => ByRow(x -> join(sort(collect(getProtNamesFromPepSeq(testPtable, x[:sequence]))), "|")) => :proteinNames)
+scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitionsPRM, params)
 #need to get maximum MS1 in the vicinity. 
 
 function test(matches::Vector{FragmentMatch})
@@ -117,16 +151,6 @@ function test(matches::Vector{FragmentMatch})
     sort!(test, by=x->x.intensity)
 end
 
-function quad_trap(V) 
-    N = length(N)
-    h = (b-a)/N
-    int = h * ( V[1] + V[end] ) / 2
-    for k=1:N-1
-        xk = (b-a) * k/N + a
-        int = int + h*f(xk)
-    end
-    return int
-end
 
 using Plots
 x = range(0, 10, length=10)

@@ -462,7 +462,7 @@ end
 export fixedMods
 
 """
-    getPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
+    addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
 
 Modifies a `PrecursorTable` to fill the `precursors` field. Gets a `Precursor` for each unique `Peptide` in `ptable`. Sorts the 
 precursors in order of increasing mz.   
@@ -491,7 +491,7 @@ testPtable = PrecursorTable()
 buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/peptide_lists/PROT_PEPTIDE_TEST1.txt")
 getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
 """
-function getPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
+function addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
     prec_id = UInt32(1)
     for (pep_id, peptide) in pairs(ptable.id_to_pep)
         for charge in charges, isotope in isotopes
@@ -533,7 +533,7 @@ Builds a `PrecursorTable` given a path to a tab delimited text file where each l
     @test Set(getPepSeqsFromProt(testPtable, "CD8A")) == Set(["AAEGLDTQR", "TWNLGETVELK", "LGDTFVLTLSDFR"])
     @test Set(getPepSeqsFromProt(testPtable, "ZNF746")) == Set(["LLSLEGR", "GQPLPTPPAPPDPFK"])
 """
-function buildPrecursorTable!(ptable::PrecursorTable, 
+function buildPrecursorTable!(ptable::PrecursorTable,
                               fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
                               var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
                               n::Int, f_path::String)
@@ -565,3 +565,5 @@ function buildPrecursorTable!(ptable::PrecursorTable,
         println("Time to build precursor table ", timetaken);
     end
 end
+
+
