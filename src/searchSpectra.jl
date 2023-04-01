@@ -135,53 +135,6 @@ function ProcessPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABL
     transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort(collect(getProtNamesFromPepSeq(ptable, psm[:sequence]))), "|")) => :proteinNames)
     PSMs
 end
-NRF2_Survey = Arrow.Table("./data/parquet/Nrf2_SQ_052122_survey.arrow")
-params = (upper_tol = 0.5, lower_tol = 0.5, δs = [0.0], b_start = 3, y_start = 3, prec_charges = UInt8[2,3,4], 
-isotopes = UInt8[0], transition_charges = UInt8[1,2], fragment_ppm = Float32(40))
-scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitionsPRM, params)
-#need to get maximum MS1 in the vicinity. 
-
-function test(matches::Vector{FragmentMatch})
-    test = FragmentMatch[]
-    for match in matches
-        if (match.scan_idx == 2703) & (match.transition.prec_id ==UInt32(11))
-            push!(test, match);#println(match.transition.prec_id)
-        end
-    end
-    sort!(test, by=x->x.intensity)
-end
-
-
-using Plots
-x = range(0, 10, length=10)
-p = plot(x, x*2, seriestype=:scatter)
-plot!(x, x*2)
-savefig(p, "myplot.pdf") 
-p = plot()
-for (i, mass) in enumerate(NRF2_Survey.masses[1])
-    plot!([mass, mass], [0, NRF2_Survey.intensities[1][i]], legend = false, color = "black")
-end
-
-
-function plotSpectra!(p::Plots.Plot{Plots.GRBackend}, masses, intensities)
-    for (peak_idx, mass) in enumerate(masses)
-        plot!(p, [mass, mass], [0, intensities[peak_idx]], legend = false, color = "black")
-    end
-end
-p = plot()
-plotSpectra(p, NRF2_Survey.masses[2703], NRF2_Survey.intensities[2703])
-#display(p)
-function addFragmentIons!(p::Plots.Plot{Plots.GRBackend}, matches)
-    for match in matches
-        plot!(p, [match.match_mz, match.match_mz], [0, -1*match.intensity], legend = false, color = "red")
-    end
-end
-p = plot()
-plotSpectra(p, NRF2_Survey.masses[4167], NRF2_Survey.intensities[4167])
-addFragmentIons!(p, test(matches))
-display(p)
-
-#need to get RT estimate for each peptide. 
 
 struct MatchedPrecursor
     rt::Float32
@@ -190,78 +143,109 @@ struct MatchedPrecursor
     transitions::UnorderedDictionary{String, Vector{Float32}}
     best_psm::NamedTuple{(:scan_idx, :name, :mz, :intensity), Tuple{Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}
 end
+
 MatchedPrecursor() = MatchedPrecursor(Float32(0), 0, Float32[], UnorderedDictionary{String, Vector{Float32}}(), (scan_idx = 0, name = String[], mz = Float32[], intensity = Float32[]))
 
-test_dict = UnorderedDictionary{UInt32, MatchedPrecursor}()
-for pep in eachrow(scored)
-    insert!(test_dict, pep[:precursor_idx], MatchedPrecursor(pep[:retentionTime],
-                                                        Float32[],
-                                                        [0],
-                                                        UnorderedDictionary{String, Vector{Float32}}(),
-                                                        (scan_idx = pep[:scan_idx], name = Vector{String}(), mz = Float32[], intensity = Float32[])))
-end
-function test(matches::Vector{FragmentMatch})
-    test = FragmentMatch[]
-    for match in matches
-        if (match.scan_idx == 2703) & (match.transition.prec_id ==UInt32(11))
-            push!(test, match);#println(match.transition.prec_id)
-        end
+function initMatchedPrecursorS(bestPSMs::DataFrame)
+    matched_precursors = UnorderedDictionary{UInt32, MatchedPrecursor}()
+    for pep in eachrow(bestPSMs)
+        insert!(matched_precursors, 
+                pep[:precursor_idx], 
+                MatchedPrecursor(pep[:retentionTime],
+                Float32[],
+                [0],
+                UnorderedDictionary{String, Vector{Float32}}(),
+                (scan_idx = pep[:scan_idx], name = Vector{String}(), mz = Float32[], intensity = Float32[])))
+
     end
-    sort!(test, by=x->x.intensity)
 end
-precursors = Set(scored[!,:precursor_idx])
-function testmatchp(matches::Vector{FragmentMatch}, test_dict::UnorderedDictionary{UInt32, MatchedPrecursor})
-    for match in matches
-        #pep_id = getPepIDFromPrecID(testPtable, match.transition.prec_id)
-        prec_id = match.transition.prec_id
-        if !isassigned(test_dict, prec_id)
-            continue
-        end
-        fragment_name = string(match.transition.ion_type)*string(match.transition.ind)*"+"*string(match.transition.charge)
-        if !isassigned(test_dict[prec_id].transitions, fragment_name)
-            insert!(test_dict[prec_id].transitions, fragment_name, Float32[])
-        end
-        if match.scan_idx == test_dict[prec_id].best_psm[:scan_idx]
-            push!(test_dict[prec_id].best_psm[:mz], match.match_mz)
-            push!(test_dict[prec_id].best_psm[:intensity], match.intensity)
-            push!(test_dict[prec_id].best_psm[:name], fragment_name)
-        end
+
+NRF2_Survey = Arrow.Table("./data/parquet/Nrf2_SQ_052122_survey.arrow")
+params = (upper_tol = 0.5, lower_tol = 0.5, δs = [0.0], b_start = 3, y_start = 3, prec_charges = UInt8[2,3,4], 
+isotopes = UInt8[0], transition_charges = UInt8[1,2], fragment_ppm = Float32(40))
+scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitionsPRM, params)
+#need to get maximum MS1 in the vicinity. 
+
+#need to get RT estimate for each peptide. 
+
+function getMatchedPrecursors(fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table)
+
+    """
+        getTransitionName(transition::UnorderedDictionary{String, Vector{Float32}}) 
+    """
+    function getTransitionName(transition::UnorderedDictionary{String, Vector{Float32}})
+        string(transition.ion_type)*string(transition.ind)*"+"*string(transition.charge)
     end
-    for match in matches
-        prec_id = match.transition.prec_id
-        if !isassigned(test_dict, prec_id)
-            continue
-        end
-        rt = test_dict[prec_id].rt
-        observed_rt = NRF2_Survey[:retentionTime][match.scan_idx]
-        if abs(observed_rt- rt)<0.15
-            if match.scan_idx>test_dict[prec_id].last_scan_idx[1]
-                test_dict[prec_id].last_scan_idx[1]=match.scan_idx
-                append!(test_dict[prec_id].rts, observed_rt)
-                for key in keys(test_dict[prec_id].transitions)
-                    append!(test_dict[prec_id].transitions[key],Float32(0))
+
+    function getBestPSMs!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch})
+
+        function addScanToPrecursor!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, match::FragmentMatch, fragment_name::String, prec_id::UInt32)
+            
+            function assignPrecursor!(matched_precursors::UnorderedDicteionary{UInt32, MatchedPrecursor}, fragment_name::String)
+                if !isassigned(matched_precursors[prec_id].transitions, fragment_name)
+                    insert!(matched_precursors[prec_id].transitions, fragment_name, Float32[])
                 end
             end
-            fragment_name = string(match.transition.ion_type)*string(match.transition.ind)*"+"*string(match.transition.charge)
-            #$if !isassigned(test_dict[pep_id].transitions, fragment_name)
-             #   insert!(test_dict[pep_id].transitions, fragment_name, [match.intensity])
-            #else
-            test_dict[prec_id].transitions[fragment_name][end] = match.intensity
-            #end
+
+            assignPrecursor!(matched_precursors, fragment_name);
+
+            if match.scan_idx == matched_precursors[prec_id].best_psm[:scan_idx]
+                push!(matched_precursors[prec_id].best_psm[:mz], match.match_mz)
+                push!(matched_precursors[prec_id].best_psm[:intensity], match.intensity)
+                push!(matched_precursors[prec_id].best_psm[:name], fragment_name)
+            end
+
+        end
+
+        for match in matches
+            #pep_id = getPepIDFromPrecID(testPtable, match.transition.prec_id)
+            prec_id = match.transition.prec_id
+            if !isassigned(matched_precursors, prec_id) continue end
+            #as in y3+2 or b6+1 (name/length/+charge)
+            fragment_name = getTransitionName(match.transition)
+            addScanToPrecursor!(matched_precursors, match, fragment_name, prec_id)
+        end
+
+    end
+
+    function addTransition(matched_precursor::MatchedPrecursor, match::FragmentMatch)
+        if match.scan_idx>matched_precursors.last_scan_idx[1]
+            matched_precursors.last_scan_idx[1]=match.scan_idx
+            append!(matched_precursors.rts, observed_rt)
+            for key in keys(matched_precursors.transitions)
+                append!(matched_precursors.transitions[key],Float32(0))
+            end
+        end
+        matched_precursor.transitions[getTransitionName(match.transition)][end] = match.intensity
+    end
+
+    function isInRTWindow(matched_precursor::MatchedPrecursor, MS_TABLE::Arrow.Table, rt_tol::Float64)
+        best_rt = matched_precursor.rt
+        observed_rt = MS_Table[:retentionTime][matched_precursor.scan_idx]
+        return (abs(observed_rt- best_rt)<rt_tol)
+    end
+
+    function addTransitionIntensities!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table)
+        for match in matches
+            prec_id = match.transition.prec_id
+            matched_precursor = matched_precursors[prec_id]
+            if !isassigned(test_dict, prec_id) continue end
+            for match in matches
+                if isInRTWindow(matched_precursor, MS_TABLE, rt_tol) 
+                    addTransition(matched_precursor, match) 
+                end
+            end
         end
     end
-    test_dict
+
+    matched_precursors = UnorderedDictionary{UInt32, MatchedPrecursor}()
+    getBestPSMs!(matched_precursors, fragment_matches)
+    addTransitionIntensities!(matched_precursors, matches, MS_TABLE)
+    return matched_precursors 
+
 end
 
 testmatchp(matches, test_dict)
-p = plot()
-for (color, t) in enumerate(keys(test_dict[1].transitions))
-    plot!(p, test_dict[1].rts, test_dict[1].transitions[t], color = color, legend = true, label = t)
-    plot!(p, test_dict[1].rts, test_dict[1].transitions[t], seriestype=:scatter, color = color, label = nothing)
-end
-display(p)
-
-
 
 function plotSpectra!(p::Plots.Plot{Plots.GRBackend}, masses, intensities)
     for (peak_idx, mass) in enumerate(masses)
