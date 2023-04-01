@@ -38,6 +38,7 @@ mutable struct FragmentMatch
     match_mz::Float32
     count::UInt8
     peak_ind::Int64
+    scan_idx::UInt32
 end
 
 FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0)
@@ -140,7 +141,7 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)
+function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64, scan_idx::UInt32)
     function updateFragmentMatch!(match::FragmentMatch, mass::Float32, intensity::Float32, peak_ind::Int64)
         match.intensity += intensity
         match.match_mz = mass
@@ -150,7 +151,7 @@ function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transitio
     if isassigned(matches, match)
         updateFragmentMatch!(matches[match], mass, intensity, peak_ind)
     else
-        push!(matches, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind))
+        push!(matches, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind, scan_idx))
     end
 end
 
@@ -194,7 +195,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)
+function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64, scan_idx::UInt32)
 
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
@@ -206,7 +207,7 @@ function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transit
             if (masses[peak]+ δ <= getHigh(Transitions[transition]))
                 #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
                 best_peak = getNearest(Transitions[transition], masses, peak, δ=δ)
-                setFragmentMatch!(matches, match, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak);
+                setFragmentMatch!(matches, match, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak, scan_idx);
                 transition += 1
                 match += 1
                 continue
@@ -251,10 +252,10 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}; δs::Vector{Float64} = [0.0])
+function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}; δs::Vector{Float64} = [0.0], scan_idx = UInt32(0))
     matches = Vector{FragmentMatch}()
     for δ in δs
-        matchPeaks!(matches, Transitions, masses, intensities, δ)
+        matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx)
     end
     matches
 end

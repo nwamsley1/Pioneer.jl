@@ -3,6 +3,11 @@ using Combinatorics, Dictionaries
 
 export buildPrecursorTable!, getPrecursors!
 
+struct SimplePrecursor
+    charge::UInt8
+    isotope::UInt8
+    pep_id::UInt32
+end
 
 """
     PeptideGroup
@@ -174,6 +179,7 @@ mutable struct PrecursorTable
     id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
     pepGroup_to_id::UnorderedDictionary{String, UInt32}
     id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
+    simple_precursors::UnorderedDictionary{UInt32, SimplePrecursor}
     precursors::Vector{Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
 end
 
@@ -192,6 +198,7 @@ PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, PeptideGroup}(),
                                     UnorderedDictionary{String, UInt32}(),
                                     UnorderedDictionary{UInt32, Peptide}(),
+                                    UnorderedDictionary{UInt32, SimplePrecursor}(),
                                     Vector{Precursor}())
 
 containsProt(p::PrecursorTable, protein::AbstractString) = isassigned(p.prot_to_id, protein)
@@ -205,6 +212,7 @@ getProt(p::PrecursorTable, prot_id::UInt32) = p.id_to_prot[prot_id]
 getPepGroupID(p::PrecursorTable, peptide::String) = p.pepGroup_to_id[peptide]
 getPepGroup(p::PrecursorTable, pepGroup_id::UInt32) = p.id_to_pepGroup[pepGroup_id]
 getPep(p::PrecursorTable, pep_id::UInt32) = p.id_to_pep[pep_id]
+getSimplePrecFromID(p::PrecursorTable, prec_id::UInt32) = p.simple_precursors[prec_id]
 getProtNamesFromPepSeq(p::PrecursorTable, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupID(p, peptide)))])
 getPepGroupsFromProt(p::PrecursorTable, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtID(p, protein)))]
 getPepSeqsFromProt(p::PrecursorTable, protein::String) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, protein)]
@@ -477,7 +485,7 @@ Dict{String, Float32}(
     "Hlys" => Float32(8),
 )
 fixed_mods = [(p=r"C", r="C[Carb]")]
-var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+var_mods = [(p=r"(K\$)", r="[Hlys]"), (p=r"(R\$)", r="[Harg]")]
 
 testPtable = PrecursorTable()
 buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/peptide_lists/PROT_PEPTIDE_TEST1.txt")
@@ -488,12 +496,14 @@ function getPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes
     for (pep_id, peptide) in pairs(ptable.id_to_pep)
         for charge in charges, isotope in isotopes
             push!(ptable.precursors, Precursor(peptide.sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict))
+            insert!(ptable.simple_precursors, prec_id, SimplePrecursor(charge, isotope, pep_id));
             prec_id+= UInt32(1)
         end
     end
     sort!(ptable.precursors, by=p->getMZ(p))
 end
 
+getPepIDFromPrecID(p::PrecursorTable, prec_id::UInt32) = getSimplePrecFromID(p, prec_id).pep_id
 """
     buildPrecursorTable!(ptable::PrecursorTable, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, n::Int, f_path::String)
 
@@ -513,7 +523,7 @@ Builds a `PrecursorTable` given a path to a tab delimited text file where each l
 ### Examples 
     testPtable = PrecursorTable()
     fixed_mods = [(p=r"C", r="C[Carb]")]
-    var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+    var_mods = [(p=r"(K\$)", r="[Hlys]"), (p=r"(R\$)", r="[Harg]")]
     buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/NRF2_SIL.txt")
     getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
     @test length(getIDToPepGroup(testPtable)) == 260

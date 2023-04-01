@@ -7,10 +7,10 @@ mutable struct FastXTandem <: PSM
     y_int::Float32
     y_ions::Set{UInt8}
     error::Float64
-    precursor_idx::Int32
+    precursor_idx::UInt32
 end
 
-FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), Int32(0))
+FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), UInt32(0))
 results = UnorderedDictionary{UInt32, FastXTandem}()
 #Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 
@@ -51,7 +51,8 @@ function makePSMsDict(::FastXTandem)
         :error => Float64[],
         :y_ladder => Int8[],
         :scan_idx => Int64[],
-        :precursor_idx => Int32[]
+        :precursor_idx => UInt32[],
+        :total_ions => UInt32[]
     )
 end
 
@@ -108,5 +109,6 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, Fast
         append!(PSMs_dict[:y_ladder], getLongestY(unscored_PSMs[key].y_ions))
         append!(PSMs_dict[:scan_idx], scan_idx)
         append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)
+        append!(PSMs_dict[:total_ions], unscored_PSMs[key].y_count + unscored_PSMs[key].b_count)
     end
 end
