@@ -167,8 +167,7 @@ isotopes = UInt8[0], transition_charges = UInt8[1,2], fragment_ppm = Float32(40)
 scored, matches =  SearchRAW(NRF2_Survey, testPtable.precursors, selectTransitionsPRM, params)
 bestPSMs = ProcessPSMs(scored, testPtable, NRF2_Survey, UInt8(5))
 matched_precursors = initMatchedPrecursors(bestPSMs)
-getMatchedPrecursors(matched_precursors, matches, NRF2_Survey)
-#need to get maximum MS1 in the vicinity. 
+getMatchedPrecursors(matched_precursors, matches, NRF2_Survey, 0.15)
 
 #need to get RT estimate for each peptide. 
 function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table, rt_tol::Float64)
@@ -180,7 +179,7 @@ function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, Ma
         string(transition.ion_type)*string(transition.ind)*"+"*string(transition.charge)
     end
 
-    function getBestPSMs!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, matches::Vector{FragmentMatch})
+    function getBestPSMs!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, fragment_matches::Vector{FragmentMatch})
 
         function addScanToPrecursor!(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, match::FragmentMatch, fragment_name::String, prec_id::UInt32)
             
@@ -200,7 +199,7 @@ function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, Ma
 
         end
 
-        for match in matches
+        for match in fragment_matches
             #pep_id = getPepIDFromPrecID(testPtable, match.transition.prec_id)
             prec_id = match.transition.prec_id
             if !isassigned(matched_precursors, prec_id) continue end
@@ -211,12 +210,18 @@ function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, Ma
 
     end
 
-    function addTransition(matched_precursor::MatchedPrecursor, match::FragmentMatch, rt::Float64)
+    function addTransition(matched_precursor::MatchedPrecursor, match::FragmentMatch, rt::Float32)
+        #println("TEST0")
+        #println("match ", match)
+        #println("matched_precursor", matched_precursor)
+        #println("matched_precursor.last_scan_idx[1] ", matched_precursor.last_scan_idx[1])
         if match.scan_idx>matched_precursor.last_scan_idx[1]
+            #println("TEST1")
             matched_precursor.last_scan_idx[1]=match.scan_idx
             append!(matched_precursor.rts, rt)
             for key in keys(matched_precursor.transitions)
-                append!(matched_precursor.transitions[key],Float32(0))
+                #println("TEST");
+                push!(matched_precursor.transitions[key],Float32(0))
             end
         end
         matched_precursor.transitions[getTransitionName(match.transition)][end] = match.intensity
@@ -231,21 +236,21 @@ function getMatchedPrecursors(matched_precursors::UnorderedDictionary{UInt32, Ma
         for match in matches
             prec_id = match.transition.prec_id
             if !isassigned(matched_precursors, prec_id) continue end
-            matched_precursor = matched_precursors[prec_id]
-            for match in matches
-                rt = MS_TABLE[:retentionTime][match.scan_idx]
-                if isInRTWindow(matched_precursor, rt, rt_tol) 
-                    addTransition(matched_precursor, match, rt) 
-                end
+            rt = MS_TABLE[:retentionTime][match.scan_idx]
+            if isInRTWindow(matched_precursors[prec_id], rt, rt_tol) 
+                addTransition(matched_precursors[prec_id], match, rt) 
+                #println("TESTTEST")
             end
         end
     end
 
     getBestPSMs!(matched_precursors, fragment_matches)
-    addTransitionIntensities!(matched_precursors, matches, MS_TABLE, rt_tol)
+    addTransitionIntensities!(matched_precursors, fragment_matches, MS_TABLE, rt_tol)
     return matched_precursors 
 
 end
+
+getMatchedPrecursors(matched_precursors, matches, NRF2_Survey, 0.15)
 
 testmatchp(matches, test_dict)
 
@@ -261,7 +266,7 @@ function addFragmentIons!(p::Plots.Plot{Plots.GRBackend}, matched_ions::NamedTup
     i = 1
     for (mz, intensity) in zip(matched_ions[:mz], matched_ions[:intensity])
         plot!(p, [mz, mz], [0, -1*intensity], legend = false, color = "red")
-        annotate!(mz + 1, -1*intensity, text(matched_ions[:name][i], :black, :top, :left, 8))
+        annotate!(mz + 1, -1*intensity, fontfamily = "helvetica", text(matched_ions[:name][i], :black, :top, :left, 8))
         i += 1
     end
 end
@@ -271,10 +276,46 @@ function plotBestSpectra(matched_ions, RAW)
     addFragmentIons!(p, matched_ions)
     display(p)
 end
-p = plot()
-plotSpectra(p, NRF2_Survey.masses[4167], NRF2_Survey.intensities[4167])
-addFragmentIons!(p, test(matches))
-display(p)
+plotBestSpectra(matched_precursors[1].best_psm, NRF2_Survey)
+
+testmatchp(matches, test_dict)
 
 
+#testPtable.id_to_pep[1].sequence
+function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary{UInt32, MatchedPrecursor}, ptable::PrecursorTable, out_path::String, fname::String)
+    function plotFragmentIonChromatogram(transitions::UnorderedDictionary{String, Vector{Float32}}, rts::Vector{Float32}, title::String, out_path::String)
+        p = plot(title = title, fontfamily="helvetica")
+        for (color, t) in enumerate(keys(transitions))
+            plot!(p, rts, transitions[t], color = color, legend = true, label = t)
+            plot!(p, rts, transitions[t], seriestype=:scatter, color = color, label = nothing)
+        end
+        savefig(joinpath(out_path, title*".pdf"))
+    end
+
+    if !isdir(out_path)
+        mkpath(out_path)
+    end
+
+    @time for key in keys(matched_precursors)
+        plotFragmentIonChromatogram(matched_precursors[key].transitions, matched_precursors[key].rts, 
+        ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence, out_path)
+        # Get all files in the directory that match the pattern
+    end
+    files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
+    merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
+end
+plotAllFragmentIonChromatograms(matched_precursors, testPtable, "./data/figures/", "MERGED_NRF2_SURVEY.pdf")
+
+using Glob
 getPepIDFromPrecIDlegend = false
+using Glob, Regex
+using PDFmerger
+# Set the path of the directory and the regular expression pattern
+dir_path = "./data/figures/"
+pattern = r"\.pdf$"  # Match files that end with .txt
+
+# Get all files in the directory that match the pattern
+files = filter(x -> isfile(joinpath(dir_path, x)) && match(pattern, x) != nothing, readdir(dir_path))
+@time merge_pdfs(map(file -> joinpath(dir_path,file), files), cleanup=true)
+# Print the list of matching files
+println(files)
