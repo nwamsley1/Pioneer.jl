@@ -4,11 +4,16 @@ using Combinatorics, Dictionaries
 export buildPrecursorTable!, getPrecursors!
 
 struct SimplePrecursor
+    mz::Float32
     charge::UInt8
     isotope::UInt8
     pep_id::UInt32
 end
 
+getMZ(sp::SimplePrecursor) = sp.mz
+getCharge(sp::SimplePrecursor) = sp.charge
+getIsotope(sp::SimplePrecursor) = sp.isotope
+getPepID(sp::SimplePrecursor) = sp.pep_id
 """
     PeptideGroup
 
@@ -189,6 +194,7 @@ getIDToPepGroup(p::PrecursorTable) = p.id_to_pepGroup
 getPepGroupToID(p::PrecursorTable) = p.pepGroup_to_id
 getIDToPep(p::PrecursorTable) = p.id_to_pep
 getPrecursors(p::PrecursorTable) = p.precursors
+getSimplePrecursors(p::PrecursorTable) = p.simple_precursors
 
 export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getPrecursors
 
@@ -496,7 +502,7 @@ function addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes
     for (pep_id, peptide) in pairs(ptable.id_to_pep)
         for charge in charges, isotope in isotopes
             push!(ptable.precursors, Precursor(peptide.sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict))
-            insert!(ptable.simple_precursors, prec_id, SimplePrecursor(charge, isotope, pep_id));
+            insert!(ptable.simple_precursors, prec_id, SimplePrecursor(getMZ(ptable.precursors[end]), charge, isotope, pep_id));
             prec_id+= UInt32(1)
         end
     end
