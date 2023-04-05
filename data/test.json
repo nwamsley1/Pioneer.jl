@@ -1,0 +1,40 @@
+{
+    "right_precursor_tolerance": 0.001,
+    "left_precursor_tolerance": 0.001,
+    "precursor_rt_tolerance": 0.3,
+    "b_ladder_start": 3,
+    "y_ladder_start": 3,
+    "precursor_charges": [2, 3, 4],
+    "precursor_isotopes": [0],
+    "transition_charges": [1, 2],
+    "fragment_match_ppm": 40,
+    "minimum_fragment_count": 5,
+    "precursor_rt_window": 0.3,
+    "max_variable_mods": 2,
+    "fixed_mods":[
+                     ["C","C[Carb]"],
+                     ["K$","K[Hlys]"],
+                     ["R$","R[Harg]"]
+    ],
+    "modification_masses":
+        {
+        "C[Carb]":57.021464,
+        "Harg":10.008269,
+        "Hlys":8.014199
+        }
+    
+}
+
+scored, matches =  SearchRAW(
+    NRF2_Survey, 
+    getPrecursors(testPtable), 
+    selectTransitionsPRM, 
+    Float32(0.001),
+    Float32(0.001),
+    UInt32[1, 2],
+    UInt32[0],
+    UInt8(3),
+    UInt8(3),
+    Float32(2),
+    UInt32(1)
+    )

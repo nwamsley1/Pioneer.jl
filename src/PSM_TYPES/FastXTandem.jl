@@ -8,9 +8,10 @@ mutable struct FastXTandem <: PSM
     y_ions::Set{UInt8}
     error::Float64
     precursor_idx::UInt32
+    ms_file_idx::UInt32
 end
 
-FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), UInt32(0))
+FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), UInt32(0), UInt32(0))
 results = UnorderedDictionary{UInt32, FastXTandem}()
 #Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 
@@ -21,6 +22,7 @@ function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem}
     for match in matches
         if !isassigned(results, getPrecID(match.transition))
             insert!(results, getPrecID(match.transition), FastXTandem())
+            results[getPrecID(match.transition)].ms_file_idx = getMSFileID(match)
         end
         ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.match_mz, match.intensity)
     end
@@ -52,7 +54,8 @@ function makePSMsDict(::FastXTandem)
         :y_ladder => Int8[],
         :scan_idx => Int64[],
         :precursor_idx => UInt32[],
-        :total_ions => UInt32[]
+        :total_ions => UInt32[],
+        :ms_file_idx => UInt32[]
     )
 end
 
@@ -110,5 +113,6 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, Fast
         append!(PSMs_dict[:scan_idx], scan_idx)
         append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)
         append!(PSMs_dict[:total_ions], unscored_PSMs[key].y_count + unscored_PSMs[key].b_count)
+        append!(PSMs_dict[:ms_file_idx], unscored_PSMs[key].ms_file_idx)
     end
 end
