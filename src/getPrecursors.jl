@@ -1,3 +1,4 @@
+module getPrecursors
 include("./precursor.jl");
 using Combinatorics, Dictionaries
 
@@ -570,6 +571,7 @@ function buildPrecursorTable!(ptable::PrecursorTable,
         end
         println("Time to build precursor table ", timetaken);
     end
+end
 end
 
 
