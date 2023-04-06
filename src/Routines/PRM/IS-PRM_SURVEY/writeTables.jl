@@ -4,9 +4,9 @@ function writeTransitionList(best_psms::DataFrame, f_out::String)
         for row in eachrow(best_psms)
 
             #data = join(append!([row[:proteinNames]*","*row[:sequence]], row[:names]),",")
-            data = append!([row[:proteinNames], 
+            data = append!([row[:condition],row[:proteinNames], 
                             row[:sequence]], #replace(row[:sequence], r"\[(.*?)\]" => "")
-                            row[:names])
+                            row[:transition_names])
             write(io, join(data,",")*"\n")
         end
     end
@@ -15,11 +15,11 @@ end
 function writeIAPIMethod(best_psms::DataFrame, f_out::String)
     open(f_out, "w") do io
         # loop over data and write each line
-        write(io, join(["protein_name","sequence","precursor_mz","precursor_intensity","transition_mz"],",")*"\n")
+        write(io, join(["protein_name","sequence","precursor_mz","precursor_intensity","condition","transition_mz"],",")*"\n")
         for row in eachrow(best_psms)
 
             #data = join(append!([row[:proteinNames]*","*row[:sequence]], row[:names]),",")
-            data = append!([row[:proteinNames], row[:sequence], row[:precursor_mz], row[:MS1_PEAK_HEIGHT]], row[:transition_mzs])
+            data = append!([row[:proteinNames], row[:sequence], row[:precursor_mz], row[:ms1_peak_height], row[:condition]], row[:transition_mzs])
             write(io, join(data,",")*"\n")
         end
     end

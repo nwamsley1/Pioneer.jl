@@ -44,15 +44,16 @@ function getPrecursors(window_center::Float32, precursorList::Vector{Precursor},
     return @view(precursorList[start:stop])
 end
 
-
+#=
 #searchsortedlast(bestPSMs[!,:retentionTime],  x, lt=(t, x)->t<x)
 searchsortedfirst(bestPSMs[!,:retentionTime], 50 ,lt=(t,x)->t<x)
 searchsortedlast(bestPSMs[!,:retentionTime], 50 ,lt=(x, t)->t>x)
 searchsortedfirst(bestPSMs[!,:retentionTime],  x, ltx->50>x)
 
 bestPSMs[170:180,:]
+=#
 
-
+#=
 function getMS1PeakHeights(retentionTimes::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, 
                             masses::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                             intensities::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
@@ -102,3 +103,4 @@ function getMS1PeakHeights(retentionTimes::Arrow.Primitive{Union{Missing, Float3
     end
     #println("i ", i)
 end
+=#

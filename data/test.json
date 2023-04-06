@@ -7,8 +7,10 @@
     "precursor_charges": [2, 3, 4],
     "precursor_isotopes": [0],
     "transition_charges": [1, 2],
+    "transition_isotopes": [0],
     "fragment_match_ppm": 40,
     "minimum_fragment_count": 5,
+    "fragments_to_select": 5,
     "precursor_rt_window": 0.3,
     "max_variable_mods": 2,
     "fixed_mods":[
@@ -16,25 +18,18 @@
                      ["K$","K[Hlys]"],
                      ["R$","R[Harg]"]
     ],
+    "variable_mods":
+    [],
     "modification_masses":
         {
-        "C[Carb]":57.021464,
+        "Carb":57.021464,
         "Harg":10.008269,
         "Hlys":8.014199
+        },
+    "ms_file_conditions":
+        {
+            "_35NCE_":"35NCE",
+            "_40NCE_":"40NCE",
+            "GAPDH":"GAPDH"
         }
-    
 }
-
-scored, matches =  SearchRAW(
-    NRF2_Survey, 
-    getPrecursors(testPtable), 
-    selectTransitionsPRM, 
-    Float32(0.001),
-    Float32(0.001),
-    UInt32[1, 2],
-    UInt32[0],
-    UInt8(3),
-    UInt8(3),
-    Float32(2),
-    UInt32(1)
-    )

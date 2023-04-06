@@ -1,12 +1,12 @@
 #Need a method that gets the appropriate precursors/transitions for each
 #Scan. That might be unique to each method/pipeline. 
-using Arrow, DataFrames, Tables
-using Plots
-include("src/precursor.jl")
-include("src/matchpeaks.jl")
-include("src/getPrecursors.jl")
-include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/FastXTandem.jl")
+#using Arrow, DataFrames, Tables
+#using Plots
+#include("src/precursor.jl")
+#include("src/matchpeaks.jl")
+#include("src/getPrecursors.jl")
+#include("src/PSM_TYPES/PSM.jl")
+#include("src/PSM_TYPES/FastXTandem.jl")
 #function CheckRawData(RAW::Arrow.Table)#
 #
 # In precursorTable need something that maps prec_id's
@@ -165,6 +165,7 @@ function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, Stri
     return ptable
 end
 
+#=
 testPtable = PrecursorTable()
 fixed_mods = [(p=r"C", r="C[Carb]"),
 (p=r"K$", r="K[Hlys]"),
@@ -180,7 +181,7 @@ Dict{String, Float32}(
 )
 using Tables
 using DataFrames
-
+=##
 """
 getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABLE::Arrow.Table, min_fragment_count::UInt8)
 
@@ -214,12 +215,12 @@ retains only the row for each precursor with the highest XTandem hyperscore afte
 ### Examples 
 
 """
-function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABLE::Arrow.Table, min_fragment_count::UInt8)
+function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABLE::Dict{UInt32, Arrow.Table}, min_fragment_count::UInt8)
     PSMs = DataFrame(PSMs)
     filter!(row -> row.total_ions >= min_fragment_count, PSMs);
     transform!(PSMs, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)
-    PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, :pep_idx))
-    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :retentionTime)
+    PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:ms_file_idx, :pep_idx])) #combine on file and pep_idx, retain only the row with the highest hyperscore in each group
+    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLES[psm[:ms_file_idx]][:retentionTime][psm[:scan_idx]]) => :retentionTime)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(ptable.id_to_pep[psm[:pep_idx]])) => :sequence)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getMZ(getSimplePrecursors(ptable)[psm[:precursor_idx]])) => :precursor_mz)
     transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort(collect(getProtNamesFromPepSeq(ptable, psm[:sequence]))), "|")) => :proteinNames)
@@ -304,9 +305,12 @@ Initializes a dictionary container of `PrecursorChromatogram` from a DataFrame o
     2 │       3  0.0412292      47.5865            760     52286          13         7        59.7062  ALNVLVPIFYR[Harg]               ABCB6
     3 │       4  0.0218811      42.695             436      7588          10         6        23.4598  YVSLPNQNK[Hlys]                 ABHD4
 """
-function initPrecursorChromatograms(bestPSMs::DataFrame)
+function initPrecursorChromatograms(bestPSMs::DataFrame, ms_file_idx::UInt32)
     precursor_chromatograms = UnorderedDictionary{UInt32, PrecursorChromatogram}()
     for pep in eachrow(bestPSMs)
+        if pep[:ms_file_idx] != ms_file_idx
+            continue
+        end
         insert!(precursor_chromatograms, 
                 pep[:precursor_idx],
                 PrecursorChromatogram(Float32[],
@@ -317,7 +321,7 @@ function initPrecursorChromatograms(bestPSMs::DataFrame)
     end
     precursor_chromatograms
 end
-
+#=
 NRF2_Survey = Arrow.Table("./data/parquet/Nrf2_SQ_052122_survey.arrow")
 
 testPtable = PrecursorTable()
@@ -335,13 +339,13 @@ scored, matches =  SearchRAW(
     NRF2_Survey, 
     getPrecursors(testPtable), 
     selectTransitionsPRM, 
-    Float32(0.001),
-    Float32(0.001),
+    Float32(0.002),
+    Float32(0.002),
     UInt8[1, 2],
     UInt8[0],
     Int64(3),
     Int64(3),
-    Float32(2),
+    Float32(40),
     UInt32(1)
     )
 ##########
@@ -352,7 +356,7 @@ fillPrecursorChromatograms!(precursor_chromatograms , matches, NRF2_Survey, 0.15
 testPtable = PrecursorTable()
 buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "./data/NRF2_SIL.txt")
 addPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
-
+=#
 function ScoreSurveyRun(ptable::PrecursorTable, peptides_path::String, raw_paths::Vector{String}, ms_file_idx::Int, params)
     MS_TABLE = Arrow.Table(raw_paths[ms_file_idx])
 
@@ -388,7 +392,7 @@ function ScoreSurveyRun(ptable::PrecursorTable, peptides_path::String, raw_paths
     return precursor_chromatograms
 end
 
-MS1_MAX_HEIGHTS = UnorderedDictionary{UInt32, Float32}()
+#MS1_MAX_HEIGHTS = UnorderedDictionary{UInt32, Float32}()
 
 function getPrecursorsInRTWindow(retentionTimes::Vector{Float32}, l_bnd::Float32, u_bnd::Float32)
     #print("l_bnd ", l_bnd)
@@ -401,7 +405,7 @@ function getPrecursorsInRTWindow(retentionTimes::Vector{Float32}, l_bnd::Float32
     return start, stop
 end
 function getBestTransitions(best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}},
-                            maximum_fragment_count::Int)
+                            maximum_fragment_count::UInt8)
     #Restrictions 
     #Can't choose two charge states for the same transition 
     sorted_by_name = sortperm(best_psm[:name])
@@ -427,9 +431,10 @@ function getBestTransitions(best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :i
     return best_sorted[1:min(maximum_fragment_count, end)]
 end
 
-searchsortedfirst(bestPSMs[!,:retentionTime], 50 ,lt=(t,x)->t<x)
-searchsortedlast(bestPSMs[!,:retentionTime], 50 ,lt=(x, t)->t>x)
+#searchsortedfirst(bestPSMs[!,:retentionTime], 50 ,lt=(t,x)->t<x)
+#searchsortedlast(bestPSMs[!,:retentionTime], 50 ,lt=(x, t)->t>x)
 MS1_MAX_HEIGHTS = UnorderedDictionary{UInt32, Float32}()
+
 function getMS1Peaks!(MS1::Vector{Union{Missing, Float32}}, INTENSITIES::Vector{Union{Missing, Float32}}, MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, Float32}, precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32}, precursors::UnorderedDictionary{UInt32, SimplePrecursor}, rt::Float32, rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
@@ -498,7 +503,7 @@ function getMS1PeakHeights!(retentionTimes::Arrow.Primitive{Union{Missing, Float
 end
 
 #need to get RT estimate for each peptide. 
-function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table, rt_tol::Float64)
+function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, fragment_matches::Vector{FragmentMatch}, MS_TABLE::Arrow.Table, rt_tol::Float64, ms_file_idx::UInt32)
 
     """
         getTransitionName(transition::UnorderedDictionary{String, Vector{Float32}}) 
@@ -520,7 +525,7 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
             assignPrecursor!(precursor_chromatograms[prec_id], fragment_name);
 
             if match.scan_idx == precursor_chromatograms[prec_id].best_psm[:scan_idx]
-                if match.ms_file_idx == precursor_chromatograms[prec_id].best_psm[:ms_file_idx]
+                if match.ms_file_idx == ms_file_idx
                     push!(precursor_chromatograms[prec_id].best_psm[:mz], match.match_mz)
                     push!(precursor_chromatograms[prec_id].best_psm[:intensity], match.intensity)
                     push!(precursor_chromatograms[prec_id].best_psm[:name], fragment_name)
@@ -570,12 +575,12 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
     end
 
     getBestPSMs!(precursor_chromatograms, fragment_matches)
-    addTransitionIntensities!(precursor_chromatograms, fragment_matches, MS_TABLES, rt_tol)
+    addTransitionIntensities!(precursor_chromatograms, fragment_matches, MS_TABLE, rt_tol)
     return precursor_chromatograms 
 
 end
 
-getMatchedPrecursors(matched_precursors, matches, NRF2_Survey, 0.15)
+#getMatchedPrecursors(matched_precursors, matches, NRF2_Survey, 0.15)
 
 
 
@@ -621,7 +626,7 @@ function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, Prec
 
 end
 
-plotAllBestSpectra(matched_precursors, testPtable, NRF2_Survey, "./data/figures/spectra/", "MERGED_NRF2_SURVEY_SPECTRA.pdf")
+#plotAllBestSpectra(matched_precursors, testPtable, NRF2_Survey, "./data/figures/spectra/", "MERGED_NRF2_SURVEY_SPECTRA.pdf")
 
 function plotFragmentIonChromatogram(transitions::UnorderedDictionary{String, Vector{Float32}}, rts::Vector{Float32}, title::String, out_path::String)
     p = plot(title = title, fontfamily="helvetica")
@@ -647,8 +652,9 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
     files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 end
-plotAllFragmentIonChromatograms(matched_precursors, testPtable, "./data/figures/", "MERGED_NRF2_SURVEY_CHROMATOGRAMS.pdf")
+#plotAllFragmentIonChromatograms(matched_precursors, testPtable, "./data/figures/", "MERGED_NRF2_SURVEY_CHROMATOGRAMS.pdf")
 
+#=
 using Glob
 getPepIDFromPrecIDlegend = false
 using Glob, Regex
@@ -662,3 +668,4 @@ files = filter(x -> isfile(joinpath(dir_path, x)) && match(pattern, x) != nothin
 @time merge_pdfs(map(file -> joinpath(dir_path,file), files), cleanup=true)
 # Print the list of matching files
 println(files)
+=#
