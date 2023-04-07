@@ -1,0 +1,35 @@
+{
+    "right_precursor_tolerance": 0.001,
+    "left_precursor_tolerance": 0.001,
+    "precursor_rt_tolerance": 0.3,
+    "b_ladder_start": 3,
+    "y_ladder_start": 3,
+    "precursor_charges": [2, 3, 4],
+    "precursor_isotopes": [0],
+    "transition_charges": [1, 2],
+    "transition_isotopes": [0],
+    "fragment_match_ppm": 40,
+    "minimum_fragment_count": 5,
+    "fragments_to_select": 5,
+    "precursor_rt_window": 0.3,
+    "max_variable_mods": 2,
+    "fixed_mods":[
+                     ["C","C[Carb]"],
+                     ["K$","K[Hlys]"],
+                     ["R$","R[Harg]"]
+    ],
+    "variable_mods":
+    [],
+    "modification_masses":
+        {
+        "Carb":57.021464,
+        "Harg":10.008269,
+        "Hlys":8.014199
+        },
+    "ms_file_conditions":
+        {
+            "_35NCE_":"35NCE",
+            "_40NCE_":"40NCE",
+            "GAPDH":"GAPDH"
+        }
+}
