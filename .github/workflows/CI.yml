@@ -59,3 +59,4 @@ jobs:
             using Titus
             DocMeta.setdocmeta!(Titus, :DocTestSetup, :(using Titus); recursive=true)
             doctest(Titus)'
+      - run: julia --project=docs docs/make.jl
