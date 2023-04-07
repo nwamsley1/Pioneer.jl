@@ -105,14 +105,14 @@ end
     @test Tol(test_fragment_match.intensity, 0)
     @test Tol(test_fragment_match.peak_ind, 0)
 
-    setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2)
+    setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2, UInt32(0), UInt32(0))
     @test Tol(test_fragment_match.count, 1)
     @test Tol(test_fragment_match.match_mz, test_masses[2])
     @test Tol(test_fragment_match.count, 1)
     @test Tol(test_fragment_match.peak_ind, 2)
 
     for i in 1:10
-        setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2)
+        setFragmentMatch!([test_fragment_match], 1, test_t, test_masses[2], Float32(1), 2, UInt32(0), UInt32(0))
     end
 
     @test Tol(test_fragment_match.count, 11)
@@ -134,12 +134,12 @@ end
     #Multiple transitions can map to the same peak but multiple peaks cannot map to the same transition
     #Transitions 1 and 2 should match to peak 2, and transition 4 should map to peak 10. Transition 3 should not map to any peak. 
     test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0)
+    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0, UInt32(0), UInt32(0))
     @test map(x->getPeakInd(x), test_matches) == [2, 2, 10]
 
     #Try again but make sure we can match to the first and last peak in the spectrum. 
     test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses[2:10], test_intensities, 0.0)
+    matchPeaks!(test_matches, test_t, test_masses[2:10], test_intensities, 0.0, UInt32(0), UInt32(0))
     @test map(x->getPeakInd(x), test_matches) == [1, 1, length(test_masses[2:10])]
 
     ##########

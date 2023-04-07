@@ -1,5 +1,6 @@
 using JSON
 using PrettyPrinting
+using PDFmerger
 ##########
 #Parse arguments
 ##########
@@ -19,7 +20,7 @@ function parse_commandline()
         "precursor_list"
             help = "Path to a tab delimited table of precursors"
             required = true
-        "--make_plot", "-p"
+        "--make_plots", "-p"
             help = "Whether to make plots. Defaults to `true`"
             default = true
         "--print_params", "-s"
@@ -246,3 +247,21 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_CONDITION[psm[:ms
     println(" Scored "*string(size(best_psms)[1])*" precursors")
 end
 
+##########
+#Make Plots
+##########
+
+if ARGS["make_plots"]
+    for (ms_file_idx, MS_TABLE) in MS_TABLES
+        sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
+        plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
+                            ptable, 
+                            MS_TABLE,
+                            joinpath("./figures/best_spectra/", sample_name),
+                            join(sample_name*"_best_spectra"*".pdf"))
+        plotAllFragmentIonChromatograms(precursor_chromatograms[ms_file_idx], 
+                                        ptable,
+                                        joinpath("./figures/precursor_chromatograms/", sample_name),
+                                        join(sample_name*"_precursor_chromatograms"*".pdf"))
+    end
+end

@@ -1,4 +1,4 @@
-function plotBestSpectra(matched_ions::NamedTuple{(:scan_idx, :name, :mz, :intensity), Tuple{Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}, RAW::Arrow.Table, title::String, out_path::String)
+function plotBestSpectra(matched_ions::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}, RAW::Arrow.Table, title::String, out_path::String)
 
     function plotSpectra!(p::Plots.Plot{Plots.GRBackend}, masses, intensities)
         for (peak_idx, mass) in enumerate(masses)
@@ -8,7 +8,7 @@ function plotBestSpectra(matched_ions::NamedTuple{(:scan_idx, :name, :mz, :inten
     #p = plot()
     #plotSpectra(p, NRF2_Survey.masses[2703], NRF2_Survey.intensities[2703])
     #display(p)
-    function addFragmentIons!(p::Plots.Plot{Plots.GRBackend}, matched_ions::NamedTuple{(:scan_idx, :name, :mz, :intensity), Tuple{Int64, Vector{String}, Vector{Float32}, Vector{Float32}}})
+    function addFragmentIons!(p::Plots.Plot{Plots.GRBackend}, matched_ions::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}})
         i = 1
         for (mz, intensity) in zip(matched_ions[:mz], matched_ions[:intensity])
             plot!(p, [mz, mz], [0, -1*intensity], legend = false, color = "red")

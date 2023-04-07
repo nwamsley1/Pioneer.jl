@@ -1,6 +1,9 @@
 #using Titus
 using Test
-
+const default_mods::Dict{String, Float32} = 
+Dict{String, Float32}(
+    "Carb" => Float32(57.021464)
+)
 function Tol(a, b, ppm = 2)
     abs(a-b)<=(ppm*minimum((a, b))/1000000)
 end

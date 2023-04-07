@@ -196,7 +196,7 @@ end
 
     testPtable = PrecursorTable()
     buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/peptide_lists/PROT_PEPTIDE_TEST1.txt")
-    getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
+    addPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
 
     #Test sizes
     @test length(getIDToProt(testPtable)) == 3
@@ -241,7 +241,7 @@ end
     fixed_mods = [(p=r"C", r="C[Carb]")]
     var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
     buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/NRF2_SIL.txt")
-    getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
+    addPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
     @test length(getIDToPepGroup(testPtable)) == 260
     @test length(getPrecursors(testPtable)) == 260*2*3 #2 because each protein ends in a variably modifiable K or R. 3 because 3 charge states. 
 

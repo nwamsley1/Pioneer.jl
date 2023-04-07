@@ -42,7 +42,7 @@ mutable struct FragmentMatch
     ms_file_idx::UInt32
 end
 
-FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0)
+FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0, UInt8(0), UInt8(0))
 getMZ(f::FragmentMatch) = getMZ(f.transition)
 getLow(f::FragmentMatch) = getLow(f.transition)
 getHigh(f::FragmentMatch) = getHigh(f.transition)
