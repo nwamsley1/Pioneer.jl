@@ -1,53 +1,89 @@
 using JSON
-
+using PrettyPrinting
 ##########
 #Parse arguments
 ##########
-    # Parse the first argument as an integer
-    params = JSON.parse(read(ARGS[1], String))
-    MS_DATA_DIR = ARGS[2]
-    PRECURSOR_LIST_PATH = ARGS[3]
 
-    MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
+using ArgParse
 
+function parse_commandline()
+    s = ArgParseSettings()
 
-    # Print the argument
-    println("Parameters: $params")
-    println("MS_DATA_DIR: $MS_DATA_DIR")
-    println("MS_TABLE_PATHS: $MS_TABLE_PATHS")
-    println("PRECURSOR_LIST_PATH: $PRECURSOR_LIST_PATH")
-
-    function parse_mods(fixed_mods)
-    fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
-    for mod in fixed_mods
-        push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
+    @add_arg_table! s begin
+        "params_json"
+            help = "Path to a .json file with the parameters"
+            required = true
+        "data_dir"
+            help = "Path to a folder with .arrow MS data tables"
+            required = true
+        "precursor_list"
+            help = "Path to a tab delimited table of precursors"
+            required = true
+        "--make_plot", "-p"
+            help = "Whether to make plots. Defaults to `true`"
+            default = true
+        "--print_params", "-s"
+            help = "Whether to print the parameters from the json. Defaults to `false`"
+            default = false 
     end
-    return fixed_mods_parsed
-    end
-    #Parse argments
-    params = (
-    right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
-    left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
-    precursor_rt_tolerance = Float64(params["precursor_rt_tolerance"]),
-    b_ladder_start = Int64(params["b_ladder_start"]),
-    y_ladder_start = Int64(params["y_ladder_start"]),
-    precursor_charges = [UInt8(charge) for charge in params["precursor_charges"]],
-    precursor_isotopes = [UInt8(isotope) for isotope in params["precursor_isotopes"]],
-    transition_charges = [UInt8(charge) for charge in params["transition_charges"]],
-    transition_isotopes = [UInt8(isotope) for isotope in params["transition_isotopes"]],
-    fragment_match_ppm = Float32(params["fragment_match_ppm"]),
-    minimum_fragment_count = UInt8(params["minimum_fragment_count"]),
-    fragments_to_select = UInt8(params["fragments_to_select"]),
-    precursort_rt_window = Float32(params["precursor_rt_window"]),
-    max_variable_mods = Int(params["max_variable_mods"]),
-    fixed_mods = parse_mods(params["fixed_mods"]),
-    variable_mods = parse_mods(params["variable_mods"]),
-    modification_masses = Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"]),
-    ms_file_conditions = params["ms_file_conditions"]
-    )
 
-    #Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"])
-    println("params again $params")
+    return parse_args(s)
+end
+
+ARGS = parse_commandline()
+
+
+params = JSON.parse(read(ARGS["params_json"], String))
+MS_DATA_DIR = ARGS["data_dir"]
+PRECURSOR_LIST_PATH = ARGS["precursor_list"]
+
+#Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
+MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
+
+
+# Print the argument
+#println("Parameters: $params")
+#println("MS_DATA_DIR: $MS_DATA_DIR")
+println("Processing: "*string(length(MS_TABLE_PATHS))*" files")
+#println("PRECURSOR_LIST_PATH: $PRECURSOR_LIST_PATH")
+
+function parse_mods(fixed_mods)
+fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
+for mod in fixed_mods
+    push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
+end
+return fixed_mods_parsed
+end
+#Parse argments
+params = (
+right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
+left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
+precursor_rt_tolerance = Float64(params["precursor_rt_tolerance"]),
+b_ladder_start = Int64(params["b_ladder_start"]),
+y_ladder_start = Int64(params["y_ladder_start"]),
+precursor_charges = [UInt8(charge) for charge in params["precursor_charges"]],
+precursor_isotopes = [UInt8(isotope) for isotope in params["precursor_isotopes"]],
+transition_charges = [UInt8(charge) for charge in params["transition_charges"]],
+transition_isotopes = [UInt8(isotope) for isotope in params["transition_isotopes"]],
+fragment_match_ppm = Float32(params["fragment_match_ppm"]),
+minimum_fragment_count = UInt8(params["minimum_fragment_count"]),
+fragments_to_select = UInt8(params["fragments_to_select"]),
+precursort_rt_window = Float32(params["precursor_rt_window"]),
+max_variable_mods = Int(params["max_variable_mods"]),
+fixed_mods = parse_mods(params["fixed_mods"]),
+variable_mods = parse_mods(params["variable_mods"]),
+modification_masses = Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"]),
+ms_file_conditions = params["ms_file_conditions"]
+)
+
+#Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"])
+if ARGS["print_params"]
+    for (k,v) in zip(keys(params), params)
+        pprint(k)
+        print(" => ")
+        pprintln(v)
+    end
+end
 ##########
 #Load Dependencies 
 ##########
@@ -59,9 +95,16 @@ include("../../../matchpeaks.jl")
 include("../../../getPrecursors.jl")
 include("../../../PSM_TYPES/PSM.jl")
 include("../../../PSM_TYPES/FastXTandem.jl")
-include("../../../searchSpectra.jl")
+#include("../../../searchSpectra.jl")
+include("../../../Routines/PRM/getBestPSMs.jl")
+include("../../../Routines/PRM/precursorChromatogram.jl")
+include("../../../Routines/PRM/plotPRM.jl")
+include("../../../Routines/PRM/getMS1PeakHeights.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("../../../SearchRAW.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
-println("LOADED")
+
 ##########
 #Read Precursor Table
 ##########

@@ -4,12 +4,11 @@
 const H2O::Float32 = Float32(18.010565)
 const PROTON::Float32 = Float32(1.0072764)
 const NEUTRON::Float32 = Float32(1.00335)
-const default_mods::Dict{String, Float32} = 
+#=const default_mods::Dict{String, Float32} = 
 Dict{String, Float32}(
     "Carb" => Float32(57.021464)
-)
-export PROTON, H2O, NEUTRON, default_mods
-##########
+)=#
+export PROTON, H2O, NEUTRON
 #Representation of Amino Acid
 ##########
 """
@@ -214,7 +213,6 @@ export Residue
 export getMass
 export getMod
 export getAA
-export default_mods
 
 ##########
 #Ion, Transition, Precursor

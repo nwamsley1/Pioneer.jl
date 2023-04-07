@@ -573,5 +573,41 @@ function buildPrecursorTable!(ptable::PrecursorTable,
     end
 end
 
+"""
+    getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, n::Int, f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},mass_mods::Dict{String, Float32})
+
+Build a `PrecursorTable` given a file_path to a tab delimited table of protein_name peptide_sequence pairs. Applies fixed and variable modifications. Gets precursors
+for each combination of `charges` and `isotopes` supplied. 
+
+### Input
+
+- `fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}` -- Specification of fixed modifications to apply
+- `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}` -- Specification of variable modifications to apply
+- `n::Int` -- Will apply all combinations of `n` or fewer variable modifications to each sequence
+- `f_path::String` -- File path fo the protein-peptide list. 
+- `charges::Vector{UInt8}` -- For each peptide, gets precursors with these charge states 
+- `isotopes::Vector{UInt8}` -- For each peptide, gets precursors with these isotopic states
+- ` mass_mods::Dict{String, Float32}` -- Specifies mass for each modification in `fixed_mods` and `var_mods` 
+
+### Output
+- Returns a `PrecursorTable` struct. See documentation for `PrecursorTable`. Mapps identifiers between precursors,
+pepties, peptide groups, and proteins. 
+
+### Notes
+
+### Examples 
+
+"""
+function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+        var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+        n::Int, 
+        f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},
+        mass_mods::Dict{String, Float32})
+    ptable = PrecursorTable()
+    buildPrecursorTable!(ptable, fixed_mods, var_mods, n, f_path)
+    addPrecursors!(ptable, charges, isotopes, mass_mods)
+    return ptable
+end
+
 
 
