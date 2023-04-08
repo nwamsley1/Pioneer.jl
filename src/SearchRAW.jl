@@ -1,5 +1,8 @@
 function SearchRAW(
-                   spectra::Arrow.Table, precursorList::Vector{Precursor}, selectTransitions, 
+                   spectra::Arrow.Table, 
+                   ptable::PrecursorTable,
+                   initTransitions, 
+                   selectTransitions, 
                    right_precursor_tolerance::Float32,
                    left_precursor_tolerance::Float32,
                    transition_charges::Vector{UInt8},
@@ -14,6 +17,7 @@ function SearchRAW(
     #not goinig to want this for all methods
     allFragmentMatches = Vector{FragmentMatch}()
 
+    prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}} = initTransitions()
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
@@ -27,7 +31,9 @@ function SearchRAW(
         #
         #params = getSpectrumSpecificParams(spectrum, selectParams)
 
-        transitions = selectTransitions(spectrum[:precursorMZ], precursorList, 
+        transitions = selectTransitions(spectrum[:precursorMZ], 
+                                        getPrecursors(ptable), 
+                                        prec_id_to_transitions,
                                         right_precursor_tolerance,
                                         left_precursor_tolerance,
                                         transition_charges,
@@ -37,10 +43,9 @@ function SearchRAW(
                                         fragment_match_ppm
                                         )
         #Named tuple for scan 
-
         fragmentMatches = matchPeaks(transitions, spectrum[:masses], spectrum[:intensities], 
                                     #δs = params[:δs],
-                                    δs = [Float64(0)],
+                                    δs = Float64[0.0],#[Float64(0)],
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx)
         #sort(getTransitions(selectPrecursors(spectrum)),  
@@ -54,5 +59,6 @@ function SearchRAW(
 
         append!(allFragmentMatches, fragmentMatches)
     end
+    #println(prec_id_to_transitions)
     (scored_PSMs, allFragmentMatches)
 end

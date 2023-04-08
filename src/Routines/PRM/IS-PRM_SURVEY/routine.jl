@@ -1,3 +1,4 @@
+#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -37,7 +38,8 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 PRECURSOR_LIST_PATH = ARGS["precursor_list"]
-
+#MS_DATA_DIR = "./data/parquet/
+#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
 
@@ -55,7 +57,9 @@ for mod in fixed_mods
 end
 return fixed_mods_parsed
 end
+
 #Parse argments
+#params = JSON.parse(read("./data/test.json", String))
 params = (
 right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
 left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
@@ -101,10 +105,32 @@ include("../../../Routines/PRM/getBestPSMs.jl")
 include("../../../Routines/PRM/precursorChromatogram.jl")
 include("../../../Routines/PRM/plotPRM.jl")
 include("../../../Routines/PRM/getMS1PeakHeights.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
 include("../../../SearchRAW.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
+
+#=
+include("src/precursor.jl")
+include("src/binaryRangeQuery.jl")
+include("src/matchpeaks.jl")
+include("src/getPrecursors.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
+#include("../../../searchSpectra.jl")
+include("src/Routines/PRM/getBestPSMs.jl")
+include("src/Routines/PRM/precursorChromatogram.jl")
+include("src/Routines/PRM/plotPRM.jl")
+include("src/Routines/PRM/getMS1PeakHeights.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("src/earchRAW.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
+=#
+
 
 ##########
 #Read Precursor Table
@@ -128,13 +154,15 @@ include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
+test = Dictionary{UInt32, Vector{Transition}}()
     for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
 
         MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
 
         scored_psms, fragment_matches = SearchRAW(
                                                 MS_TABLES[UInt32(ms_file_idx)], 
-                                                getPrecursors(ptable), 
+                                                ptable, 
+                                                initTransitions,
                                                 selectTransitionsPRM, 
                                                 params[:right_precursor_tolerance],
                                                 params[:left_precursor_tolerance],
@@ -155,7 +183,6 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 #Get Best PSMs for Each Peptide
 ##########
     best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, params[:minimum_fragment_count])
- 
 ##########
 #Get MS1 Peak Heights
 ##########
@@ -175,7 +202,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                             MS_TABLE[:intensities], 
                             MS_TABLE[:msOrder], 
                             ms1_peak_heights[ms_file_idx], 
-                            best_psms[!,:retentionTime], 
+                            best_psms[!,:retention_time], 
                             best_psms[!,:precursor_idx], 
                             best_psms[!,:ms_file_idx],
                             getSimplePrecursors(ptable), 
@@ -187,7 +214,6 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 
     #Add MS1 Heights to the best_psms DataFrame 
     transform!(best_psms, AsTable(:) => ByRow(psm -> ms1_peak_heights[psm[:ms_file_idx]][psm[:precursor_idx]]) => :ms1_peak_height)
-    
 ##########
 #Get Chromatograms for the best precursors in each file. 
 ##########

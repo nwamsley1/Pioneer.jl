@@ -75,9 +75,9 @@ Initializes a dictionary container of `PrecursorChromatogram` from a DataFrame o
     2 │       3  0.0412292      47.5865            760     52286          13         7        59.7062  ALNVLVPIFYR[Harg]               ABCB6
     3 │       4  0.0218811      42.695             436      7588          10         6        23.4598  YVSLPNQNK[Hlys]                 ABHD4
 """
-function initPrecursorChromatograms(bestPSMs::DataFrame, ms_file_idx::UInt32)
+function initPrecursorChromatograms(best_psms::DataFrame, ms_file_idx::UInt32)
     precursor_chromatograms = UnorderedDictionary{UInt32, PrecursorChromatogram}()
-    for pep in eachrow(bestPSMs)
+    for pep in eachrow(best_psms)
         if pep[:ms_file_idx] != ms_file_idx
             continue
         end
@@ -86,7 +86,7 @@ function initPrecursorChromatograms(bestPSMs::DataFrame, ms_file_idx::UInt32)
                 PrecursorChromatogram(Float32[],
                 [0],
                 UnorderedDictionary{String, Vector{Float32}}(),
-                (rt = pep[:retentionTime], scan_idx = pep[:scan_idx], name = Vector{String}(), mz = Float32[], intensity = Float32[])))
+                (rt = pep[:retention_time], scan_idx = pep[:scan_idx], name = Vector{String}(), mz = Float32[], intensity = Float32[])))
 
     end
     precursor_chromatograms
@@ -101,9 +101,9 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
         string(transition.ion_type)*string(transition.ind)*"+"*string(transition.charge)
     end
 
-    function getBestPSMs!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, fragment_matches::Vector{FragmentMatch})
+    function getBestPSMs!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, fragment_matches::Vector{FragmentMatch}, ms_file_idx::UInt32)
 
-        function addScanToPrecursor!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, match::FragmentMatch, fragment_name::String, prec_id::UInt32)
+        function addScanToPrecursor!(precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, match::FragmentMatch, fragment_name::String, prec_id::UInt32, ms_file_idx::UInt32)
             
             function assignPrecursor!(matched_precursor::PrecursorChromatogram, fragment_name::String)
                 if !isassigned(matched_precursor.transitions, fragment_name)
@@ -129,7 +129,7 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
             if !isassigned(precursor_chromatograms, prec_id) continue end
             #as in y3+2 or b6+1 (name/length/+charge)
             fragment_name = getTransitionName(match.transition)
-            addScanToPrecursor!(precursor_chromatograms, match, fragment_name, prec_id)
+            addScanToPrecursor!(precursor_chromatograms, match, fragment_name, prec_id, ms_file_idx)
         end
 
     end
@@ -163,7 +163,7 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
         end
     end
 
-    getBestPSMs!(precursor_chromatograms, fragment_matches)
+    getBestPSMs!(precursor_chromatograms, fragment_matches, ms_file_idx)
     addTransitionIntensities!(precursor_chromatograms, fragment_matches, MS_TABLE, rt_tol)
     return precursor_chromatograms 
 

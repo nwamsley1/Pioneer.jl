@@ -35,11 +35,14 @@ function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABL
     PSMs = DataFrame(PSMs)
     filter!(row -> row.total_ions >= min_fragment_count, PSMs);
     transform!(PSMs, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)
+    #Charge and isotope state of precursor
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(getSimplePrecursors(ptable)[psm[:precursor_idx]])) => :precursor_charge)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getIsotope(getSimplePrecursors(ptable)[psm[:precursor_idx]])) => :precursor_isotope)
     PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:ms_file_idx, :pep_idx])) #combine on file and pep_idx, retain only the row with the highest hyperscore in each group
-    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLES[psm[:ms_file_idx]][:retentionTime][psm[:scan_idx]]) => :retentionTime)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLES[psm[:ms_file_idx]][:retentionTime][psm[:scan_idx]]) => :retention_time)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(ptable.id_to_pep[psm[:pep_idx]])) => :sequence)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getMZ(getSimplePrecursors(ptable)[psm[:precursor_idx]])) => :precursor_mz)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort(collect(getProtNamesFromPepSeq(ptable, psm[:sequence]))), "|")) => :proteinNames)
-    sort!(PSMs, [:retentionTime])
+    transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort(collect(getProtNamesFromPepSeq(ptable, psm[:sequence]))), "|")) => :protein_name)
+    sort!(PSMs, [:retention_time])
     PSMs
 end

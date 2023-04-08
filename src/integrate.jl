@@ -1,5 +1,5 @@
-using Tables, Arrow
-include("precursor.jl")
+using Tables
+#include("precursor.jl")
 #dict = Dict("customer age" => [15, 20, 25],
 #                   "first name" => ["Rohit", "Rahul", "Akshat"])
 #DataFrame(dict)
@@ -10,7 +10,7 @@ include("precursor.jl")
 lightMZ = getMZ(Precursor(getResidues("VGVNGFGR"), UInt8(2)))
 heavyMZ = getMZ(Precursor(getResidues("VGVNGFGR[+10.008269]"), UInt8(2)))
 
-getTransitions(getMZ(Precursor("VGVNGFGR", charge = UInt8(2))))
+#getTransitions(getMZ(Precursor("VGVNGFGR", charge = UInt8(2))))
 #function getSub(mean::Float32, array::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}; ppm::Float32)
 #    findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
 #end

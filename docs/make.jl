@@ -1,7 +1,40 @@
 using Titus
 using Documenter
-
+#using DemoCards
 DocMeta.setdocmeta!(Titus, :DocTestSetup, :(using Titus); recursive=true)
+
+#op_templates, op_theme = cardtheme("grid")
+#operations, operations_cb = makedemos("operations", op_templates)
+
+About = "Introduction" => "introduction.md"
+
+GettingStarted = "gettingstarted.md"
+
+UserGuide = "User's guide" => [
+        "interface.md"
+    ]
+
+DevGuide = "Developer's guide" => [
+        "wrappers.md"
+    ]
+
+Examples = "Examples" => [
+        "examples/test.md"
+    ]
+
+Index = "Index" => "index.md"
+
+License = "License" => "license.md"
+
+PAGES = [
+    About,
+    GettingStarted,
+    UserGuide,
+    DevGuide,
+    Examples,
+    Index,
+    License
+    ]
 
 makedocs(;
     modules=[Titus],
@@ -14,9 +47,9 @@ makedocs(;
         edit_link="main",
         assets=String[],
     ),
-    pages=[
-        "Home" => "index.md",
-    ],
+    pages=
+        PAGES
+    ,
 )
 
 deploydocs(;

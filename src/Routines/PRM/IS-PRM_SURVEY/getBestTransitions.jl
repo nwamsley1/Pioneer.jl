@@ -6,7 +6,6 @@ function getBestTransitions(best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :i
     #names = best_psm[:name][sorted_by_name]
     #intensities = est_psm[:intensity][sorted_by_name]
     ion_indices = Int64[]
-
     for i in eachindex(sorted_by_name)
         if i>1
             if best_psm[:name][sorted_by_name[i]][1:2] == best_psm[:name][sorted_by_name[i - 1]][1:2]

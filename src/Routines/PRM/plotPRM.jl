@@ -30,11 +30,13 @@ function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, Prec
     end
 
     @time for key in keys(matched_precursors)
+        peptide_sequence = ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence
+        protein_name = join(getProtNamesFromPepSeq(ptable, peptide_sequence), "|")
         plotBestSpectra(matched_precursors[key].best_psm, MS_TABLE,
-                        ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence,
+                        protein_name*"-"*peptide_sequence,
                         out_path)
     end
-
+getProtNamesFromPepSeq
     files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 
@@ -59,10 +61,15 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
     end
 
     @time for key in keys(matched_precursors)
+        peptide_sequence = ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence
+        protein_name = join(getProtNamesFromPepSeq(ptable, peptide_sequence), "|")
+
         plotFragmentIonChromatogram(matched_precursors[key].transitions, matched_precursors[key].rts, 
-        ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence, out_path)
+                                    protein_name*"-"*peptide_sequence, 
+                                    out_path)
         # Get all files in the directory that match the pattern
     end
     files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 end
+
