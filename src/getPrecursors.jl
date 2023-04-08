@@ -187,7 +187,7 @@ mutable struct PrecursorTable
     id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
     simple_precursors::UnorderedDictionary{UInt32, SimplePrecursor}
     precursors::Vector{Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
-    pep_id_to_transitions::UnorderedDictionary{UInt32, Vector{String}}
+    pep_id_to_transitions::UnorderedDictionary{UInt32, Vector{Transition}}
 end
 
 getIDToProt(p::PrecursorTable) = p.id_to_prot
