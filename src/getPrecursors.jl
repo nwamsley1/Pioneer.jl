@@ -40,10 +40,11 @@ Type that represents an unmodified peptide
 """
 struct PeptideGroup
     prot_ids::Set{UInt32}
+    pep_ids::Set{UInt32}
     sequence::String
 end
 
-PeptideGroup() = PeptideGroup(Set{UInt32}(), "")
+PeptideGroup() = PeptideGroup(Set{UInt32}(), Set{UInt32}(), "")
 getSeq(p::PeptideGroup) = p.sequence
 getProtIDs(p::PeptideGroup) = p.prot_ids
 export getProtIds
@@ -74,6 +75,7 @@ Type that represents a peptide
 struct Peptide
     sequence::String
     pep_group_id::UInt32
+    prec_ids::Set{UInt32}
 end
 
 getSeq(p::Peptide) = p.sequence
@@ -187,7 +189,6 @@ mutable struct PrecursorTable
     id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
     simple_precursors::UnorderedDictionary{UInt32, SimplePrecursor}
     precursors::Vector{Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
-    pep_id_to_transitions::UnorderedDictionary{UInt32, Vector{Transition}}
 end
 
 getIDToProt(p::PrecursorTable) = p.id_to_prot
@@ -208,8 +209,7 @@ PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{String, UInt32}(),
                                     UnorderedDictionary{UInt32, Peptide}(),
                                     UnorderedDictionary{UInt32, SimplePrecursor}(),
-                                    Vector{Precursor}(),
-                                    UnorderedDictionary{UInt32, Vector{String}}())
+                                    Vector{Precursor}())
 
 containsProt(p::PrecursorTable, protein::AbstractString) = isassigned(p.prot_to_id, protein)
 containsProtID(p::PrecursorTable, prot_id::UInt32) = isassigned(p.id_to_prot, prot_id)
@@ -233,7 +233,7 @@ export getProtID, getProt, getPepGroupID, getPepGroup, getPep
 insertProtID!(p::PrecursorTable, protein::String, prot_id::UInt32) = insert!(p.prot_to_id, protein, prot_id)
 insertProt!(p::PrecursorTable, protein::String, prot_id::UInt32) = insert!(p.id_to_prot, prot_id, Protein(protein))
 insertPepGroupID!(p::PrecursorTable, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
-insertPepGroup!(p::PrecursorTable, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), peptide))
+insertPepGroup!(p::PrecursorTable, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), Set(UInt32[]), peptide))
 
 """
     addProteinToPepGroup!(p::PrecursorTable, protein::String, peptide::String)

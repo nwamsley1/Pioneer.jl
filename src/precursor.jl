@@ -396,7 +396,7 @@ struct Precursor <: Ion
     residues::Vector{Residue}
     mz::MzFeature
     charge::UInt8
-    iosotope::UInt8
+    isotope::UInt8
     pep_id::UInt32
     prec_id::UInt32
     """
@@ -452,6 +452,10 @@ Precursor() = Precursor(Vector{Residue}(), MzFeature(), UInt8(0), UInt8(0), UInt
 
 getResidues(precursor::Precursor) = precursor.residues
 addProtein(precursor::Precursor) = push!(precursor.pep_id)
+getIsotope(p::Precursor) = p.isotope
+getPepID(p::Precursor) = p.pep_id
+getPrecID(p::Precursor) = p.prec_id
+getCharge(p::Precursor) = p.charge
 
 import Base.length
 length(precursor::Precursor) = length(getResidues(precursor))
