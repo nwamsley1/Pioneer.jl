@@ -80,6 +80,7 @@ end
 
 getSeq(p::Peptide) = p.sequence
 getGroupID(p::Peptide) = p.pep_group_id
+getPrecIDs(p::Peptide) = p.prec_ids
 
 """
     Protein
@@ -199,7 +200,7 @@ getProtToID(p::PrecursorDatabase) = p.prot_to_id
 getIDToPepGroup(p::PrecursorDatabase) = p.id_to_pepGroup
 getPepGroupToID(p::PrecursorDatabase) = p.pepGroup_to_id
 getIDToPep(p::PrecursorDatabase) = p.id_to_pep
-getPrecursors(p::PrecursorDatabase) = p.precursors
+getPrecursors(p::PrecursorDatabase) = p.prec_id_to_precursor
 #getSimplePrecursors(p::PrecursorDatabase) = p.simple_precursors
 getPepIDToTransitions(p::PrecursorDatabase) = p.pep_id_to_transitions
 

@@ -111,18 +111,8 @@ include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 #Read Precursor Table
 ##########
 @time begin 
-    ptable = PrecursorTable()
-    buildPrecursorTable!(ptable, 
-                        params[:fixed_mods], 
-                        params[:variable_mods], 
-                        params[:max_variable_mods], 
-                        PRECURSOR_LIST_PATH)
-    addPrecursors!(
-                        ptable, 
-                        params[:precursor_charges], 
-                        params[:precursor_isotopes], 
-                        params[:modification_masses]
-                        )
+    test = ISPRMPrecursorTable()
+    buildPrecursorTable!(test, mods_dict, "data/parquet/transition_list.csv")
 ##########
 #Search Survey Runs
 ##########
