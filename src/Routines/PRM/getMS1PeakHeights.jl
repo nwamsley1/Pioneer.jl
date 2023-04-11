@@ -9,7 +9,14 @@ function getPrecursorsInRTWindow(retentionTimes::Vector{Float32}, l_bnd::Float32
     return start, stop
 end
 
-function getMS1Peaks!(MS1::Vector{Union{Missing, Float32}}, INTENSITIES::Vector{Union{Missing, Float32}}, MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, Float32}, precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32}, precursors::UnorderedDictionary{UInt32, SimplePrecursor}, rt::Float32, rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
+function getMS1Peaks!(precursors::Dictionary{UInt32, Precursor}, 
+                        MS1::Vector{Union{Missing, Float32}}, 
+                        INTENSITIES::Vector{Union{Missing, Float32}}, 
+                        MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, Float32}, 
+                        precursor_rts::Vector{Float32}, 
+                        precursor_idxs::Vector{UInt32}, 
+                        precursor_ms_file_idxs::Vector{UInt32}, 
+                        rt::Float32, rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
     #precursor_idxs =  @view(bestPSMs[!,:precursor_idx][getPrecursorsInRTWindow(bestPSMs[!,:retentionTime],rt - rt_tol, rt + rt_tol)])
@@ -47,13 +54,12 @@ function getMS1Peaks!(MS1::Vector{Union{Missing, Float32}}, INTENSITIES::Vector{
     end
 end
 
-function getMS1PeakHeights!(retentionTimes::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, 
+function getMS1PeakHeights!(ptable::PrecursorTable, retentionTimes::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, 
                             masses::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                             intensities::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                             msOrders::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}},
                             ms1_max_heights::UnorderedDictionary{UInt32, Float32}, 
                             precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
-                            precursorsDict::UnorderedDictionary{UInt32, SimplePrecursor}, 
                             rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
     #println("tunction")
     #i = 1
@@ -64,11 +70,13 @@ function getMS1PeakHeights!(retentionTimes::Arrow.Primitive{Union{Missing, Float
         end
         #i += 1
         #println("test?")
-        @inline getMS1Peaks!(masses[scan_idx], 
+        @inline getMS1Peaks!(getPrecIDToPrecursor(ptable), 
+                    masses[scan_idx], 
                     intensities[scan_idx], 
                     ms1_max_heights, 
-                    precursor_rts, precursor_idxs, precursor_ms_file_idxs,                    #Precursor retention times and id's (sorted by rt)
-                    precursorsDict,                                         #PrecursorTable
+                    precursor_rts, 
+                    precursor_idxs, 
+                    precursor_ms_file_idxs,                    #Precursor retention times and id's (sorted by rt)                                      #PrecursorTable
                     retentionTimes[scan_idx],                               #RT of current scan
                     rt_tol, left_mz_tol, right_mz_tol, ms_file_idx #Only consider precursors where the best scan is within the `rt_col` of the current scan
                     );

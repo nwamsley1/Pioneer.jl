@@ -1,7 +1,6 @@
 function SearchRAW(
                    spectra::Arrow.Table, 
                    ptable::PrecursorTable,
-                   initTransitions, 
                    selectTransitions, 
                    right_precursor_tolerance::Float32,
                    left_precursor_tolerance::Float32,
@@ -17,7 +16,6 @@ function SearchRAW(
     #not goinig to want this for all methods
     allFragmentMatches = Vector{FragmentMatch}()
 
-    prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}} = initTransitions()
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
@@ -32,8 +30,7 @@ function SearchRAW(
         #params = getSpectrumSpecificParams(spectrum, selectParams)
 
         transitions = selectTransitions(spectrum[:precursorMZ], 
-                                        getPrecursors(ptable), 
-                                        prec_id_to_transitions,
+                                        ptable,
                                         right_precursor_tolerance,
                                         left_precursor_tolerance,
                                         transition_charges,

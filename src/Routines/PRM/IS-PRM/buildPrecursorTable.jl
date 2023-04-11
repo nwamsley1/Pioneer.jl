@@ -20,26 +20,38 @@ getIntegrationBoundaryScanIDs(p::LightHeavyPeptidePair) = p.integration_boundary
 
 #addProtID(p::LightHeavyPair, prot_id::UInt32) = push!(getProtIDs(p), prot_id)
 
-mutable struct ISPRMPrecursorTable
-    ptable::PrecursorTable 
+mutable struct ISPRMPrecursorTable <: PrecursorDatabase
+    id_to_prot::UnorderedDictionary{UInt32, Protein}
+    prot_to_id::UnorderedDictionary{String, UInt32}
+    id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
+    pepGroup_to_id::UnorderedDictionary{String, UInt32}
+    id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
+    prec_id_to_precursors::Dictionary{UInt32, Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
+    sorted_precursor_keys::Vector{UInt32}
+    prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}}
     pep_id_to_light_heavy_pair::UnorderedDictionary{UInt32, LightHeavyPeptidePair}
     pep_sequence_to_pep_id::UnorderedDictionary{String, UInt32}
-    prec_id_to_transitions::UnorderedDictionary{UInt32, Vector{Transition}}
-    light_precursor_set::Set{SimplePrecursor}
-    prec_id_to_precursors::Dictionary{UInt32, Precursor}
+    simple_precursor_set::Set{SimplePrecursor}
 end
 
-ISPRMPrecursorTable() = ISPRMPrecursorTable(PrecursorTable(), UnorderedDictionary{UInt32, LightHeavyPeptidePair}(), UnorderedDictionary{String, UInt32}(), 
-UnorderedDictionary{UInt32, Vector{Transition}}(), Set{SimplePrecursor}(), Dictionary{UInt32, Precursor}())
+ISPRMPrecursorTable() = ISPRMPrecursorTable(UnorderedDictionary{UInt32, Protein}(),
+                                            UnorderedDictionary{String, UInt32}(),
+                                            UnorderedDictionary{UInt32, PeptideGroup}(),
+                                            UnorderedDictionary{String, UInt32}(),
+                                            UnorderedDictionary{UInt32, Peptide}(),
+                                            Dictionary{UInt32, Precursor}(),
+                                            Vector{UInt32}(),
+                                            UnorderedDictionary{UInt32, Vector{Transition}}(), 
+                                            UnorderedDictionary{UInt32, LightHeavyPeptidePair}(), 
+                                            UnorderedDictionary{String, UInt32}(), 
+                                            Set{SimplePrecursor}())
 
-getPTable(p::ISPRMPrecursorTable) = p.ptable
 getPrecIDToLightHeavyPair(p::ISPRMPrecursorTable) = p.pep_id_to_light_heavy_pair
-getPrecIDToTransitions(p::ISPRMPrecursorTable) = p.prec_id_to_transitions
 getPepSequenceToPepID(p::ISPRMPrecursorTable) = p.pep_sequence_to_pep_id
 getLightHeavyPairFromPepID(p::ISPRMPrecursorTable, pep_id::UInt32) = getPrecIDToLightHeavyPair(p)[pep_id]
-getPrecursors(p::ISPRMPrecursorTable) = p.prec_id_to_precursors
+getSimplePrecursorSet(p::ISPRMPrecursorTable) = p.simple_precursor_set
 
-isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ p.light_precursor_set
+isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
 isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor) = isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec))
 addToPrecursorSet!(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = push!(p.light_precursor_set, SimplePrecursor(mz, charge, isotope, pep_id))
 addToPrecursorSet!(p::ISPRMPrecursorTable, prec::Precursor) = push!(p.light_precursor_set, SimplePrecursor(getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)))
@@ -81,7 +93,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     function parseLine(row::String, header::Dict{String, Int})
         println("header ", header)
         row = map(string, split(row, ","))
-        return row[header["protein_name"]], row[header["sequence"]], parse(UInt8, row[header["precursor_charge"]]), parse(UInt8, row[header["precursor_isotope"]]), row[header["transition_names"]:end]
+        return row[header["protein_name"]], row[header["sequence"]], parse(UInt8, row[header["precursor_charge"]]), parse(UInt8, row[header["precursor_isotope"]]), map(string, split(row[header["transition_names"]],";"))
     end
 
     function parseTransitionName(transition_name::String)
@@ -89,27 +101,27 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     end
 
     function getProtID!(ptable::ISPRMPrecursorTable, protein_name::String, max_prot_id::UInt32)
-        if !containsProt(getPTable(ptable), protein_name) #If the protien hasn't been encountered,
+        if !containsProt(ptable, protein_name) #If the protien hasn't been encountered,
             #then add it to the hash table\
             max_prot_id += UInt32(1);  
             prot_id = max_prot_id
-            addNewProtein!(protein_name, prot_id, getPTable(ptable));
+            addNewProtein!(protein_name, prot_id, ptable);
         else
-            prot_id = getProtToID(getPTable(ptable))[protein_name]
+            prot_id = getProtToID(ptable)[protein_name]
         end
         return prot_id, max_prot_id
     end
 
     function getPepGroupID!(ptable::ISPRMPrecursorTable, protein_name::String, unmodified_sequence::String, max_pepGroup_id::UInt32)
-        if !containsPepGroup(getPTable(ptable), unmodified_sequence) #If the peptide hasn't been encountered
+        if !containsPepGroup(ptable, unmodified_sequence) #If the peptide hasn't been encountered
             max_pepGroup_id += UInt32(1)
             pepGroup_id = max_pepGroup_id
-            addNewPeptideGroup!(unmodified_sequence, pepGroup_id, protein_name, getPTable(ptable)); #add it to the hash table,
-            addPepGroupToProtein!(getPTable(ptable), protein_name, unmodified_sequence); #add a new peptide group to the protein,
+            addNewPeptideGroup!(unmodified_sequence, pepGroup_id, protein_name, ptable); #add it to the hash table,
+            addPepGroupToProtein!(ptable, protein_name, unmodified_sequence); #add a new peptide group to the protein,
         else #If this peptide has been encountered before, just update the protein and peptide groups
-            addProteinToPepGroup!(getPTable(ptable), protein_name, unmodified_sequence); #Add the current protein to this peptide group
-            addPepGroupToProtein!(getPTable(ptable), protein_name, unmodified_sequence); #Add the current peptide group to this protein
-            pepGroup_id = getPepGroupToID(getPTable(ptable))[unmodified_sequence]
+            addProteinToPepGroup!(ptable, protein_name, unmodified_sequence); #Add the current protein to this peptide group
+            addPepGroupToProtein!(ptable, protein_name, unmodified_sequence); #Add the current peptide group to this protein
+            pepGroup_id = getPepGroupToID(ptable)[unmodified_sequence]
         end
         return pepGroup_id, max_pepGroup_id
     end 
@@ -150,6 +162,8 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                 transition = parseTransitionName(transition_name)
                 push!(getPrecIDToTransitions(ptable)[prec_id],
                 Transition(getResidues(getPrecursors(ptable)[prec_id]),
+                            ion_type = transition[:ion_type],
+                            ind = transition[:ind],
                             charge = transition[:charge],
                             isotope = UInt8(0),
                             prec_id = prec_id)
@@ -169,6 +183,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
             timetaken = @elapsed for row in eachline(f)
 
                 protein_name, heavy_sequence, charge, isotope, transition_names = parseLine(row, header)
+                println("transition_names ", transition_names)
                 #Add a check to make sure it is a heavy peptide to begin with. Warn and skip if not. 
                 light_sequence = replace(heavy_sequence, r"\[H[a-z]{3}\]" =>"")
                 unmodified_sequence = replace(heavy_sequence, r"\[[^\]]*\]"=>"")
@@ -190,6 +205,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     end
 
     main(ptable, mods_dict, f_path)
+    makeSortedPrecursorKeys!(ptable)
 end
 
 mods_dict = Dict("Carb" => Float32(57.021464),

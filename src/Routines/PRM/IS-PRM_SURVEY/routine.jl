@@ -51,11 +51,11 @@ println("Processing: "*string(length(MS_TABLE_PATHS))*" files")
 #println("PRECURSOR_LIST_PATH: $PRECURSOR_LIST_PATH")
 
 function parse_mods(fixed_mods)
-fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
-for mod in fixed_mods
-    push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
-end
-return fixed_mods_parsed
+    fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
+    for mod in fixed_mods
+        push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
+    end
+    return fixed_mods_parsed
 end
 
 #Parse argments
@@ -127,7 +127,8 @@ include("src/Routines/PRM/getMS1PeakHeights.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
-include("src/earchRAW.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
+include("src/SearchRAW.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 =#
 
@@ -148,6 +149,15 @@ include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
                         params[:precursor_isotopes], 
                         params[:modification_masses]
                         )
+    addTransitions!(
+                        ptable, 
+                        params[:transition_charges],
+                        params[:transition_isotopes],
+                        params[:b_ladder_start],
+                        params[:y_ladder_start],
+                        params[:fragment_match_ppm]
+                    )
+    #println(getPrecIDToTransitions(ptable))
 ##########
 #Search Survey Runs
 ##########
@@ -162,8 +172,7 @@ test = Dictionary{UInt32, Vector{Transition}}()
         scored_psms, fragment_matches = SearchRAW(
                                                 MS_TABLES[UInt32(ms_file_idx)], 
                                                 ptable, 
-                                                initTransitions,
-                                                selectTransitionsPRM, 
+                                                selectTransitions, 
                                                 params[:right_precursor_tolerance],
                                                 params[:left_precursor_tolerance],
                                                 params[:transition_charges],
@@ -196,7 +205,7 @@ test = Dictionary{UInt32, Vector{Transition}}()
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
                 )
 
-        getMS1PeakHeights!(
+        getMS1PeakHeights!( ptable,
                             MS_TABLE[:retentionTime], 
                             MS_TABLE[:masses], 
                             MS_TABLE[:intensities], 
@@ -205,7 +214,6 @@ test = Dictionary{UInt32, Vector{Transition}}()
                             best_psms[!,:retention_time], 
                             best_psms[!,:precursor_idx], 
                             best_psms[!,:ms_file_idx],
-                            getSimplePrecursors(ptable), 
                             Float32(0.25), 
                             params[:right_precursor_tolerance], 
                             params[:left_precursor_tolerance],

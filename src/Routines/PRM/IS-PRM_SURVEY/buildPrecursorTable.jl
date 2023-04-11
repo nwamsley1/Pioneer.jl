@@ -101,10 +101,45 @@ function addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes
     prec_id = UInt32(1)
     for (pep_id, peptide) in pairs(ptable.id_to_pep)
         for charge in charges, isotope in isotopes
-            push!(ptable.precursors, Precursor(peptide.sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict))
-            insert!(ptable.simple_precursors, prec_id, SimplePrecursor(getMZ(ptable.precursors[end]), charge, isotope, pep_id));
+            insert!(getPrecIDToPrecursor(ptable), 
+                    prec_id,
+                    Precursor(peptide.sequence, 
+                                charge = charge, 
+                                isotope = isotope, 
+                                pep_id = pep_id, 
+                                prec_id = prec_id, 
+                                mods_dict = mods_dict)
+                    )
+            #insert!(ptable.simple_precursors, prec_id, SimplePrecursor(getMZ(ptable.precursors[end]), charge, isotope, pep_id));
             prec_id+= UInt32(1)
         end
     end
-    sort!(ptable.precursors, by=p->getMZ(p))
+    makeSortedPrecursorKeys!(ptable)
+end
+
+function addTransitions!(ptable::PrecursorTable, transition_charges::Vector{UInt8}, transition_isotopes::Vector{UInt8},b_start::Int64,y_start::Int64, fragment_match_ppm::Float32)
+    for (prec_id, precursor) in pairs(getPrecIDToPrecursor(ptable))
+        for charge in transition_charges, isotope in transition_isotopes
+            if !isassigned(getPrecIDToTransitions(ptable), prec_id)
+                insert!(getPrecIDToTransitions(ptable),
+                        prec_id,
+                        getTransitions(precursor, 
+                                        charge = charge, 
+                                        isotope = isotope, 
+                                        b_start = b_start, 
+                                        y_start = y_start,
+                                        ppm = fragment_match_ppm)
+                        )
+            else
+                append!(getTransitions(ptable, prec_id), 
+                        getTransitions(precursor, 
+                                        charge = charge, 
+                                        isotope = isotope, 
+                                        b_start = b_start, 
+                                        y_start = y_start,
+                                        ppm = fragment_match_ppm)
+                        )
+            end
+        end
+    end
 end

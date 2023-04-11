@@ -20,9 +20,8 @@ also sorted by MZ just like `precursorLit`
 ### Examples 
 
 """
-function selectTransitionsPRM(window_center::Float32, 
-                                precursorList::Vector{Precursor}, 
-                                prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}},
+function selectTransitions(window_center::Float32, 
+                                ptable::PrecursorTable, 
                                 right_precursor_tolerance::Float32,
                                 left_precursor_tolerance::Float32,
                                 transition_charges::Vector{UInt8},
@@ -31,29 +30,12 @@ function selectTransitionsPRM(window_center::Float32,
                                 y_start::Int64,
                                 fragment_match_ppm::Float32)
 
-    function getPrecursors(window_center::Float32, precursorList::Vector{Precursor}, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
-        l_bnd, u_bnd = window_center - left_precursor_tolerance, window_center + right_precursor_tolerance
-        start, stop = searchsortedfirst(precursorList, l_bnd,lt=(t,x)->getMZ(t)<x), searchsortedlast(precursorList, u_bnd,lt=(x,t)->getMZ(t)>x)
-        return @view(precursorList[start:stop])
-    end
-
     transitions = Vector{Transition}();
 
-    for precursor in getPrecursors(window_center, precursorList, left_precursor_tolerance, right_precursor_tolerance)
-        for charge in transition_charges, isotope in transition_isotopes
-            if !isassigned(prec_id_to_transitions, getPrecID(precursor))
-                insert!(prec_id_to_transitions, 
-                        getPrecID(precursor),
-                        getTransitions(precursor, 
-                                                charge = charge, 
-                                                isotope = isotope, 
-                                                b_start = b_start, 
-                                                y_start = y_start,
-                                                ppm = fragment_match_ppm)
-                        ) 
-            end
+    for prec_id in precursorRangeQuery(ptable, window_center, left_precursor_tolerance, right_precursor_tolerance)
+        if isassigned(getPrecIDToTransitions(ptable), prec_id)
+            append!(transitions, getTransitions(ptable, prec_id))
         end
-        append!(transitions, prec_id_to_transitions[getPrecID(precursor)])
     end
     sort!(transitions, by=x->getMZ(x))
 
