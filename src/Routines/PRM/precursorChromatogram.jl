@@ -136,8 +136,8 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
 
     function addTransition(precursor_chromatogram::PrecursorChromatogram, match::FragmentMatch, rt::Float32)
 
-        if match.scan_idx>precursor_chromatogram.last_scan_idx[1]
-            precursor_chromatogram.last_scan_idx[1]=match.scan_idx
+        if match.scan_idx>precursor_chromatogram.last_scan_idx[end]
+            push!(precursor_chromatogram.last_scan_idx, match.scan_idx)
             append!(precursor_chromatogram.rts, rt)
             for key in keys(precursor_chromatogram.transitions)
                 push!(precursor_chromatogram.transitions[key],Float32(0))

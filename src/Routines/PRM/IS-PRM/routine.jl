@@ -223,13 +223,56 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                                                                                                         )
                 ) 
     end 
-
+    
+    scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]
+    precursor_chromatograms[1][184].last_scan_idx
     #Names and charges for the "n" most intense fragment ions for each precursor
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestTransitions(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]),
                                                                         params[:fragments_to_select])) => :best_transitions)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:name][psm[:best_transitions]]) => :transition_names)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:mz][psm[:best_transitions]]) => :transition_mzs)
-
+    scan_cycle_union = getScanCycleUnion(
+                            scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]],
+                            scan_adresses[1][precursor_chromatograms[1][184].last_scan_idx[2:end]]
+                        )
+    bounds = Set(getIntegrationBounds(
+                scan_cycle_union
+            ))
+    light_scans = [index for (index, x) in enumerate(scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]) if x.ms1 in bounds]
+    heavy_scans = [index for (index, x) in enumerate(scan_adresses[1][precursor_chromatograms[1][184].last_scan_idx[2:end]]) if x.ms1 in bounds]
+    X = zeros(length(precursor_chromatograms[1][184].transitions)*length(bounds), length(precursor_chromatograms[1][184].transitions) + 1)
+    for (i, value) in enumerate(precursor_chromatograms[1][183].transitions)
+        X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = value[light_scans]
+        X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = value[light_scans]
+    end
+    #X[:,end] = ones(size(X)[1])
+    y = Float64[]
+    for (i, value) in enumerate(precursor_chromatograms[1][184].transitions)
+        append!(y, value[heavy_scans])
+    end
+    X[45:55,1] .+= 1e5
+    X[45:55,6] .+= 1e5
+    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
+    m.betas
+    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = false, lambda=Float64[median(y)])
+    m.betas
+    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = false, lambda=Float64[0])
+    m.betas
+    fit(LassoModel, X, y)
+    X[45:55,1] .+= 10000
+    X[45:55,6] .+= 10000
+    fit(LassoModel, X, y)
+    #I = 1e9*Diagonal(ones(7))
+    I = 1e9*Diagonal(ones(6))
+    I[1,1] = 0
+    B = (transpose(X)*X + I)\(transpose(X)*y)
+    1 - sum((X*B - y).^2)/sum((y .- mean(y)).^2)
+    B = (transpose(X[:,1])*X[:,1])\(transpose(X[:,1])*y)
+    1 - sum((X[:,1]*B - y).^2)/sum((y .- mean(y)).^2)
+    #Do this with just the top 4 most abundant transitions. 
+    #Also, try adding bias or missaligned transition and see what is more robust.
+    sum(precursor_chromatograms[1][184].transitions["y6+1"][light_scans])/sum(precursor_chromatograms[1][183].transitions["y6+1"][light_scans])
+    sum(precursor_chromatograms[1][184].transitions["y7+1"][light_scans])/sum(precursor_chromatograms[1][183].transitions["y7+1"][light_scans])
 ##########
 #Apply conditions to MS Files. 
 ##########

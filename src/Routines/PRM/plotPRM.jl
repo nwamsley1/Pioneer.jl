@@ -24,7 +24,7 @@ function plotBestSpectra(matched_ions::NamedTuple{(:rt, :scan_idx, :name, :mz, :
 
 end
 
-function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, PrecursorChromatogram}, ptable::PrecursorTable, MS_TABLE::Arrow.Table, out_path::String, fname::String)
+function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, PrecursorChromatogram}, ptable::PrecursorDatabase, MS_TABLE::Arrow.Table, out_path::String, fname::String)
     if !isdir(out_path)
         mkpath(out_path)
     end
@@ -36,7 +36,6 @@ function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, Prec
                         protein_name*"-"*peptide_sequence,
                         out_path)
     end
-getProtNamesFromPepSeq
     files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 
@@ -54,7 +53,7 @@ function plotFragmentIonChromatogram(transitions::UnorderedDictionary{String, Ve
 end
 
 #testPtable.id_to_pep[1].sequence
-function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary{UInt32, PrecursorChromatogram}, ptable::PrecursorTable, out_path::String, fname::String)
+function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary{UInt32, PrecursorChromatogram}, ptable::PrecursorDatabase, out_path::String, fname::String)
 
     if !isdir(out_path)
         mkpath(out_path)

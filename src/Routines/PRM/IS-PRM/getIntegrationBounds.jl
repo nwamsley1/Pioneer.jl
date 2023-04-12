@@ -114,7 +114,8 @@ function getIntegrationBounds(scan_indices::Vector{Int64}; max_gap_size::Int = 1
             gap_size = scan_indices[index[1]] - last
         end
     end
-    (lower_bound = best_start, upper_bound = best_stop+1)
+    scan_indices[best_start:(best_stop +1)]
+    #(lower_bound = best_start, upper_bound = best_stop+1)
 end
 export getIntegrationBounds
 getIntegrationBounds(sunion)
