@@ -4,17 +4,6 @@ using Combinatorics, Dictionaries
 
 export buildPrecursorTable!, getPrecursors!
 
-struct SimplePrecursor
-    mz::Float32
-    charge::UInt8
-    isotope::UInt8
-    pep_id::UInt32
-end
-
-getMZ(sp::SimplePrecursor) = sp.mz
-getCharge(sp::SimplePrecursor) = sp.charge
-getIsotope(sp::SimplePrecursor) = sp.isotope
-getPepID(sp::SimplePrecursor) = sp.pep_id
 """
     PeptideGroup
 

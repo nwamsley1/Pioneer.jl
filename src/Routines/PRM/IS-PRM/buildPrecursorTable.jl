@@ -1,3 +1,15 @@
+struct SimplePrecursor
+    sequence::String
+    charge::UInt8
+    isotope::UInt8
+    pep_id::UInt32
+end
+
+getSeq(sp::SimplePrecursor) = sp.sequence
+getCharge(sp::SimplePrecursor) = sp.charge
+getIsotope(sp::SimplePrecursor) = sp.isotope
+getPepID(sp::SimplePrecursor) = sp.pep_id
+
 struct LightHeavyPrecursorPair
     pepGroup_id::UInt32
     light_sequence::String
@@ -53,8 +65,8 @@ getSimplePrecursorSet(p::ISPRMPrecursorTable) = p.simple_precursor_set
 
 isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
 isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor) = isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec))
-addToPrecursorSet!(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = push!(p.simple_precursor_set, SimplePrecursor(mz, charge, isotope, pep_id))
-addToPrecursorSet!(p::ISPRMPrecursorTable, prec::Precursor) = push!(p.simple_precursor_set, SimplePrecursor(getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)))
+#addToPrecursorSet!(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = push!(p.simple_precursor_set, SimplePrecursor(mz, charge, isotope, pep_id))
+#addToPrecursorSet!(p::ISPRMPrecursorTable, prec::Precursor) = push!(p.simple_precursor_set, SimplePrecursor(getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)))
 """
     buildPrecursorTable!(ptable::PrecursorTable, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, n::Int, f_path::String)
 
@@ -93,7 +105,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     function parseLine(row::String, header::Dict{String, Int})
         row = map(string, split(row, ","))
         return row[header["protein_name"]], row[header["sequence"]], parse(UInt8, row[header["precursor_charge"]]), parse(UInt8, row[header["precursor_isotope"]]), map(string, split(row[header["transition_names"]],";"))
-    end
+    end 
 
     function parseTransitionName(transition_name::String)
         return (ion_type = transition_name[1], ind = parse(UInt8, split(transition_name,"+")[1][2:end]), charge = parse(UInt8, transition_name[end]))
@@ -143,23 +155,23 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     function addPrecursors!(ptable::ISPRMPrecursorTable, light_precursor::Precursor, heavy_precursor::Precursor, pep_id::UInt32, max_lh_pair_id::UInt32, max_prec_id::UInt32)
         max_prec_id += UInt32(2)
         max_lh_pair_id += UInt32(1)
-        light_prec_id, heavy_prec_id, lh_pair_id = max_prec_id - UInt32(1), max_prec_id, max_lh_pair_id
+        light_prec_id, heavy_prec_id = max_prec_id - UInt32(1), max_prec_id
 
-        addToPrecursorSet!(ptable, light_precursor)
+        #addToPrecursorSet!(ptable, light_precursor)
 
         insert!(getPrecursors(ptable), light_prec_id, light_precursor)
         insert!(getPrecursors(ptable), heavy_prec_id, heavy_precursor)
         insert!(getIDToLightHeavyPair(ptable),
-                lh_pair_id,
+                max_lh_pair_id,
                 LightHeavyPrecursorPair(pep_id, 
                                         getSeq(getPep(ptable, getPepID(light_precursor))), 
-                                        getSeq(getPep(ptable, getPepID(light_precursor))),
+                                        getSeq(getPep(ptable, getPepID(heavy_precursor))),
                                         light_prec_id, 
                                         heavy_prec_id, 
                                         Int64[], Int64[], Set(Int64[])
                                         )
                 )
-        push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), lh_pair_id)
+        push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
         return light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id
     end
 
@@ -187,8 +199,8 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
 
             header = readHeader(f)
 
-            max_prot_id, max_pepGroup_id, max_pep_id, max_lh_pair_id, max_prec_id = UInt32(0), UInt32(0), UInt32(0), UInt32(1), UInt32(0)
-            pepGroup_id, pep_id, prot_id, lh_pair_id, prec_id = UInt32(1), UInt32(1), UInt32(1), UInt32(1), UInt32(1)
+            max_prot_id, max_pepGroup_id, max_pep_id, max_lh_pair_id, max_prec_id = UInt32(0), UInt32(0), UInt32(0), UInt32(0), UInt32(0)
+            pepGroup_id, pep_id, prot_id, prec_id = UInt32(1), UInt32(1), UInt32(1), UInt32(1)
 
             timetaken = @elapsed for row in eachline(f)
 
@@ -197,16 +209,22 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                 light_sequence = replace(heavy_sequence, r"\[H[a-z]{3}\]" =>"")
                 unmodified_sequence = replace(heavy_sequence, r"\[[^\]]*\]"=>"")
 
-                light_precursor = Precursor(light_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
-                heavy_precursor = Precursor(heavy_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
-
                 prot_id, max_prot_id = getProtID!(ptable, protein_name, max_prot_id)
                 pepGroup_id, max_pepGroup_id = getPepGroupID!(ptable, protein_name, unmodified_sequence, max_pepGroup_id)
                 pep_id, max_pep_id = getPepID!(ptable, light_sequence, max_pep_id, pepGroup_id)
-
-                if !isinPrecursorSet(ptable, light_precursor) #If the precursor hasn't been encountered 
+                println("TEST")
+                precursor = SimplePrecursor(light_sequence, charge, isotope, pep_id)
+                println("TESTAGAIN")
+                if precursor ∉ ptable.simple_precursor_set
+                    push!(ptable.simple_precursor_set, precursor)
+                    println("A")
+                    light_precursor = Precursor(light_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
+                    heavy_precursor = Precursor(heavy_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
+                    println("B")
                     light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id = addPrecursors!(ptable, light_precursor, heavy_precursor, pep_id, max_lh_pair_id, max_prec_id)
+                    println("AC")
                     addTransitions!(ptable, transition_names, [light_prec_id, heavy_prec_id])
+                    println("C")
                 end
             end
             println("Time to build precursor table ", timetaken);
@@ -216,7 +234,12 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     main(ptable, mods_dict, f_path)
     makeSortedPrecursorKeys!(ptable)
 end
-
+#=struct SimplePrecursor
+    sequence::String
+    charge::UInt8
+    isotope::UInt8
+    pep_id::UInt32
+end=#
 mods_dict = Dict("Carb" => Float32(57.021464),
                  "Harg" => Float32(10.008269),
                  "Hlys" => Float32(8.014199))

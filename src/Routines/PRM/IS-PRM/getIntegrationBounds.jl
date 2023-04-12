@@ -16,9 +16,10 @@ end
 
 getSub(prec::Ion, array::AbstractArray) = getSub(getMZ(prec), array, getLow(prec), getHigh(prec))
 
-test.pepGroup_to_id["VGVNGFGR"]
+
 test.id_to_pepGroup[0x0000005c]
 test.id_to_pep[0x00000027]
+test.lh_pair_id_to_light_heavy_pair[0x0000005e]
 for (key, value) in pairs(getIDToLightHeavyPair(test))
     append!(getIDToLightHeavyPair(test)[key].light_scan_idxs,
     getSub(test.prec_id_to_precursor[value.light_prec_id], GAPDH_VGVNGFGR[:precursorMZ]))
