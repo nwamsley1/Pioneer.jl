@@ -135,6 +135,9 @@ include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
     buildPrecursorTable!(ptable, mods_dict, "data/parquet/transition_list.csv")
 scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
 MS_TABLES = Dict{UInt32, Arrow.Table}()
+MS_TABLE_PATHS = [ "./data/parquet/GAPDH_VGVNGFGR.arrow",
+"./data/parquet/GSTM1_RPWFAGNK.arrow",
+"./data/parquet/GSTM4_VAVWGNK.arrow"]
 for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
     MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
     scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLES[UInt32(ms_file_idx)][:msOrder])
@@ -188,7 +191,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
                 )
 
-        getMS1PeakHeights!(
+        getMS1PeakHeights!( ptable,
                             MS_TABLE[:retentionTime], 
                             MS_TABLE[:masses], 
                             MS_TABLE[:intensities], 
@@ -197,7 +200,6 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                             best_psms[!,:retention_time], 
                             best_psms[!,:precursor_idx], 
                             best_psms[!,:ms_file_idx],
-                            getSimplePrecursors(ptable), 
                             Float32(0.25), 
                             params[:right_precursor_tolerance], 
                             params[:left_precursor_tolerance],

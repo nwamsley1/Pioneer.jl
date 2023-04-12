@@ -25,18 +25,18 @@ Type that represents an chromatogram for a `Precursor`
 
 - initMatchedPrecursors(bestPSMs::DataFrame) -- Initializes a dictionary container of `PrecursorChromatogram` from a DataFrame of best PSMs. 
 """
-struct PrecursorChromatogram
-    rts::Vector{Float32}
-    scan_idxs::Vector{Int64}
-    transitions::UnorderedDictionary{String, Vector{Float32}}
-    best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}
+struct PairedPrecursorChromatogram
+    rts::Dict{String, Vector{Int64}}
+    transitions::Dict{String, Dict{String, Vector{Float32}}}
 end
 
 PrecursorChromatogram() = PrecursorChromatogram(Float32[], Int64[], UnorderedDictionary{String, Vector{Float32}}(), (rt = Float32(0), scan_idx = 0, name = String[], mz = Float32[], intensity = Float32[]))
 getRTs(pc::PrecursorChromatogram) = pc.rts
-getLastScanIdx(pc::PrecursorChromatogram) = pc.scan_idxs[end]
+getLastScanIdx(pc::PrecursorChromatogram) = pc.last_scan_idx
 getTransitions(pc::PrecursorChromatogram) = pc.transitions
 getBestPSM(pc::PrecursorChromatogram) = pc.best_psm
+
+PairedPrecursorChromatogram
 
 """
     initPrecursorChromatograms(bestPSMs::DataFrame)
