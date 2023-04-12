@@ -23,19 +23,15 @@ also sorted by MZ just like `precursorLit`
 function selectTransitions(window_center::Float32, 
                                 ptable::ISPRMPrecursorTable,
                                 right_precursor_tolerance::Float32,
-                                left_precursor_tolerance::Float32,
-                                transition_charges::Vector{UInt8},
-                                transition_isotopes::Vector{UInt8},
-                                b_start::Int64,
-                                y_start::Int64,
-                                fragment_match_ppm::Float32)
+                                left_precursor_tolerance::Float32)
 
     transitions = Vector{Transition}();
     
     for prec_id in precursorRangeQuery(ptable, window_center, left_precursor_tolerance, right_precursor_tolerance)
-        if !isassigned(getTransitions(ptable), prec_id)
-            append!(transitions, getTransitions(ptable, prec_id))
-        end
+       # if !isassigned(getTransitions(ptable), prec_id)
+       #     println("transitions for $prec_id ", getTransition(ptable, prec_id))
+            append!(transitions, getTransition(ptable, prec_id))
+       # end
     end
 
     sort!(transitions, by=x->getMZ(x))

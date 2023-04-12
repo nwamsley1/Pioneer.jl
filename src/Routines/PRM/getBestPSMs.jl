@@ -31,7 +31,7 @@ retains only the row for each precursor with the highest XTandem hyperscore afte
 ### Examples 
 
 """
-function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorTable, MS_TABLE::Dict{UInt32, Arrow.Table}, min_fragment_count::UInt8)
+function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorDatabase, MS_TABLES::Dict{UInt32, Arrow.Table}, min_fragment_count::UInt8)
     PSMs = DataFrame(PSMs)
     filter!(row -> row.total_ions >= min_fragment_count, PSMs);
     transform!(PSMs, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)

@@ -38,8 +38,8 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 PRECURSOR_LIST_PATH = ARGS["precursor_list"]
-#MS_DATA_DIR = "./data/parquet/
-#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt
+#MS_DATA_DIR = "./data/parquet/"
+#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
 

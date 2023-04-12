@@ -226,6 +226,8 @@ getPepSeqsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getSeq(pep_group) f
 getPrecIDToPrecursor(p::PrecursorDatabase) = p.prec_id_to_precursor
 getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 getSortedPrecursorKeys(p::PrecursorDatabase) = p.sorted_precursor_keys
+getTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+getTransition(p::PrecursorDatabase, prec_id::UInt32) = p.prec_id_to_transitions[prec_id]
 function setSortedPrecursorKeys(p::PrecursorDatabase, keys::Vector{UInt32}) 
     p.sorted_precursor_keys = keys
 end

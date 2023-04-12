@@ -106,16 +106,44 @@ include("../../../Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
 include("../../../SearchRAW.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
-
+#=
+include("src/precursor.jl")
+include("src/binaryRangeQuery.jl")
+include("src/matchpeaks.jl")
+include("src/getPrecursors.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
+#include("../../../searchSpectra.jl")
+include("src/Routines/PRM/getBestPSMs.jl")
+include("src/Routines/PRM/precursorChromatogram.jl")
+include("src/Routines/PRM/plotPRM.jl")
+include("src/Routines/PRM/getMS1PeakHeights.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
+include("src/SearchRAW.jl")
+include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
+=#
+include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
+include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
 ##########
 #Read Precursor Table
 ##########
 @time begin 
-    test = ISPRMPrecursorTable()
-    buildPrecursorTable!(test, mods_dict, "data/parquet/transition_list.csv")
+    ptable = ISPRMPrecursorTable()
+    buildPrecursorTable!(ptable, mods_dict, "data/parquet/transition_list.csv")
+scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
+MS_TABLES = Dict{UInt32, Arrow.Table}()
+for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+    MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
+    scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLES[UInt32(ms_file_idx)][:msOrder])
+    setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
+end
 ##########
 #Search Survey Runs
 ##########
+
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
@@ -125,9 +153,8 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 
         scored_psms, fragment_matches = SearchRAW(
                                                 MS_TABLES[UInt32(ms_file_idx)], 
-                                                getPrecursors(ptable), 
-                                                initTransitions,
-                                                selectTransitionsPRM, 
+                                                ptable, 
+                                                selectTransitions, 
                                                 params[:right_precursor_tolerance],
                                                 params[:left_precursor_tolerance],
                                                 params[:transition_charges],

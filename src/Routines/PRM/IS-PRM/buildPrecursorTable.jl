@@ -10,25 +10,34 @@ getCharge(sp::SimplePrecursor) = sp.charge
 getIsotope(sp::SimplePrecursor) = sp.isotope
 getPepID(sp::SimplePrecursor) = sp.pep_id
 
-struct LightHeavyPrecursorPair
+mutable struct LightHeavyPrecursorPair
     pepGroup_id::UInt32
     light_sequence::String
     heavy_sequence::String
     light_prec_id::UInt32
     heavy_prec_id::UInt32
-    light_scan_idxs::Vector{Int64}
-    heavy_scan_idxs::Vector{Int64}
-    integration_boundary_scan_idxs::Set{Int64}
+    integration_bounds::Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}
 end
 
 
 getPepGroupID(p::LightHeavyPrecursorPair) = p.pepGroup_id
 getLightSeq(p::LightHeavyPrecursorPair) = p.light_sequence
 getHeavySeq(p::LightHeavyPrecursorPair) = p.heavy_sequence
-getPrecIDPairs(p::LightHeavyPrecursorPair) = p.lh_prec_id_pairs
+getLightPrecID(p::LightHeavyPrecursorPair) = p.light_prec_id
+getHeavyPrecID(p::LightHeavyPrecursorPair) = p.heavy_prec_id
 getLightScanIDs(p::LightHeavyPrecursorPair) = p.light_scan_idxs
 getHeavyScanIDs(p::LightHeavyPrecursorPair) = p.light_scan_idxs
-getIntegrationBoundaryScanIDs(p::LightHeavyPrecursorPair) = p.integration_boundary_scan_idxs
+getIntegrationBounds(p::LightHeavyPrecursorPair) = p.integration_bounds
+
+function setIntegrationBounds!(p::LightHeavyPrecursorPair, run_idx::Int64, bounds::NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}})
+    if !isassigned(getIntegrationBounds(p), run_idx)
+        insert!(getIntegrationBounds(p), run_idx, bounds)
+    else
+        getIntegrationBounds(p)[run_idx] = bounds
+    end
+end
+
+inBounds(p::LightHeavyPrecursorPair, run_idx, i::Int64) = (i>=getIntegrationBounds(p)[run_idx][:lower_bound]) & (i<=getIntegrationBounds(p)[run_idx][:upper_bound]) 
 
 #addProtID(p::LightHeavyPair, prot_id::UInt32) = push!(getProtIDs(p), prot_id)
 
@@ -168,7 +177,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                                         getSeq(getPep(ptable, getPepID(heavy_precursor))),
                                         light_prec_id, 
                                         heavy_prec_id, 
-                                        Int64[], Int64[], Set(Int64[])
+                                        Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}()
                                         )
                 )
         push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
