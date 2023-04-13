@@ -224,13 +224,104 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                 ) 
     end 
     
-    scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]
-    precursor_chromatograms[1][184].last_scan_idx
+    #scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]
+    #precursor_chromatograms[1][184].last_scan_idx
     #Names and charges for the "n" most intense fragment ions for each precursor
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestTransitions(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]),
                                                                         params[:fragments_to_select])) => :best_transitions)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:name][psm[:best_transitions]]) => :transition_names)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:mz][psm[:best_transitions]]) => :transition_mzs)
+    
+##########
+#Get PARs. 
+##########
+function getPARs(ptable::ISPRMPrecursorTable, 
+                scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
+                precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram})
+    for (key, value) in pairs(getIDToLightHeavyPair(ptable))
+        println(value)
+        if length(value.integration_bounds) < 1
+            continue
+        end
+        if !isassigned(precursor_chromatograms, value.light_prec_id)
+            println("not assigned ", value)
+            continue
+        end
+        integration_bounds = Set(
+                                getIntegrationBounds(
+                                    getScanCycleUnion(
+                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.light_prec_id),
+                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.heavy_prec_id)
+                                        )
+                                    )
+                                )
+        light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
+        heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
+        println(fitPAR(light_scans, 
+                heavy_scans, 
+                bounds, 
+                precursor_chromatograms[value.light_prec_id].transitions, 
+                precursor_chromatograms[value.heavy_prec_id].transitions
+                ).betas)
+    end
+end
+    getPAR()
+
+    function getScanAdressesForPrecursor(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
+                                         precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
+                                         prec_id::UInt32)
+        scan_adresses[precursor_chromatograms[prec_id].last_scan_idx[2:end]]
+    end
+
+    function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
+                     precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
+                     prec_id::UInt32, 
+                     bounds::Set{Int64})
+        [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
+    end
+
+    function initDesignMatrix(scans::Vector{Int64}, bounds::Set{Int})
+        zeros(
+                    length(scans)*length(bounds), 
+                    length(scans) + 1
+                )
+    end
+
+    function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, scans::Vector{Int64})
+        for (i, transition) in enumerate(transitions)
+            X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transition[scans]
+            X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transition[scans]
+        end
+        X
+    end
+
+    function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, scans::Vector{Int64})
+        y = Float64[]
+        for (i, transition) in enumerate(transitions)
+            append!(y, transition[scans])
+        end
+    end
+
+    function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
+                    bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
+
+        X = fillDesignMatrix(initDesignMatrix(light_scans, bounds), light_transitions, light_scans)
+        y = getResponseMatrix(heavy_transitions, heavy_scans)
+        println("transitions ", light_transitions)
+        println("transitions ", heavy_transitions)
+        println("light scans ", light_scans)
+        println("heavy scans ", heavy_scans)
+        println("y ", y)
+        println("X ", X)
+        return glmnet(X, y, 
+                        penalty_factor = append!([0.0], ones(length(light_transitions))), 
+                        intercept = true, 
+                        lambda=Float64[median(y)])
+    end
+
+    glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
+
+    get
     scan_cycle_union = getScanCycleUnion(
                             scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]],
                             scan_adresses[1][precursor_chromatograms[1][184].last_scan_idx[2:end]]
