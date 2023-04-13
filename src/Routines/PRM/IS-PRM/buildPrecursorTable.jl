@@ -194,7 +194,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                                         light_prec_id, 
                                         heavy_prec_id, 
                                         Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}(),
-                                        Matrix{Float64}(),
+                                        zeros((2,2)),
                                         0.0)
                 )
         push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
@@ -240,27 +240,21 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                 prot_id, max_prot_id = getProtID!(ptable, protein_name, max_prot_id)
                 pepGroup_id, max_pepGroup_id = getPepGroupID!(ptable, protein_name, unmodified_sequence, max_pepGroup_id)
                 pep_id, max_pep_id = getPepID!(ptable, light_sequence, max_pep_id, pepGroup_id)
-                println("TEST")
                 precursor = SimplePrecursor(light_sequence, charge, isotope, pep_id)
-                println("TESTAGAIN")
                 if precursor ∉ ptable.simple_precursor_set
                     push!(ptable.simple_precursor_set, precursor)
-                    println("A")
                     light_precursor = Precursor(light_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
                     heavy_precursor = Precursor(heavy_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
-                    println("B")
                     light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id = addPrecursors!(ptable, light_precursor, heavy_precursor, pep_id, max_lh_pair_id, max_prec_id)
-                    println("AC")
                     addTransitions!(ptable, transition_names, [light_prec_id, heavy_prec_id])
-                    println("C")
                 end
             end
             println("Time to build precursor table ", timetaken);
         end
     end
 
-    main(ptable, mods_dict, f_path)
-    makeSortedPrecursorKeys!(ptable)
+    main(ptable, mods_dict, f_path);
+    makeSortedPrecursorKeys!(ptable);
 end
 #=struct SimplePrecursor
     sequence::String

@@ -49,13 +49,14 @@ println("Processing: "*string(length(MS_TABLE_PATHS))*" files")
 #println("PRECURSOR_LIST_PATH: $PRECURSOR_LIST_PATH")
 
 function parse_mods(fixed_mods)
-fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
-for mod in fixed_mods
-    push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
-end
-return fixed_mods_parsed
+    fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
+    for mod in fixed_mods
+        push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
+    end
+    return fixed_mods_parsed
 end
 #Parse argments
+#params = JSON.parse(read("./data/test.json", String))
 params = (
 right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
 left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
@@ -118,15 +119,16 @@ include("src/Routines/PRM/getBestPSMs.jl")
 include("src/Routines/PRM/precursorChromatogram.jl")
 include("src/Routines/PRM/plotPRM.jl")
 include("src/Routines/PRM/getMS1PeakHeights.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("src/Routines/PRM/IS-PRM/initTransitions.jl")
+include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
 include("src/SearchRAW.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 =#
 include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
 ##########
 #Read Precursor Table
 ##########
@@ -141,7 +143,7 @@ MS_TABLE_PATHS = [ "./data/parquet/GAPDH_VGVNGFGR.arrow",
 for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
     MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
     scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLES[UInt32(ms_file_idx)][:msOrder])
-    setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
+    #setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
 end
 ##########
 #Search Survey Runs
@@ -176,9 +178,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 ##########
 #Get Best PSMs for Each Peptide
 ##########
-    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, UInt8(1)
-    #params[:minimum_fragment_count]
-    )
+    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, UInt8(1))
  
 ##########
 #Get MS1 Peak Heights
@@ -242,17 +242,14 @@ function getPARs(ptable::ISPRMPrecursorTable,
                 precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram})
     for (key, value) in pairs(getIDToLightHeavyPair(ptable))
         #println(value)
-        if length(value.integration_bounds) < 1
-            continue
-        end
         if !isassigned(precursor_chromatograms, value.light_prec_id)
-            println("not assigned ", value)
-            println(value.light_prec_id)
+            #println("not assigned ", value)
+            #println(value.light_prec_id)
             continue
         end
         if !isassigned(precursor_chromatograms, value.heavy_prec_id)
-            println("not assigned ", value)
-            println(value.heavy_prec_id)
+            #println("not assigned ", value)
+            #println(value.heavy_prec_id)
             continue
         end
         integration_bounds = Set(
@@ -263,6 +260,10 @@ function getPARs(ptable::ISPRMPrecursorTable,
                                         )
                                     )
                                 )
+        if length(value.integration_bounds) < 1
+            continue
+        end
+        println("TEST")
         light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
         heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
         m = fitPAR(light_scans, 
@@ -271,69 +272,69 @@ function getPARs(ptable::ISPRMPrecursorTable,
                 precursor_chromatograms[value.light_prec_id].transitions, 
                 precursor_chromatograms[value.heavy_prec_id].transitions
                 )
+        println(m)
         setParModel(value, coef = m.betas.ca, dev_ratio = m.dev_ratio[1])
     end
 end
-    getPAR()
 
-    function getScanAdressesForPrecursor(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                                         precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                                         prec_id::UInt32)
-        scan_adresses[precursor_chromatograms[prec_id].last_scan_idx[2:end]]
+function getScanAdressesForPrecursor(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
+                                        precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
+                                        prec_id::UInt32)
+    scan_adresses[precursor_chromatograms[prec_id].scan_idxs[2:end]]
+end
+
+function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
+                    precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
+                    prec_id::UInt32, 
+                    bounds::Set{Int64})
+    [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
+end
+
+function initDesignMatrix(transitions::Set{String}, bounds::Set{Int})
+    zeros(
+                length(transitions)*length(bounds), 
+                length(transitions) + 1
+            )
+end
+
+function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::Set{Int})
+    for (i, transition) in enumerate(transition_union)
+        X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
+        X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
     end
+    X
+end
 
-    function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                     precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                     prec_id::UInt32, 
-                     bounds::Set{Int64})
-        [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
+function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
+    y = Float64[]
+    for (i, transition) in enumerate(transition_union)
+        append!(y, transitions[transition][scans])
     end
+    y
+end
 
-    function initDesignMatrix(transitions::Set{String}, bounds::Set{Int})
-        zeros(
-                    length(transitions)*length(bounds), 
-                    length(transitions) + 1
-                )
+function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
+                bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
+
+    transition_union = Set(keys(light_transitions))∩Set(keys(heavy_transitions))
+    if length(transition_union) == 0
+        return 
     end
-
-    function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::Set{Int})
-        for (i, transition) in enumerate(transition_union)
-            X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
-            X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
-        end
-        X
-    end
-
-    function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
-        y = Float64[]
-        for (i, transition) in enumerate(transition_union)
-            append!(y, transitions[transition][scans])
-        end
-        y
-    end
-
-    function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
-                    bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
-
-        transition_union = Set(keys(light_transitions))∩Set(keys(heavy_transitions))
-        if length(transition_union) == 0
-            return 
-        end
-        
-        X = fillDesignMatrix(initDesignMatrix(transition_union, bounds), light_transitions, transition_union, light_scans, bounds)
-        y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
-        return glmnet(X, y, 
-                        penalty_factor = append!([0.0], ones(length(transition_union))), 
-                        intercept = false, 
-                        lambda=Float64[median(y)])
-    end
+    
+    X = fillDesignMatrix(initDesignMatrix(transition_union, bounds), light_transitions, transition_union, light_scans, bounds)
+    y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
+    return glmnet(X, y, 
+                    penalty_factor = append!([0.0], ones(length(transition_union))), 
+                    intercept = false, 
+                    lambda=Float64[median(y)])
+end
 
     glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
 
     get
     scan_cycle_union = getScanCycleUnion(
-                            scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]],
-                            scan_adresses[1][precursor_chromatograms[1][184].last_scan_idx[2:end]]
+                            scan_adresses[1][precursor_chromatograms[1][183].scan_idxs[2:end]],
+                            scan_adresses[1][precursor_chromatograms[1][184].scan_idxs[2:end]]
                         )
     bounds = Set(getIntegrationBounds(
                 scan_cycle_union
