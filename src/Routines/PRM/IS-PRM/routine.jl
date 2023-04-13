@@ -176,7 +176,9 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 ##########
 #Get Best PSMs for Each Peptide
 ##########
-    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, params[:minimum_fragment_count])
+    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, UInt8(1)
+    #params[:minimum_fragment_count]
+    )
  
 ##########
 #Get MS1 Peak Heights
@@ -239,12 +241,18 @@ function getPARs(ptable::ISPRMPrecursorTable,
                 scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
                 precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram})
     for (key, value) in pairs(getIDToLightHeavyPair(ptable))
-        println(value)
+        #println(value)
         if length(value.integration_bounds) < 1
             continue
         end
         if !isassigned(precursor_chromatograms, value.light_prec_id)
             println("not assigned ", value)
+            println(value.light_prec_id)
+            continue
+        end
+        if !isassigned(precursor_chromatograms, value.heavy_prec_id)
+            println("not assigned ", value)
+            println(value.heavy_prec_id)
             continue
         end
         integration_bounds = Set(
@@ -257,12 +265,13 @@ function getPARs(ptable::ISPRMPrecursorTable,
                                 )
         light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
         heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        println(fitPAR(light_scans, 
+        m = fitPAR(light_scans, 
                 heavy_scans, 
-                bounds, 
+                integration_bounds, 
                 precursor_chromatograms[value.light_prec_id].transitions, 
                 precursor_chromatograms[value.heavy_prec_id].transitions
-                ).betas)
+                )
+        setParModel(value, coef = m.betas.ca, dev_ratio = m.dev_ratio[1])
     end
 end
     getPAR()
@@ -280,42 +289,42 @@ end
         [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
     end
 
-    function initDesignMatrix(scans::Vector{Int64}, bounds::Set{Int})
+    function initDesignMatrix(transitions::Set{String}, bounds::Set{Int})
         zeros(
-                    length(scans)*length(bounds), 
-                    length(scans) + 1
+                    length(transitions)*length(bounds), 
+                    length(transitions) + 1
                 )
     end
 
-    function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, scans::Vector{Int64})
-        for (i, transition) in enumerate(transitions)
-            X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transition[scans]
-            X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transition[scans]
+    function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::Set{Int})
+        for (i, transition) in enumerate(transition_union)
+            X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
+            X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
         end
         X
     end
 
-    function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, scans::Vector{Int64})
+    function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
         y = Float64[]
-        for (i, transition) in enumerate(transitions)
-            append!(y, transition[scans])
+        for (i, transition) in enumerate(transition_union)
+            append!(y, transitions[transition][scans])
         end
+        y
     end
 
     function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
                     bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
 
-        X = fillDesignMatrix(initDesignMatrix(light_scans, bounds), light_transitions, light_scans)
-        y = getResponseMatrix(heavy_transitions, heavy_scans)
-        println("transitions ", light_transitions)
-        println("transitions ", heavy_transitions)
-        println("light scans ", light_scans)
-        println("heavy scans ", heavy_scans)
-        println("y ", y)
-        println("X ", X)
+        transition_union = Set(keys(light_transitions))∩Set(keys(heavy_transitions))
+        if length(transition_union) == 0
+            return 
+        end
+        
+        X = fillDesignMatrix(initDesignMatrix(transition_union, bounds), light_transitions, transition_union, light_scans, bounds)
+        y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
         return glmnet(X, y, 
-                        penalty_factor = append!([0.0], ones(length(light_transitions))), 
-                        intercept = true, 
+                        penalty_factor = append!([0.0], ones(length(transition_union))), 
+                        intercept = false, 
                         lambda=Float64[median(y)])
     end
 

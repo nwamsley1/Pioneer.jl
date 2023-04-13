@@ -4,7 +4,9 @@ struct SimplePrecursor
     isotope::UInt8
     pep_id::UInt32
 end
-
+mutable struct teststruct
+    a::Tuple{Int64, Int64}
+end
 getSeq(sp::SimplePrecursor) = sp.sequence
 getCharge(sp::SimplePrecursor) = sp.charge
 getIsotope(sp::SimplePrecursor) = sp.isotope
@@ -17,8 +19,14 @@ mutable struct LightHeavyPrecursorPair
     light_prec_id::UInt32
     heavy_prec_id::UInt32
     integration_bounds::Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}
+    par_model_coef::Matrix{Float64}
+    dev_ratio::Float64
 end
 
+function setParModel(p::LightHeavyPrecursorPair, coef::Matrix{Float64}, dev_ratio::Float64)
+    p.par_model_coef = coef
+    p.dev_ratio = dev_ratio
+end
 
 getPepGroupID(p::LightHeavyPrecursorPair) = p.pepGroup_id
 getLightSeq(p::LightHeavyPrecursorPair) = p.light_sequence
@@ -53,6 +61,7 @@ mutable struct ISPRMPrecursorTable <: PrecursorDatabase
     lh_pair_id_to_light_heavy_pair::UnorderedDictionary{UInt32, LightHeavyPrecursorPair}
     pep_sequence_to_pep_id::UnorderedDictionary{String, UInt32}
     simple_precursor_set::Set{SimplePrecursor}
+    prec_id_to_lh_pair_id::UnorderedDictionary{UInt32, UInt32}
 end
 
 ISPRMPrecursorTable() = ISPRMPrecursorTable(UnorderedDictionary{UInt32, Protein}(),
@@ -65,12 +74,19 @@ ISPRMPrecursorTable() = ISPRMPrecursorTable(UnorderedDictionary{UInt32, Protein}
                                             UnorderedDictionary{UInt32, Vector{Transition}}(), 
                                             UnorderedDictionary{UInt32, LightHeavyPrecursorPair}(), 
                                             UnorderedDictionary{String, UInt32}(), 
-                                            Set{SimplePrecursor}())
+                                            Set{SimplePrecursor}(),
+                                            UnorderedDictionary{UInt32, UInt32}())
 
 getIDToLightHeavyPair(p::ISPRMPrecursorTable) = p.lh_pair_id_to_light_heavy_pair
 getPepSequenceToPepID(p::ISPRMPrecursorTable) = p.pep_sequence_to_pep_id
 getLightHeavyPairFromPrecID(p::ISPRMPrecursorTable, prec_id::UInt32) = getPrecIDToLightHeavyPair(p)[prec_id]
 getSimplePrecursorSet(p::ISPRMPrecursorTable) = p.simple_precursor_set
+
+function addPrecIDToLHPairID(p::ISPRMPrecursorTable, prec_id::UInt32, lh_pair_id::UInt32)
+    if !isassigned(p.prec_id_to_lh_pair_id, prec_id)
+        insert!(p.prec_id_to_lh_pair_id, prec_id, lh_pair_id)
+    end
+end
 
 isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
 isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor) = isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec))
@@ -177,10 +193,13 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                                         getSeq(getPep(ptable, getPepID(heavy_precursor))),
                                         light_prec_id, 
                                         heavy_prec_id, 
-                                        Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}()
-                                        )
+                                        Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}(),
+                                        Matrix{Float64}(),
+                                        0.0)
                 )
         push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
+        addPrecIDToLHPairID(ptable, light_prec_id, max_lh_pair_id)
+        addPrecIDToLHPairID(ptable, heavy_prec_id, max_lh_pair_id)
         return light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id
     end
 
