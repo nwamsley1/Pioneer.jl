@@ -38,15 +38,7 @@ function setIntegrationBounds!(ptable::ISPRMPrecursorTable,
         end
     end
 end
-#scan_adresses = getScanAdresses(GAPDH_VGVNGFGR[:msOrder])
 
-#test.id_to_pepGroup[0x0000005c]
-#test.id_to_pep[0x00000027]
-#test.lh_pair_id_to_light_heavy_pair[0x0000005e]
-#scan_adresses = getScanAdresses(GAPDH_VGVNGFGR[:msOrder])
-#ms1_indices = Set(map(x->x.ms1, heavy_adresses))∩Set(map(x->x.ms1, light_adresses))
-#test.lh_pair_id_to_light_heavy_pair[0x0000005c]
-#function getScanAdresses(scan_order::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}})
 function getScanAdresses(scan_order::AbstractArray)
     scan_adresses = Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}(undef,length(scan_order)) 
     ms1 = 0
@@ -63,11 +55,7 @@ function getScanAdresses(scan_order::AbstractArray)
     end
     scan_adresses
 end
-#adresses = getScanAdresses(GAPDH_VGVNGFGR[:msOrder]) #P#test.lh_pair_id_to_light_heavy_pair[0x0000005c].light_scan_idxs)
-#h = adresses[test.lh_pair_id_to_light_heavy_pair[0x0000005c].heavy_scan_idxs]
-#l = adresses[test.lh_pair_id_to_light_heavy_pair[0x0000005c].light_scan_idxs]
-#h = getScanAdresses(#test.lh_pair_id_to_light_heavy_pair[0x0000005c].heavy_scan_idxs)
-export getScanAdresses
+
 function getScanCycleUnion(scan_adresses_1::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
                            scan_adresses_2::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}
                           )
@@ -76,14 +64,7 @@ function getScanCycleUnion(scan_adresses_1::Vector{NamedTuple{(:scan_index, :ms1
                 )
         )
 end
-export getScanCycleUnion
-#union = getScanCycleUnion(l, h)
-#light_adresses = getScanAdresses(table.msOrder)[getSub(lightMZ, Float32(10.0), table.precursorMZ)]
-#heavy_adresses = getScanAdresses(table.msOrder)[getSub(heavyMZ, Float32(10.0), table.precursorMZ)]
-#ms1_indices = getScanCycleUnion(light_adresses, heavy_adresses)
-test_indices = Vector{Int64}([1, 2, 10, 11, 12, 13, 60, 61, 62, 63, 64, 65, 66, 67, 68, 100])
-test_indices = Vector{Int64}([1, 2, 10, 11, 12, 13, 60, 61, 62, 63, 64, 65, 66, 67, 68, 100])
-##getIntegrationBounds(ms1_indices)
+
 function getIntegrationBounds(scan_indices::Vector{Int64}; max_gap_size::Int = 10)
     if length(scan_indices)<=1
         return (lower_bound = 1, upper_bound = 1)
@@ -117,18 +98,6 @@ function getIntegrationBounds(scan_indices::Vector{Int64}; max_gap_size::Int = 1
     scan_indices[best_start:(best_stop +1)]
     #(lower_bound = best_start, upper_bound = best_stop+1)
 end
-export getIntegrationBounds
-#getIntegrationBounds(sunion)
-#getIntegrationBounds(ms1_indices)
-
-#limit this by integration boundaires
-#light_scans = [x.scan_index for x in light_adresses if x.ms1∈ms1_indices]
-#heavy_scans = [x.scan_index for x in light_adresses if x.ms1∈ms1_indices]
-#Function that given a sorted list of transitions gets all the hits
-#of_eltype(Float32, table.intensities[1]))
-#function getHits(mass_list::Vector{Float32}, ppm::Float64, masses::MappedArray{Float32, 1, Vector{Union{Missing, Float32}}, MappedArrays.var"#7#9"{Float32}, MappedArrays.var"#8#10"{Union{Missing, Float32}}}, 
-#    intensities::MappedArray{Float32, 1, Vector{Union{Missing, Float32}}, MappedArrays.var"#7#9"{Float32}, MappedArrays.var"#8#10"{Union{Missing, Float32}}})
-#function getHits(mass_list::Vector{Float32}, ppm::Float32, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}})
 
 
 

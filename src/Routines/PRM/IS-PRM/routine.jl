@@ -121,7 +121,6 @@ include("src/Routines/PRM/precursorChromatogram.jl")
 include("src/Routines/PRM/plotPRM.jl")
 include("src/Routines/PRM/getMS1PeakHeights.jl")
 include("src/Routines/PRM/IS-PRM/initTransitions.jl")
-include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
 include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
 include("src/SearchRAW.jl")
 =#
@@ -129,6 +128,7 @@ include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
 include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
 include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("src/Routines/PRM/IS-PRM/parEstimation.jl")
 ##########
 #Read Precursor Table
 ##########
@@ -240,189 +240,48 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 using GLMNet
 using Statistics
 for i in eachindex(MS_TABLES)
-    getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], UInt32(i))
+    getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
 end
 #Get the peak area ratios into the dataframe. 
 #Then make the plots with the PARs.
 #Then figure out how to summarize to protien level by LFQ and make a protien table
-function getPARs(ptable::ISPRMPrecursorTable, 
-                scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
-                precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                ms_file_idx::UInt32)
-    for (key, value) in pairs(getIDToLightHeavyPair(ptable))
-        #println(value)
-        if !isassigned(precursor_chromatograms, value.light_prec_id)
-            #println("not assigned ", value)
-            #println(value.light_prec_id)
-            continue
-        end
-        if !isassigned(precursor_chromatograms, value.heavy_prec_id)
-            #println("not assigned ", value)
-            #println(value.heavy_prec_id)
-            continue
-        end
-        integration_bounds = Set(
-                                getIntegrationBounds(
-                                    getScanCycleUnion(
-                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.light_prec_id),
-                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.heavy_prec_id)
-                                        )
-                                    )
-                                )
-        println(integration_bounds)
-        if length(integration_bounds) < 4
-            continue
-        end
-        println("integration_bounds ", integration_bounds)
-        println("TEST")
-        light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        m = fitPAR(light_scans, 
-                heavy_scans, 
-                integration_bounds, 
-                precursor_chromatograms[value.light_prec_id].transitions, 
-                precursor_chromatograms[value.heavy_prec_id].transitions
+
+##########
+#Write Protein Peptide Quant Table
+##########
+#transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:mz][psm[:best_transitions]]) => :transition_mzs)
+
+function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt32)
+    lh_pair = ptable.lh_pair_id_to_light_heavy_pair[ptable.prec_id_to_lh_pair_id[prec_id]]
+    isotope = "light"
+    if lh_pair.heavy_prec_id == prec_id
+        isotope = "heavy"
+    end
+    if length(lh_pair.par_model) == 0
+        return (Missing, Missing, isotope)
+    elseif !isassigned(lh_pair.par_model, ms_file_idx)
+        return (missing, missing, isotope)
+    else
+        return (1/lh_pair.par_model[ms_file_idx].par_model_coef[1],
+                lh_pair.par_model[ms_file_idx].dev_ratio,
+                isotope
                 )
-        println(m.betas.ca)
-        setParModel(value, coef = m.betas.ca, dev_ratio = m.dev_ratio[1], ms_file_idx = ms_file_idx)
     end
 end
+transform!(best_psms, AsTable(:) => ByRow(psm -> (getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx]))) => [:par, :dev_ratio, :isotope])
 
-function getScanAdressesForPrecursor(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                                        precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                                        prec_id::UInt32)
-    scan_adresses[precursor_chromatograms[prec_id].scan_idxs[2:end]]
+quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
+getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+combine(sdf -> getProtAbundance(sdf[!,:sequence], sdf[!,:ms_file_idx], sdf[!, :par]), groupby(quant, :protein_names))
+combine(sdf -> typeof(sdf[!,:sequence]), groupby(quant, :protein_names))
+
+
+quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
+combine(groupby(quant, :protein_names), [:sequence, :ms_file_idx, :par] => (sequence, ms_file_idx, par) -> getProtAbundance(sequence, ms_file_idx, par))
+a = groupby(quant, :protein_names)
+for group in grouped
+    getProtAbundance(group.sequence,group.ms_file_idx, group.par)
 end
-
-function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                    precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                    prec_id::UInt32, 
-                    bounds::Set{Int64})
-    [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
-end
-
-function initDesignMatrix(transitions::Set{String}, bounds::Set{Int})
-    zeros(
-                length(transitions)*length(bounds), 
-                length(transitions) + 1
-            )
-end
-
-function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::Set{Int})
-    for (i, transition) in enumerate(transition_union)
-        X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
-        X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
-    end
-    X
-end
-
-function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
-    y = Float64[]
-    for (i, transition) in enumerate(transition_union)
-        append!(y, transitions[transition][scans])
-    end
-    y
-end
-
-function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
-                bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
-
-    transition_union = Set(keys(light_transitions))∩Set(keys(heavy_transitions))
-    if length(transition_union) == 0
-        return 
-    end
-    
-    X = fillDesignMatrix(initDesignMatrix(transition_union, bounds), light_transitions, transition_union, light_scans, bounds)
-    y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
-    return glmnet(X, y, 
-                    penalty_factor = append!([0.0], ones(length(transition_union))), 
-                    intercept = false, 
-                    lambda=Float64[median(y)])
-end
-
-    glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
-
-    get
-    scan_cycle_union = getScanCycleUnion(
-                            scan_adresses[1][precursor_chromatograms[1][183].scan_idxs[2:end]],
-                            scan_adresses[1][precursor_chromatograms[1][184].scan_idxs[2:end]]
-                        )
-    bounds = Set(getIntegrationBounds(
-                scan_cycle_union
-            ))
-    light_scans = [index for (index, x) in enumerate(scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]) if x.ms1 in bounds]
-    heavy_scans = [index for (index, x) in enumerate(scan_adresses[1][precursor_chromatograms[1][184].last_scan_idx[2:end]]) if x.ms1 in bounds]
-    X = zeros(length(precursor_chromatograms[1][184].transitions)*length(bounds), length(precursor_chromatograms[1][184].transitions) + 1)
-    for (i, value) in enumerate(precursor_chromatograms[1][183].transitions)
-        X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = value[light_scans]
-        X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = value[light_scans]
-    end
-    #X[:,end] = ones(size(X)[1])
-    y = Float64[]
-    for (i, value) in enumerate(precursor_chromatograms[1][184].transitions)
-        append!(y, value[heavy_scans])
-    end
-    X[45:55,1] .+= 1e5
-    X[45:55,6] .+= 1e5
-    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
-    m.betas
-    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = false, lambda=Float64[median(y)])
-    m.betas
-    m = glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = false, lambda=Float64[0])
-    m.betas
-    fit(LassoModel, X, y)
-    X[45:55,1] .+= 10000
-    X[45:55,6] .+= 10000
-    fit(LassoModel, X, y)
-    #I = 1e9*Diagonal(ones(7))
-    I = 1e9*Diagonal(ones(6))
-    I[1,1] = 0
-    B = (transpose(X)*X + I)\(transpose(X)*y)
-    1 - sum((X*B - y).^2)/sum((y .- mean(y)).^2)
-    B = (transpose(X[:,1])*X[:,1])\(transpose(X[:,1])*y)
-    1 - sum((X[:,1]*B - y).^2)/sum((y .- mean(y)).^2)
-    #Do this with just the top 4 most abundant transitions. 
-    #Also, try adding bias or missaligned transition and see what is more robust.
-    sum(precursor_chromatograms[1][184].transitions["y6+1"][light_scans])/sum(precursor_chromatograms[1][183].transitions["y6+1"][light_scans])
-    sum(precursor_chromatograms[1][184].transitions["y7+1"][light_scans])/sum(precursor_chromatograms[1][183].transitions["y7+1"][light_scans])
-##########
-#Apply conditions to MS Files. 
-##########
-MS_FILE_ID_TO_NAME = Dict(
-                            zip(
-                            [UInt32(i) for i in 1:length(MS_TABLE_PATHS)], 
-                            [splitpath(filepath)[end] for filepath in MS_TABLE_PATHS]
-                            )
-                        )
-
-MS_FILE_ID_TO_CONDITION = Dict(
-                                    zip(
-                                    [key for key in keys(MS_FILE_ID_TO_NAME)], 
-                                    ["NONE" for key in keys(MS_FILE_ID_TO_NAME) ]
-                                    )
-                                )
-
-for (file_id, file_name) in MS_FILE_ID_TO_NAME 
-    for (condition, value) in params[:ms_file_conditions]
-        if occursin(condition, file_name)
-            MS_FILE_ID_TO_CONDITION[file_id] = condition
-        end
-    end
-end
-
-transform!(best_psms, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_CONDITION[psm[:ms_file_idx]]) => :condition)
-##########
-#Write Method Files
-##########
-    #Get best_psm for each peptide across all ms_file
-    best_psms = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(best_psms, :pep_idx)) 
-
-    writeTransitionList(best_psms, joinpath(MS_DATA_DIR, "transition_list.csv"))
-    writeIAPIMethod(best_psms, joinpath(MS_DATA_DIR, "iapi_method.csv"))
-
-    println(" Scored "*string(size(best_psms)[1])*" precursors")
-end
-
 ##########
 #Make Plots
 ##########
@@ -441,3 +300,119 @@ if ARGS["make_plots"]
                                         join(sample_name*"_precursor_chromatograms"*".pdf"))
     end
 end
+
+prot = DataFrame(Dict(
+    :peptide => ["A","A","A","B","B","B","C","C","C"],
+    :protein => split(repeat("A",9), ""),
+    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
+    :abundance => [10, 12, 14, 1, 1.2, 1.4, 100, 120, 140],
+))
+
+prot = DataFrame(Dict(
+    :peptide => ["A","A","A","B","B","B","C","C","C"],
+    :protein => split(repeat("A",9), ""),
+    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
+    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, 400],
+))
+
+prot = DataFrame(Dict(
+    :peptide => ["A","A","A","B","B","B","C","C","C"],
+    :protein => split(repeat("A",9), ""),
+    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
+    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, missing],
+))
+
+prot = DataFrame(Dict(
+    :peptide => ["A"],
+    :protein => split(repeat("A",1), ""),
+    :file_idx => [1],
+    :abundance => [10],
+))
+
+
+function getS(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{Union{T, Missing}}) where T <: Real
+    S = Matrix(zeros(length(unique(peptides)), length(unique(experiments))))
+    peptides_dict = Dict(zip(unique(peptides), 1:length(unique(peptides))))
+    experiments_dict = Dict(zip(unique(experiments), 1:length(unique(experiments))))
+    for i in eachindex(peptides)
+        S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = coalesce(abundance[i], 0.0)
+    end
+    return S
+end
+
+function getB(S::Matrix{Float64}, N::Int)
+    B = zeros(N + 1)
+    for i in 1:N
+        for j in (i+1):N
+                r_i_j = median(-log2.(S[:,i]) + log2.(S[:,j]))
+                if (S[i, j] != 0.0)
+                    B[i] = B[i] - r_i_j# M[i, j]
+                    B[j] = B[j] + r_i_j
+                end
+        end 
+    end
+    B.*=2
+    B[end] = sum(S[S.!=0])*N/length(S) #Normalizing factor
+    B
+end
+
+function getA(N::Int)
+    A = ones(N+1, N+1)
+    for i in 1:(N)
+        for j in 1:N
+            if i == j
+                A[i, j] = 2*(N - 1)
+            else
+                A[i, j] = -1*(N-1)
+            end
+        end
+    end
+    A[end, end] = 0
+    A
+end
+
+function getProtAbundance(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{Union{T, Missing}}) where T <: Real
+    N = length(unique(experiments))
+    S = getS(peptides, experiments, abundance)
+    B = getB(S, N)
+    A = getA(N)
+    return (A\B)[1:(end - 1)]
+end
+
+function getProtAbundance(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{T}) where T <: Real
+    getProtAbundance(peptides, experiments, allowmissing(abundance))
+end 
+
+S = getS(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+N = 3
+A = ones(N+1, N+1)
+B = zeros(3 + 1)
+N = 3
+
+getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+
+prot = DataFrame(Dict(
+    :peptide => ["A","A","A","B","B","B","C","C"],
+    :protein => split(repeat("A",8), ""),
+    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2],
+    :abundance => [10, 12, 14, 1, 1.2, 1.4, 100, 120],
+))
+
+A*log.([10, 12, 14])
+B
+
+for prot in grouped
+    getProtAbundance(prot[!, :sequence], prot[!, :ms_file_idx], prot[!, :par])
+end
+A, B = getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+sum(A*log.([10, 12, 14]) .- B)
+a = (-1)*ones(3, 3)
+a[diagind(a)] .= 4
+Diagonal(4*ones(3, 3))
+
+function my_function(x::Vector{Int})
+    # function implementation
+end
+
+df = DataFrame(group = [1, 1, 2, 2], values = [1, 2, 3, 4])
+result = combine(groupby(df, :group), :values => (x -> my_function(x)) => :result)
