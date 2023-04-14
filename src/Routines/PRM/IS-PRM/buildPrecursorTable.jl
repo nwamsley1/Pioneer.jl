@@ -12,20 +12,27 @@ getCharge(sp::SimplePrecursor) = sp.charge
 getIsotope(sp::SimplePrecursor) = sp.isotope
 getPepID(sp::SimplePrecursor) = sp.pep_id
 
+struct ParModel
+    par_model_coef::Matrix{Float64}
+    dev_ratio::Float64
+end
+ParModel() = ParModel(zeros((2,2)),0.0)
 mutable struct LightHeavyPrecursorPair
     pepGroup_id::UInt32
     light_sequence::String
     heavy_sequence::String
     light_prec_id::UInt32
     heavy_prec_id::UInt32
-    integration_bounds::Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}
-    par_model_coef::Matrix{Float64}
-    dev_ratio::Float64
+    #integration_bounds::Dictionary{UInt32, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}
+    par_model::Dictionary{UInt32, ParModel}
 end
 
-function setParModel(p::LightHeavyPrecursorPair, coef::Matrix{Float64}, dev_ratio::Float64)
-    p.par_model_coef = coef
-    p.dev_ratio = dev_ratio
+function setParModel(p::LightHeavyPrecursorPair; coef::Matrix{Float64} = zeros((2, 2)), dev_ratio::Float64 = 0.0, ms_file_idx::UInt32 = UInt32(0))
+    if !isassigned(p.par_model, ms_file_idx)
+        insert!(p.par_model, ms_file_idx, ParModel(coef, dev_ratio))
+    else
+        p.par_model[ms_file_idx] = ParModel(coef, dev_ratio)
+    end
 end
 
 getPepGroupID(p::LightHeavyPrecursorPair) = p.pepGroup_id
@@ -193,9 +200,8 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                                         getSeq(getPep(ptable, getPepID(heavy_precursor))),
                                         light_prec_id, 
                                         heavy_prec_id, 
-                                        Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}(),
-                                        zeros((2,2)),
-                                        0.0)
+                                        #Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}(),
+                                        Dictionary{UInt32, ParModel}())
                 )
         push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
         addPrecIDToLHPairID(ptable, light_prec_id, max_lh_pair_id)

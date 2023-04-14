@@ -37,7 +37,8 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 PRECURSOR_LIST_PATH = ARGS["precursor_list"]
-
+#MS_DATA_DIR = "./data/parquet/"
+#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
 
@@ -122,12 +123,11 @@ include("src/Routines/PRM/getMS1PeakHeights.jl")
 include("src/Routines/PRM/IS-PRM/initTransitions.jl")
 include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
 include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
 include("src/SearchRAW.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 =#
 include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
 include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
 ##########
 #Read Precursor Table
@@ -237,9 +237,18 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 ##########
 #Get PARs. 
 ##########
+using GLMNet
+using Statistics
+for i in eachindex(MS_TABLES)
+    getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], UInt32(i))
+end
+#Get the peak area ratios into the dataframe. 
+#Then make the plots with the PARs.
+#Then figure out how to summarize to protien level by LFQ and make a protien table
 function getPARs(ptable::ISPRMPrecursorTable, 
                 scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
-                precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram})
+                precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
+                ms_file_idx::UInt32)
     for (key, value) in pairs(getIDToLightHeavyPair(ptable))
         #println(value)
         if !isassigned(precursor_chromatograms, value.light_prec_id)
@@ -260,9 +269,11 @@ function getPARs(ptable::ISPRMPrecursorTable,
                                         )
                                     )
                                 )
-        if length(value.integration_bounds) < 1
+        println(integration_bounds)
+        if length(integration_bounds) < 4
             continue
         end
+        println("integration_bounds ", integration_bounds)
         println("TEST")
         light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
         heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
@@ -272,8 +283,8 @@ function getPARs(ptable::ISPRMPrecursorTable,
                 precursor_chromatograms[value.light_prec_id].transitions, 
                 precursor_chromatograms[value.heavy_prec_id].transitions
                 )
-        println(m)
-        setParModel(value, coef = m.betas.ca, dev_ratio = m.dev_ratio[1])
+        println(m.betas.ca)
+        setParModel(value, coef = m.betas.ca, dev_ratio = m.dev_ratio[1], ms_file_idx = ms_file_idx)
     end
 end
 

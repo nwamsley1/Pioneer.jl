@@ -38,7 +38,7 @@ function setIntegrationBounds!(ptable::ISPRMPrecursorTable,
         end
     end
 end
-scan_adresses = getScanAdresses(GAPDH_VGVNGFGR[:msOrder])
+#scan_adresses = getScanAdresses(GAPDH_VGVNGFGR[:msOrder])
 
 #test.id_to_pepGroup[0x0000005c]
 #test.id_to_pep[0x00000027]
@@ -77,7 +77,7 @@ function getScanCycleUnion(scan_adresses_1::Vector{NamedTuple{(:scan_index, :ms1
         )
 end
 export getScanCycleUnion
-sunion = getScanCycleUnion(l, h)
+#union = getScanCycleUnion(l, h)
 #light_adresses = getScanAdresses(table.msOrder)[getSub(lightMZ, Float32(10.0), table.precursorMZ)]
 #heavy_adresses = getScanAdresses(table.msOrder)[getSub(heavyMZ, Float32(10.0), table.precursorMZ)]
 #ms1_indices = getScanCycleUnion(light_adresses, heavy_adresses)
@@ -118,7 +118,7 @@ function getIntegrationBounds(scan_indices::Vector{Int64}; max_gap_size::Int = 1
     #(lower_bound = best_start, upper_bound = best_stop+1)
 end
 export getIntegrationBounds
-getIntegrationBounds(sunion)
+#getIntegrationBounds(sunion)
 #getIntegrationBounds(ms1_indices)
 
 #limit this by integration boundaires
