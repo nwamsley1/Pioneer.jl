@@ -332,10 +332,19 @@ end
 ##########
 #Make Plots
 ##########
+for (ms_file_idx, MS_TABLE) in MS_TABLES
+    sample_name = split(MS_TABLE_PATHS[ms_file_idx], ".")[1]
+    plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
+                        ptable, 
+                        MS_TABLE,
+                        joinpath("./figures/best_spectra/", sample_name),
+                        join(sample_name*"_best_spectra"*".pdf"))
+end
 
 if ARGS["make_plots"]
     for (ms_file_idx, MS_TABLE) in MS_TABLES
-        sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
+        #sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
+
         plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
                             ptable, 
                             MS_TABLE,

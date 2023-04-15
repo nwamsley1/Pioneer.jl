@@ -72,3 +72,48 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 end
 
+function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
+    heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, out_path::String)
+    p = plot(title = title, fontfamily="helvetica")
+    twinx()
+    max_light = 0.0
+    max_heavy = 0.0
+
+    for (color, t) in enumerate(keys(heavy_transitions))
+        if isassigned(light_transitions, t)
+            if maximum(light_transitions[t])>max_light
+                max_light = maximum(light_transitions[t])
+            end
+        end
+        if maximum(heavy_transitions[t])>max_heavy
+            max_heavy = maximum(heavy_transitions[t])
+        end
+    end
+
+    for (color, t) in enumerate(keys(heavy_transitions))
+
+        if isassigned(light_transitions, t)
+            plot!(p, light_rts, -1*(max_heavy/max_light)*light_transitions[t], color = color, legend = false, label = t, axis = 2)
+            plot!(p, light_rts, -1*(max_heavy/max_light)*light_transitions[t], seriestype=:scatter, legend = false, color = color, label = nothing, axis = 2)
+        end
+
+        plot!(p, heavy_rts, heavy_transitions[t], color = color, legend = true, label = t, axis = 1)
+        plot!(p, heavy_rts, heavy_transitions[t], seriestype=:scatter, color = color, label = nothing, axis = 1)
+    end
+    #ylims!((0, max_heavy), axis = 1)
+    #ylims!((0, max_light), axis = 2)
+    plot!(yticks = (max_heavy, string(max_heavy)), axis = 1)
+    plot!(yticks = (-1*max_light, string(max_light)), axis = 2)
+    yticks!(2, [5, 10, 15], ["Low", "Medium", "High"])
+    savefig(joinpath(out_path, title*".pdf"))
+end
+
+ptable.lh_pair_id_to_light_heavy_pair[0x000005c]
+
+plotPairedFragmentIonChromatogram(
+precursor_chromatograms[1][0x000000b7].transitions,
+precursor_chromatograms[1][0x000000b8].transitions,
+precursor_chromatograms[1][0x000000b7].rts,
+precursor_chromatograms[1][0x000000b8].rts,
+"TEST",
+"./")
