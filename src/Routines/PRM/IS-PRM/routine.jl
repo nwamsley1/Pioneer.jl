@@ -268,20 +268,34 @@ function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt3
                 )
     end
 end
-transform!(best_psms, AsTable(:) => ByRow(psm -> (getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx]))) => [:par, :dev_ratio, :isotope])
-
-quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
-getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
-combine(sdf -> getProtAbundance(sdf[!,:sequence], sdf[!,:ms_file_idx], sdf[!, :par]), groupby(quant, :protein_names))
-combine(sdf -> typeof(sdf[!,:sequence]), groupby(quant, :protein_names))
-
-
-quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
-combine(groupby(quant, :protein_names), [:sequence, :ms_file_idx, :par] => (sequence, ms_file_idx, par) -> getProtAbundance(sequence, ms_file_idx, par))
-a = groupby(quant, :protein_names)
-for group in grouped
-    getProtAbundance(group.sequence,group.ms_file_idx, group.par)
+transform!(best_psms, [:par, :dev_ratio, :isotope] => [Vector{Float64}(undef, size(df, 1)), Vector{Float64}(undef, size(df, 1)), Vector{String}(undef, size(df, 1))]=> [:par, :dev_ratio, :isotope]) do row
+    # Do some calculation here to fill the new column
+    row.par, row.dev_ratio, row.isotope = getPAR(ptable, row.precursor_idx, row.ms_file_idx)
 end
+best_psms.par = missings(Float64, size(best_psms, 1))
+best_psms.dev_ratio = missings(Float64, size(best_psms, 1))
+for row in eachrow(best_psms)
+    par, dev, isotope = getPAR(ptable, row.precursor_idx, row.ms_file_idx)
+    if typeof(par)!=Float64
+        continue
+    else
+        row.par, row.dev_ratio, row.isotope = par, dev, isotope
+    end
+end
+\
+quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
+combine(groupby(quant, :protein_names), [:sequence, :ms_file_idx, :par] => (sequence, ms_file_idx, par) -> getProtAbundance(collect(sequence), collect(ms_file_idx), collect(par)))
+for group in groupby(quant, :protein_names)
+    println(getProtAbundance(collect(group.sequence), collect(group.ms_file_idx), collect(group.par)))
+end
+prot = DataFrame(Dict(
+    :peptide => ["A"],
+    :protein => split(repeat("A",1), ""),
+    :file_idx => [1],
+    :abundance => [10],
+))
+getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+
 ##########
 #Make Plots
 ##########
@@ -328,9 +342,9 @@ prot = DataFrame(Dict(
     :file_idx => [1],
     :abundance => [10],
 ))
+getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
 
-
-function getS(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{Union{T, Missing}}) where T <: Real
+function getS(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Union{T, Missing}}) where T <: Real
     S = Matrix(zeros(length(unique(peptides)), length(unique(experiments))))
     peptides_dict = Dict(zip(unique(peptides), 1:length(unique(peptides))))
     experiments_dict = Dict(zip(unique(experiments), 1:length(unique(experiments))))
@@ -371,15 +385,21 @@ function getA(N::Int)
     A
 end
 
-function getProtAbundance(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{Union{T, Missing}}) where T <: Real
+function getProtAbundance(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Union{T, Missing}}) where T <: Real
     N = length(unique(experiments))
     S = getS(peptides, experiments, abundance)
     B = getB(S, N)
     A = getA(N)
-    return (A\B)[1:(end - 1)]
+    out = (A\B)[1:(end - 1)]
+    println(out)
+    return out
+    #if out == 0.0
+    #    return missing
+    #else
+    #    return out
 end
 
-function getProtAbundance(peptides::Vector{String}, experiments::Vector{Int}, abundance::Vector{T}) where T <: Real
+function getProtAbundance(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{T}) where T <: Real
     getProtAbundance(peptides, experiments, allowmissing(abundance))
 end 
 
