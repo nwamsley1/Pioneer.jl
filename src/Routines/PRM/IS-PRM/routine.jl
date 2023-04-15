@@ -258,7 +258,7 @@ function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt3
         isotope = "heavy"
     end
     if length(lh_pair.par_model) == 0
-        return (Missing, Missing, isotope)
+        return (missing, missing, isotope)
     elseif !isassigned(lh_pair.par_model, ms_file_idx)
         return (missing, missing, isotope)
     else
@@ -268,7 +268,9 @@ function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt3
                 )
     end
 end
-transform!(best_psms, [:par, :dev_ratio, :isotope] => [Vector{Float64}(undef, size(df, 1)), Vector{Float64}(undef, size(df, 1)), Vector{String}(undef, size(df, 1))]=> [:par, :dev_ratio, :isotope]) do row
+
+transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
+#=transform!(best_psms, [:par, :dev_ratio, :isotope] => [Vector{Float64}(undef, size(df, 1)), Vector{Float64}(undef, size(df, 1)), Vector{String}(undef, size(df, 1))]=> [:par, :dev_ratio, :isotope]) do row
     # Do some calculation here to fill the new column
     row.par, row.dev_ratio, row.isotope = getPAR(ptable, row.precursor_idx, row.ms_file_idx)
 end
@@ -282,19 +284,50 @@ for row in eachrow(best_psms)
         row.par, row.dev_ratio, row.isotope = par, dev, isotope
     end
 end
-\
-quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
-combine(groupby(quant, :protein_names), [:sequence, :ms_file_idx, :par] => (sequence, ms_file_idx, par) -> getProtAbundance(collect(sequence), collect(ms_file_idx), collect(par)))
-for group in groupby(quant, :protein_names)
-    println(getProtAbundance(collect(group.sequence), collect(group.ms_file_idx), collect(group.par)))
-end
+=#
 prot = DataFrame(Dict(
-    :peptide => ["A"],
-    :protein => split(repeat("A",1), ""),
-    :file_idx => [1],
-    :abundance => [10],
+    :peptide => ["A","A","A","B","B","B","C","C","C","D","D","D"],
+    :protein => append!(split(repeat("A",9), ""), ["B","B","B"]),
+    :file_idx => UInt32[1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3],
+    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, missing, 1000, 2000, 3000],
 ))
-getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
+r=sample(1:size(prot,1), size(prot,1),  replace=false)
+@time prot = prot[r,:]
+using StatsBase
+out = Dict(
+    :protein => String[],
+    :peptides => String[],
+    :log2_abundance => Float64[],
+    :experiments => UInt32[],
+)
+
+for (protein, data) in pairs(groupby(prot, :protein))
+    println(typeof(protein[:protein]))
+    getProtAbundance(string(protein[:protein]), 
+                        collect(data[!,:peptide]), 
+                        collect(data[!,:file_idx]), 
+                        collect(data[!,:abundance]),
+                        out[:protein],
+                        out[:peptides],
+                        out[:experiments],
+                        out[:log2_abundance]
+                    )
+    #println(protein[:parent])
+end
+quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
+
+for (protein, data) in pairs(groupby(quant, :protein_names))
+    getProtAbundance(string(protein[:protein_names]), 
+                        collect(data[!,:sequence]), 
+                        collect(data[!,:ms_file_idx]), 
+                        (collect(data[!,:par])),
+                        out[:protein],
+                        out[:peptides],
+                        out[:experiments],
+                        out[:log2_abundance]
+                    )
+    #println(protein[:parent])
+end
 
 ##########
 #Make Plots
@@ -344,64 +377,7 @@ prot = DataFrame(Dict(
 ))
 getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
 
-function getS(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Union{T, Missing}}) where T <: Real
-    S = Matrix(zeros(length(unique(peptides)), length(unique(experiments))))
-    peptides_dict = Dict(zip(unique(peptides), 1:length(unique(peptides))))
-    experiments_dict = Dict(zip(unique(experiments), 1:length(unique(experiments))))
-    for i in eachindex(peptides)
-        S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = coalesce(abundance[i], 0.0)
-    end
-    return S
-end
 
-function getB(S::Matrix{Float64}, N::Int)
-    B = zeros(N + 1)
-    for i in 1:N
-        for j in (i+1):N
-                r_i_j = median(-log2.(S[:,i]) + log2.(S[:,j]))
-                if (S[i, j] != 0.0)
-                    B[i] = B[i] - r_i_j# M[i, j]
-                    B[j] = B[j] + r_i_j
-                end
-        end 
-    end
-    B.*=2
-    B[end] = sum(S[S.!=0])*N/length(S) #Normalizing factor
-    B
-end
-
-function getA(N::Int)
-    A = ones(N+1, N+1)
-    for i in 1:(N)
-        for j in 1:N
-            if i == j
-                A[i, j] = 2*(N - 1)
-            else
-                A[i, j] = -1*(N-1)
-            end
-        end
-    end
-    A[end, end] = 0
-    A
-end
-
-function getProtAbundance(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Union{T, Missing}}) where T <: Real
-    N = length(unique(experiments))
-    S = getS(peptides, experiments, abundance)
-    B = getB(S, N)
-    A = getA(N)
-    out = (A\B)[1:(end - 1)]
-    println(out)
-    return out
-    #if out == 0.0
-    #    return missing
-    #else
-    #    return out
-end
-
-function getProtAbundance(peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{T}) where T <: Real
-    getProtAbundance(peptides, experiments, allowmissing(abundance))
-end 
 
 S = getS(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
 N = 3
