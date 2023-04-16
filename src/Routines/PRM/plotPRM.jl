@@ -75,7 +75,7 @@ using LaTeXStrings
 function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
     heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, 
     par::Real, dev_ratio::Real, out_path::String)
-    p = plot(title = title, fontfamily="helvetica")
+    p = plot(title = title, fontfamily="helvetica", legend=:outertopright)
 
     max_light = 0.0
     max_heavy = 0.0
@@ -98,7 +98,7 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
             plot!(p, light_rts, -1*(max_heavy/max_light)*light_transitions[t], seriestype=:scatter, legend = false, color = color, label = nothing)
         end
 
-        plot!(p, heavy_rts, heavy_transitions[t], color = color, legend = true, label = t)
+        plot!(p, heavy_rts, heavy_transitions[t], color = color, legend = :outertopright, label = t)
         plot!(p, heavy_rts, heavy_transitions[t], seriestype=:scatter, color = color, label = nothing)
     end
 
@@ -110,6 +110,7 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     yticks!((ticks, 
              ticklabels), 
              axis = 1)
+    #plot!(legend=:outertopright)
     savefig(joinpath(out_path, title*".pdf"))
 end
 
@@ -120,10 +121,13 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
                                                 ms_file_idx::UInt32, 
                                                 out_path::String, 
                                                 fname::String)
+    if !isdir(out_path)
+        mkpath(out_path)
+    end
     for lh_pair in ptable.lh_pair_id_to_light_heavy_pair
         
         function getPrecursorChromatogram(prec_id::UInt32, chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram})
-            if !isassined(chromatograms, prec_id)
+            if !isassigned(chromatograms, prec_id)
                 return UnorderedDictionary{String, Vector{Float32}}(), Float32[]
             else
                 return chromatograms[prec_id].transitions, chromatograms[prec_id].rts
@@ -131,10 +135,10 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
         end
 
         function getParModel(par_models::Dictionary{UInt32, ParModel}, ms_file_idx::UInt32)
-            if !isassigned(ms_file_idx, par_models)
+            if !isassigned(par_models,  ms_file_idx)
                 return 0.0, 0.0
             else
-                par_model[ms_file_idx].par_model_coef[ms_file_idx], par_model[dev_ratio]
+                par_models[ms_file_idx].par_model_coef[ms_file_idx], par_models[ms_file_idx].dev_ratio
             end
         end
 
@@ -142,6 +146,9 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
         heavy_transitions, heavy_rts = getPrecursorChromatogram(lh_pair.heavy_prec_id, chromatograms)
         par, dev_ratio = getParModel(lh_pair.par_model, ms_file_idx)
 
+        if (length(light_transitions) == 0) & (length(heavy_transitions) == 0)
+            continue
+        end
         plotPairedFragmentIonChromatogram(
             light_transitions, 
             heavy_transitions,
@@ -151,9 +158,9 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             par, 
             dev_ratio,
             out_path)
-
+    end
         files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
         merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
-    end
+
 end
 

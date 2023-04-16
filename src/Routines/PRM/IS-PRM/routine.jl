@@ -270,21 +270,7 @@ function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt3
 end
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
-#=transform!(best_psms, [:par, :dev_ratio, :isotope] => [Vector{Float64}(undef, size(df, 1)), Vector{Float64}(undef, size(df, 1)), Vector{String}(undef, size(df, 1))]=> [:par, :dev_ratio, :isotope]) do row
-    # Do some calculation here to fill the new column
-    row.par, row.dev_ratio, row.isotope = getPAR(ptable, row.precursor_idx, row.ms_file_idx)
-end
-best_psms.par = missings(Float64, size(best_psms, 1))
-best_psms.dev_ratio = missings(Float64, size(best_psms, 1))
-for row in eachrow(best_psms)
-    par, dev, isotope = getPAR(ptable, row.precursor_idx, row.ms_file_idx)
-    if typeof(par)!=Float64
-        continue
-    else
-        row.par, row.dev_ratio, row.isotope = par, dev, isotope
-    end
-end
-=#
+
 prot = DataFrame(Dict(
     :peptide => ["A","A","A","B","B","B","C","C","C","D","D","D"],
     :protein => append!(split(repeat("A",9), ""), ["B","B","B"]),
@@ -332,6 +318,11 @@ end
 ##########
 #Make Plots
 ##########
+
+
+plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[3], UInt32(3), "./figures/paired_spectra", "TESTOUT3")
+
+#=
 for (ms_file_idx, MS_TABLE) in MS_TABLES
     sample_name = split(MS_TABLE_PATHS[ms_file_idx], ".")[1]
     plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
@@ -356,68 +347,4 @@ if ARGS["make_plots"]
                                         join(sample_name*"_precursor_chromatograms"*".pdf"))
     end
 end
-
-prot = DataFrame(Dict(
-    :peptide => ["A","A","A","B","B","B","C","C","C"],
-    :protein => split(repeat("A",9), ""),
-    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
-    :abundance => [10, 12, 14, 1, 1.2, 1.4, 100, 120, 140],
-))
-
-prot = DataFrame(Dict(
-    :peptide => ["A","A","A","B","B","B","C","C","C"],
-    :protein => split(repeat("A",9), ""),
-    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
-    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, 400],
-))
-
-prot = DataFrame(Dict(
-    :peptide => ["A","A","A","B","B","B","C","C","C"],
-    :protein => split(repeat("A",9), ""),
-    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2, 3],
-    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, missing],
-))
-
-prot = DataFrame(Dict(
-    :peptide => ["A"],
-    :protein => split(repeat("A",1), ""),
-    :file_idx => [1],
-    :abundance => [10],
-))
-getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
-
-
-
-S = getS(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
-N = 3
-A = ones(N+1, N+1)
-B = zeros(3 + 1)
-N = 3
-
-getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
-
-prot = DataFrame(Dict(
-    :peptide => ["A","A","A","B","B","B","C","C"],
-    :protein => split(repeat("A",8), ""),
-    :file_idx => [1, 2, 3, 1, 2, 3, 1, 2],
-    :abundance => [10, 12, 14, 1, 1.2, 1.4, 100, 120],
-))
-
-A*log.([10, 12, 14])
-B
-
-for prot in grouped
-    getProtAbundance(prot[!, :sequence], prot[!, :ms_file_idx], prot[!, :par])
-end
-A, B = getProtAbundance(prot[!, :peptide], prot[!, :file_idx], prot[!, :abundance])
-sum(A*log.([10, 12, 14]) .- B)
-a = (-1)*ones(3, 3)
-a[diagind(a)] .= 4
-Diagonal(4*ones(3, 3))
-
-function my_function(x::Vector{Int})
-    # function implementation
-end
-
-df = DataFrame(group = [1, 1, 2, 2], values = [1, 2, 3, 4])
-result = combine(groupby(df, :group), :values => (x -> my_function(x)) => :result)
+=#
