@@ -1,3 +1,4 @@
+using Printf 
 function plotBestSpectra(matched_ions::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}, RAW::Arrow.Table, title::String, out_path::String)
 
     function plotSpectra!(p::Plots.Plot{Plots.GRBackend}, masses, intensities)
@@ -71,7 +72,7 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
     files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
     merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
 end
-using LaTeXStrings
+
 function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
     heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, 
     par::Real, dev_ratio::Real, out_path::String)
@@ -114,7 +115,7 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     savefig(joinpath(out_path, title*".pdf"))
 end
 
-ptable.lh_pair_id_to_light_heavy_pair[0x000005c]
+#ptable.lh_pair_id_to_light_heavy_pair[0x000005c]
 
 function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable, 
                                                 chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram}, 
@@ -138,7 +139,7 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             if !isassigned(par_models,  ms_file_idx)
                 return 0.0, 0.0
             else
-                par_models[ms_file_idx].par_model_coef[ms_file_idx], par_models[ms_file_idx].dev_ratio
+                par_models[ms_file_idx].par_model_coef[ms_file_idx][1], par_models[ms_file_idx].dev_ratio
             end
         end
 

@@ -1,4 +1,5 @@
 #julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
+#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -103,7 +104,7 @@ include("../../../PSM_TYPES/FastXTandem.jl")
 #include("../../../searchSpectra.jl")
 include("../../../Routines/PRM/getBestPSMs.jl")
 include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/plotPRM.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/plotPRM.jl")
 include("../../../Routines/PRM/getMS1PeakHeights.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
@@ -136,7 +137,7 @@ include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 ##########
 #Read Precursor Table
 ##########
-@time begin 
+#@time begin 
     ptable = PrecursorTable()
     buildPrecursorTable!(ptable, 
                         params[:fixed_mods], 
@@ -279,7 +280,7 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_CONDITION[psm[:ms
     writeIAPIMethod(best_psms, joinpath(MS_DATA_DIR, "iapi_method.csv"))
 
     println(" Scored "*string(size(best_psms)[1])*" precursors")
-end
+#end
 
 ##########
 #Make Plots

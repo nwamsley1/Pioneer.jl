@@ -6,7 +6,7 @@ function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int6
     end
     return S
 end
-getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
+#getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
 function getB(S::Matrix{Float64}, N::Int)
     B = zeros(N + 1)
     for i in 1:N

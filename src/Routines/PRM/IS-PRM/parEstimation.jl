@@ -82,17 +82,23 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
     return glmnet(X, y, 
                     penalty_factor = append!([0.0], ones(length(transition_union))), 
                     intercept = false, 
-                    lambda=Float64[median(y)])
+                    lambda=Float64[mean(y)])
 end
 
-#=
-    glmnet(X, y, penalty_factor = Float64[0, 1, 1, 1, 1, 1], intercept = true, lambda=Float64[median(y)])
-
-    
-    I = 1e9*Diagonal(ones(6))
-    I[1,1] = 0
-    B = (transpose(X)*X + I)\(transpose(X)*y)
-    1 - sum((X*B - y).^2)/sum((y .- mean(y)).^2)
-    B = (transpose(X[:,1])*X[:,1])\(transpose(X[:,1])*y)
-    1 - sum((X[:,1]*B - y).^2)/sum((y .- mean(y)).^2)
-=#
+function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt32)
+    lh_pair = ptable.lh_pair_id_to_light_heavy_pair[ptable.prec_id_to_lh_pair_id[prec_id]]
+    isotope = "light"
+    if lh_pair.heavy_prec_id == prec_id
+        isotope = "heavy"
+    end
+    if length(lh_pair.par_model) == 0
+        return (missing, missing, isotope)
+    elseif !isassigned(lh_pair.par_model, ms_file_idx)
+        return (missing, missing, isotope)
+    else
+        return (1/lh_pair.par_model[ms_file_idx].par_model_coef[1],
+                lh_pair.par_model[ms_file_idx].dev_ratio,
+                isotope
+                )
+    end
+end

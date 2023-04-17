@@ -191,7 +191,7 @@ getPepGroupToID(p::PrecursorDatabase) = p.pepGroup_to_id
 getIDToPep(p::PrecursorDatabase) = p.id_to_pep
 getPrecursors(p::PrecursorDatabase) = p.prec_id_to_precursor
 #getSimplePrecursors(p::PrecursorDatabase) = p.simple_precursors
-getPepIDToTransitions(p::PrecursorDatabase) = p.pep_id_to_transitions
+getPepIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 
 export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getPrecursors
 

@@ -1,6 +1,9 @@
+#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/test.json /Users/n.t.wamsley/Desktop/test_folder ./data/NRF2_SIL.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
+using CSV
+using Arrow, DataFrames, Tables, Plots
 ##########
 #Parse arguments
 ##########
@@ -42,7 +45,11 @@ PRECURSOR_LIST_PATH = ARGS["precursor_list"]
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
 
-
+#=
+MS_TABLE_PATHS = [ "./data/parquet/GAPDH_VGVNGFGR.arrow",
+"./data/parquet/GSTM1_RPWFAGNK.arrow",
+"./data/parquet/GSTM4_VAVWGNK.arrow"]
+=#
 # Print the argument
 #println("Parameters: $params")
 #println("MS_DATA_DIR: $MS_DATA_DIR")
@@ -90,74 +97,53 @@ end
 ##########
 #Load Dependencies 
 ##########
-using Arrow, DataFrames, Tables
-using Plots
 include("../../../precursor.jl")
 include("../../../binaryRangeQuery.jl")
 include("../../../matchpeaks.jl")
 include("../../../getPrecursors.jl")
 include("../../../PSM_TYPES/PSM.jl")
 include("../../../PSM_TYPES/FastXTandem.jl")
-#include("../../../searchSpectra.jl")
-include("../../../Routines/PRM/getBestPSMs.jl")
+include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
 include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/plotPRM.jl")
 include("../../../Routines/PRM/getMS1PeakHeights.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("../../../Routines/PRM/IS-PRM/initTransitions.jl")
+include("../../../Routines/PRM/IS-PRM/getBestTransitions.jl")
 include("../../../SearchRAW.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
-#=
-include("src/precursor.jl")
-include("src/binaryRangeQuery.jl")
-include("src/matchpeaks.jl")
-include("src/getPrecursors.jl")
-include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/FastXTandem.jl")
-#include("../../../searchSpectra.jl")
-include("src/Routines/PRM/getBestPSMs.jl")
-include("src/Routines/PRM/precursorChromatogram.jl")
-include("src/Routines/PRM/plotPRM.jl")
-include("src/Routines/PRM/getMS1PeakHeights.jl")
-include("src/Routines/PRM/IS-PRM/initTransitions.jl")
-include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
-include("src/SearchRAW.jl")
-=#
-include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
-include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
-include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
-include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
-include("src/Routines/PRM/IS-PRM/parEstimation.jl")
+include("../../../Routines/PRM/IS-PRM/buildPrecursorTable.jl")
+include("../../../Routines/PRM/IS-PRM/selectTransitions.jl")
+include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
+include("../../../Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
+include("../../../LFQ.jl")
+include("../../../Routines/PRM/plotPRM.jl")
 ##########
 #Read Precursor Table
 ##########
-@time begin 
-    ptable = ISPRMPrecursorTable()
-    buildPrecursorTable!(ptable, mods_dict, "data/parquet/transition_list.csv")
+#@time begin 
+ptable = ISPRMPrecursorTable()
+buildPrecursorTable!(ptable, mods_dict, "data/parquet/transition_list.csv")
 scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
 MS_TABLES = Dict{UInt32, Arrow.Table}()
-MS_TABLE_PATHS = [ "./data/parquet/GAPDH_VGVNGFGR.arrow",
-"./data/parquet/GSTM1_RPWFAGNK.arrow",
-"./data/parquet/GSTM4_VAVWGNK.arrow"]
+
 for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
-    MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
-    scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLES[UInt32(ms_file_idx)][:msOrder])
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLE[:msOrder])
     #setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
 end
 ##########
 #Search Survey Runs
 ##########
 
-MS_TABLES = Dict{UInt32, Arrow.Table}()
+#MS_TABLES = Dict{UInt32, Arrow.Table}()
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
+MS_RT = Dict{UInt32, Vector{Float32}}()
     for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
 
-        MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
-
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+        MS_RT[UInt32(ms_file_idx)] = MS_TABLE[:retentionTime]
         scored_psms, fragment_matches = SearchRAW(
-                                                MS_TABLES[UInt32(ms_file_idx)], 
+                                                MS_TABLE, 
                                                 ptable, 
                                                 selectTransitions, 
                                                 params[:right_precursor_tolerance],
@@ -178,7 +164,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 ##########
 #Get Best PSMs for Each Peptide
 ##########
-    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, UInt8(1))
+    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1))
  
 ##########
 #Get MS1 Peak Heights
@@ -187,12 +173,12 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
     ms1_peak_heights = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, Float32}}()
     #Peak heights are zero to begin with
     precursor_idxs = unique(best_psms[!,:precursor_idx])
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
+    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         insert!(ms1_peak_heights, 
                 UInt32(ms_file_idx), 
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
                 )
-
         getMS1PeakHeights!( ptable,
                             MS_TABLE[:retentionTime], 
                             MS_TABLE[:masses], 
@@ -215,8 +201,8 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 #Get Chromatograms for the best precursors in each file. 
 ##########
     precursor_chromatograms = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, PrecursorChromatogram}}()
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
-
+    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         insert!(precursor_chromatograms, UInt32(ms_file_idx), initPrecursorChromatograms(best_psms, UInt32(ms_file_idx)) |> (best_psms -> fillPrecursorChromatograms!(best_psms, 
                                                                                                                     combined_fragment_matches[UInt32(ms_file_idx)], 
                                                                                                                     MS_TABLE, 
@@ -225,9 +211,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
                                                                                                         )
                 ) 
     end 
-    
-    #scan_adresses[1][precursor_chromatograms[1][183].last_scan_idx[2:end]]
-    #precursor_chromatograms[1][184].last_scan_idx
+
     #Names and charges for the "n" most intense fragment ions for each precursor
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestTransitions(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]),
                                                                         params[:fragments_to_select])) => :best_transitions)
@@ -239,9 +223,12 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 ##########
 using GLMNet
 using Statistics
-for i in eachindex(MS_TABLES)
+for i in eachindex(MS_TABLE_PATHS)
     getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
 end
+
+transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
+
 #Get the peak area ratios into the dataframe. 
 #Then make the plots with the PARs.
 #Then figure out how to summarize to protien level by LFQ and make a protien table
@@ -249,36 +236,6 @@ end
 ##########
 #Write Protein Peptide Quant Table
 ##########
-#transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:mz][psm[:best_transitions]]) => :transition_mzs)
-
-function getPAR(ptable::ISPRMPrecursorTable, prec_id::UInt32, ms_file_idx::UInt32)
-    lh_pair = ptable.lh_pair_id_to_light_heavy_pair[ptable.prec_id_to_lh_pair_id[prec_id]]
-    isotope = "light"
-    if lh_pair.heavy_prec_id == prec_id
-        isotope = "heavy"
-    end
-    if length(lh_pair.par_model) == 0
-        return (missing, missing, isotope)
-    elseif !isassigned(lh_pair.par_model, ms_file_idx)
-        return (missing, missing, isotope)
-    else
-        return (1/lh_pair.par_model[ms_file_idx].par_model_coef[1],
-                lh_pair.par_model[ms_file_idx].dev_ratio,
-                isotope
-                )
-    end
-end
-
-transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
-
-prot = DataFrame(Dict(
-    :peptide => ["A","A","A","B","B","B","C","C","C","D","D","D"],
-    :protein => append!(split(repeat("A",9), ""), ["B","B","B"]),
-    :file_idx => UInt32[1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3],
-    :abundance => [10, 20, 40, 1, 2, 4, 100, 200, missing, 1000, 2000, 3000],
-))
-r=sample(1:size(prot,1), size(prot,1),  replace=false)
-@time prot = prot[r,:]
 using StatsBase
 out = Dict(
     :protein => String[],
@@ -287,19 +244,6 @@ out = Dict(
     :experiments => UInt32[],
 )
 
-for (protein, data) in pairs(groupby(prot, :protein))
-    println(typeof(protein[:protein]))
-    getProtAbundance(string(protein[:protein]), 
-                        collect(data[!,:peptide]), 
-                        collect(data[!,:file_idx]), 
-                        collect(data[!,:abundance]),
-                        out[:protein],
-                        out[:peptides],
-                        out[:experiments],
-                        out[:log2_abundance]
-                    )
-    #println(protein[:parent])
-end
 quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
 
 for (protein, data) in pairs(groupby(quant, :protein_names))
@@ -315,36 +259,20 @@ for (protein, data) in pairs(groupby(quant, :protein_names))
     #println(protein[:parent])
 end
 
+out = DataFrame(out)
+
+out_folder = joinpath(MS_DATA_DIR, "tables/")
+if !isdir(out_folder)
+    mkpath(out_folder)
+end
+CSV.write(joinpath(out_folder, "protein_quant.csv"), out)
 ##########
 #Make Plots
 ##########
 
-
-plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[3], UInt32(3), "./figures/paired_spectra", "TESTOUT3")
-
-#=
-for (ms_file_idx, MS_TABLE) in MS_TABLES
-    sample_name = split(MS_TABLE_PATHS[ms_file_idx], ".")[1]
-    plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
-                        ptable, 
-                        MS_TABLE,
-                        joinpath("./figures/best_spectra/", sample_name),
-                        join(sample_name*"_best_spectra"*".pdf"))
+for (i, path) in enumerate(MS_TABLE_PATHS)
+    sample_name = split(splitpath(path)[end], ".")[1]
+    plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[i], UInt32(i), joinpath(MS_DATA_DIR,"figures/paired_spectra",sample_name),
+    join(sample_name*"_precursor_chromatograms"*".pdf"))
 end
-
-if ARGS["make_plots"]
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
-        #sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
-
-        plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
-                            ptable, 
-                            MS_TABLE,
-                            joinpath("./figures/best_spectra/", sample_name),
-                            join(sample_name*"_best_spectra"*".pdf"))
-        plotAllFragmentIonChromatograms(precursor_chromatograms[ms_file_idx], 
-                                        ptable,
-                                        joinpath("./figures/precursor_chromatograms/", sample_name),
-                                        join(sample_name*"_precursor_chromatograms"*".pdf"))
-    end
-end
-=#
+#end
