@@ -22,7 +22,10 @@ function getPARs(ptable::ISPRMPrecursorTable,
             continue
         end
         light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
+        println("light scans ", light_scans)
         heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
+        println("heavy scans ", heavy_scans)
+        println("integration bounds ", integration_bounds)
         m = fitPAR(light_scans, 
                 heavy_scans, 
                 integration_bounds, 
@@ -46,14 +49,20 @@ function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :
     [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
 end
 
-function initDesignMatrix(transitions::Set{String}, bounds::Set{Int})
+function initDesignMatrix(transitions::Set{String}, bounds::AbstractArray)
     zeros(
-                length(transitions)*length(bounds), 
+                #length(transitions)*length(bounds), 
+                length(transitions)*length(bounds),
                 length(transitions) + 1
             )
 end
 
-function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::Set{Int})
+function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::AbstractArray)
+    println("FILLX")
+    println(transitions)
+    println(transition_union)
+    println(scans)
+    println(bounds)
     for (i, transition) in enumerate(transition_union)
         X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
         X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
@@ -77,7 +86,7 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
         return 
     end
     
-    X = fillDesignMatrix(initDesignMatrix(transition_union, bounds), light_transitions, transition_union, light_scans, bounds)
+    X = fillDesignMatrix(initDesignMatrix(transition_union, light_scans), light_transitions, transition_union, light_scans, light_scans)
     y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
     return glmnet(X, y, 
                     penalty_factor = append!([0.0], ones(length(transition_union))), 

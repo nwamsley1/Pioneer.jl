@@ -214,7 +214,7 @@ containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(p.id_to_pep, pe
 
 getProtID(p::PrecursorDatabase, protein::String) = p.prot_to_id[protein]
 getProt(p::PrecursorDatabase, prot_id::UInt32) = p.id_to_prot[prot_id]
-getPepGroupID(p::PrecursorDatabase, peptide::String) = p.pepGroup_to_id[peptide]
+getPepGroupID(p::PrecursorDatabase, peptide::String) = p.pepGroup_to_id[string(replace(peptide, r"\[[^\]]*\]"=>""))]
 getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = p.id_to_pepGroup[pepGroup_id]
 getPep(p::PrecursorDatabase, pep_id::UInt32) = p.id_to_pep[pep_id]
 getSimplePrecFromID(p::PrecursorDatabase, prec_id::UInt32) = p.simple_precursors[prec_id]

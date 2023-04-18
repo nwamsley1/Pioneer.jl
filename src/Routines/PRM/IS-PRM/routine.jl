@@ -123,7 +123,7 @@ include("../../../Routines/PRM/plotPRM.jl")
 #@time begin 
 ptable = ISPRMPrecursorTable()
 buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
-println(ptable.pepGroup_to_id)
+#println(ptable.pepGroup_to_id)
 scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 println("N threads ", Threads.nthreads())
@@ -175,8 +175,9 @@ println("SEARCHED")
 #Get Best PSMs for Each Peptide
 ##########
     #println(combined_scored_psms[UInt32(1)])
+    display(first(DataFrame(combined_scored_psms), 10))
     best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1))
- 
+    display(first(best_psms, 10))
 ##########
 #Get MS1 Peak Heights
 ##########
