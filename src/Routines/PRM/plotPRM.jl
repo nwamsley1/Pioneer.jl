@@ -161,7 +161,9 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             out_path)
     end
         files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
-        merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
+        if length(files)>0
+            merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
+        end
 
 end
 

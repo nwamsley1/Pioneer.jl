@@ -21,11 +21,10 @@ function getPARs(ptable::ISPRMPrecursorTable,
         if length(integration_bounds) < minimum_scans + 1
             continue
         end
+
         light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        println("light scans ", light_scans)
-        heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        println("heavy scans ", heavy_scans)
-        println("integration bounds ", integration_bounds)
+        heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.heavy_prec_id, integration_bounds)
+        
         m = fitPAR(light_scans, 
                 heavy_scans, 
                 integration_bounds, 
@@ -46,7 +45,20 @@ function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :
                     precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
                     prec_id::UInt32, 
                     bounds::Set{Int64})
-    [index for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
+    scans = [(index, scan_address) for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
+    #println("scans ", scans)
+    function keep_first_occurrences_sorted(tuples::Vector{<:Tuple})
+        last_second = nothing
+        new_tuples = Int64[]
+        for tup in tuples
+            if last_second != tup[2].ms1
+                push!(new_tuples, tup[1])
+                last_second = tup[2].ms1
+            end
+        end
+        return new_tuples
+    end
+    keep_first_occurrences_sorted(scans)
 end
 
 function initDesignMatrix(transitions::Set{String}, bounds::AbstractArray)
@@ -58,11 +70,7 @@ function initDesignMatrix(transitions::Set{String}, bounds::AbstractArray)
 end
 
 function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::AbstractArray)
-    println("FILLX")
-    println(transitions)
-    println(transition_union)
-    println(scans)
-    println(bounds)
+
     for (i, transition) in enumerate(transition_union)
         X[((i-1)*length(bounds) + 1):(i*length(bounds)),1] = transitions[transition][scans]
         X[((i-1)*length(bounds) + 1):(i*length(bounds)),i+1] = transitions[transition][scans]
@@ -73,6 +81,9 @@ end
 function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
     y = Float64[]
     for (i, transition) in enumerate(transition_union)
+        #println("transition ", transition)
+        #println("transitions[transition] ", transitions[transition])
+        #println("scans ", scans)
         append!(y, transitions[transition][scans])
     end
     y
@@ -85,9 +96,13 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
     if length(transition_union) == 0
         return 
     end
-    
+    #println("NEW")
     X = fillDesignMatrix(initDesignMatrix(transition_union, light_scans), light_transitions, transition_union, light_scans, light_scans)
     y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
+
+    if sum(X)==0 #This is hacky. Need to fix. 
+        X[1] = 1.0
+    end
     return glmnet(X, y, 
                     penalty_factor = append!([0.0], ones(length(transition_union))), 
                     intercept = false, 

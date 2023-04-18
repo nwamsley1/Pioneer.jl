@@ -235,8 +235,10 @@ println("SEARCHED")
 ##########
 using GLMNet
 using Statistics
-for i in eachindex(MS_TABLE_PATHS)
+@time begin
+Threads.@threads for i in collect(eachindex(MS_TABLE_PATHS))
     getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
+end
 end
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
