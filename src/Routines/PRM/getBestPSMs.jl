@@ -43,7 +43,7 @@ function getBestPSMs(PSMs::Dict{Symbol, Vector}, ptable::PrecursorDatabase, MS_R
     transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(ptable.id_to_pep[psm[:pep_idx]])) => :sequence)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getMZ(getPrecursor(ptable,psm[:precursor_idx]))) => :precursor_mz)
     #(collect(getProtIDs(getIDToPepGroup(ptable)[getGroupID(getIDToPep(ptable)[psm[:pep_idx]])])))
-    transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort((collect(getProtIDs(getIDToPepGroup(ptable)[getGroupID(getIDToPep(ptable)[psm[:pep_idx]])])))), "|")) => :protein_name)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> join(sort((collect(getProtNamesFromPepSeq(ptable, psm[:sequence])))), "|")) => :protein_names)
     sort!(PSMs, [:retention_time])
     PSMs
 end

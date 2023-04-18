@@ -1,4 +1,5 @@
-#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/test.json /Users/n.t.wamsley/Desktop/test_folder ./data/NRF2_SIL.txt
+#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/test.json /Users/n.t.wamsley/Desktop/test_folder ./data/NRF2_SIL.txt\
+#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -20,8 +21,8 @@ function parse_commandline()
         "data_dir"
             help = "Path to a folder with .arrow MS data tables"
             required = true
-        "precursor_list"
-            help = "Path to a tab delimited table of precursors"
+        "transition_list"
+            help = "Path to a tab delimited table of transitions"
             required = true
         "--make_plots", "-p"
             help = "Whether to make plots. Defaults to `true`"
@@ -39,7 +40,7 @@ ARGS = parse_commandline()
 
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
-PRECURSOR_LIST_PATH = ARGS["precursor_list"]
+TRANSITION_LIST_PATH = ARGS["transition_list"]
 #MS_DATA_DIR = "./data/parquet/"
 #PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
@@ -121,15 +122,18 @@ include("../../../Routines/PRM/plotPRM.jl")
 ##########
 #@time begin 
 ptable = ISPRMPrecursorTable()
-buildPrecursorTable!(ptable, mods_dict, "data/parquet/transition_list.csv")
+buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
+println(ptable.pepGroup_to_id)
 scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
 MS_TABLES = Dict{UInt32, Arrow.Table}()
-
+println("N threads ", Threads.nthreads())
 for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    #println("MS_TABLE_PATH ", MS_TABLE_PATH)
     scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLE[:msOrder])
     #setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
 end
+
 ##########
 #Search Survey Runs
 ##########
@@ -138,8 +142,12 @@ end
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
-    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
-
+println("START")
+lk = ReentrantLock()
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4967_SQ_Kinome_KYSE70_Rep3_EWZ.arrow",
+"/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+        println("MS_TABLE_PATH ", MS_TABLE_PATH)
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         MS_RT[UInt32(ms_file_idx)] = MS_TABLE[:retentionTime]
         scored_psms, fragment_matches = SearchRAW(
@@ -155,15 +163,18 @@ MS_RT = Dict{UInt32, Vector{Float32}}()
                                                 params[:fragment_match_ppm],
                                                 UInt32(ms_file_idx)
                                                 )
-        for key in keys(combined_scored_psms)
-            append!(combined_scored_psms[key], scored_psms[key])
+        lock(lk) do 
+            for key in keys(combined_scored_psms)
+                append!(combined_scored_psms[key], scored_psms[key])
+            end
+            combined_fragment_matches[UInt32(ms_file_idx)] = fragment_matches
         end
-        combined_fragment_matches[UInt32(ms_file_idx)] = fragment_matches
     end
-
+println("SEARCHED")
 ##########
 #Get Best PSMs for Each Peptide
 ##########
+    #println(combined_scored_psms[UInt32(1)])
     best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1))
  
 ##########
@@ -265,11 +276,11 @@ out_folder = joinpath(MS_DATA_DIR, "tables/")
 if !isdir(out_folder)
     mkpath(out_folder)
 end
-CSV.write(joinpath(out_folder, "protein_quant.csv"), out)
+CSV.write(joinpath(out_folder, "protein.csv"), out)
 ##########
 #Make Plots
 ##########
-
+#end
 for (i, path) in enumerate(MS_TABLE_PATHS)
     sample_name = split(splitpath(path)[end], ".")[1]
     plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[i], UInt32(i), joinpath(MS_DATA_DIR,"figures/paired_spectra",sample_name),

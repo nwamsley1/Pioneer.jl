@@ -55,8 +55,8 @@ function getMS1Peaks!(precursors::Dictionary{UInt32, Precursor},
 end
 
 function getMS1PeakHeights!(ptable::PrecursorDatabase, retentionTimes::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, 
-                            masses::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
-                            intensities::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int32, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
+                            masses::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
+                            intensities::Arrow.List{Union{Missing, Vector{Union{Missing, Float32}}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                             msOrders::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}},
                             ms1_max_heights::UnorderedDictionary{UInt32, Float32}, 
                             precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},

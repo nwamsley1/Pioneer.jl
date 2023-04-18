@@ -5,7 +5,7 @@ function writeTransitionList(best_psms::DataFrame, f_out::String)
         for row in eachrow(best_psms)
 
             #data = join(append!([row[:proteinNames]*","*row[:sequence]], row[:names]),",")
-            data = push!([row[:protein_name], 
+            data = push!([row[:protein_names], 
                             row[:sequence],
                             row[:precursor_charge],
                             row[:precursor_isotope]], #replace(row[:sequence], r"\[(.*?)\]" => "")
@@ -22,7 +22,7 @@ function writeIAPIMethod(best_psms::DataFrame, f_out::String)
         for row in eachrow(best_psms)
 
             #data = join(append!([row[:proteinNames]*","*row[:sequence]], row[:names]),",")
-            data = append!([row[:protein_name], row[:sequence], row[:precursor_mz], row[:retention_time], row[:ms1_peak_height], row[:condition]], row[:transition_mzs])
+            data = append!([row[:protein_names], row[:sequence], row[:precursor_mz], row[:retention_time], row[:ms1_peak_height], row[:condition]], row[:transition_mzs])
             write(io, join(data,",")*"\n")
         end
     end
