@@ -2,17 +2,17 @@
 include("./precursor.jl");
 using Combinatorics, Dictionaries
 
-export buildPrecursorTable!, getPrecursors!
-
 """
     PeptideGroup
 
-Type that represents an unmodified peptide 
+Type that represents an unmodified peptide. Minimal unit specifiable by single-charater amino-acid  
+symbols alone. Cannot describe modifications. 
 
 ### Fields
 
-- prot_ids::Set{UInt32} -- Set of identifiers for proteins that contain the peptide group. 
-- sequence::String -- Sequence of the peptide group
+- prot_ids::Set{UInt32} -- Set of identifiers for `Protein`s that contain this `Peptide` group
+- pep_ids::Set{UInt32} -- Set of identifiers for `Peptide`s contained by this `PeptideGroup`
+- sequence::String -- Sequence of the `PeptideGroup`
 
 ### Examples
 
@@ -22,10 +22,16 @@ Type that represents an unmodified peptide
 
 - getSeq(p::PeptideGroup) = p.sequence
 - getProtIDs(p::PeptideGroup) = p.prot_ids
+- getPepIDs(p::PeptideGroup) = p.pep_ids
 
 ### Methods
 
 - addProtID!(pg::PeptideGroup, prot_id::UInt32)
+
+### Notes
+
+Protein > PeptideGroup > Peptide > Precursor
+
 """
 struct PeptideGroup
     prot_ids::Set{UInt32}
@@ -34,52 +40,65 @@ struct PeptideGroup
 end
 
 PeptideGroup() = PeptideGroup(Set{UInt32}(), Set{UInt32}(), "")
-getSeq(p::PeptideGroup) = p.sequence
-getProtIDs(p::PeptideGroup) = p.prot_ids
-export getProtIds
+getSeq(pg::PeptideGroup) = pg.sequence
+getProtIDs(pg::PeptideGroup) = pg.prot_ids
+getPepIDs(pg::PeptideGroup) = pg.pep_ids
 
-function addProtID!(pg::PeptideGroup, prot_id::UInt32)
-    push!(pg.prot_ids, prot_id)
-end
+addProtID!(pg::PeptideGroup, prot_id::UInt32) push!(pg.prot_ids, prot_id)
+
+export getSeq, getProtIDs, getPepIDs, addProtID!
 
 """
     Peptide
 
-Type that represents a peptide
+Type that represents a peptide. Minimal describing a peptide of a particular mono-isotopic mass. A `Precursor`
+is a `Peptide` specifying a specific mass and charge.
 
 ### Fields
 
 - sequence::String -- Sequence of the peptide
-- pep_group_id::UInt32-- Identifier of the `PeptideGroup` to which the peptide belongs. 
+- pepGroup_id::UInt32 -- Identifier of the `PeptideGroup` to which this `Peptide` belongs. 
+- prec_ids::Set{UInt32} -- Set of identifiers for `Precursor`s associated with this `Peptide`
+
 
 ### GetterMethods
 
 - getSeq(p::Peptide) = p.sequence
-- getGroupID(p::Peptide) = p.pep_group_id
+- getPepGroupID(p::Peptide) = pepGroup_id
+- getPrecIDs(p::Peptide) = p.prec_ids
 
 ### Methods
 
-- addProtID!(pg::PeptideGroup, prot_id::UInt32)
+- addPrecID!(p::Peptide, prec_id::UInt32)
+
+### Notes
+
+Protein > PeptideGroup > Peptide > Precursor
+
 """
 struct Peptide
     sequence::String
-    pep_group_id::UInt32
+    pepGroup_id::UInt32
     prec_ids::Set{UInt32}
 end
 
 getSeq(p::Peptide) = p.sequence
-getGroupID(p::Peptide) = p.pep_group_id
+getPepGroupID(p::Peptide) = pepGroup_id
 getPrecIDs(p::Peptide) = p.prec_ids
+
+addPrecID!(p::Peptide, prec_id::UInt32) = push!(p.prec_ids, prec_id)
+
+export getSeq, getPepGroupID, getPrecIDs, addPrecID!
 
 """
     Protein
 
-Type that represents a protein
+Type that represents a protein. 
 
 ### Fields
 
 - sequence::String -- Sequence of the peptide
-- pep_group_id::UInt32-- Identifier of the `PeptideGroup` to which the peptide belongs. 
+- pep_group_id::UInt32-- Identifier of thes `PeptideGroup`s contained by this `Protein`
 
 ### Examples
 
@@ -87,12 +106,16 @@ Type that represents a protein
 
 ### GetterMethods
 
-- getPepGroupIDs(p::Protein) = p.pep_group_ids
 - getName(p::Protein) = p.name
+- getPepGroupIDs(p::Protein) = p.pep_group_ids
 
 ### Methods
 
-- addPepGroup!(p::Protein, pep_group_id::UInt32)
+- addPepGroupID!(p::Protein, pep_group_id::UInt32)
+
+### Notes
+
+Protein > PeptideGroup > Peptide > Precursor
 """
 struct Protein
     name::String
@@ -101,27 +124,96 @@ end
 
 Protein(name::String) = Protein(name, Set{UInt32}())
 
-getPepGroupIDs(p::Protein) = p.pep_group_ids
 getName(p::Protein) = p.name
+getPepGroupIDs(p::Protein) = p.pep_group_ids
 
-addPepGroup!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
+addPepGroupID!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
 
-export getPepGroupIDs, getName
+export getPepGroupIDs, getName, addPepGroupID!
+
 abstract type PeptideDatabase end
-abstract type PrecursorDatabase <: PeptideDatabase end
+
 """
     PrecursorTable
 
 Data Structure that represents relations between precursors, peptides, peptide groups, and proteins
 
-### Fields
+### Suggested Fields
 
-- id_to_prot::UnorderedDictionary{UInt32, Protein} -- Maps from a protien identifier to a Protein
+An implementation of `PrecursorTable` should have these fields 
+
+- id_to_prot::UnorderedDictionary{UInt32, Protein}-- Maps from a protien identifier to a Protein
 - prot_to_id::UnorderedDictionary{String, UInt32} -- Maps from a protein name to a protein identifier
 - id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup} -- Maps a PeptideGroup identifier to a PeptideGroup
 - pepGroup_to_id::UnorderedDictionary{String, UInt32} -- Maps a PeptideGroup name/sequence to an identifier
 - id_to_pep::UnorderedDictionary{UInt32, Peptide} -- Maps a peptide identifier to a peptide
-- precursors::Vector{Precursor} -- Precursor has fields `pep_id` and `prec_id`. `pep_id`s are keys for `id_to_pep`
+- id_to_prec::Dictionary{UInt32, Precursor} -- Precursor has fields `pep_id` and `prec_id`. `pep_id`s are keys for `id_to_pep`
+- sorted_prec_ids::Vector{UInt32} -- 
+- prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}} --
+
+### GetterMethods
+
+- getIDToProt(p::PrecursorDatabase) = p.id_to_prot
+- getProtToID(p::PrecursorDatabase) = p.prot_to_id
+- getIDToPepGroup(p::PrecursorDatabase) = p.id_to_pepGroup
+- getPepGroupToID(p::PrecursorDatabase) = p.pepGroup_to_id
+- getIDToPep(p::PrecursorDatabase) = p.id_to_pep
+- getIDToPrec(p::PrecursorDatabase) = p.id_to_prec
+- getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+- getPrecursorIDs(p::PrecursorDatabase) = p.sorted_prec_ids
+- getProtID(p::PrecursorDatabase, protein::String)
+- getProtID(p::PrecursorDatabase, protein::Protein)
+- getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32)
+- getPepGroupID(p::PrecursorDatabase, peptide::String)
+- getPepGroupID(p::PrecursorDatabase, pepGroup::PeptideGroup)
+- getPep(p::PrecursorDatabase, pep_id::UInt32)
+- getPrecursor(p::PrecursorDatabase, prec_id::UInt32)
+- getTransitions(p::PrecursorDatabase, prec_id::UInt32)
+- getProtNamesFromPepSeq(p::PrecursorDatabase, peptide::String)
+- getProtNamesFromPepSeq(p::PrecursorDatabase, pepGroup::PeptideGroup)
+- getPepGroupsFromProt(p::PrecursorDatabase, protein::String)
+- getPepSeqsFromProt(p::PrecursorDatabase, protein::String)
+- getPepGroupsFromProt(p::PrecursorDatabase, prot_id::UInt32)
+- getPepSeqsFromProt(p::PrecursorDatabase, prot_id::UInt32)
+- getPepIDFromPrecID(p::PrecursorDatabase, prec_id::UInt32)
+
+### Methods
+
+- insertProtID!(p::PrecursorDatabase, protein::String, prot_id::UInt32)
+- insertProt!(p::PrecursorDatabase, protein::String, prot_id::UInt32)
+- insertPepGroupID!(p::PrecursorDatabase, peptide::String, pepGroup_id::UInt32)
+- insertPepGroup!(p::PrecursorDatabase, protein::String, peptide::String, pepGroup_id::UInt32)
+- setSortedPrecursorKeys!(p::PrecursorDatabase)
+- precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
+- addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
+- addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
+- addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
+- addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
+### Notes
+
+`PrecursorDatabase` keeps an account of relations between Proteins, PeptideGroups, Peptides, and
+Precursors. Each Protein, PeptideGroup, Peptide, and Precursor has a unique UInt32 indentifier. 
+Each also has a string name. See `Protein`, `PeptideGroup`, `Peptide` and `Precursor`. 
+Proteins map to one or more PeptideGroups. PeptideGroups map to one or more Peptides, 
+and each Peptide maps to one or more precursors.
+"""
+abstract type PrecursorDatabase <: PeptideDatabase end
+
+"""
+    PrecursorTable <: PrecursorDatabase
+
+Inherits from `PrecursorDatabase`. Minimal implementation of methods required for `PrecursorDatabase`
+
+### Fields
+
+- id_to_prot::UnorderedDictionary{UInt32, Protein}-- Maps from a protien identifier to a `Protein``
+- prot_to_id::UnorderedDictionary{String, UInt32} -- Maps from a protein name to a protein identifier
+- id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup} -- Maps a peptide group identifier to a `PeptideGroup``
+- pepGroup_to_id::UnorderedDictionary{String, UInt32} -- Maps a `PeptideGroup`` name/sequence to an identifier
+- id_to_pep::UnorderedDictionary{UInt32, Peptide} -- Maps a peptide identifier to a `Peptide`
+- id_to_prec::Dictionary{UInt32, Precursor} -- Maps a precursor identifier to a `Precursor`
+- sorted_prec_ids::Vector{UInt32} -- Precursor ID's for precursors in `id_to_prec` sorted by m/z 
+- prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}} --  Maps a precursor identifier to a Vector{Transition} (fragment ions)
 
 ### Examples
 
@@ -133,54 +225,15 @@ Data Structure that represents relations between precursors, peptides, peptide g
     UnorderedDictionary{UInt32, Peptide}(),
     Vector{Precursor}())` -- constructor for a placeholder 
 
-### GetterMethods
-
-- getIDToProt(p::PrecursorTable)
-- getProtToID(p::PrecursorTable) 
-- getIDToPepGroup(p::PrecursorTable) 
-- getPepGroupToID(p::PrecursorTable)
-- getIDToPep(p::PrecursorTable)
-- getPrecursors(p::PrecursorTable)
-- getProtID(p::PrecursorTable, protein::String)
-- getProt(p::PrecursorTable, prot_id::UInt32)
-- getPepGroupID(p::PrecursorTable, peptide::String)
-- getPepGroup(p::PrecursorTable, pepGroup_id::UInt32)
-- getPep(p::PrecursorTable, pep_id::UInt32)
-- getProtNamesFromPepSeq(p::PrecursorTable, peptide::String)
-- getPepGroupsFromProt(p::PrecursorTable, protein::String)
-- getPepSeqsFromProt(p::PrecursorTable, protein::String)
-- getPepGroupsFromProt(p::PrecursorTable, prot_id::UInt32)
-- getPepSeqsFromProt(p::PrecursorTable, prot_id::UInt32)
-
-### Methods
-
-- insertProtID!(p::PrecursorTable, protein::String, prot_id::UInt32)
-- insertProt!(p::PrecursorTable, protein::String, prot_id::UInt32)
-- insertPepGroupID!(p::PrecursorTable, peptide::String, pepGroup_id::UInt32)
-- insertPepGroup!(p::PrecursorTable, protein::String, peptide::String, pepGroup_id::UInt32)
-
-- addProteinToPepGroup!(p::PrecursorTable, protein::String, peptide::String)
-- addPepGroupToProtein!(p::PrecursorTable, protein::String, peptide::String)
-- addNewProtein!(protein::String, prot_id::UInt32, precursor_table::PrecursorTable)
-- addNewPeptideGroup!(peptide::String, pepGroup_id::UInt32, protein::String, precursor_table::PrecursorTable)
-
-### Notes
-
-`PrecursorTable` keeps an account of relations between Proteins, PeptideGroups, Peptides, and
-Precursors. Each Protein, PeptideGroup, Peptide, and Precursor has a unique UInt32 indentifier. 
-Each also has a string name. See `Protein`, `PeptideGroup`, `Peptide` and `Precursor`. 
-Proteins map to one or more PeptideGroups. PeptideGroups map to one or more Peptides, 
-and each Peptide maps to one or more precursors.
 """
 mutable struct PrecursorTable <: PrecursorDatabase
     id_to_prot::UnorderedDictionary{UInt32, Protein}
     prot_to_id::UnorderedDictionary{String, UInt32}
     id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
     pepGroup_to_id::UnorderedDictionary{String, UInt32}
-    id_to_pep::UnorderedDictionary{UInt32, Peptide} #Map peptide IDs to peptide group
-    #simple_precursors::UnorderedDictionary{UInt32, SimplePrecursor}
-    prec_id_to_precursor::Dictionary{UInt32, Precursor} #Needs to be sortable by precursor mass, therfore, not an UnorderedDictioanry. 
-    sorted_precursor_keys::Vector{UInt32}
+    id_to_pep::UnorderedDictionary{UInt32, Peptide}
+    id_to_prec::Dictionary{UInt32, Precursor}
+    sorted_prec_ids::Vector{UInt32}
     prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}}
 end
 
@@ -189,11 +242,16 @@ getProtToID(p::PrecursorDatabase) = p.prot_to_id
 getIDToPepGroup(p::PrecursorDatabase) = p.id_to_pepGroup
 getPepGroupToID(p::PrecursorDatabase) = p.pepGroup_to_id
 getIDToPep(p::PrecursorDatabase) = p.id_to_pep
-getPrecursors(p::PrecursorDatabase) = p.prec_id_to_precursor
-#getSimplePrecursors(p::PrecursorDatabase) = p.simple_precursors
-getPepIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+getIDToPrec(p::PrecursorDatabase) = p.id_to_prec
+getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+getPrecursorIDs(p::PrecursorDatabase) = p.sorted_prec_ids
 
-export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getPrecursors
+
+
+
+getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+
+export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getIDToPrec, getPrecursors, getPrecIDToTransitions
 
 PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, Protein}(),
@@ -206,33 +264,38 @@ PrecursorTable() = PrecursorTable(
                                     Vector{UInt32}(),
                                     Dictionary{UInt32, Vector{Transition}}())
 
-containsProt(p::PrecursorDatabase, protein::AbstractString) = isassigned(p.prot_to_id, protein)
-containsProtID(p::PrecursorDatabase, prot_id::UInt32) = isassigned(p.id_to_prot, prot_id)
-containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(p.pepGroup_to_id, peptide)
-containsPepGroupID(p::PrecursorDatabase, pepGroup_id::UInt32) = isassigned(p.id_to_pepGroup, pepGroup_id)
-containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(p.id_to_pep, pep_id)
+containsProt(p::PrecursorDatabase, protein::AbstractString) = isassigned(getProtToID(p), protein)
+containsProtID(p::PrecursorDatabase, prot_id::UInt32) = isassigned(getIDToProt(p), prot_id)
+containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(getPepGroupToIDp(p), peptide)
+containsPepGroupID(p::PrecursorDatabase, pepGroup_id::UInt32) = isassigned(getIDToPepGroup(p), pepGroup_id)
+containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(getIDToPep(p), pep_id)
+containsPrecID(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecursors(p), prec_id)
+hasTransitions(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecIDToTransitions(p), prec_id)
 
-getProtID(p::PrecursorDatabase, protein::String) = p.prot_to_id[protein]
-getProt(p::PrecursorDatabase, prot_id::UInt32) = p.id_to_prot[prot_id]
-getPepGroupID(p::PrecursorDatabase, peptide::String) = p.pepGroup_to_id[string(replace(peptide, r"\[[^\]]*\]"=>""))]
-getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = p.id_to_pepGroup[pepGroup_id]
-getPep(p::PrecursorDatabase, pep_id::UInt32) = p.id_to_pep[pep_id]
-getSimplePrecFromID(p::PrecursorDatabase, prec_id::UInt32) = p.simple_precursors[prec_id]
+
+getProt(p::PrecursorDatabase, prot_id::UInt32) = getIDToProt(p)[prot_id]
+
+getProtID(p::PrecursorDatabase, protein::String) = getProtToID(p)[protein]
+getProtID(p::PrecursorDatabase, protein::Protein) = getProtToID(getName(p))[protein]
+
+getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = getIDToPepGroup(p)[pepGroup_id]
+getPepGroupID(p::PrecursorDatabase, peptide::String) = getPepGroupToID(p)[string(replace(peptide, r"\[[^\]]*\]"=>""))]
+getPepGroupID(p::PrecursorDatabase, pepGroup::PeptideGroup) = getPepGroupToID(p)[getSeq(pepGroup)]
+
+getPep(p::PrecursorDatabase, pep_id::UInt32) = getIDToPep(p)[pep_id]
+getPrecursor(p::PrecursorDatabase, prec_id::UInt32) = getIDToPrec(p)[prec_id]
+
+getTransitions(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToTrasnitions(p)[prec_id]
+
+
 getProtNamesFromPepSeq(p::PrecursorDatabase, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupID(p, peptide)))])
+getProtNamesFromPepSeq(p::PrecursorDatabase, pepGroup::PeptideGroup) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getSeq(pepGroup))])
+
 getPepGroupsFromProt(p::PrecursorDatabase, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtID(p, protein)))]
 getPepSeqsFromProt(p::PrecursorDatabase, protein::String) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, protein)]
 getPepGroupsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, prot_id))]
 getPepSeqsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, prot_id)]
-getPrecIDToPrecursor(p::PrecursorDatabase) = p.prec_id_to_precursor
-getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
-getSortedPrecursorKeys(p::PrecursorDatabase) = p.sorted_precursor_keys
-getTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
-getTransition(p::PrecursorDatabase, prec_id::UInt32) = p.prec_id_to_transitions[prec_id]
-function setSortedPrecursorKeys(p::PrecursorDatabase, keys::Vector{UInt32}) 
-    p.sorted_precursor_keys = keys
-end
-getPrecursor(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToPrecursor(p)[prec_id]
-getTransitions(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToTransitions(p)[prec_id]
+getPepIDFromPrecID(p::PrecursorDatabase, prec_id::UInt32) = getPepID(getPrecursor(p, prec_id))
 
 export getProtID, getProt, getPepGroupID, getPepGroup, getPep
 
@@ -241,55 +304,71 @@ insertProt!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(p.
 insertPepGroupID!(p::PrecursorDatabase, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
 insertPepGroup!(p::PrecursorDatabase, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), Set(UInt32[]), peptide))
 
-function makeSortedPrecursorKeys!(p::PrecursorDatabase)
-    sort!(getPrecIDToPrecursor(p), by = prec->getMZ(prec));
-    setSortedPrecursorKeys(p, [key for key in keys(getPrecIDToPrecursor(p))];)
-end
-
-function precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
-    l_bnd, u_bnd = window_center - left_precursor_tolerance, window_center + right_precursor_tolerance
-    start = searchsortedfirst(getSortedPrecursorKeys(p), l_bnd,lt=(t,x)->getMZ(getPrecursor(p, t))<x)
-    stop = searchsortedlast(getSortedPrecursorKeys(p), u_bnd,lt=(x,t)->getMZ(getPrecursor(p, t))>x)
-    return @view(getSortedPrecursorKeys(p)[start:stop])
-end
-
 
 """
-    addProteinToPepGroup!(p::PrecursorTable, protein::String, peptide::String)
+    setSortedPrecursorKeys!(p::PrecursorDatabase)
+
+Sorts precursors in the `PrecursorDatabase` by their m/z ratio. First sorts the Dictionary{UInt32, Precursor}
+`p.id_to_prec` that maps precursor id's to `Precursor`s. Sets `p.sorted_prec_ids`
+as a vector of the ID's for these precursors (sorted). 
+"""
+function setSortedPrecursorKeys!(p::PrecursorDatabase)
+    function setSortedPrecursorIDs(p::PrecursorDatabase, keys::Vector{UInt32}) 
+        p.sorted_prec_ids = keys
+    end
+    sort!(getIDToPrec(p), by = prec->getMZ(prec));
+    setSortedPrecursorKeys(p, collect(keys(getIDToPrec(p))))
+end
+
+"""
+    precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
+
+Finds precursor IDs mapping to `Precursor`s with m/z ratios in the tolerance specified by `window_center`, `left_precursor_tolerance`, and `right_precursor_tolerance`
+Assumes the p.id_to_prec dictionary is already sorted. see `setSortedPrecursorKeys!`
+"""
+function precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
+    l_bnd, u_bnd = window_center - left_precursor_tolerance, window_center + right_precursor_tolerance
+    start = searchsortedfirst(getPrecursorIDs(p), l_bnd,lt=(t,x)->getMZ(getPrecursor(p, t))<x)
+    stop = searchsortedlast(getPrecursorIDs(p), u_bnd,lt=(x,t)->getMZ(getPrecursor(p, t))>x)
+    return @view(getPrecursorIDsp)[start:stop]
+end
+
+"""
+addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
 
 For the PeptideGroup to which "peptide" belongs, add the protein to its `prot_ids`
 """
-function addProteinToPepGroup!(p::PrecursorDatabase, protein::String, peptide::String)
-    addProtID!(getPepGroup(p, getPepGroupID(p, peptide)), getProtID(p, protein))
+function addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
+    addProtID!(getPepGroup(pd, getPepGroupID(pd, peptide)), getProtID(pd, protein))
 end
 
 """
-    addPepGroupToProtein!(p::PrecursorTable, protein::String, peptide::String)
+addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
 
 For the protein to which the `peptide` belongs, add the correct peptide group id to its `pep_group_ids`
 """
-function addPepGroupToProtein!(p::PrecursorDatabase, protein::String, peptide::String)
-    addPepGroup!(getProt(p, getProtID(p, protein)), getPepGroupID(p, peptide))
+function addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
+    addPepGroup!(getProt(pd, getProtID(pd, protein)), getPepGroupID(pd, peptide))
 end
 
 """
-    addNewProtein!(protein::String, prot_id::UInt32, precursor_table::PrecursorTable)
+addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
 
 Create a new `Protein` and protein id and add them to the lookup tables
 """
-function addNewProtein!(protein::String, prot_id::UInt32, precursor_table::PrecursorDatabase)
-    insertProtID!(precursor_table, protein, prot_id);
-    insertProt!(precursor_table, protein, prot_id);
+function addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
+    insertProtID!(pd, protein, prot_id);
+    insertProt!(pd, protein, prot_id);
 end
 
 """
-    addNewPeptideGroup!(peptide::String, pepGroup_id::UInt32, protein::String, precursor_table::PrecursorTable)
+addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
 
 Create a new `PeptideGroup` and peptide group id and add them to the lookup tables
 """
-function addNewPeptideGroup!(peptide::String, pepGroup_id::UInt32, protein::String, precursor_table::PrecursorDatabase)
-        insertPepGroupID!(precursor_table, peptide, pepGroup_id);
-        insertPepGroup!(precursor_table, protein, peptide, pepGroup_id)
+function addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
+        insertPepGroupID!(pd, peptide, pepGroup_id);
+        insertPepGroup!(pd, protein, peptide, pepGroup_id)
 end
 
 """
@@ -490,9 +569,9 @@ end
 
 export fixedMods
 
-getPepIDFromPrecID(p::PrecursorDatabase, prec_id::UInt32) = getPepID(getPrecursor(p, prec_id))
 
 
+#=
 """
     getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, n::Int, f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},mass_mods::Dict{String, Float32})
 
@@ -528,6 +607,6 @@ function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, Stri
     addPrecursors!(ptable, charges, isotopes, mass_mods)
     return ptable
 end
-
+=#
 
 
