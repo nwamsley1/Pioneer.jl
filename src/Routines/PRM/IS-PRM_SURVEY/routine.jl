@@ -1,4 +1,6 @@
 #julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
+#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
+#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -38,8 +40,8 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 PRECURSOR_LIST_PATH = ARGS["precursor_list"]
-#MS_DATA_DIR = "./data/parquet/
-#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt
+#MS_DATA_DIR = "./data/parquet/"
+#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
 
@@ -103,7 +105,7 @@ include("../../../PSM_TYPES/FastXTandem.jl")
 #include("../../../searchSpectra.jl")
 include("../../../Routines/PRM/getBestPSMs.jl")
 include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/plotPRM.jl")
+include("../../../Routines/PRM/IS-PRM_SURVEY/plotPRM.jl")
 include("../../../Routines/PRM/getMS1PeakHeights.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
 include("../../../Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
@@ -164,13 +166,13 @@ include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
-test = Dictionary{UInt32, Vector{Transition}}()
+MS_RT = Dict{UInt32, Vector{Float32}}()
     for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
 
-        MS_TABLES[UInt32(ms_file_idx)] = Arrow.Table(MS_TABLE_PATH)
-
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+        MS_RT[UInt32(ms_file_idx)] = MS_TABLE[:retentionTime]
         scored_psms, fragment_matches = SearchRAW(
-                                                MS_TABLES[UInt32(ms_file_idx)], 
+                                                MS_TABLE, 
                                                 ptable, 
                                                 selectTransitions, 
                                                 params[:right_precursor_tolerance],
@@ -191,7 +193,7 @@ test = Dictionary{UInt32, Vector{Transition}}()
 ##########
 #Get Best PSMs for Each Peptide
 ##########
-    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_TABLES, params[:minimum_fragment_count])
+    best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, params[:minimum_fragment_count])
 ##########
 #Get MS1 Peak Heights
 ##########
@@ -199,7 +201,8 @@ test = Dictionary{UInt32, Vector{Transition}}()
     ms1_peak_heights = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, Float32}}()
     #Peak heights are zero to begin with
     precursor_idxs = unique(best_psms[!,:precursor_idx])
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
+    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         insert!(ms1_peak_heights, 
                 UInt32(ms_file_idx), 
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
@@ -226,8 +229,8 @@ test = Dictionary{UInt32, Vector{Transition}}()
 #Get Chromatograms for the best precursors in each file. 
 ##########
     precursor_chromatograms = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, PrecursorChromatogram}}()
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
-
+    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         insert!(precursor_chromatograms, UInt32(ms_file_idx), initPrecursorChromatograms(best_psms, UInt32(ms_file_idx)) |> (best_psms -> fillPrecursorChromatograms!(best_psms, 
                                                                                                                     combined_fragment_matches[UInt32(ms_file_idx)], 
                                                                                                                     MS_TABLE, 
@@ -279,14 +282,15 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_CONDITION[psm[:ms
     writeIAPIMethod(best_psms, joinpath(MS_DATA_DIR, "iapi_method.csv"))
 
     println(" Scored "*string(size(best_psms)[1])*" precursors")
+#end
 end
-
 ##########
 #Make Plots
 ##########
-
+#=
 if ARGS["make_plots"]
-    for (ms_file_idx, MS_TABLE) in MS_TABLES
+    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
         plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
                             ptable, 
@@ -298,4 +302,4 @@ if ARGS["make_plots"]
                                         joinpath("./figures/precursor_chromatograms/", sample_name),
                                         join(sample_name*"_precursor_chromatograms"*".pdf"))
     end
-end
+end=#

@@ -27,14 +27,14 @@ Type that represents an chromatogram for a `Precursor`
 """
 struct PrecursorChromatogram
     rts::Vector{Float32}
-    last_scan_idx::Vector{Int64}
+    scan_idxs::Vector{Int64}
     transitions::UnorderedDictionary{String, Vector{Float32}}
     best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32}}}
 end
 
 PrecursorChromatogram() = PrecursorChromatogram(Float32[], Int64[], UnorderedDictionary{String, Vector{Float32}}(), (rt = Float32(0), scan_idx = 0, name = String[], mz = Float32[], intensity = Float32[]))
 getRTs(pc::PrecursorChromatogram) = pc.rts
-getLastScanIdx(pc::PrecursorChromatogram) = pc.last_scan_idx
+getLastScanIdx(pc::PrecursorChromatogram) = pc.scan_idxs[end]
 getTransitions(pc::PrecursorChromatogram) = pc.transitions
 getBestPSM(pc::PrecursorChromatogram) = pc.best_psm
 
@@ -136,8 +136,8 @@ function fillPrecursorChromatograms!(precursor_chromatograms::UnorderedDictionar
 
     function addTransition(precursor_chromatogram::PrecursorChromatogram, match::FragmentMatch, rt::Float32)
 
-        if match.scan_idx>precursor_chromatogram.last_scan_idx[1]
-            precursor_chromatogram.last_scan_idx[1]=match.scan_idx
+        if match.scan_idx>precursor_chromatogram.scan_idxs[end]
+            push!(precursor_chromatogram.scan_idxs, match.scan_idx)
             append!(precursor_chromatogram.rts, rt)
             for key in keys(precursor_chromatogram.transitions)
                 push!(precursor_chromatogram.transitions[key],Float32(0))

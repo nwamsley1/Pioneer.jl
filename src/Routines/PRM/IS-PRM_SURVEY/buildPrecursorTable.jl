@@ -51,12 +51,12 @@ function buildPrecursorTable!(ptable::PrecursorTable,
                                     pepGroup_id,
                                     pep_id,
                                     n = n); #
-                if length(line)>2
-                    transition_names = line[3:end]
-                    insert!(getPepIDToTransitions(ptable),
-                            pep_id,
-                            transition_names)
-                end
+                #if length(line)>2
+                #    transition_names = line[3:end]
+                #    insert!(getPepIDToTransitions(ptable),
+                #            pep_id,
+                #            transition_names)
+                #end
                 pepGroup_id += UInt32(1); 
             else #If this peptide has been encountered before, we don't need to apply the variable modes. Instead,
                 addProteinToPepGroup!(ptable, protein, peptide); #Add the current protein to this peptide group

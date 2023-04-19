@@ -24,11 +24,12 @@ function selectTransitions(window_center::Float32,
                                 ptable::PrecursorTable, 
                                 right_precursor_tolerance::Float32,
                                 left_precursor_tolerance::Float32,
-                                transition_charges::Vector{UInt8},
-                                transition_isotopes::Vector{UInt8},
-                                b_start::Int64,
-                                y_start::Int64,
-                                fragment_match_ppm::Float32)
+                                #transition_charges::Vector{UInt8},
+                                #transition_isotopes::Vector{UInt8},
+                                #b_start::Int64,
+                                #y_start::Int64,
+                                #fragment_match_ppm::Float32
+                                )
 
     transitions = Vector{Transition}();
 

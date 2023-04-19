@@ -4,17 +4,6 @@ using Combinatorics, Dictionaries
 
 export buildPrecursorTable!, getPrecursors!
 
-struct SimplePrecursor
-    mz::Float32
-    charge::UInt8
-    isotope::UInt8
-    pep_id::UInt32
-end
-
-getMZ(sp::SimplePrecursor) = sp.mz
-getCharge(sp::SimplePrecursor) = sp.charge
-getIsotope(sp::SimplePrecursor) = sp.isotope
-getPepID(sp::SimplePrecursor) = sp.pep_id
 """
     PeptideGroup
 
@@ -80,6 +69,7 @@ end
 
 getSeq(p::Peptide) = p.sequence
 getGroupID(p::Peptide) = p.pep_group_id
+getPrecIDs(p::Peptide) = p.prec_ids
 
 """
     Protein
@@ -199,9 +189,9 @@ getProtToID(p::PrecursorDatabase) = p.prot_to_id
 getIDToPepGroup(p::PrecursorDatabase) = p.id_to_pepGroup
 getPepGroupToID(p::PrecursorDatabase) = p.pepGroup_to_id
 getIDToPep(p::PrecursorDatabase) = p.id_to_pep
-getPrecursors(p::PrecursorDatabase) = p.precursors
+getPrecursors(p::PrecursorDatabase) = p.prec_id_to_precursor
 #getSimplePrecursors(p::PrecursorDatabase) = p.simple_precursors
-getPepIDToTransitions(p::PrecursorDatabase) = p.pep_id_to_transitions
+getPepIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 
 export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getPrecursors
 
@@ -224,7 +214,7 @@ containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(p.id_to_pep, pe
 
 getProtID(p::PrecursorDatabase, protein::String) = p.prot_to_id[protein]
 getProt(p::PrecursorDatabase, prot_id::UInt32) = p.id_to_prot[prot_id]
-getPepGroupID(p::PrecursorDatabase, peptide::String) = p.pepGroup_to_id[peptide]
+getPepGroupID(p::PrecursorDatabase, peptide::String) = p.pepGroup_to_id[string(replace(peptide, r"\[[^\]]*\]"=>""))]
 getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = p.id_to_pepGroup[pepGroup_id]
 getPep(p::PrecursorDatabase, pep_id::UInt32) = p.id_to_pep[pep_id]
 getSimplePrecFromID(p::PrecursorDatabase, prec_id::UInt32) = p.simple_precursors[prec_id]
@@ -236,6 +226,8 @@ getPepSeqsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getSeq(pep_group) f
 getPrecIDToPrecursor(p::PrecursorDatabase) = p.prec_id_to_precursor
 getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 getSortedPrecursorKeys(p::PrecursorDatabase) = p.sorted_precursor_keys
+getTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
+getTransition(p::PrecursorDatabase, prec_id::UInt32) = p.prec_id_to_transitions[prec_id]
 function setSortedPrecursorKeys(p::PrecursorDatabase, keys::Vector{UInt32}) 
     p.sorted_precursor_keys = keys
 end

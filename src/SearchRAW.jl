@@ -1,6 +1,6 @@
 function SearchRAW(
                    spectra::Arrow.Table, 
-                   ptable::PrecursorTable,
+                   ptable::PrecursorDatabase,
                    selectTransitions, 
                    right_precursor_tolerance::Float32,
                    left_precursor_tolerance::Float32,
@@ -32,12 +32,7 @@ function SearchRAW(
         transitions = selectTransitions(spectrum[:precursorMZ], 
                                         ptable,
                                         right_precursor_tolerance,
-                                        left_precursor_tolerance,
-                                        transition_charges,
-                                        transition_isotopes,
-                                        b_start,
-                                        y_start,
-                                        fragment_match_ppm
+                                        left_precursor_tolerance
                                         )
         #Named tuple for scan 
         fragmentMatches = matchPeaks(transitions, spectrum[:masses], spectrum[:intensities], 
