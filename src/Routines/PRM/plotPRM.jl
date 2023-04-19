@@ -77,7 +77,9 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, 
     par::Real, dev_ratio::Real, out_path::String)
     p = plot(title = title, fontfamily="helvetica", legend=:outertopright)
-
+    if (length(heavy_rts) == 0) | (length(light_rts) == 0)
+        return 
+    end
     max_light = 0.0
     max_heavy = 0.0
 
@@ -105,6 +107,8 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
 
     ticks = [1*max_heavy, 0, -1*(max_heavy/max_light)*max_light]
     ticklabels = [ @sprintf "%.2E" x for x in [max_heavy, 0, max_light]]
+    #println("par ", par)
+    #par = string(par)
     par = @sprintf "%.2E" par
     dev_ratio = @sprintf "%.2E" dev_ratio
     annotate!(minimum(heavy_rts), max_heavy, fontfamily = "helvetica", text("PAR $par \nDev Ratio $dev_ratio", :black, :top, :left, 8))
@@ -139,7 +143,7 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             if !isassigned(par_models,  ms_file_idx)
                 return 0.0, 0.0
             else
-                par_models[ms_file_idx].par_model_coef[ms_file_idx][1], par_models[ms_file_idx].dev_ratio
+                1/par_models[ms_file_idx].par_model_coef[1], par_models[ms_file_idx].dev_ratio
             end
         end
 
