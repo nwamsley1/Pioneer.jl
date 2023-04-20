@@ -189,6 +189,8 @@ An implementation of `PrecursorTable` should have these fields
 - addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
 - addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
 - addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
+- addPrecursors!(ptable::PrecursorDatabase, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
+- addTransitions!(ptable::PrecursorDatabase, transition_charges::Vector{UInt8}, transition_isotopes::Vector{UInt8},b_start::Int64,y_start::Int64, fragment_match_ppm::Float32)
 ### Notes
 
 `PrecursorDatabase` keeps an account of relations between Proteins, PeptideGroups, Peptides, and
@@ -269,6 +271,7 @@ containsProtID(p::PrecursorDatabase, prot_id::UInt32) = isassigned(getIDToProt(p
 containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(getPepGroupToIDp(p), peptide)
 containsPepGroupID(p::PrecursorDatabase, pepGroup_id::UInt32) = isassigned(getIDToPepGroup(p), pepGroup_id)
 containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(getIDToPep(p), pep_id)
+containsPep(p::PrecursorDatabase, sequence::String) = isassigned(getPepSeqToPepID(p), sequence)
 containsPrecID(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecursors(p), prec_id)
 hasTransitions(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecIDToTransitions(p), prec_id)
 
@@ -303,7 +306,10 @@ insertProtID!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(
 insertProt!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(p.id_to_prot, prot_id, Protein(protein))
 insertPepGroupID!(p::PrecursorDatabase, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
 insertPepGroup!(p::PrecursorDatabase, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), Set(UInt32[]), peptide))
-
+function insertPep!(p::PrecursorDatabase, sequence::String, pep_id::UInt32, pepGroup_id::UInt32)
+    insert!(getPepSeqToPepID(p), sequence, pep_id)
+    insert!(getIDToPep(ptable), pep_id, Peptide(sequence, pepGroup_id, Set(UInt32[])))
+end
 
 """
     setSortedPrecursorKeys!(p::PrecursorDatabase)
@@ -372,241 +378,100 @@ function addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id
 end
 
 """
-    matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String)::Vector{Tuple{UnitRange{Int64}, String}}
+    addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
 
-Finds each match to patterns in the input_string. Returns a Vector{Tuple{UnitRange{Int64}, String}}. Each pattern in `patterns` includes a 
-regular expresion `:p` and a replacement `:r`, which should substitute the matched pattern. For the output, the first element of each tuple is a UnitRange
-corresponding to the indices of `input_string` that matched a pattern. The second element is a string that should be substituted at those indices.  
-
-### Input
-
-- `patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: -- Patterns to match and their substitutions (could replace r"K\$" with "K[C-term K mod]")
-- `input_string::String` -- A string to search for matches to `patterns`
-
-### Output
-- `::Vector{Tuple{UnitRange{Int64}, String}}`
-
-Each UnitRange{Int64} corresponds to a range in `input_string` that matched a pattern. Each String is intended to replace those indices
-in the `input_string`. 
-
-### Algorithm 
-- Searches the input string for each pattern seperately. Appends each match to the output as a Tuple{UnitRange{Int64}, String}. 
-
-### Notes
-
-- Different combinations of each modification need to be applied. That is why this function returns a Vector of modifications
-rather than applying each modification to the `input_string` and returning that as output. 
-
-### Examples 
-var_mods = [(p=r"(E)", r="[modE]"), (p=r"(C)", r="[modC]")]
-test_pep = "PEPEPCPEPEP"
-@test Set(matchVarMods(var_mods, test_pep)) == Set([(2:2, "[modE]"),
-                                                (4:4, "[modE]"),
-                                                (6:6, "[modC]"),
-                                                (8:8, "[modE]"),
-                                                (10:10, "[modE]")])
-"""
-function matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String)
-    matches = Vector{Tuple{UnitRange{Int64}, String}}()
-    for pattern in patterns
-        regex_matches = findall(pattern[:p], input_string)
-        for match in regex_matches
-            push!(matches, (match, pattern[:r]))
-        end
-    end
-    matches
-end
-
-"""
-    applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matches::Vector{Tuple{UnitRange{Int64}, String}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, n::Int)
-
-Applies all combinations of n or fewer variable modifications to an input peptide sequence, `unmod_seq`. 
+Modifies a `PrecursorDatabase` to fill the `precursors` field. Gets a `Precursor` for each unique `Peptide` in `ptable`. Sorts the 
+precursors in order of increasing mz.   
 
 ### Input
 
-- `peptides::UnorderedDictionary{UInt32, Peptide}` -- Maps unique peptide identifiers to `Peptide`s
-- `matches::Vector{Tuple{UnitRange{Int64}, String}}` -- Tuples of substitutions `String` to be substituted into `unmod_seq` at indices `UnitRange{Int64}`
-- `unmod_seq::String` -- A string representing a peptide sequence
-- `group_id::UInt32` -- Unique identifier for a `PeptideGroup`
-- `pep_id::UInt32` -- Unique identifier for a `Peptide`
-- `n::Int` -- Apply all combinations of n or fewer modifications (specified in `matches`). 
+- `ptable::PrecursorTable` -- See `PrecursorTable`
+- `charges::Vector{UInt8}` -- Get a precursor with these charges for each Peptide in `ptable`
+- `isotopes::Vector{UInt8}` -- Get a precursor with these isotopes for each Peptide in `ptable`
+- `mods_dict::Dict{String, Float32}` -- Dict mapping modifications to their masses
 
 ### Output
-- Modifies `peptides`. Adds a new key value pair UInt32=>`Peptide` for each unique peptide modification. Also
-adds the unmodified peptide. 
-
-### Algorithm 
-- Relies on `Combinatorics` package to find all combinations of n or fewer `matches` that can be applied to the peptide sequence `unmod_seq`. 
-
-### Notes
-
-- If there are only M matches but `n`>length(`matches`), will apply at most M matches
-- If multiple mods can be applied to the same index, they will be appended. For example: "DRAGRACER[R mod 1][R mod 2]". 
+- Fills the `id_to_prec` and `sorted_prec_ids` fields in a `PrecursorDatabase` 
 
 ### Examples 
-- See `applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)`
-"""
-function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matches::Vector{Tuple{UnitRange{Int64}, String}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, n::Int)
-    
-    function applyMods(combination, unmod_seq::String)
-        output_str = [""] #Build the modified sequence from scratch
-        index = 1
-        for mod in combination
-            push!(output_str, unmod_seq[index:mod[1][1]]) #From the prior modification up until the location of the next mod
-            push!(output_str, mod[2])                     #Add the modification
-            index = mod[1][1]+1                           
-        end
-        push!(output_str, unmod_seq[index:end]) #From the last mod to the end of the sequence
-        return output_str        
-    end
-
-    insertPeptide!(peptides::UnorderedDictionary{UInt32, Peptide}, 
-                   seq::String, 
-                   group_id::UInt32, 
-                   pep_id::UInt32) = insert!(peptides, pep_id, Peptide(seq, group_id, Set(UInt32[])))
-
-    #Peptide with 0 variable mods. 
-    #pep_id += UInt32(1);
-    insertPeptide!(peptides, unmod_seq, group_id, pep_id);
-    pep_id += UInt32(1);
-    # Apply the replacements to the input string for each combination
-    for N in 1:min(n, length(matches)) #Apply 1:min(n, length(matches)) variable mods
-        for combination in combinations(matches, N) #Each combination of "N" variable mods
-            sort!(combination, by=match->match[1][end]); #Sort applied variable mods in order of appearance in "unmod_seq". 
-            modified_seq = applyMods(combination, unmod_seq) #Get the modified sequence for the given combination of mods
-            #pep_id += UInt32(1);
-            insertPeptide!(peptides, join(modified_seq), group_id, pep_id);
-            pep_id += UInt32(1);
-        end
-    end
-    pep_id
-end
-
-"""
-    applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)
-
-Wrapper for `applyVariableMods!`. Applies all combinations of n or fewer variable modifications, `var_mods`, to an input peptide sequence, `unmod_seq`. 
-
-### Input
-
-- `peptides::UnorderedDictionary{UInt32, Peptide}` -- Maps unique peptide identifiers to `Peptide`s
-- `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}` -- Pairs of match patterns and substitutions for variable modifications
-- `unmod_seq::String` -- A string representing a peptide sequence
-- `group_id::UInt32` -- Unique identifier for a `PeptideGroup`
-- `pep_id::UInt32` -- Unique identifier for a `Peptide`
-- `n::Int` -- Apply all combinations of n or fewer modifications (specified in `matches`). 
-
-### Output
-- Modifies `peptides`. Adds a new key value pair UInt32=>`Peptide` for each unique peptide modification. Also
-adds the unmodified peptide. 
-
-### Algorithm 
-- Relies on `Combinatorics` package to find all combinations of n or fewer `matches` that can be applied to the peptide sequence `unmod_seq`. 
-
-### Notes
-
-- If there are only M matches but `n`>length(`matches`), will apply at most M matches
-- If multiple mods can be applied to the same index, they will be appended. For example: "DRAGRACER[R mod 1][R mod 2]". 
-
-### Examples 
-
-test_peps_dict = UnorderedDictionary{UInt32, Peptide}()
-group_id = UInt32(1)
-pep_id = UInt32(1)
-var_mods = [(p=r"(E)", r="[modE]"), (p=r"(C)", r="[modC]")]
-test_pep = "PEPEPCPEPEP"
-applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=1);
-@test Set(map(pep->getSeq(pep), test_peps_dict)) == Set([
-                                                            "PEPEPCPEPEP",
-                                                            "PEPEPC[modC]PEPEP",
-                                                            "PE[modE]PEPCPEPEP",
-                                                            "PEPE[modE]PCPEPEP",
-                                                            "PEPEPCPE[modE]PEP",
-                                                            "PEPEPCPEPE[modE]P"
-                                                            ])
-"""
-function applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)
-    applyVariableMods!(peptides,
-                    matchVarMods(var_mods, unmod_seq),
-                    unmod_seq,
-                    group_id,
-                    pep_id,
-                    n
-                    )
-end
-export applyMods!
-
-"""
-    fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
-
-Applies fixed moficitations to a peptide sequence and returns the modified sequence.  
-
-### Input
-
-- `peptide::String` -- A peptide sequence. 
-- `Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}` -- Pairs of match match patterns and substitutions for fixed modifications
-
-### Output
-- A peptide sequence with fixed modifications applied. 
-
-### Algorithm 
-
-for mod in fixed_mods
-    peptide = replace(peptide, mod[:p]=>mod[:r])
-end
-
-### Examples 
-
+test_mods::Dict{String, Float32} = 
+Dict{String, Float32}(
+    "Carb" => Float32(57.021464),
+    "Harg" => Float32(10),
+    "Hlys" => Float32(8),
+)
 fixed_mods = [(p=r"C", r="C[Carb]")]
-@test fixedMods("CARACHTER", fixed_mods) == "C[Carb]ARAC[Carb]HTER"
+var_mods = [(p=r"(K\$)", r="[Hlys]"), (p=r"(R\$)", r="[Harg]")]
+
+testPtable = PrecursorTable()
+buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/peptide_lists/PROT_PEPTIDE_TEST1.txt")
+getPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
 """
-function fixedMods(peptide::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
-    for mod in fixed_mods
-        peptide = replace(peptide, mod[:p]=>mod[:r])
+function addPrecursors!(ptable::PrecursorDatabase, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
+    prec_id = UInt32(1)
+    for (pep_id, peptide) in pairs(getIDToPep(ptable))
+        for charge in charges, isotope in isotopes
+            insert!(getIDToPrec(ptable), 
+                    prec_id,
+                    Precursor(peptide.sequence, 
+                                charge = charge, 
+                                isotope = isotope, 
+                                pep_id = pep_id, 
+                                prec_id = prec_id, 
+                                mods_dict = mods_dict)
+                    )
+            #insert!(ptable.simple_precursors, prec_id, SimplePrecursor(getMZ(ptable.precursors[end]), charge, isotope, pep_id));
+            prec_id+= UInt32(1)
+        end
     end
-    peptide
+    setSortedPrecursorKeys!(ptable)
 end
 
-export fixedMods
 
-
-
-#=
 """
-    getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, n::Int, f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},mass_mods::Dict{String, Float32})
+    addTransitions!(ptable::PrecursorDatabase, transition_charges::Vector{UInt8}, transition_isotopes::Vector{UInt8},b_start::Int64,y_start::Int64, fragment_match_ppm::Float32)
 
-Build a `PrecursorTable` given a file_path to a tab delimited table of protein_name peptide_sequence pairs. Applies fixed and variable modifications. Gets precursors
-for each combination of `charges` and `isotopes` supplied. 
+Modifies a `PrecursorDatabase` to add `Transition`s to the 'prec_id_to_transitions' field corresponding to all `Precursor`s  in the `id_to_prec` field. Gets all transitions 
+for the specified charge and isotopic states for all precursors in the PrecursorDatabase. 
 
 ### Input
 
-- `fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}` -- Specification of fixed modifications to apply
-- `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}` -- Specification of variable modifications to apply
-- `n::Int` -- Will apply all combinations of `n` or fewer variable modifications to each sequence
-- `f_path::String` -- File path fo the protein-peptide list. 
-- `charges::Vector{UInt8}` -- For each peptide, gets precursors with these charge states 
-- `isotopes::Vector{UInt8}` -- For each peptide, gets precursors with these isotopic states
-- ` mass_mods::Dict{String, Float32}` -- Specifies mass for each modification in `fixed_mods` and `var_mods` 
+- `ptable::PrecursorTable` -- See `PrecursorTable`
+- `transition_charges::Vector{UInt8}` -- Get `Transition`s with these charges for each `Precursor` in `ptable`
+- `transition_isotopes::Vector{UInt8}` -- Get `Transition`s with these isotopes for each Precursor` in `ptable`
+- `b_start::Int64` -- Get transitions bn+x and higher. At `3` would exclude b2 and b1 ions
+- `y_start::Int64` -- Same as `b_start` but for y ions
+- `fragment_match_ppm::Float32` -- Fragment match tolerance for the precursors
 
 ### Output
-- Returns a `PrecursorTable` struct. See documentation for `PrecursorTable`. Mapps identifiers between precursors,
-pepties, peptide groups, and proteins. 
-
-### Notes
+- Fills the `prec_id_to_transitions` field in a `PrecursorDatabase` 
 
 ### Examples 
 
 """
-function getPrecursors(fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
-        var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
-        n::Int, 
-        f_path::String, charges::Vector{UInt8}, isotopes::Vector{UInt8},
-        mass_mods::Dict{String, Float32})
-    ptable = PrecursorTable()
-    buildPrecursorTable!(ptable, fixed_mods, var_mods, n, f_path)
-    addPrecursors!(ptable, charges, isotopes, mass_mods)
-    return ptable
+function addTransitions!(ptable::PrecursorDatabase, transition_charges::Vector{UInt8}, transition_isotopes::Vector{UInt8},b_start::Int64,y_start::Int64, fragment_match_ppm::Float32)
+    for (prec_id, precursor) in pairs(getIDToPrec(ptable))
+        for charge in transition_charges, isotope in transition_isotopes
+            if !hasTransitions(ptable, prec_id)
+                insert!(getPrecIDToTransitions(ptable),
+                        prec_id,
+                        getTransitions(precursor, 
+                                        charge = charge, 
+                                        isotope = isotope, 
+                                        b_start = b_start, 
+                                        y_start = y_start,
+                                        ppm = fragment_match_ppm)
+                        )
+            else
+                append!(getTransitions(ptable, prec_id), 
+                        getTransitions(precursor, 
+                                        charge = charge, 
+                                        isotope = isotope, 
+                                        b_start = b_start, 
+                                        y_start = y_start,
+                                        ppm = fragment_match_ppm)
+                        )
+            end
+        end
+    end
 end
-=#
-
-
