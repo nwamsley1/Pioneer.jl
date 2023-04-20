@@ -293,7 +293,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
         if !containsPep(ptable, light_sequence) #If the peptide hasn't been encountered
             max_pep_id += UInt32(1);  
             insertPep!(ptable, light_sequence, max_pep_id, pepGroup_id)
-            push!(getIDToPepGroup(ptable)[pepGroup_id].pep_ids, pep_id)
+            addPepToPepGroup!(ptable, pepGroup_id, pep_id)
             return max_pep_id, max_pep_id
         else
             pep_id = getPepSequenceToPepID(ptable)[light_sequence]
@@ -302,25 +302,22 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
     end
     
     function addPrecursors!(ptable::ISPRMPrecursorTable, light_precursor::Precursor, heavy_precursor::Precursor, pep_id::UInt32, max_lh_pair_id::UInt32, max_prec_id::UInt32)
-        max_prec_id += UInt32(2)
+        
         max_lh_pair_id += UInt32(1)
-        light_prec_id, heavy_prec_id = max_prec_id - UInt32(1), max_prec_id
-
-        #addToPrecursorSet!(ptable, light_precursor)
-
-        insert!(getPrecursors(ptable), light_prec_id, light_precursor)
-        insert!(getPrecursors(ptable), heavy_prec_id, heavy_precursor)
+        insertPrecursor!(ptable, light_precursor)
+        insertPrecursor!(ptable, heavy_precursor)
         insert!(getIDToLightHeavyPair(ptable),
                 max_lh_pair_id,
                 LightHeavyPrecursorPair(pep_id, 
                                         getSeq(getPep(ptable, getPepID(light_precursor))), 
                                         getSeq(getPep(ptable, getPepID(heavy_precursor))),
-                                        light_prec_id, 
-                                        heavy_prec_id, 
+                                        getPrecID(light_precursor), 
+                                        getPrecID(heavy_precursor), 
                                         #Dictionary{Int64, NamedTuple{(:lower_bound, :upper_bound), Tuple{Int64, Int64}}}(),
                                         Dictionary{UInt32, ParModel}())
                 )
-        push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
+        #push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), getPrecID(light_precursor))
+        #push!(getPrecIDs(getIDToPep(ptable)[getPepID(light_precursor)]), max_lh_pair_id)
         addPrecIDToLHPairID(ptable, light_prec_id, max_lh_pair_id)
         addPrecIDToLHPairID(ptable, heavy_prec_id, max_lh_pair_id)
         return light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id
@@ -333,14 +330,15 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                     prec_id,Vector{Transition}())
             for transition_name in transition_names
                 transition = parseTransitionName(transition_name)
-                push!(getPrecIDToTransitions(ptable)[prec_id],
-                Transition(getResidues(getPrecursors(ptable)[prec_id]),
-                            ion_type = transition[:ion_type],
-                            ind = transition[:ind],
-                            charge = transition[:charge],
-                            isotope = UInt8(0),
-                            prec_id = prec_id)
-                    )
+                addTransition!(ptable, 
+                                prec_id, 
+                                Transition(getResidues(getPrecursors(ptable)[prec_id]),
+                                        ion_type = transition[:ion_type],
+                                        ind = transition[:ind],
+                                        charge = transition[:charge],
+                                        isotope = UInt8(0),
+                                        prec_id = prec_id)
+                                )
             end
         end
     end
@@ -366,18 +364,23 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                 precursor = SimplePrecursor(light_sequence, charge, isotope, pep_id)
                 if precursor ∉ ptable.simple_precursor_set
                     push!(ptable.simple_precursor_set, precursor)
-                    light_precursor = Precursor(light_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
-                    heavy_precursor = Precursor(heavy_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = prec_id, mods_dict = mods_dict)
-                    light_prec_id, heavy_prec_id, max_prec_id, max_lh_pair_id = addPrecursors!(ptable, light_precursor, heavy_precursor, pep_id, max_lh_pair_id, max_prec_id)
+
+                    max_prec_id += UInt32(2)
+                    light_prec_id, heavy_prec_id = max_prec_id - UInt32(1), max_prec_id
+                    light_precursor = Precursor(light_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = light_prec_id, mods_dict = mods_dict)
+                    heavy_precursor = Precursor(heavy_sequence, charge = charge, isotope = isotope, pep_id = pep_id, prec_id = heavy_prec_id, mods_dict = mods_dict)
+
+                    max_prec_id, max_lh_pair_id = addPrecursors!(ptable, light_precursor, heavy_precursor, pep_id, max_lh_pair_id, max_prec_id)
                     addTransitions!(ptable, transition_names, [light_prec_id, heavy_prec_id])
                 end
             end
+
+            setSortedPrecursorKeys!(ptable)
             println("Time to build precursor table ", timetaken);
         end
     end
 
     main(ptable, mods_dict, f_path);
-    makeSortedPrecursorKeys!(ptable);
 end
 #=struct SimplePrecursor
     sequence::String

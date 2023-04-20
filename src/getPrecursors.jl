@@ -306,11 +306,16 @@ insertProtID!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(
 insertProt!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(p.id_to_prot, prot_id, Protein(protein))
 insertPepGroupID!(p::PrecursorDatabase, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
 insertPepGroup!(p::PrecursorDatabase, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), Set(UInt32[]), peptide))
+
+addPepToPepGroup!(p::PrecursorDatabase, pepGroup_id::UInt32, pep_id::UInt32) = push!(getPepGroup(p, pepGroup_id), pep_id)
+
 function insertPep!(p::PrecursorDatabase, sequence::String, pep_id::UInt32, pepGroup_id::UInt32)
     insert!(getPepSeqToPepID(p), sequence, pep_id)
     insert!(getIDToPep(ptable), pep_id, Peptide(sequence, pepGroup_id, Set(UInt32[])))
 end
 
+addTransition!(p::PrecursorDatabase, prec_id::UInt32, t::Transition) = push!(getTransitions(p, prec_id), t)
+insertPrecursor!(p::PrecursorDatabase, prec::Precursor) = insert!(getPrecursors(p), getPrecID(prec), prec)
 """
     setSortedPrecursorKeys!(p::PrecursorDatabase)
 
