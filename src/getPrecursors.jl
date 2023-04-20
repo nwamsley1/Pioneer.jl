@@ -44,7 +44,7 @@ getSeq(pg::PeptideGroup) = pg.sequence
 getProtIDs(pg::PeptideGroup) = pg.prot_ids
 getPepIDs(pg::PeptideGroup) = pg.pep_ids
 
-addProtID!(pg::PeptideGroup, prot_id::UInt32) push!(pg.prot_ids, prot_id)
+addProtID!(pg::PeptideGroup, prot_id::UInt32) = push!(pg.prot_ids, prot_id)
 
 export getSeq, getProtIDs, getPepIDs, addProtID!
 
@@ -83,7 +83,7 @@ struct Peptide
 end
 
 getSeq(p::Peptide) = p.sequence
-getPepGroupID(p::Peptide) = pepGroup_id
+getPepGroupID(p::Peptide) = p.pepGroup_id
 getPrecIDs(p::Peptide) = p.prec_ids
 
 addPrecID!(p::Peptide, prec_id::UInt32) = push!(p.prec_ids, prec_id)
@@ -268,7 +268,7 @@ PrecursorTable() = PrecursorTable(
 
 containsProt(p::PrecursorDatabase, protein::AbstractString) = isassigned(getProtToID(p), protein)
 containsProtID(p::PrecursorDatabase, prot_id::UInt32) = isassigned(getIDToProt(p), prot_id)
-containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(getPepGroupToIDp(p), peptide)
+containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(getPepGroupToID(p), peptide)
 containsPepGroupID(p::PrecursorDatabase, pepGroup_id::UInt32) = isassigned(getIDToPepGroup(p), pepGroup_id)
 containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(getIDToPep(p), pep_id)
 containsPep(p::PrecursorDatabase, sequence::String) = isassigned(getPepSeqToPepID(p), sequence)
@@ -278,12 +278,13 @@ hasTransitions(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecIDToTr
 
 getProt(p::PrecursorDatabase, prot_id::UInt32) = getIDToProt(p)[prot_id]
 
-getProtID(p::PrecursorDatabase, protein::String) = getProtToID(p)[protein]
-getProtID(p::PrecursorDatabase, protein::Protein) = getProtToID(getName(p))[protein]
+getProtIDFromName(p::PrecursorDatabase, protein::String) = getProtToID(p)[protein]
+#getProtID(p::PrecursorDatabase, protein::Protein) = getProtToID(getName(p))[protein]
 
 getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = getIDToPepGroup(p)[pepGroup_id]
-getPepGroupID(p::PrecursorDatabase, peptide::String) = getPepGroupToID(p)[string(replace(peptide, r"\[[^\]]*\]"=>""))]
-getPepGroupID(p::PrecursorDatabase, pepGroup::PeptideGroup) = getPepGroupToID(p)[getSeq(pepGroup)]
+
+getPepGroupIDFromSequence(p::PrecursorDatabase, peptide::String) = getPepGroupToID(p)[string(replace(peptide, r"\[[^\]]*\]"=>""))]
+getPepGroupIDFromPepGroup(p::PrecursorDatabase, pepGroup::PeptideGroup) = getPepGroupToID(p)[getSeq(pepGroup)]
 
 getPep(p::PrecursorDatabase, pep_id::UInt32) = getIDToPep(p)[pep_id]
 getPrecursor(p::PrecursorDatabase, prec_id::UInt32) = getIDToPrec(p)[prec_id]
@@ -291,10 +292,10 @@ getPrecursor(p::PrecursorDatabase, prec_id::UInt32) = getIDToPrec(p)[prec_id]
 getTransitions(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToTrasnitions(p)[prec_id]
 
 
-getProtNamesFromPepSeq(p::PrecursorDatabase, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupID(p, peptide)))])
+getProtNamesFromPepSeq(p::PrecursorDatabase, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupIDFromSequence(p, peptide)))])
 getProtNamesFromPepSeq(p::PrecursorDatabase, pepGroup::PeptideGroup) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getSeq(pepGroup))])
 
-getPepGroupsFromProt(p::PrecursorDatabase, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtID(p, protein)))]
+getPepGroupsFromProt(p::PrecursorDatabase, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtIDFromName(p, protein)))]
 getPepSeqsFromProt(p::PrecursorDatabase, protein::String) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, protein)]
 getPepGroupsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, prot_id))]
 getPepSeqsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, prot_id)]
@@ -328,7 +329,7 @@ function setSortedPrecursorKeys!(p::PrecursorDatabase)
         p.sorted_prec_ids = keys
     end
     sort!(getIDToPrec(p), by = prec->getMZ(prec));
-    setSortedPrecursorKeys(p, collect(keys(getIDToPrec(p))))
+    setSortedPrecursorIDs(p, collect(keys(getIDToPrec(p))))
 end
 
 """
@@ -341,7 +342,7 @@ function precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_
     l_bnd, u_bnd = window_center - left_precursor_tolerance, window_center + right_precursor_tolerance
     start = searchsortedfirst(getPrecursorIDs(p), l_bnd,lt=(t,x)->getMZ(getPrecursor(p, t))<x)
     stop = searchsortedlast(getPrecursorIDs(p), u_bnd,lt=(x,t)->getMZ(getPrecursor(p, t))>x)
-    return @view(getPrecursorIDsp)[start:stop]
+    return @view(getPrecursorIDsp[start:stop])
 end
 
 """
@@ -349,8 +350,9 @@ addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
 
 For the PeptideGroup to which "peptide" belongs, add the protein to its `prot_ids`
 """
-function addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
-    addProtID!(getPepGroup(pd, getPepGroupID(pd, peptide)), getProtID(pd, protein))
+function addProteinToPepGroup!(pd::PrecursorDatabase, prot_id, pepGroup_id)
+    addProtID!(pd.id_to_pepGroup[pepGroup_id], prot_id)
+    #addProtID!(getPepGroup(pd, getPepGroupID(pd, peptide)), getProtID(pd, protein))
 end
 
 """
@@ -358,8 +360,9 @@ addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
 
 For the protein to which the `peptide` belongs, add the correct peptide group id to its `pep_group_ids`
 """
-function addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
-    addPepGroup!(getProt(pd, getProtID(pd, protein)), getPepGroupID(pd, peptide))
+function addPepGroupToProtein!(pd::PrecursorDatabase, prot_id::UInt32, pepGroup_id::UInt32)
+    addPepGroupID!(getProt(pd, prot_id), pepGroup_id)
+    #push!(getPepGroupIDs(getProt(pd, getProtID(pd, protein))), getPepGroupID(pd, peptide))
 end
 
 """
@@ -367,7 +370,7 @@ addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
 
 Create a new `Protein` and protein id and add them to the lookup tables
 """
-function addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
+function addProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
     insertProtID!(pd, protein, prot_id);
     insertProt!(pd, protein, prot_id);
 end
@@ -377,9 +380,16 @@ addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32,
 
 Create a new `PeptideGroup` and peptide group id and add them to the lookup tables
 """
-function addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
-        insertPepGroupID!(pd, peptide, pepGroup_id);
-        insertPepGroup!(pd, protein, peptide, pepGroup_id)
+function addPepGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, pep_ids::Set{UInt32}, protein::String)
+        #insertPepGroupID!(pd, peptide, pepGroup_id);
+        #insertPepGroup!(pd, protein, peptide, pepGroup_id)
+        prot_id = getProtIDFromName(pd, protein)
+        insert!(getPepGroupToID(pd), peptide, pepGroup_id)
+        #Add the new pepGroup
+        insert!(getIDToPepGroup(pd), pepGroup_id, PeptideGroup(Set([prot_id]), pep_ids, peptide))
+        #Add pepGroup_id to the protein
+        #push!(getPepGroupIDs(getProt(pd, prot_id)), pepGroup_id)
+
 end
 
 """

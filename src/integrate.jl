@@ -1,22 +1,8 @@
 using Tables
-#include("precursor.jl")
-#dict = Dict("customer age" => [15, 20, 25],
-#                   "first name" => ["Rohit", "Rahul", "Akshat"])
-#DataFrame(dict)
-#table.precursorMZ
-#def getSub(x, low)
-#    Set(findall(x->x<478, skipmissing(table.precursorMZ)));
-#b = Set(findall(x->x>477, skipmissing(table.precursorMZ)));
+
 lightMZ = getMZ(Precursor(getResidues("VGVNGFGR"), UInt8(2)))
 heavyMZ = getMZ(Precursor(getResidues("VGVNGFGR[+10.008269]"), UInt8(2)))
 
-#getTransitions(getMZ(Precursor("VGVNGFGR", charge = UInt8(2))))
-#function getSub(mean::Float32, array::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}; ppm::Float32)
-#    findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
-#end
-
-#For testing purposes easier to accept AbstractRray rather 
-#than concrete type even if less performant
 function getSub(mean::Float32, array::AbstractArray; ppm::Float32)
     findall(x->coalesce(abs(mean-x)<((mean/1000000.0)*ppm), false), array)
 end
