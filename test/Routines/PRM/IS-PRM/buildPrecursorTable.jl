@@ -232,9 +232,13 @@
     @test getSeq(getPep(testPtable, UInt32(9))) == "DRAGRACE"
     @test getSeq(getPep(testPtable, UInt32(10))) == "D[Hglu]RAGRACE"
 
+    for (precursor_id, peptide_id) in zip(precursor_ids, peptide_ids)
+        @test getPepID(getPrecursor(testPtable, precursor_id)) == peptide_id
+    end
 
-
-
+    for (precursor_id, peptide_id) in zip(precursor_ids, peptide_ids)
+        println(length(getPrecursor(testPtable, precursor_id)))
+    end
 
 
 
