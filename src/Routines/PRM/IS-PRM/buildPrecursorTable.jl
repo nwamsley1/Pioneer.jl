@@ -385,7 +385,6 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
                 light_pep_id, heavy_pep_id, max_pep_id = getPepID!(ptable, light_sequence, heavy_sequence, max_pep_id, pepGroup_id)
                 precursor = SimplePrecursor(light_sequence, charge, isotope, light_pep_id)
                 if precursor ∉ ptable.simple_precursor_set
-                    println(precursor)
                     push!(ptable.simple_precursor_set, precursor)
 
                     max_prec_id += UInt32(2)

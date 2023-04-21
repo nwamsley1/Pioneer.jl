@@ -161,7 +161,7 @@
                     )
 
     testPtable = ISPRMPrecursorTable()
-    buildPrecursorTable!(testPtable, mods_dict, "./data/peptide_lists/TRANSITION_LIST_TEST1.txt")
+    buildPrecursorTable!(testPtable, mods_dict, "../data/peptide_lists/TRANSITION_LIST_TEST1.txt")
                 
     @test length(getIDToProt(testPtable)) == 3
     @test length(getProtToID(testPtable)) == 3
@@ -232,17 +232,51 @@
     @test getSeq(getPep(testPtable, UInt32(9))) == "DRAGRACE"
     @test getSeq(getPep(testPtable, UInt32(10))) == "D[Hglu]RAGRACE"
 
+    precursor_ids = [UInt32(x) for x in 1:12]
+    peptide_ids = UInt32[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 9, 10]
+    peptide_lengths = UInt8[8, 8, 10, 10, 10, 10, 10, 10, 8, 8, 8, 8]
+
     for (precursor_id, peptide_id) in zip(precursor_ids, peptide_ids)
         @test getPepID(getPrecursor(testPtable, precursor_id)) == peptide_id
     end
 
-    for (precursor_id, peptide_id) in zip(precursor_ids, peptide_ids)
-        println(length(getPrecursor(testPtable, precursor_id)))
+    for (precursor_id, peptide_length) in zip(precursor_ids, peptide_lengths)
+        @test length(getPrecursor(testPtable, precursor_id)) == peptide_length
     end
 
+    #Rows 1 and 3 of TRANSITION_LIST_TEST1 have the same peptide but with different transitions/fragment
+    #ions specified. The intent is to use only the first set of fragment ions encountered for a specific precursor. 
+    #This test enforces that intention. 
+    ions_set = Set(String["y3+1", "y7+1", "y6+1", "b3+1", "b5+2"])
+    test_ions_set = Set(String[])
+    for t in getTransitions(testPtable, UInt32(2))
+        push!(test_ions_set, string(getIonType(t))*string(getInd(t))*"+"*string(getCharge(t)))
+    end
 
+    @test ions_set == test_ions_set 
 
+    function checkEquivalentLHPair(a::LightHeavyPrecursorPair, b::LightHeavyPrecursorPair)
+        @test a.light_pep_id == b.light_pep_id 
+        @test a.heavy_pep_id == b.heavy_pep_id
+        @test a.light_sequence == b.light_sequence
+        @test a.heavy_sequence == b.heavy_sequence
+        @test  a.light_prec_id == b.light_prec_id
+        @test  a.heavy_prec_id == b.heavy_prec_id
+        @test  a.par_model == b.par_model
+    end
 
+    lh_test_pairs = Dict{UInt32, LightHeavyPrecursorPair}(
+       UInt32(5) => LightHeavyPrecursorPair(0x00000009, 0x0000000a, "DRAGRACE", "D[Hglu]RAGRACE", 0x00000009, 0x0000000a, Dictionary{UInt32, ParModel}()),
+       UInt32(4) =>  LightHeavyPrecursorPair(0x00000007, 0x00000008, "PEPTICKDEK", "PEPTICKDEK[Hlys]", 0x00000007, 0x00000008, Dictionary{UInt32, ParModel}()),
+       UInt32(6) =>  LightHeavyPrecursorPair(0x00000009, 0x0000000a, "DRAGRACE", "D[Hglu]RAGRACE", 0x0000000b, 0x0000000c, Dictionary{UInt32, ParModel}()),
+       UInt32(2) =>  LightHeavyPrecursorPair(0x00000003, 0x00000004, "AMINEACIDK", "AMINEACIDK[Hlys]", 0x00000003, 0x00000004, Dictionary{UInt32, ParModel}()),
+       UInt32(3) =>  LightHeavyPrecursorPair(0x00000005, 0x00000006, "PEPTIC[Carb]KDEK", "PEPTIC[Carb]KDEK[Hlys]", 0x00000005, 0x00000006, Dictionary{UInt32, ParModel}()),
+       UInt32(1) =>  LightHeavyPrecursorPair(0x00000001, 0x00000002, "PEPTIDER", "PEPTIDER[Harg]", 0x00000001, 0x00000002, Dictionary{UInt32, ParModel}())
+    )
+
+    for key in keys(getIDToLightHeavyPair(testPtable))
+        checkEquivalentLHPair(getLightHeavyPairFromPrecID(testPtable, key), lh_test_pairs[key])
+    end
 
 
 
