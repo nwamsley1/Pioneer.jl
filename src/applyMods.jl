@@ -43,6 +43,7 @@ function matchVarMods(patterns::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}
     end
     matches
 end
+export matchVarMods
 
 """
     applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matches::Vector{Tuple{UnitRange{Int64}, String}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, n::Int)
@@ -110,6 +111,7 @@ function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matc
     end
     pep_id
 end
+export applyVariableMods!
 
 """
     applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)

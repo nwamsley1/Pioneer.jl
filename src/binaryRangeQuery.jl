@@ -36,10 +36,11 @@ function binaryGetNearest(arr::Vector{Union{Missing, T}}, query::T, low_tol::T, 
     return 0
 
 end
-
+export binaryGetNearest
 
 function getPrecursors(window_center::Float32, precursorList::Vector{Precursor}, params)
     l_bnd, u_bnd = window_center - params[:lower_tol], window_center + params[:upper_tol]
     start, stop = searchsortedfirst(precursorList, l_bnd,lt=(t,x)->getMZ(t)<x), searchsortedlast(precursorList, u_bnd,lt=(x,t)->getMZ(t)>x)
     return @view(precursorList[start:stop])
 end
+export getPrecursors

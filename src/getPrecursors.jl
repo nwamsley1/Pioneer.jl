@@ -46,7 +46,7 @@ getPepIDs(pg::PeptideGroup) = pg.pep_ids
 
 addProtID!(pg::PeptideGroup, prot_id::UInt32) = push!(pg.prot_ids, prot_id)
 
-export getSeq, getProtIDs, getPepIDs, addProtID!
+export PeptideGroup, getSeq, getProtIDs, getPepIDs, addProtID!
 
 """
     Peptide
@@ -88,7 +88,7 @@ getPrecIDs(p::Peptide) = p.prec_ids
 
 addPrecID!(p::Peptide, prec_id::UInt32) = push!(p.prec_ids, prec_id)
 
-export getSeq, getPepGroupID, getPrecIDs, addPrecID!
+export Peptide, getSeq, getPepGroupID, getPrecIDs, addPrecID!
 
 """
     Protein
@@ -129,12 +129,12 @@ getPepGroupIDs(p::Protein) = p.pep_group_ids
 
 addPepGroupID!(p::Protein, pep_group_id::UInt32) = push!(p.pep_group_ids, pep_group_id)
 
-export getPepGroupIDs, getName, addPepGroupID!
+export Protein, getPepGroupIDs, getName, addPepGroupID!
 
 abstract type PeptideDatabase end
 
 """
-    PrecursorTable
+    PrecursorDatabase
 
 Data Structure that represents relations between precursors, peptides, peptide groups, and proteins
 
@@ -247,13 +247,9 @@ getIDToPep(p::PrecursorDatabase) = p.id_to_pep
 getIDToPrec(p::PrecursorDatabase) = p.id_to_prec
 getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 getPrecursorIDs(p::PrecursorDatabase) = p.sorted_prec_ids
-
-
-
-
 getPrecIDToTransitions(p::PrecursorDatabase) = p.prec_id_to_transitions
 
-export getIDToProt, getIDToPep, getIDToPepGroup, getPepGroupToID, getIDToPep, getIDToPrec, getPrecursors, getPrecIDToTransitions
+export getIDToProt, getProtToID, getIDToPepGroup, getIDToPep, getPrecIDToTransitions, getPrecursorIDs, getPrecIDToTransitions
 
 PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{UInt32, Protein}(),
@@ -266,35 +262,29 @@ PrecursorTable() = PrecursorTable(
                                     Vector{UInt32}(),
                                     Dictionary{UInt32, Vector{Transition}}())
 
+export PrecursorDatabase, PrecursorTable
+
 containsProt(p::PrecursorDatabase, protein::AbstractString) = isassigned(getProtToID(p), protein)
 containsProtID(p::PrecursorDatabase, prot_id::UInt32) = isassigned(getIDToProt(p), prot_id)
 containsPepGroup(p::PrecursorDatabase, peptide::String) = isassigned(getPepGroupToID(p), peptide)
 containsPepGroupID(p::PrecursorDatabase, pepGroup_id::UInt32) = isassigned(getIDToPepGroup(p), pepGroup_id)
 containsPepID(p::PrecursorDatabase, pep_id::UInt32) = isassigned(getIDToPep(p), pep_id)
 containsPep(p::PrecursorDatabase, sequence::String) = isassigned(getPepSeqToPepID(p), sequence)
-containsPrecID(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecursors(p), prec_id)
+containsPrecID(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getIDToPrec(p), prec_id)
 hasTransitions(p::PrecursorDatabase, prec_id::UInt32) = isassigned(getPrecIDToTransitions(p), prec_id)
 
+export containsProt, containsProtID, containsPepGroup, containsPepGroupID, containsPepID, containsPep, containsPrecID, hasTransitions
 
 getProt(p::PrecursorDatabase, prot_id::UInt32) = getIDToProt(p)[prot_id]
-
 getProtIDFromName(p::PrecursorDatabase, protein::String) = getProtToID(p)[protein]
-#getProtID(p::PrecursorDatabase, protein::Protein) = getProtToID(getName(p))[protein]
-
 getPepGroup(p::PrecursorDatabase, pepGroup_id::UInt32) = getIDToPepGroup(p)[pepGroup_id]
-
 getPepGroupIDFromSequence(p::PrecursorDatabase, peptide::String) = getPepGroupToID(p)[string(replace(peptide, r"\[[^\]]*\]"=>""))]
 getPepGroupIDFromPepGroup(p::PrecursorDatabase, pepGroup::PeptideGroup) = getPepGroupToID(p)[getSeq(pepGroup)]
-
 getPep(p::PrecursorDatabase, pep_id::UInt32) = getIDToPep(p)[pep_id]
 getPrecursor(p::PrecursorDatabase, prec_id::UInt32) = getIDToPrec(p)[prec_id]
-
-getTransitions(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToTrasnitions(p)[prec_id]
-
-
+getTransitions(p::PrecursorDatabase, prec_id::UInt32) = getPrecIDToTransitions(p)[prec_id]
 getProtNamesFromPepSeq(p::PrecursorDatabase, peptide::String) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getPepGroup(p, getPepGroupIDFromSequence(p, peptide)))])
 getProtNamesFromPepSeq(p::PrecursorDatabase, pepGroup::PeptideGroup) = Set([getName(getProt(p, prot_id)) for prot_id in getProtIDs(getSeq(pepGroup))])
-
 getPepGroupsFromProt(p::PrecursorDatabase, protein::String) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, getProtIDFromName(p, protein)))]
 getPepSeqsFromProt(p::PrecursorDatabase, protein::String) = [getSeq(pep_group) for pep_group in getPepGroupsFromProt(p, protein)]
 getPepGroupsFromProt(p::PrecursorDatabase, prot_id::UInt32) = [getPepGroup(p, ID) for ID in getPepGroupIDs(getProt(p, prot_id))]
@@ -308,15 +298,15 @@ insertProt!(p::PrecursorDatabase, protein::String, prot_id::UInt32) = insert!(p.
 insertPepGroupID!(p::PrecursorDatabase, peptide::String, pepGroup_id::UInt32) = insert!(p.pepGroup_to_id, peptide, pepGroup_id)
 insertPepGroup!(p::PrecursorDatabase, protein::String, peptide::String, pepGroup_id::UInt32) = insert!(p.id_to_pepGroup, pepGroup_id, PeptideGroup(Set(getProtID(p, protein)), Set(UInt32[]), peptide))
 
-addPepToPepGroup!(p::PrecursorDatabase, pepGroup_id::UInt32, pep_id::UInt32) = push!(getPepGroup(p, pepGroup_id), pep_id)
+addPepToPepGroup!(p::PrecursorDatabase, pepGroup_id::UInt32, pep_id::UInt32) = push!(getPepIDs(getPepGroup(p, pepGroup_id)), pep_id)
 
 function insertPep!(p::PrecursorDatabase, sequence::String, pep_id::UInt32, pepGroup_id::UInt32)
     insert!(getPepSeqToPepID(p), sequence, pep_id)
-    insert!(getIDToPep(ptable), pep_id, Peptide(sequence, pepGroup_id, Set(UInt32[])))
+    insert!(getIDToPep(p), pep_id, Peptide(sequence, pepGroup_id, Set(UInt32[])))
 end
 
 addTransition!(p::PrecursorDatabase, prec_id::UInt32, t::Transition) = push!(getTransitions(p, prec_id), t)
-insertPrecursor!(p::PrecursorDatabase, prec::Precursor) = insert!(getPrecursors(p), getPrecID(prec), prec)
+insertPrecursor!(p::PrecursorDatabase, prec::Precursor) = insert!(getIDToPrec(p), getPrecID(prec), prec)
 """
     setSortedPrecursorKeys!(p::PrecursorDatabase)
 
@@ -331,6 +321,7 @@ function setSortedPrecursorKeys!(p::PrecursorDatabase)
     sort!(getIDToPrec(p), by = prec->getMZ(prec));
     setSortedPrecursorIDs(p, collect(keys(getIDToPrec(p))))
 end
+export insertPrecursor!
 
 """
     precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_precursor_tolerance::Float32, right_precursor_tolerance::Float32)
@@ -344,16 +335,21 @@ function precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_
     stop = searchsortedlast(getPrecursorIDs(p), u_bnd,lt=(x,t)->getMZ(getPrecursor(p, t))>x)
     return @view(getPrecursorIDsp[start:stop])
 end
+export precursorRangeQuery
 
 """
 addProteinToPepGroup!(pd::PrecursorDatabase, protein::String, peptide::String)
 
 For the PeptideGroup to which "peptide" belongs, add the protein to its `prot_ids`
 """
-function addProteinToPepGroup!(pd::PrecursorDatabase, prot_id, pepGroup_id)
+function addProteinToPepGroup!(pd::PrecursorDatabase, prot_id::UInt32, pepGroup_id::UInt32)
     addProtID!(pd.id_to_pepGroup[pepGroup_id], prot_id)
     #addProtID!(getPepGroup(pd, getPepGroupID(pd, peptide)), getProtID(pd, protein))
 end
+function addProteinToPepGroup!(pd::PrecursorDatabase, prot_name::String, pepGroup_name::String)
+    addProteinToPepGroup!(pd, getProtIDFromName(pd, prot_name), getPepGroupIDFromSequence(pd, pepGroup_name))
+end
+export addProteinToPepGroup!
 
 """
 addPepGroupToProtein!(pd::PrecursorDatabase, protein::String, peptide::String)
@@ -365,6 +361,11 @@ function addPepGroupToProtein!(pd::PrecursorDatabase, prot_id::UInt32, pepGroup_
     #push!(getPepGroupIDs(getProt(pd, getProtID(pd, protein))), getPepGroupID(pd, peptide))
 end
 
+function addPepGroupToProtein!(pd::PrecursorDatabase, prot_name::String, pepGroup_name::String)
+    addPepGroupToProtein!(pd, getProtIDFromName(pd, prot_name), getPepGroupIDFromSequence(pd, pepGroup_name))
+end
+export addPepGroupToProtein!
+
 """
 addNewProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
 
@@ -374,6 +375,7 @@ function addProtein!(pd::PrecursorDatabase, protein::String, prot_id::UInt32)
     insertProtID!(pd, protein, prot_id);
     insertProt!(pd, protein, prot_id);
 end
+export addProtein!
 
 """
 addNewPeptideGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt32, protein::String)
@@ -391,6 +393,7 @@ function addPepGroup!(pd::PrecursorDatabase, peptide::String, pepGroup_id::UInt3
         #push!(getPepGroupIDs(getProt(pd, prot_id)), pepGroup_id)
 
 end
+export addPepGroup!
 
 """
     addPrecursors!(ptable::PrecursorTable, charges::Vector{UInt8}, isotopes::Vector{UInt8}, mods_dict::Dict{String, Float32})
@@ -441,7 +444,7 @@ function addPrecursors!(ptable::PrecursorDatabase, charges::Vector{UInt8}, isoto
     end
     setSortedPrecursorKeys!(ptable)
 end
-
+export addPrecursors!
 
 """
     addTransitions!(ptable::PrecursorDatabase, transition_charges::Vector{UInt8}, transition_isotopes::Vector{UInt8},b_start::Int64,y_start::Int64, fragment_match_ppm::Float32)
@@ -490,3 +493,5 @@ function addTransitions!(ptable::PrecursorDatabase, transition_charges::Vector{U
         end
     end
 end
+
+export addTransitions!

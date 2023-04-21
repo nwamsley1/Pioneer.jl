@@ -1,0 +1,10 @@
+protein_name,sequence,precursor_charge,precursor_isotope,transition_names
+PROT_A,PEPTIDER[Harg],2,0,y3+1;y7+1;y6+1;b3+1;b5+2
+PROT_A,PEPTIDER,2,0,y3+1;y7+1;y6+1;b3+1;b5+2
+PROT_B,PEPTIDER[Harg],2,0,y5+1;y4+1;y8+1;b4+1;b5+1
+PROT_C,PEPTIDER[Harg],2,0,y3+1;y7+1;y6+1;b3+1;b5+2
+PROT_A,AMINEACIDK[Hlys],2,0,y5+1;y7+1;y9+1;b3+1;b5+1
+PROT_B,PEPTIC[Carb]KDEK[Hlys],2,0,y4+1;y6+1;y8+1;b3+1;b6+2;b7+1
+PROT_B,PEPTICKDEK[Hlys],2,0,y4+1;y6+1;y8+1;b3+1;b6+2;b7+1
+PROT_C,D[Hglu]RAGRACE,2,0,y3+1;y7+1;y6+1;b3+1;b5+2
+PROT_C,D[Hglu]RAGRACE,3,0,y3+1;y7+1;y6+1;b3+1;b5+2
