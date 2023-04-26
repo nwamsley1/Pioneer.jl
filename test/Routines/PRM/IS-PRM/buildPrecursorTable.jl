@@ -278,6 +278,19 @@
         checkEquivalentLHPair(getLightHeavyPairFromPrecID(testPtable, key), lh_test_pairs[key])
     end
 
+    sequences = ["PEPTIDER", "PEPTIDER[Harg]", "AMINEACIDK", "AMINEACIDK[Hlys]",
+    "PEPTIC[Carb]KDEK", "PEPTIC[Carb]KDEK[Hlys]", "PEPTICKDEK", 
+    "PEPTIC[Carb]KDEK[Hlys]","DRAGRACE", "D[Hglu]RAGRACE"]
+
+    pep_ids = [UInt32(x) for x in 1:10]
+    for (sequence, pep_id) in zip(sequences, pep_ids)
+        getPepSeqToPepID(testPtable)[sequence] == pep_id
+    end
+
+
+    #Key thing here is that "DRAGRACE" has two charge states.
+    @test SimplePrecursor("DRAGRACE", 0x03, 0x00, 0x00000009) ∈ getSimplePrecursors(testPtable)
+    @test SimplePrecursor("DRAGRACE", 0x02, 0x00, 0x00000009) ∈ getSimplePrecursors(testPtable)
 
 
 end
