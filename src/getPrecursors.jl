@@ -333,7 +333,7 @@ function precursorRangeQuery(p::PrecursorDatabase, window_center::Float32, left_
     l_bnd, u_bnd = window_center - left_precursor_tolerance, window_center + right_precursor_tolerance
     start = searchsortedfirst(getPrecursorIDs(p), l_bnd,lt=(t,x)->getMZ(getPrecursor(p, t))<x)
     stop = searchsortedlast(getPrecursorIDs(p), u_bnd,lt=(x,t)->getMZ(getPrecursor(p, t))>x)
-    return @view(getPrecursorIDsp[start:stop])
+    return @view(getPrecursorIDs(p)[start:stop])
 end
 export precursorRangeQuery
 

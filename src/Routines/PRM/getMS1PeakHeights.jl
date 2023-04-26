@@ -1,4 +1,5 @@
-function getPrecursorsInRTWindow(retentionTimes::Vector{Float32}, l_bnd::Float32, u_bnd::Float32)
+#This function name needs to be more generic?
+function getPrecursorsInRTWindow(retentionTimes::Vector{T}, l_bnd::T, u_bnd::T) where T <: Number
     #print("l_bnd ", l_bnd)
     #print("u_bnd ", u_bnd)
     start = searchsortedfirst(retentionTimes, l_bnd ,lt=(t,x)->t<x)

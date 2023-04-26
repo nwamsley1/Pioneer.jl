@@ -132,6 +132,7 @@ include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
 include("src/SearchRAW.jl")
 include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
+include("src/Routines/applyMods.jl")
 =#
 
 

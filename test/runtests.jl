@@ -15,5 +15,9 @@ include("./Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("matchpeaks.jl")
 include("binaryRangeQuery.jl")
 include("PSM_TYPES/FastXTandem.jl")
+
+using DataFrames
+include("../src/Routines/PRM/IS-PRM_SURVEY/getBestPSMs.jl")
+include("./Routines/PRM/IS-PRM-Survey/getBestPSMs.jl")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")
