@@ -75,7 +75,7 @@ end
 
 function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
     heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, 
-    par::Real, dev_ratio::Real, out_path::String)
+    par::Real, goodness_of_fit::Real, out_path::String)
     p = plot(title = title, fontfamily="helvetica", legend=:outertopright)
     if (length(heavy_rts) == 0) | (length(light_rts) == 0)
         return 
@@ -95,14 +95,16 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     end
 
     for (color, t) in enumerate(keys(heavy_transitions))
-
         if isassigned(light_transitions, t)
-            plot!(p, light_rts, -1*(max_heavy/max_light)*light_transitions[t], color = color, legend = false, label = nothing)
-            plot!(p, light_rts, -1*(max_heavy/max_light)*light_transitions[t], seriestype=:scatter, legend = false, color = color, label = nothing)
+            I = (light_transitions[t].>=1e-12)
+            #I = (light_transitions[t].>=1e-12)
+            plot!(p, light_rts[I], -1*(max_heavy/max_light)*light_transitions[t][I], color = color, legend = false, label = nothing)
+            plot!(p, light_rts[I], -1*(max_heavy/max_light)*light_transitions[t][I], seriestype=:scatter, legend = false, color = color, label = nothing)
         end
-
-        plot!(p, heavy_rts, heavy_transitions[t], color = color, legend = :outertopright, label = t)
-        plot!(p, heavy_rts, heavy_transitions[t], seriestype=:scatter, color = color, label = nothing)
+        I = (heavy_transitions[t].>=1e-12)
+        #I = (heavy_transitions[t].>=1e-12)
+        plot!(p, heavy_rts[I], heavy_transitions[t][I], color = color, legend = :outertopright, label = t)
+        plot!(p, heavy_rts[I], heavy_transitions[t][I], seriestype=:scatter, color = color, label = nothing)
     end
 
     ticks = [1*max_heavy, 0, -1*(max_heavy/max_light)*max_light]
@@ -110,13 +112,17 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     #println("par ", par)
     #par = string(par)
     par = @sprintf "%.2E" par
-    dev_ratio = @sprintf "%.2E" dev_ratio
-    annotate!(minimum(heavy_rts), max_heavy, fontfamily = "helvetica", text("PAR $par \nDev Ratio $dev_ratio", :black, :top, :left, 8))
+    goodness_of_fit= @sprintf "%.2E" 100.0*goodness_of_fit
+    annotate!(minimum(heavy_rts), max_heavy, fontfamily = "helvetica", text("PAR $par \nstderr/mean % $goodness_of_fit", :black, :top, :left, 8))
     yticks!((ticks, 
              ticklabels), 
              axis = 1)
     #plot!(legend=:outertopright)
+    println(out_path)
+    println(joinpath(out_path, title*".pdf"))
+    println("A")
     savefig(joinpath(out_path, title*".pdf"))
+    println("B")
 end
 
 #ptable.lh_pair_id_to_light_heavy_pair[0x000005c]
@@ -143,13 +149,13 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             if !isassigned(par_models,  ms_file_idx)
                 return 0.0, 0.0
             else
-                1/par_models[ms_file_idx].par_model_coef[1], par_models[ms_file_idx].dev_ratio
+                1/getCoef(par_models[ms_file_idx]), getGoodnessOfFit(par_models[ms_file_idx])
             end
         end
 
         light_transitions, light_rts = getPrecursorChromatogram(lh_pair.light_prec_id, chromatograms)
         heavy_transitions, heavy_rts = getPrecursorChromatogram(lh_pair.heavy_prec_id, chromatograms)
-        par, dev_ratio = getParModel(lh_pair.par_model, ms_file_idx)
+        par, goodness_of_fit = getParModel(lh_pair.par_model, ms_file_idx)
 
         if (length(light_transitions) == 0) & (length(heavy_transitions) == 0)
             continue
@@ -161,7 +167,7 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
             heavy_rts,
             lh_pair.light_sequence,
             par, 
-            dev_ratio,
+            goodness_of_fit,
             out_path)
     end
         files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))

@@ -41,6 +41,7 @@ mutable struct FragmentMatch
     scan_idx::UInt32
     ms_file_idx::UInt32
 end
+export FragmentMatch
 
 FragmentMatch() = FragmentMatch(Transition(), Float32(0), Float32(0), UInt8(0), 0, UInt8(0), UInt8(0))
 getMZ(f::FragmentMatch) = getMZ(f.transition)
@@ -112,6 +113,7 @@ function getNearest(transition::Transition, masses::Vector{Union{Missing, Float3
     end
     best_peak
 end
+export getNearest
 
 """
     setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)  
@@ -157,6 +159,7 @@ function setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transitio
         push!(matches, FragmentMatch(transition, intensity, mass, UInt8(1), peak_ind, scan_idx, ms_file_idx))
     end
 end
+export setFragmentMatch!
 
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
@@ -224,6 +227,7 @@ function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transit
         peak+=1
     end
 end
+export matchPeaks!
 
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
@@ -264,4 +268,4 @@ function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missin
 end
 
 
-export FragmentMatch, getNearest
+export FragmentMatch, getNearest, matchPeaks
