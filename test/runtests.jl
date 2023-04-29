@@ -19,5 +19,11 @@ include("PSM_TYPES/FastXTandem.jl")
 using DataFrames
 include("../src/Routines/PRM/IS-PRM_SURVEY/getBestPSMs.jl")
 include("./Routines/PRM/IS-PRM-Survey/getBestPSMs.jl")
+
+include("../src/Routines/PRM/getMS1PeakHeights.jl")
+include("./Routines/PRM/getMS1PeakHeights.jl")
+
+include("../src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("./Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")

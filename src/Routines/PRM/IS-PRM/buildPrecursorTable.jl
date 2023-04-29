@@ -70,14 +70,14 @@ None
 None
 
 """
-struct ParModel
-    par_model_coef::Matrix{Float64}
-    goodness_of_fit::Float64
+struct ParModel{T} <: AbstractFloat
+    par_model_coef::T
+    goodness_of_fit::T
 end
 
 getCoef(pm::ParModel) = pm.par_model_coef
 getGoodnessOfFit(pm::ParModel) = pm.goodness_of_fit
-ParModel() = ParModel(zeros((2,2)),0.0)
+ParModel() = ParModel(0.0,0.0)
 
 """
     LightHeavyPrecursorPair
@@ -135,7 +135,7 @@ getHeavyPrecID(p::LightHeavyPrecursorPair) = p.heavy_prec_id
 getLightScanIDs(p::LightHeavyPrecursorPair) = p.light_scan_idxs
 getHeavyScanIDs(p::LightHeavyPrecursorPair) = p.light_scan_idxs
 
-function setParModel(p::LightHeavyPrecursorPair; coef::Matrix{Float64} = zeros((2, 2)), goodness_of_fit::Float64 = 0.0, ms_file_idx::UInt32 = UInt32(0))
+function setParModel(p::LightHeavyPrecursorPair; coef::T = 0.0, goodness_of_fit::T = 0.0, ms_file_idx::UInt32 = UInt32(0)) where T <: AbstractFloat
     if !isassigned(p.par_model, ms_file_idx)
         insert!(p.par_model, ms_file_idx, ParModel(coef,  goodness_of_fit))
     else

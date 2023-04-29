@@ -7,8 +7,10 @@ Type that represents an chromatogram for a `Precursor`
 
 - rts::Vector{Float32} -- Retention times for scans targeting this precursor
 - last_scan_idx::Vector{Int64} --  Keeps track of the last_scan from which a transition has been added (should change to a Ref in the future)
-- transitions::UnorderedDictionary{String, Vector{Float32}} -- Dictionary with keys for each transition, and values for their intensities in each matched scan. Those vectors should all have the same length and correspond to the `rts` field. 
-- best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32} -- List of transitions, mz's, and their intensities for the best scoring PSM for the precursor.  
+- transitions::UnorderedDictionary{String, Vector{Float32}} -- Dictionary with keys for each transition, and values for their intensities in 
+each matched scan. Those vectors should all have the same length and correspond to the `rts` field. 
+- best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Float32, Int64, Vector{String}, Vector{Float32}, Vector{Float32} -- List of 
+transitions, mz's, and their intensities for the best scoring PSM for the precursor.  
 
 ### Examples
 

@@ -32,7 +32,7 @@ end
     #getMS1Peaks!
     ##########
 
-"""
+#=
 ```
 getMS1Peaks!(precursors::Dictionary{UInt32, Precursor}, 
                         MS1::Vector{Union{Missing, Float32}}, 
@@ -43,14 +43,14 @@ getMS1Peaks!(precursors::Dictionary{UInt32, Precursor},
                         precursor_ms_file_idxs::Vector{UInt32}, 
                         rt::Float32, rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
 ```
-"""
-using Dicsionaries
-
+=#
+using Dictionaries
 precursors = Dictionary(
     UInt32[1, 2, 3, 4],
     [Precursor(seq) for seq in ["PEPTIDE","DICER","DRAGRACER","AMINEACID"]]
 )
-"""
+
+#=
 precursor mz's
 400.68726
 400.68726
@@ -58,7 +58,8 @@ precursor mz's
 318.14453
 517.25146
 490.2148
-"""
+=#
+
 precursor_rts = Float32[10.0, 10.0, 11.0, 11.0, 11.0, 25.0]
 precursor_idxs = UInt32[1, 1, 2, 2, 3, 4]
 precursor_ms_file_idxs = UInt32[1, 1, 1, 1, 1, 2]
@@ -141,10 +142,75 @@ getMS1Peaks!(MS1_MAX_HEIGHTS,
             
 @test length(MS1_MAX_HEIGHTS) == 4
 @test Tol(MS1_MAX_HEIGHTS[UInt32(4)], 500.0f0)
+
+getMS1Peaks!(MS1_MAX_HEIGHTS,
+            precursors,
+            allowmissing(Float32[10000]),allowmissing(Float32[10000]),
+            precursor_rts,precursor_idxs,precursor_ms_file_idxs,
+            Float32(0), Float32(0.3), Float32(0.1), Float32(0.1), UInt32(2))
+            
+@test length(MS1_MAX_HEIGHTS) == 4
+@test Tol(MS1_MAX_HEIGHTS[UInt32(4)], 500.0f0)
  
 ##########
 #getMS1PeakHeights!
 ##########
+#=
+test_mods::Dict{String, Float32} = 
+Dict{String, Float32}(
+    "Carb" => Float32(57.021464),
+    "Harg" => Float32(10),
+    "Hlys" => Float32(8),
+)
+fixed_mods = [(p=r"C", r="C[Carb]")]
+var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
 
+testPtable = PrecursorTable()
+buildPrecursorTable!(testPtable, fixed_mods, var_mods, 2, "../data/peptide_lists/PROT_PEPTIDE_TEST1.txt")
+addPrecursors!(testPtable, UInt8[2, 3, 4], UInt8[0], test_mods)
 
+#Make a few "fake" scans that have MS1 peaks for some of the peptides in testPtable. 
+#=for (key, value) in pairs(testPtable.id_to_prec)
+    println("key ", key, " mz ", getMZ(value))
+end
+key 18 mz 200.84726
+key 12 mz 259.8664
+key 17 mz 267.4606
+key 3 mz 273.3847
+key 9 mz 275.8847
+key 15 mz 304.9024
+key 6 mz 306.9024
+key 11 mz 346.15274
+key 2 mz 364.17715
+key 8 mz 367.5105
+key 16 mz 400.68726
+key 14 mz 406.20078
+key 5 mz 408.86743
+key 10 mz 518.7255
+key 1 mz 545.76215
+key 7 mz 550.76215
+key 13 mz 608.79755
+key 4 mz 612.79755
+=#
+
+#Fake retention times
+
+precursor_rts = Float32[1, 1, 1, 2, 2.5, 2.5, 3, 4, 5, 6, 7, 8]
+precursor_idxs = keys(testPtable.id_to_prec)
+precursor_ms_file_idxs = UInt32[1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+MS1_MAX_HEIGHTS = UnorderedDictionary{UInt32, Float32}()
+masses = [[],
+        ]
+retention_times = [1, 2, 2.5, 3, 4, 5, 6, 7, 8]
+getMS1PeakHeights!(MS1_MAX_HEIGHTS,
+                    testPtable,
+                    ,
+                    ,
+                    ,
+                    ,
+                    precursor_rts,precursor_idxs,precursor_ms_file_idxs,
+                    0.1, 0.001, 0.001, UInt32(1)
+)
+
+=#
 end

@@ -5,7 +5,7 @@ function rangeQuerySorted(sorted_array::Vector{T}, l_bnd::T, u_bnd::T) where T <
     return start, stop
 end
 
-function getMS1Peaks!(MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, T}, 
+function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T}, 
                         precursors::Dictionary{UInt32, Precursor}, 
                         MS1::Vector{Union{Missing, T}}, 
                         INTENSITIES::Vector{Union{Missing, T}}, 
@@ -16,7 +16,6 @@ function getMS1Peaks!(MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, T},
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
     start::Int, stop::Int = rangeQuerySorted(precursor_rts,rt - rt_tol, rt + rt_tol)
-
     if (stop-start) >= 0
     #Check to see if the MS1 height for each precursor is greater than the maximum previously observed. 
         for (i, psm_idx) in enumerate(start:stop)
@@ -27,8 +26,8 @@ function getMS1Peaks!(MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, T},
 
             precursor_idx = precursor_idxs[psm_idx]
             
-            if !isassigned(MS1_MAX_HEIGHTS, precursor_idx) #If this precursor has not been encountered before. 
-                insert!(MS1_MAX_HEIGHTS, precursor_idx, Float32(0))
+            if !isassigned(ms1_max_heights, precursor_idx) #If this precursor has not been encountered before. 
+                insert!(ms1_max_heights, precursor_idx, Float32(0))
             end
 
             mz = getMZ(precursors[precursor_idx]) #Get the precursor MZ
@@ -39,18 +38,19 @@ function getMS1Peaks!(MS1_MAX_HEIGHTS::UnorderedDictionary{UInt32, T},
                 continue
             end
 
-            if INTENSITIES[idx]>=MS1_MAX_HEIGHTS[precursor_idx] #Replace maximum observed MS1 height for the precursor if appropriate. 
-                MS1_MAX_HEIGHTS[precursor_idx] = INTENSITIES[idx]
+            if INTENSITIES[idx]>=ms1_max_heights[precursor_idx] #Replace maximum observed MS1 height for the precursor if appropriate. 
+                ms1_max_heights[precursor_idx] = INTENSITIES[idx]
             end
         end
     end
 end
 
-function getMS1PeakHeights!(ptable::PrecursorDatabase, retentionTimes::AbstractArray, 
+function getMS1PeakHeights!(ms1_max_heights::UnorderedDictionary{UInt32, Float32},
+                            ptable::PrecursorDatabase, 
+                            retentionTimes::AbstractArray, 
                             masses::AbstractArray,
                             intensities::AbstractArray, 
                             msOrders::AbstractArray,
-                            ms1_max_heights::UnorderedDictionary{UInt32, Float32}, 
                             precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
                             rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
     #println("tunction")
@@ -62,10 +62,10 @@ function getMS1PeakHeights!(ptable::PrecursorDatabase, retentionTimes::AbstractA
         end
         #i += 1
         #println("test?")
-        @inline getMS1Peaks!(getPrecIDToPrecursor(ptable), 
+        @inline getMS1Peaks!(ms1_max_heights,
+                    getIDToPrec(ptable), 
                     masses[scan_idx], 
-                    intensities[scan_idx], 
-                    ms1_max_heights, 
+                    intensities[scan_idx],  
                     precursor_rts, 
                     precursor_idxs, 
                     precursor_ms_file_idxs,                    #Precursor retention times and id's (sorted by rt)                                      #PrecursorTable

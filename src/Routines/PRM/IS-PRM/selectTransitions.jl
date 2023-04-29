@@ -30,7 +30,7 @@ function selectTransitions(window_center::Float32,
     for prec_id in precursorRangeQuery(ptable, window_center, left_precursor_tolerance, right_precursor_tolerance)
        # if !isassigned(getTransitions(ptable), prec_id)
        #     println("transitions for $prec_id ", getTransition(ptable, prec_id))
-            append!(transitions, getTransition(ptable, prec_id))
+            append!(transitions, getTransitions(ptable, prec_id))
        # end
     end
 

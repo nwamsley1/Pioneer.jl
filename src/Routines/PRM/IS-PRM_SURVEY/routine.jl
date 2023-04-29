@@ -209,12 +209,12 @@ MS_RT = Dict{UInt32, Vector{Float32}}()
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
                 )
 
-        getMS1PeakHeights!( ptable,
+        getMS1PeakHeights!( ms1_peak_heights[ms_file_idx],
+                            ptable,
                             MS_TABLE[:retentionTime], 
                             MS_TABLE[:masses], 
                             MS_TABLE[:intensities], 
-                            MS_TABLE[:msOrder], 
-                            ms1_peak_heights[ms_file_idx], 
+                            MS_TABLE[:msOrder],
                             best_psms[!,:retention_time], 
                             best_psms[!,:precursor_idx], 
                             best_psms[!,:ms_file_idx],

@@ -196,12 +196,13 @@ println("SEARCHED")
                 UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
                 )
         end
-        getMS1PeakHeights!( ptable,
+        getMS1PeakHeights!(ms1_peak_heights[ms_file_idx],
+             ptable,
                             MS_TABLE[:retentionTime], 
                             MS_TABLE[:masses], 
                             MS_TABLE[:intensities], 
                             MS_TABLE[:msOrder], 
-                            ms1_peak_heights[ms_file_idx], 
+                             
                             best_psms[!,:retention_time], 
                             best_psms[!,:precursor_idx], 
                             best_psms[!,:ms_file_idx],
@@ -244,11 +245,15 @@ using GLMNet
 using Statistics
 println("start getPARs")
 @time begin
-Threads.@threads for i in collect(eachindex(MS_TABLE_PATHS))
-    println("START ", i)
-    getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
-    println("STOP ", i)
-end
+    #=for i in collect(eachindex(MS_TABLE_PATHS))
+        println(i)
+        getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
+    end=#
+    #Threads.@threads 
+    for i in collect(eachindex(MS_TABLE_PATHS))
+        println(i)
+        getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
+    end
 end
 println("end getPARs")
 #=for i in ptable.lh_pair_id_to_light_heavy_pair
@@ -290,7 +295,7 @@ MS_FILE_ID_TO_NAME = Dict(
 transform!(quant, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_NAME[psm[:ms_file_idx]]) => :file_name)
 CSV.write(joinpath(out_folder, "peptide.csv"), quant)
 # Filter the rows based on the conditions on featurea and featureb
-filter!(row -> (coalesce(row.par, 0.0) > 1e-12) && (coalesce(row.dev_ratio, 0.0) > 0.2), quant)
+filter!(row -> (coalesce(row.par, 0.0) > 1e-12) && (coalesce(row.dev_ratio, 0.0) < 0.10), quant)
 @time begin
     for (protein, data) in pairs(groupby(quant, :protein_names))
 
