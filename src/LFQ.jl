@@ -1,40 +1,37 @@
 function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
-    S = allowmissing(Matrix(zeros(M, N)))
-    println("S ", S)
+    #S = allowmissing(Matrix(missings(M, N)))
+    S = Array{Union{Missing,Float64}}(undef, (M, N))
     for i in eachindex(peptides)
-            if isinf(log2(coalesce(abundance[i], 0.0)))
-                S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
-            else
+            if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
+                #    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
+                #else
                 S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
             end
     end
-    println("done ")
     return S
 end
 
 function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
-    println("S ")
-    display(S)
-    println("M ", M)
-    println("N ", N)
     B = zeros(N + 1)
     for i in 1:M
         for j in (i+1):N
                 #r_i_j = median(-log2.( @view(S[:,i]) ) + log2.(@view(S[:,j])))
                 r_i_j = skipmissing(-log2.( @view(S[:,i]) ) .+ log2.(@view(S[:,j])))
-                r_i_j = median(r_i_j)
-                if ismissing(r_i_j)
-                    continue
-                end
-                if !ismissing(S[i, j])
-                    B[i] = B[i] - r_i_j# M[i, j]
-                    B[j] = B[j] + r_i_j
+                if !isempty(r_i_j)
+                    r_i_j = median(r_i_j)
+                    if !ismissing(S[i, j])
+                        B[i] = B[i] - r_i_j# M[i, j]
+                        B[j] = B[j] + r_i_j
+                    end
                 end
         end 
     end
     B.*=2
-    #B[end] = mean(exp.(skipmissing(S))) #Normalizing factor
-    B[end] = log2(sum(skipmissing(S)))*(N-1)
+    norm = 0.0
+    for row in eachrow(S)
+        norm += sum(log2.(skipmissing(row)))*(length(row)/(length(row) - sum(ismissing.(row))))
+    end
+    B[end] = norm/M 
     B
 end
 
@@ -98,7 +95,7 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
 
 end
 
-function getProtAbundance(protein::String, peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Missing},
+#=function getProtAbundance(protein::String, peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Missing},
     protein_out::Vector{String}, peptides_out::Vector{String}, experiments_out::Vector{UInt32}, log2_abundance_out::Vector{Float64}) where T <: Real
     return 
-end
+end=#
