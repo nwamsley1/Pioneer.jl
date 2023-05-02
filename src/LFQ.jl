@@ -1,30 +1,29 @@
 function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
     S = allowmissing(Matrix(zeros(M, N)))
-
+    println("S ", S)
     for i in eachindex(peptides)
-            if isinf(log2(abundance[i]))
+            if isinf(log2(coalesce(abundance[i], 0.0)))
                 S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
             else
                 S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
             end
     end
-
+    println("done ")
     return S
 end
-#getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
+
 function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
+    println("S ")
+    display(S)
+    println("M ", M)
+    println("N ", N)
     B = zeros(N + 1)
     for i in 1:M
         for j in (i+1):N
                 #r_i_j = median(-log2.( @view(S[:,i]) ) + log2.(@view(S[:,j])))
                 r_i_j = skipmissing(-log2.( @view(S[:,i]) ) .+ log2.(@view(S[:,j])))
-              
-                if length(r_i_j[isinf.(r_i_j).==false]) == 0
-                    continue
-                else
-                    r_i_j = median(r_i_j[isinf.(r_i_j).==false])
-                end
-                if isnan(r_i_j)
+                r_i_j = median(r_i_j)
+                if ismissing(r_i_j)
                     continue
                 end
                 if !ismissing(S[i, j])
@@ -34,8 +33,8 @@ function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
         end 
     end
     B.*=2
-    B[end] = mean(exp.(skipmissing(S)))*N #Normalizing factor
-
+    #B[end] = mean(exp.(skipmissing(S))) #Normalizing factor
+    B[end] = log2(sum(skipmissing(S)))*(N-1)
     B
 end
 
@@ -85,25 +84,16 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
         append!(protein_out, [protein for x in 1:N])
         appendPeptides!(peptides_out, peptides, S)
     end
-    if M <=1
-        appendResults!(protein, unique_peptides, coalesce.(log2.(abundance), 0.0), protein_out, peptides_out, log2_abundance_out, allowmissing(ones(1, N)))
+    #=if M <=1
+        appendResults!(protein, unique_peptides, coalesce.(log2.(abundance) .- mean(log2.(abundance)), 0.0), protein_out, peptides_out, log2_abundance_out, allowmissing(ones(1, N)))
         return 
-    end
+    end=#
 
     S = allowmissing(getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N))
 
     B = getB(S, N, M)
     A = getA(N)
-    #missing_ratio = B .!= 0
-
-    #A = A[missing_ratio .== 1, :]
-    #B = B[missing_ratio .== 1]
-
-    @time begin
-
-        log2_abundances = (A\B)[1:(end - 1)]
-
-    end
+    log2_abundances = (A\B)[1:(end - 1)]
     appendResults!(protein, unique_peptides, log2_abundances, protein_out, peptides_out, log2_abundance_out, S)
 
 end

@@ -117,12 +117,8 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     yticks!((ticks, 
              ticklabels), 
              axis = 1)
-    #plot!(legend=:outertopright)
-    println(out_path)
-    println(joinpath(out_path, title*".pdf"))
-    println("A")
     savefig(joinpath(out_path, title*".pdf"))
-    println("B")
+    #plot!(legend=:outertopright)
 end
 
 #ptable.lh_pair_id_to_light_heavy_pair[0x000005c]
@@ -156,7 +152,7 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
         light_transitions, light_rts = getPrecursorChromatogram(lh_pair.light_prec_id, chromatograms)
         heavy_transitions, heavy_rts = getPrecursorChromatogram(lh_pair.heavy_prec_id, chromatograms)
         par, goodness_of_fit = getParModel(lh_pair.par_model, ms_file_idx)
-
+        
         if (length(light_transitions) == 0) & (length(heavy_transitions) == 0)
             continue
         end

@@ -1,89 +1,43 @@
 using RobustModels
 using Suppressor
 using Test
-function getPARs(ptable::ISPRMPrecursorTable, 
-                scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
+function getPARs(ptable::ISPRMPrecursorTable,
                 precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram};
                 minimum_scans::Int = 3,
                 ms_file_idx::UInt32 = UInt32(0))
-    i = 0
+
     for (key, value) in pairs(getIDToLightHeavyPair(ptable))
-        #if i%100 == 0
-        #    print(i,",")
-        #end
-        #i+=1
         if !isassigned(precursor_chromatograms, value.light_prec_id)
             continue
         end
         if !isassigned(precursor_chromatograms, value.heavy_prec_id)
             continue
         end
-        integration_bounds = Set(
-                                getIntegrationBounds(
-                                    getScanCycleUnion(
-                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.light_prec_id),
-                                        getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, value.heavy_prec_id)
-                                        )
-                                    )
-                                )
-                            
-        if length(integration_bounds) < minimum_scans + 1
+
+        heavy_scans, light_scans = getScanPairs(getRTs(precursor_chromatograms[value.heavy_prec_id]),
+                                                getRTs(precursor_chromatograms[value.light_prec_id]),
+                                                max_diff = Float32(0.1))
+
+        if length(heavy_scans) < minimum_scans + 1
             continue
         end
 
-        light_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.light_prec_id, integration_bounds)
-        heavy_scans = getScansInBounds(scan_adresses, precursor_chromatograms, value.heavy_prec_id, integration_bounds)
-
         par, goodness_of_fit = fitPAR(light_scans, 
-                heavy_scans, 
-                integration_bounds, 
-                precursor_chromatograms[value.light_prec_id].transitions, 
-                precursor_chromatograms[value.heavy_prec_id].transitions
-                )
+                                      heavy_scans, 
+                                      getTransitions(precursor_chromatograms[value.light_prec_id]), 
+                                      getTransitions(precursor_chromatograms[value.heavy_prec_id])
+                                      )
 
-        setParModel(value, coef = par, goodness_of_fit = goodness_of_fit, ms_file_idx = ms_file_idx)
+        setParModel(value, coef = par[1], goodness_of_fit = goodness_of_fit, ms_file_idx = ms_file_idx)
     end
 end
 
-function getScanAdressesForPrecursor(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                                        precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                                        prec_id::UInt32)
-    scan_adresses[precursor_chromatograms[prec_id].scan_idxs[2:end]]
-end
 
-function getScansInBounds(scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                    precursor_chromatograms::UnorderedDictionary{UInt32, PrecursorChromatogram},
-                    prec_id::UInt32, 
-                    bounds::Set{Int64})
-    scans = [(index, scan_address) for (index, scan_address) in enumerate(getScanAdressesForPrecursor(scan_adresses, precursor_chromatograms, prec_id)) if scan_address.ms1 in bounds]
-    #println("scans ", scans)
-    function keep_first_occurrences_sorted(tuples::Vector{<:Tuple})
-        last_second = nothing
-        new_tuples = Int64[]
-        for tup in tuples
-            if last_second != tup[2].ms1
-                push!(new_tuples, tup[1])
-                last_second = tup[2].ms1
-            end
-        end
-        return new_tuples
-    end
-    keep_first_occurrences_sorted(scans)
-end
-
-function initDesignMatrix(transitions::Set{String}, bounds::AbstractArray)
-    zeros(
-                #length(transitions)*length(bounds), 
-                length(transitions)*length(bounds),
-                #length(transitions) + 1
-                1
-            )
-end
-
-function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64}, bounds::AbstractArray)
+function fillDesignMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
+    X = zeros(length(transition_union)*length(scans),1)
     i = 1
     for transition in transition_union
-        for scan in transitions[transition][scan]
+        for scan in scans #transitions[transition][scans]
             X[i] = transitions[transition][scan]
             i += 1
         end
@@ -92,19 +46,21 @@ function fillDesignMatrix(X::Matrix{Float64}, transitions::UnorderedDictionary{S
 end
 
 function getResponseMatrix(transitions::UnorderedDictionary{String, Vector{Float32}}, transition_union::Set{String}, scans::Vector{Int64})
-    y = zeros(scans*length(transition_union))
+    y = zeros(length(scans)*length(transition_union))
     i = 1
     for transition in transition_union
-        for scan in transitions[transition][scans]
-        y[i] = scan
+        for scan in scans
+        y[i] = transitions[transition][scan]
         i += 1
         end
     end
     y
 end
 
-function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64}, 
-                bounds::Set{Int}, light_transitions::UnorderedDictionary{String, Vector{Float32}}, heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
+function fitPAR(light_scans::Vector{Int64}, 
+                heavy_scans::Vector{Int64},
+                light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
+                heavy_transitions::UnorderedDictionary{String, Vector{Float32}})
 
     transition_union = Set(keys(light_transitions))∩Set(keys(heavy_transitions))
 
@@ -114,7 +70,6 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
 
     function find_keys_with_greatest_sums(dict::UnorderedDictionary{String, Vector{Float32}}, key_set::Set{String})
         sorted_keys = sort(collect(key_set), by=x->sum(dict[x]), rev=true)
-
         return Set(sorted_keys[1:min(4, length(key_set))])
     end
 
@@ -136,7 +91,7 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
     end
 
     #println("NEW")
-    X = fillDesignMatrix(initDesignMatrix(transition_union, light_scans), light_transitions, transition_union, light_scans, light_scans)
+    X = fillDesignMatrix(light_transitions, transition_union, light_scans)
     y = getResponseMatrix(heavy_transitions, transition_union, heavy_scans)
 
     if sum(X)==0 #This is hacky. Need to fix. 
@@ -153,10 +108,10 @@ function fitPAR(light_scans::Vector{Int64}, heavy_scans::Vector{Int64},
 
     try #If model fails to converge give default values. 
         @suppress begin #Suppress warnings about convergence 
-            model =  getModel(X, y, ((X[:,1].!=0.0) .& (y.!=0.0)), TauEstimator{TukeyLoss}())
+            model =  getModel(X, y, ((X[:,1].!=0.0) .& (y.!=0.0)), TauEstimator{TukeyLoss}())   
+            par = RobustModels.coef(model)[1]
+            GOF = RobustModels.stderror(model)[1]/RobustModels.coef(model)[1]
         end
-        par = RobustModels.coef(model)[1]
-        GOF = RobustModels.stderror(model)[1]/RobustModels.coef(model)[1]
     catch
         par = 0.0
         GOF = 0.0

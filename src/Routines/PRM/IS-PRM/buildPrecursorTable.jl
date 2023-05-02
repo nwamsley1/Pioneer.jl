@@ -143,6 +143,7 @@ function setParModel(p::LightHeavyPrecursorPair; coef::T = 0.0, goodness_of_fit:
     end
 end
 
+#getParModel(p::LightHeavyPrecursorPair) = 
 """
     PrecursorTable <: PrecursorDatabase
 
