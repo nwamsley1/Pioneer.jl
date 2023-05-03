@@ -58,10 +58,13 @@ function getScanPairs(H::Vector{T}, L::Vector{T}; max_diff::T = T(3)) where T <:
         end
     end 
 
+    if j>length(L)
+        return heavy_scans, light_scans
+    end
+    
     for i in eachindex(@view(H[1:end - 1]))
 
         midpoint = H[i] + (H[i+1] - H[i])/2.0 
-
         while (L[j] <= H[i+1]) & (L[j] >= H[i])
             if (L[j] < midpoint) & (abs(L[j] - H[i]) < max_diff) #L[j] is clossest to H[i]
                 push!(light_scans, j), push!(heavy_scans, i) #Pair j with i

@@ -1,11 +1,15 @@
+using Statistics 
+
 function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
     #S = allowmissing(Matrix(missings(M, N)))
     S = Array{Union{Missing,Float64}}(undef, (M, N))
     for i in eachindex(peptides)
             if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
-                #    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
-                #else
-                S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
+               if abundance[i] != 0.0
+                    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
+               else
+                    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
+               end
             end
     end
     return S
@@ -13,18 +17,15 @@ end
 
 function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
     B = zeros(N + 1)
-    for i in 1:M
-        for j in (i+1):N
-                #r_i_j = median(-log2.( @view(S[:,i]) ) + log2.(@view(S[:,j])))
-                r_i_j = skipmissing(-log2.( @view(S[:,i]) ) .+ log2.(@view(S[:,j])))
+    for i in 1:N
+        for j in 1:N
+            if j != i
+                r_i_j = skipmissing(-log2.( @view(S[:,j]) ) .+ log2.(@view(S[:,i])))
                 if !isempty(r_i_j)
-                    r_i_j = median(r_i_j)
-                    if !ismissing(S[i, j])
-                        B[i] = B[i] - r_i_j# M[i, j]
-                        B[j] = B[j] + r_i_j
-                    end
+                    B[i] += median(r_i_j)
                 end
-        end 
+            end
+        end
     end
     B.*=2
     norm = 0.0

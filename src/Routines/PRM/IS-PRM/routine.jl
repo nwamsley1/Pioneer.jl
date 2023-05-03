@@ -42,7 +42,7 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 TRANSITION_LIST_PATH = ARGS["transition_list"]
-#MS_DATA_DIR = "./data/parquet/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out"
 #PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
@@ -118,7 +118,28 @@ include("../../../Routines/PRM/IS-PRM/getIntegrationBounds.jl")
 include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
 include("../../../LFQ.jl")
 include("../../../Routines/PRM/plotPRM.jl")
-##########
+#=
+include("src/precursor.jl")
+include("src/binaryRangeQuery.jl")
+include("src/matchpeaks.jl")
+include("src/getPrecursors.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
+include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
+include("src/Routines/PRM/precursorChromatogram.jl")
+include("src/Routines/PRM/getMS1PeakHeights.jl")
+include("src/Routines/PRM/IS-PRM/initTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
+include("src/SearchRAW.jl")
+include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
+include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
+include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("src/Routines/PRM/IS-PRM/parEstimation.jl")
+include("src/LFQ.jl")
+include("src/Routines/PRM/plotPRM.jl")
+=#
+#TRANSITION_LIST_PATH = "/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv"
 #Read Precursor Table
 ##########
 #@time begin 
@@ -145,8 +166,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
 println("START")
 lk = ReentrantLock()
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow"]
-#"/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
+#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow","/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
 @time begin
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         println("MS_TABLE_PATH ", MS_TABLE_PATH)
