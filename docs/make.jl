@@ -6,7 +6,7 @@ DocMeta.setdocmeta!(Titus, :DocTestSetup, :(using Titus); recursive=true)
 #op_templates, op_theme = cardtheme("grid")
 #operations, operations_cb = makedemos("operations", op_templates)
 
-About = "Introduction" => "introduction.md"
+About = "Introduction" => "../../README.md"
 
 GettingStarted = "gettingstarted.md"
 
@@ -52,7 +52,8 @@ makedocs(;
     ,
 )
 
-deploydocs(;
-    repo="github.com/nwamsley1/Titus.jl",
-    devbranch="main",
+deploydocs(
+        devbranch="main",
+    repo="github.com/nwamsley1/Titus.jl"
+    
 )
