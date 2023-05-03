@@ -22,8 +22,8 @@ include("./Routines/PRM/IS-PRM-Survey/getBestPSMs.jl")
 include("../src/Routines/PRM/getMS1PeakHeights.jl")
 include("./Routines/PRM/getMS1PeakHeights.jl")
 
-include("../src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
-include("./Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
+include("../src/Routines/PRM/IS-PRM-Survey/getBestTransitions.jl")
+include("./Routines/PRM/IS-PRM-Survey/getBestTransitions.jl")
 
 include("../src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
 include("./Routines/PRM/IS-PRM/getIntegrationBounds.jl")
