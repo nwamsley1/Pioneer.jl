@@ -1,103 +1,89 @@
-function getTargetedScans(array::AbstractArray, lower_bound::Float32, upper_bound::Float32)
 
-    findall(precursor_mz->coalesce(
-                        (precursor_mz<(upper_bound)) & 
-                        (precursor_mz>(lower_bound)), false), array)
+"""
+    getScanPairs(H::Vector{T}, L::Vector{T}; max_diff::T = T(3)) where T <: Number
 
-end
+Given sorted lists of retention times of MSN scans for the heavy and light precursor respectively, aligns
+the two list. Returns two list of indices, `heavy_scans` and `light_scans`, for `H` and `L` respectively of equal length. 
+heavy_scans[i] is paired with light_scans[i]. Each heavy scan is paired with its nearest light scan by retention time
+given the difference bewteen the two is less than `max_diff` (in minutes). 
+
+### Input
+
+- `H::Vector{T}` -- Sorted (ascending) retention time for MSn scans targeting the heavy precursor
+- `L::Vector{T}` -- Sorted (ascending) retention time for MSn scans targeting the light precursor
+- `max_diff::T = T(3)` -- Maximum allowable difference in retention time (minutes) bewteen a paired light and heavy scan
 
 
-getTargetedScans(prec::Ion, array::AbstractArray) = getTargetedScans(array, getLow(prec), getHigh(prec))
+### Output
+- Returns a tuple (heavy_scans, light_scans). Tuple{Vector{Int64}, Vector{Int64}}. These are of equal length and have
+1:1 correspondance. heavy_scans[i] corresponds to light_scans[i]. The vectors contain scan indices. The i'th heavy
+scan was nearest the i'th light scan, so the two are "paired". 
 
-function getTargetedScans(precursor_pair::LightHeavyPrecursorPair, 
-                            precursors::Dictionary{UInt32, Precursor}, 
-                            precursorMZs::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}})
-
-    return (
-            light_scan_ids = getTargetedScans(precursors[getLightPrecID(precursor_pair)], precursorMZs),
-            heavy_scan_ids = getTargetedScans(precursors[getHeavyPrecID(precursor_pair)], precursorMZs)
-    )
-end
-
-function setIntegrationBounds!(ptable::ISPRMPrecursorTable, 
-                               run_idx::Int64,
-                               scan_adresses::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}},
-                               precursorMZs::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}})
+### Notes
     
-    for (key, lh_pair) in pairs(getIDToLightHeavyPair(ptable))
-        targeted_scans = getTargetedScans(lh_pair, getPrecursors(ptable), precursorMZs)
-        #setTargetedScans!(value, getPrecursors(ptable), precursorMZs)
-        integration_bounds = getIntegrationBounds(
-                                                    getScanCycleUnion(
-                                                        scan_adresses[targeted_scans[:light_scan_ids]],
-                                                        scan_adresses[targeted_scans[:heavy_scan_ids]]
-                                                    )
-                                                )
-        if (integration_bounds[:upper_bound] - integration_bounds[:lower_bound]) > 3
-            setIntegrationBounds!(lh_pair, run_idx, integration_bounds)
-        end
-    end
-end
 
-function getScanAdresses(scan_order::AbstractArray)
-    scan_adresses = Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}(undef,length(scan_order)) 
-    ms1 = 0
-    msn = 0
-    for scan in enumerate(scan_order)
-        if scan[2] == 1
-            ms1 += 1
-            msn = 0
-            scan_adresses[scan[1]] = (scan_index = scan[1], ms1 = ms1, msn = msn)
+### Examples 
+julia> heavy = [1.0, 2.0, 3.0, 4.0]
+4-element Vector{Float64}:
+ 1.0
+ 2.0
+ 3.0
+ 4.0
+
+julia> light = [1.4, 2.6, 3.3, 3.8, 4.1]
+5-element Vector{Float64}:
+ 1.4
+ 2.6
+ 3.3
+ 3.8
+ 4.1
+
+julia> getScanPairs(heavy, light)
+([1, 2, 3, 4, 5], [1, 3, 3, 4, 4])
+"""
+function getScanPairs(H::Vector{T}, L::Vector{T}; max_diff::T = T(3)) where T <: Number
+    heavy_scans = Vector{Int64}()
+    light_scans = Vector{Int64}()
+
+    if ((length(L) < 3) | (length(H) < 3)) #Not enough scans
+        return heavy_scans, light_scans
+    end
+
+    j = 1
+    while j <= length(L) #Advance first light index until the retention time is greater than
+        if L[j] > H[1]   #that for the first heavy scan. 
+            break
         else
-            msn+=1
-            scan_adresses[scan[1]] = (scan_index = scan[1], ms1 = ms1, msn = msn)
+            j += 1
         end
+    end 
+
+    if j>length(L)
+        return heavy_scans, light_scans
     end
-    scan_adresses
-end
+    
+    for i in eachindex(@view(H[1:end - 1]))
 
-function getScanCycleUnion(scan_adresses_1::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}, 
-                           scan_adresses_2::Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}
-                          )
-    sort(collect(Set(map(x->x.ms1, scan_adresses_1))
-                ∩Set(map(x->x.ms1, scan_adresses_2))
-                )
-        )
-end
-
-function getIntegrationBounds(scan_indices::Vector{Int64}; max_gap_size::Int = 10)
-    if length(scan_indices)<=1
-        return (lower_bound = 1, upper_bound = 1)
-    end
-    start = 1
-    stop = 1
-    last = scan_indices[stop]
-    best_start = 1
-    best_stop = 1
-    gap_size = 0
-    for index in enumerate(diff(scan_indices))
-        if gap_size >= max_gap_size
-            gap_size = 0
-            start = index[1]
-            stop = index[1]
-            last = scan_indices[index[1]]
-            continue
-        end
-
-        if index[2] == 1
-            last = scan_indices[index[2]]
-            stop = index[1]
-            if (stop-start)>(best_stop-best_start)
-                best_start = start
-                best_stop = stop
+        midpoint = H[i] + (H[i+1] - H[i])/2.0 
+        while (L[j] <= H[i+1]) & (L[j] >= H[i])
+            if (L[j] < midpoint) & (abs(L[j] - H[i]) < max_diff) #L[j] is clossest to H[i]
+                push!(light_scans, j), push!(heavy_scans, i) #Pair j with i
+            elseif (abs(L[j] - H[i+1]) < max_diff) #L[j] is clossest to H[i]+1
+                push!(light_scans, j), push!(heavy_scans, i+1) #Pair j with i + 1
             end
-        else
-            gap_size = scan_indices[index[1]] - last
+            j+=1
+            if j > length(L) #Bounds check, all light scans exhausted
+                return heavy_scans, light_scans
+            end
         end
     end
-    scan_indices[best_start:(best_stop +1)]
-    #(lower_bound = best_start, upper_bound = best_stop+1)
+
+    if (j>1)
+        #The first light scan after the last heavy scan is a special case
+        if (abs(L[j] - H[end]) < abs(L[j-1] - H[end])) & (abs(L[j] - H[end]) < max_diff)
+            push!(light_scans, j), push!(heavy_scans, length(H))
+        end
+    end
+
+    return heavy_scans, light_scans
 end
-
-
-

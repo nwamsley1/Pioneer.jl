@@ -1,41 +1,38 @@
-function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
-    S = allowmissing(Matrix(zeros(M, N)))
+using Statistics 
 
+function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
+    #S = allowmissing(Matrix(missings(M, N)))
+    S = Array{Union{Missing,Float64}}(undef, (M, N))
     for i in eachindex(peptides)
-            if isinf(log2(abundance[i]))
-                S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
-            else
-                S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
+            if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
+               if abundance[i] != 0.0
+                    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
+               else
+                    S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
+               end
             end
     end
-
     return S
 end
-#getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N)
+
 function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
     B = zeros(N + 1)
-    for i in 1:M
-        for j in (i+1):N
-                #r_i_j = median(-log2.( @view(S[:,i]) ) + log2.(@view(S[:,j])))
-                r_i_j = skipmissing(-log2.( @view(S[:,i]) ) .+ log2.(@view(S[:,j])))
-              
-                if length(r_i_j[isinf.(r_i_j).==false]) == 0
-                    continue
-                else
-                    r_i_j = median(r_i_j[isinf.(r_i_j).==false])
+    for i in 1:N
+        for j in 1:N
+            if j != i
+                r_i_j = skipmissing(-log2.( @view(S[:,j]) ) .+ log2.(@view(S[:,i])))
+                if !isempty(r_i_j)
+                    B[i] += median(r_i_j)
                 end
-                if isnan(r_i_j)
-                    continue
-                end
-                if !ismissing(S[i, j])
-                    B[i] = B[i] - r_i_j# M[i, j]
-                    B[j] = B[j] + r_i_j
-                end
-        end 
+            end
+        end
     end
     B.*=2
-    B[end] = mean(exp.(skipmissing(S)))*N #Normalizing factor
-
+    norm = 0.0
+    for row in eachrow(S)
+        norm += sum(log2.(skipmissing(row)))*(length(row)/(length(row) - sum(ismissing.(row))))
+    end
+    B[end] = norm/M 
     B
 end
 
@@ -85,30 +82,21 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
         append!(protein_out, [protein for x in 1:N])
         appendPeptides!(peptides_out, peptides, S)
     end
-    if M <=1
-        appendResults!(protein, unique_peptides, coalesce.(log2.(abundance), 0.0), protein_out, peptides_out, log2_abundance_out, allowmissing(ones(1, N)))
+    #=if M <=1
+        appendResults!(protein, unique_peptides, coalesce.(log2.(abundance) .- mean(log2.(abundance)), 0.0), protein_out, peptides_out, log2_abundance_out, allowmissing(ones(1, N)))
         return 
-    end
+    end=#
 
     S = allowmissing(getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N))
 
     B = getB(S, N, M)
     A = getA(N)
-    #missing_ratio = B .!= 0
-
-    #A = A[missing_ratio .== 1, :]
-    #B = B[missing_ratio .== 1]
-
-    @time begin
-
-        log2_abundances = (A\B)[1:(end - 1)]
-
-    end
+    log2_abundances = (A\B)[1:(end - 1)]
     appendResults!(protein, unique_peptides, log2_abundances, protein_out, peptides_out, log2_abundance_out, S)
 
 end
 
-function getProtAbundance(protein::String, peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Missing},
+#=function getProtAbundance(protein::String, peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Missing},
     protein_out::Vector{String}, peptides_out::Vector{String}, experiments_out::Vector{UInt32}, log2_abundance_out::Vector{Float64}) where T <: Real
     return 
-end
+end=#

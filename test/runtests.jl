@@ -1,4 +1,3 @@
-#include("integrate.jl")
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
 include("../src/PSM_TYPES/FastXTandem.jl")
@@ -25,5 +24,11 @@ include("./Routines/PRM/getMS1PeakHeights.jl")
 
 include("../src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
 include("./Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
+
+include("../src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("./Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+
+include("../src/LFQ.jl")
+include("./LFQ.jl")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")

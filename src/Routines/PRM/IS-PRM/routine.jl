@@ -42,7 +42,7 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 TRANSITION_LIST_PATH = ARGS["transition_list"]
-#MS_DATA_DIR = "./data/parquet/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out"
 #PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
 #Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
@@ -118,7 +118,28 @@ include("../../../Routines/PRM/IS-PRM/getIntegrationBounds.jl")
 include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
 include("../../../LFQ.jl")
 include("../../../Routines/PRM/plotPRM.jl")
-##########
+#=
+include("src/precursor.jl")
+include("src/binaryRangeQuery.jl")
+include("src/matchpeaks.jl")
+include("src/getPrecursors.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
+include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
+include("src/Routines/PRM/precursorChromatogram.jl")
+include("src/Routines/PRM/getMS1PeakHeights.jl")
+include("src/Routines/PRM/IS-PRM/initTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestTransitions.jl")
+include("src/SearchRAW.jl")
+include("src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
+include("src/Routines/PRM/IS-PRM/selectTransitions.jl")
+include("src/Routines/PRM/IS-PRM/getBestPSMs.jl")
+include("src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("src/Routines/PRM/IS-PRM/parEstimation.jl")
+include("src/LFQ.jl")
+include("src/Routines/PRM/plotPRM.jl")
+=#
+#TRANSITION_LIST_PATH = "/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv"
 #Read Precursor Table
 ##########
 #@time begin 
@@ -128,12 +149,12 @@ buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
 scan_adresses = Dict{UInt32, Vector{NamedTuple{(:scan_index, :ms1, :msn), Tuple{Int64, Int64, Int64}}}}()
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 println("N threads ", Threads.nthreads())
-for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+#=for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #println("MS_TABLE_PATH ", MS_TABLE_PATH)
     scan_adresses[UInt32(ms_file_idx)] = getScanAdresses(MS_TABLE[:msOrder])
     #setIntegrationBounds!(ptable, ms_file_idx, scan_adresses[UInt32(ms_file_idx)], MS_TABLES[UInt32(ms_file_idx)][:precursorMZ])
-end
+end=#
 
 ##########
 #Search Survey Runs
@@ -145,8 +166,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
 println("START")
 lk = ReentrantLock()
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4967_SQ_Kinome_KYSE70_Rep3_EWZ.arrow",
-#"/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
+#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow","/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
 @time begin
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         println("MS_TABLE_PATH ", MS_TABLE_PATH)
@@ -252,18 +272,11 @@ println("start getPARs")
     #Threads.@threads 
     for i in collect(eachindex(MS_TABLE_PATHS))
         println(i)
-        getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
+        getPARs(ptable, precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
     end
 end
 println("end getPARs")
-#=for i in ptable.lh_pair_id_to_light_heavy_pair
-    if i.light_sequence == "AANLLLGYK"
-        println(i)
-        println(precursor_chromatograms[UInt32(2)][0x000004dd])
-        println(precursor_chromatograms[UInt32(2)][0x000004de])
-    end
-end=#
-transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :dev_ratio, :isotope])
+transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :goodness_of_fit, :isotope])
 
 #Get the peak area ratios into the dataframe. 
 #Then make the plots with the PARs.
@@ -280,7 +293,7 @@ out = Dict(
     :experiments => UInt32[],
 )
 
-quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :dev_ratio])
+quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :goodness_of_fit])
 println("start LFQ")
 out_folder = joinpath(MS_DATA_DIR, "tables/")
 if !isdir(out_folder)
@@ -295,7 +308,7 @@ MS_FILE_ID_TO_NAME = Dict(
 transform!(quant, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_NAME[psm[:ms_file_idx]]) => :file_name)
 CSV.write(joinpath(out_folder, "peptide.csv"), quant)
 # Filter the rows based on the conditions on featurea and featureb
-filter!(row -> (coalesce(row.par, 0.0) > 1e-12) && (coalesce(row.dev_ratio, 0.0) < 0.10), quant)
+filter!(row -> (coalesce(row.par, 0.0) > 1e-8) && (coalesce(row.goodness_of_fit, 0.0) < 0.10), quant)
 @time begin
     for (protein, data) in pairs(groupby(quant, :protein_names))
 
@@ -315,7 +328,7 @@ end
 out = DataFrame(out)
 
 transform!(out, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_NAME[psm[:experiments]]) => :file_name)
-#out_folder = joinpath(MS_DATA_DIR, "tables/")
+
 if !isdir(out_folder)
     mkpath(out_folder)
 end
@@ -326,6 +339,7 @@ CSV.write(joinpath(out_folder, "protein.csv"), out)
 #end
 for (i, path) in collect(enumerate(MS_TABLE_PATHS))
     sample_name = split(splitpath(path)[end], ".")[1]
+    println("sample_name ", sample_name)
     plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[i], UInt32(i), joinpath(MS_DATA_DIR,"figures/paired_spectra",sample_name),
     join(sample_name*"_precursor_chromatograms"*".pdf"))
     println(sample_name)
