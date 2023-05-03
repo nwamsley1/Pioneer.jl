@@ -17,7 +17,6 @@
 - Summarizaiton of peptide-level quantitation to protein-level quantitation using the MaxLFQ Algorithm without normalization [2].
 - Generates a multi-page pdf for each experiment file including chromatogram plots. 
 ![alt text](https://github.com/nwamsley1/Titus.jl/blob/main/figures/AADLLVNLDPR.png)
-# Features
 
 ## Future Additions/In-Progress 
 - Work in progress 
@@ -32,10 +31,132 @@
 
 ## Usage
 
+### Survey Run Analyses
+```
+julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
+```
+|Name                |Default| Short        |Description                    |
+ |--------------------|-------|-------------|--------------------|
+ |params_json||mandatory|Path to a .json file with the parameters (see Configuration)
+ |data_dir||mandatory|"Path to a folder with .arrow MS data tables"
+ |precursor_list||mandatory|"Path to a tab delimited table of precursors"
+ |--make_plots|true|-p|"Whether to make plots. Defaults to `true`"
+ |--print_params|false|-s|"Whether to print the parameters from the json. Defaults to `false`"
+ 
+#### Precursor List Example
+```
+ABCB6	YYNAESYEVER
+ABCB6	IDGQDISQVTQASLR
+ABCB6	ALNVLVPIFYR
+ABHD4	YVSLPNQNK
+ADD2	VNVADEVQR
+.
+.
+.
+```
+### IS-PRM Analysis
+```
+julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
+```
+|Name                |Default| Short        |Description                    |
+ |--------------------|-------|-------------|--------------------|
+ |params_json||mandatory|Path to a .json file with the parameters (see Configuration)
+ |data_dir||mandatory|"Path to a folder with .arrow MS data tables"
+ |transition_list||mandatory|"Path to a tab delimited table of transitions"
+ |--make_plots|true|-p|"Whether to make plots. Defaults to `true`"
+ |--print_params|false|-s|"Whether to print the parameters from the json. Defaults to `false`"
+ 
+ #### Transition List Example
+```
+protein_name,sequence,precursor_charge,precursor_isotope,transition_names
+ABCB6,YYNAESYEVER[Harg],2,0,y10+1;y7+1;y8+1;y9+1;y6+1
+ABCB6,ALNVLVPIFYR[Harg],2,0,y6+1;y8+1;y7+1;b4+1;y9+1
+ABHD4,YVSLPNQNK[Hlys],2,0,b4+1;y7+1;y5+2;y3+1;y5+1
+.
+.
+.
+```
 ## Example Outputs
 
 ## Configuration files
 
+### IS-PRM-Survey
+```
+{
+    "right_precursor_tolerance": 0.001,
+    "left_precursor_tolerance": 0.001,
+    "precursor_rt_tolerance": 0.3,
+    "b_ladder_start": 3,
+    "y_ladder_start": 3,
+    "precursor_charges": [2, 3, 4],
+    "precursor_isotopes": [0],
+    "transition_charges": [1, 2],
+    "transition_isotopes": [0],
+    "fragment_match_ppm": 40,
+    "minimum_fragment_count": 5,
+    "fragments_to_select": 5,
+    "precursor_rt_window": 0.3,
+    "max_variable_mods": 2,
+    "fixed_mods":[
+                     ["C","C[Carb]"],
+                     ["K$","K[Hlys]"],
+                     ["R$","R[Harg]"]
+    ],
+    "variable_mods":
+    [],
+    "modification_masses":
+        {
+        "Carb":57.021464,
+        "Harg":10.008269,
+        "Hlys":8.014199
+        },
+    "ms_file_conditions":
+        {
+            "_35NCE_":"35NCE",
+            "_40NCE_":"40NCE",
+            "GAPDH":"GAPDH"
+        }
+}
+```
+
+### IS-PRM
+```
+{
+    "right_precursor_tolerance": 0.001,
+    "left_precursor_tolerance": 0.001,
+    "precursor_rt_tolerance": 0.3,
+    "b_ladder_start": 3,
+    "y_ladder_start": 3,
+    "precursor_charges": [2, 3, 4],
+    "precursor_isotopes": [0],
+    "transition_charges": [1, 2],
+    "transition_isotopes": [0],
+    "fragment_match_ppm": 40,
+    "minimum_fragment_count": 5,
+    "fragments_to_select": 5,
+    "precursor_rt_window": 0.3,
+    "max_variable_mods": 2,
+    "fixed_mods":[
+                     ["C","C[Carb]"],
+                     ["K$","K[Hlys]"],
+                     ["R$","R[Harg]"]
+    ],
+    "variable_mods":
+    [],
+    "modification_masses":
+        {
+        "Carb":57.021464,
+        "Harg":10.008269,
+        "Hlys":8.014199
+        },
+    "ms_file_conditions":
+        {
+            "_35NCE_":"35NCE",
+            "_40NCE_":"40NCE",
+            "GAPDH":"GAPDH"
+        }
+}
+```
 ## References
 <a id="1">[1]</a> 
 Gallien S, Kim SY, Domon B. Large-Scale Targeted Proteomics Using Internal Standard Triggered-Parallel Reaction Monitoring (IS-PRM). Mol Cell Proteomics. 2015 Jun;14(6):1630-44. doi: 10.1074/mcp.O114.043968. Epub 2015 Mar 9. PMID: 25755295; PMCID: PMC4458725.
