@@ -1,4 +1,4 @@
-#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/test.json /Users/n.t.wamsley/Desktop/test_folder ./data/NRF2_SIL.txt\
+#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
 #julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
 #julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
 using JSON
