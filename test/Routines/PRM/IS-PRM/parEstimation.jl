@@ -1,3 +1,8 @@
+function Tol(a, b, ppm = 2)
+    abs(a-b)<=(ppm*minimum((a, b))/1000000)
+end
+
+
 @testset "parEstimation.jl" begin
     light_scans = [1, 2, 3, 4, 5, 6]
     heavy_scans = [1, 2, 3, 4, 5, 6]
@@ -13,9 +18,52 @@
     for (key, value) in pairs(light_transitions)
         insert!(heavy_transitions, key, 100*value)
     end
-    fitPAR
-#end
 
+    par, goodness_of_fit = fitPAR(light_scans, heavy_scans, light_transitions, heavy_transitions)
+    @test Tol(par, 100.0)
+    @test abs(goodness_of_fit-0.0) < 0.001
+
+    X = Float32[]
+    for (key, value) in pairs(light_transitions)
+        append!(X, value)
+    end
+    X = reshape(X, (length(X), 1))
+    y = Float32[]
+    for (key, value) in pairs(heavy_transitions)
+        append!(y, value)
+    end
+
+    #Robust model should be equivalent to OLS model
+    @test Tol((X\y)[1], par)
+
+    #Add interference to the light transitions and try again
+    light_transitions["y3+1"] .+= maximum(light_transitions["y3+1"])    
+    par, goodness_of_fit = fitPAR(light_scans, heavy_scans, light_transitions, heavy_transitions)
+    
+    X = Float32[]
+    for (key, value) in pairs(light_transitions)
+        append!(X, value)
+    end
+    X = reshape(X, (length(X), 1))
+    y = Float32[]
+    for (key, value) in pairs(heavy_transitions)
+        append!(y, value)
+    end
+
+    #In the presence of interference, the robust model should no longer be equivalent to OLS model
+    @test Tol((X\y)[1], par) != true
+    
+    @test size(quant) == (7, 5)
+    @test Set(quant.sequence) == Set(["GLPNVQR"
+    "LQAVTDDHIR"
+    "VAVWGNK"
+    "VAIDAGYR"
+    "VEYLDDR"
+    "VGVNGFGR"
+    "GYILQAK"])
+end
+#end
+#=
 X = zeros(6*3, 1)
 for (i, pair) in enumerate(pairs(light_transitions))
     X[((i-1)*6 + 1):i*6, 1] = pair[2]
@@ -82,7 +130,7 @@ y = [188529.84375, 283520.4375, 383212.6875, 485976.5, 573218.4375, 626788.75, 6
 
 
 I = (X[:,1].!=0.0) .& (y.!=0.0)
-
+rlm(X[I,:]./mean(y),y[I]./mean(y), loss, initial_scale=:mad, maxiter = 200)
 model = getModel(X, y, I)
 plot(X[I,:], y[I], seriestype = :scatter)
 plot!([0.0, maximum(X)], [0.0, coef(model)[1]*maximum(X)])
@@ -116,3 +164,5 @@ ols = lm(@formula(A  ~ B), df)
 heavy = [1.0, 2.0, 3.0, 4.0]
 light = [1.4, 2.6, 3.3, 3.8, 4.1]
 getScanPairs(heavy, light)
+end
+=#
