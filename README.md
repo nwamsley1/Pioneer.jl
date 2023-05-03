@@ -24,8 +24,11 @@
 - More complete documentation. At present only basic usage examples are given, and docstrings for most methods are listed in the CI docs but in no particular order. https://documentation.divio.com/
 - Robust benchmarking of PAR estimation using robust linear estimators agasint against previously used methods, such as top-N [3] or exclusion of transitions based on cosine-similarity metrics [4].
 - If standard curves are available for absolute quantitation, the ability to convert PAR estimates to abundances
+- Better plot annotations
+- Currently not available as an Julia package. Usability is akward and could use improvement. Not all parameters can be user-defined yet. 
+- Some performance issues in "precursors.jl" that should be reasonably easy to resolve. 
 - Future support of standard PRM and DIA using prosit libraries and spectral devonvolution?
-- Suggest your own...
+- Lots of others. Suggest your own...
 
 ## Usage
 
