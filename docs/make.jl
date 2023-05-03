@@ -52,7 +52,8 @@ makedocs(;
     ,
 )
 
-deploydocs(;
-    repo="github.com/nwamsley1/Titus.jl",
-    devbranch="main",
+deploydocs(
+        devbranch="main",
+    repo="github.com/nwamsley1/Titus.jl"
+    
 )
