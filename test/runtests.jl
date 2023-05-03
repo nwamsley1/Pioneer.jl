@@ -9,13 +9,13 @@ include("../src/applyMods.jl")
 include("applyMods.jl")
 include("../src/Routines/PRM/IS-PRM-SURVEY/buildPrecursorTable.jl")
 include("./Routines/PRM/IS-PRM-SURVEY/buildPrecursorTable.jl")
+
 include("../src/Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("./Routines/PRM/IS-PRM/buildPrecursorTable.jl")
 include("matchpeaks.jl")
 include("binaryRangeQuery.jl")
 include("PSM_TYPES/FastXTandem.jl")
 
-using DataFrames
 include("../src/Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
 include("./Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
 
