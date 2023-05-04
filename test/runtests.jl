@@ -46,7 +46,7 @@ include("../src/Routines/PRM/IS-PRM/getBestPSMs.jl")
 #Test Routine
 ##########
 using Arrow, JSON, Tables, DataFrames, Plots
-    params = JSON.parse(read("../data/test.json", String))
+    params = JSON.parse(read("../data/example_config/IS-PRM-SURVEY-TEST.json", String))
     function parse_mods(fixed_mods)
         fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
         for mod in fixed_mods
