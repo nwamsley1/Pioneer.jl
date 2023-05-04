@@ -166,7 +166,7 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
 println("Starting Search...")
 lk = ReentrantLock()
-MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow"]
+#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow"]
 #,"/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
 @time begin
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
@@ -201,12 +201,7 @@ println("Compiling best PSMs...")
     @time begin
         best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1));
     end
-    transform!(test, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)
-    transform!(test, AsTable(:) => ByRow(psm -> getSeq(ptable.id_to_pep[psm[:pep_idx]])) => :sequence)
-    transform!(test, AsTable(:) => ByRow(psm -> MS_RT[psm[:ms_file_idx]][psm[:scan_idx]]) => :retention_time)
-    test[test.sequence .== "GAQASSGSPALPR", :]
-    test[test.sequence .== "GAQASSGSPALPR[Harg]", :]
-    best_psms[best_psms.sequence .== "GAQASSGSPALPR[Harg]", :]
+
 ##########
 #Get MS1 Peak Heights
 ##########
