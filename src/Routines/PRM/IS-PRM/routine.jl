@@ -9,9 +9,8 @@ using Arrow, DataFrames, Tables, Plots
 ##########
 #Parse arguments
 ##########
-
+using ProgressBars
 using ArgParse
-
 function parse_commandline()
     s = ArgParseSettings()
 
@@ -161,15 +160,16 @@ end=#
 ##########
 
 #MS_TABLES = Dict{UInt32, Arrow.Table}()
+using ProgressBars
 combined_scored_psms = makePSMsDict(FastXTandem())
 combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
-println("START")
+println("Starting Search...")
 lk = ReentrantLock()
 #MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow","/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
 @time begin
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
-        println("MS_TABLE_PATH ", MS_TABLE_PATH)
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+        #println("MS_TABLE_PATH ", MS_TABLE_PATH)
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         MS_RT[UInt32(ms_file_idx)] = MS_TABLE[:retentionTime]
         scored_psms, fragment_matches = SearchRAW(
@@ -193,22 +193,23 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
         end
     end
 end
-println("SEARCHED")
 ##########
 #Get Best PSMs for Each Peptide
 ##########
+println("Compiling best PSMs...")
     @time begin
-        best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1))
+        best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1));
     end
 ##########
 #Get MS1 Peak Heights
 ##########
+println("MS1 Peak Heights...")
     #First key is ms_file_idx (identifier of the ms file), second key is pep_idx (peptide id)
     ms1_peak_heights = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, Float32}}()
     #Peak heights are zero to begin with
     precursor_idxs = unique(best_psms[!,:precursor_idx])
     @time begin
-    Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+    Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         lock(lk) do 
         insert!(ms1_peak_heights, 
@@ -233,13 +234,14 @@ println("SEARCHED")
     end
     end
     #Add MS1 Heights to the best_psms DataFrame 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> ms1_peak_heights[psm[:ms_file_idx]][psm[:precursor_idx]]) => :ms1_peak_height)
+    transform!(best_psms, AsTable(:) => ByRow(psm -> ms1_peak_heights[psm[:ms_file_idx]][psm[:precursor_idx]]) => :ms1_peak_height);
     
 ##########
 #Get Chromatograms for the best precursors in each file. 
 ##########
+println("Building Precursor Chromatograms...")
     precursor_chromatograms = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, PrecursorChromatogram}}()
-    Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+    Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         lock(lk) do 
         insert!(precursor_chromatograms, UInt32(ms_file_idx), initPrecursorChromatograms(best_psms, UInt32(ms_file_idx)) |> (best_psms -> fillPrecursorChromatograms!(best_psms, 
@@ -263,19 +265,17 @@ println("SEARCHED")
 ##########
 using GLMNet
 using Statistics
-println("start getPARs")
+println("Estimating PARs...")
 @time begin
     #=for i in collect(eachindex(MS_TABLE_PATHS))
         println(i)
         getPARs(ptable, scan_adresses[i], precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
     end=#
     #Threads.@threads 
-    for i in collect(eachindex(MS_TABLE_PATHS))
-        println(i)
+    for i in ProgressBar(collect(eachindex(MS_TABLE_PATHS)))
         getPARs(ptable, precursor_chromatograms[i], minimum_scans = 3, ms_file_idx = UInt32(i))
     end
 end
-println("end getPARs")
 transform!(best_psms, AsTable(:) => ByRow(psm -> getPAR(ptable, psm[:precursor_idx], psm[:ms_file_idx])) => [:par, :goodness_of_fit, :isotope])
 
 #Get the peak area ratios into the dataframe. 
@@ -294,7 +294,6 @@ out = Dict(
 )
 
 quant = select(best_psms[(best_psms.isotope .== "light"),:], [:ms_file_idx, :sequence, :protein_names, :par, :isotope, :goodness_of_fit])
-println("start LFQ")
 out_folder = joinpath(MS_DATA_DIR, "tables/")
 if !isdir(out_folder)
     mkpath(out_folder)
@@ -309,6 +308,7 @@ transform!(quant, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_NAME[psm[:ms_file_idx
 CSV.write(joinpath(out_folder, "peptide.csv"), quant)
 # Filter the rows based on the conditions on featurea and featureb
 filter!(row -> (coalesce(row.par, 0.0) > 1e-8) && (coalesce(row.goodness_of_fit, 0.0) < 0.10), quant)
+println("Estimating LFQ")
 @time begin
     for (protein, data) in pairs(groupby(quant, :protein_names))
 
@@ -337,7 +337,8 @@ CSV.write(joinpath(out_folder, "protein.csv"), out)
 #Make Plots
 ##########
 #end
-for (i, path) in collect(enumerate(MS_TABLE_PATHS))
+println("Generating Plots...")
+for (i, path) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     sample_name = split(splitpath(path)[end], ".")[1]
     println("sample_name ", sample_name)
     plotAllPairedFragmentIonChromatograms(ptable, precursor_chromatograms[i], UInt32(i), joinpath(MS_DATA_DIR,"figures/paired_spectra",sample_name),

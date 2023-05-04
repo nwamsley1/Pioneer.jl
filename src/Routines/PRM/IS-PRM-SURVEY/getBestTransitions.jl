@@ -32,8 +32,8 @@ because we will not select two of the same transition at a different charge stat
 
 
 """
-function getBestTransitions(best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{Int, Int, Vector{String}, Vector{T}, Vector{T}}},
-                            maximum_fragment_count::I) where {T <: AbstractFloat, I <: Int}
+function getBestTransitions(best_psm::NamedTuple{(:rt, :scan_idx, :name, :mz, :intensity), Tuple{T, Int, Vector{String}, Vector{T}, Vector{T}}};
+                            maximum_fragment_count::UInt8 = UInt8(5)) where T <: AbstractFloat
 
     if length(best_psm[:name]) == 0
         return Int64[]

@@ -30,9 +30,10 @@ function plotAllBestSpectra(matched_precursors::UnorderedDictionary{UInt32, Prec
         mkpath(out_path)
     end
 
-    @time for key in keys(matched_precursors)
+    for key in keys(matched_precursors)
         peptide_sequence = ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence
         protein_name = join(getProtNamesFromPepSeq(ptable, peptide_sequence), "|")
+        protein_name = replace(protein_name, r"/" => "|")
         plotBestSpectra(matched_precursors[key].best_psm, MS_TABLE,
                         protein_name*"-"*peptide_sequence,
                         out_path)
@@ -60,10 +61,10 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
         mkpath(out_path)
     end
 
-    @time for key in keys(matched_precursors)
+    for key in keys(matched_precursors)
         peptide_sequence = ptable.id_to_pep[getPepIDFromPrecID(ptable, key)].sequence
         protein_name = join(getProtNamesFromPepSeq(ptable, peptide_sequence), "|")
-
+        protein_name = replace(protein_name, r"/" => "|")
         plotFragmentIonChromatogram(matched_precursors[key].transitions, matched_precursors[key].rts, 
                                     protein_name*"-"*peptide_sequence, 
                                     out_path)
