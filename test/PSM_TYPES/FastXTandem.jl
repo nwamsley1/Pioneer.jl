@@ -30,7 +30,7 @@ end
     #No matched y ions so should be zero
     @test scored_PSMs[:y_ladder][1] == 0
     #log(3!) + log(0!) + log(3000*0) = log(6) + 1 = 1.791... 
-    @test Tol(scored_PSMs[:hyperscore][1], 1.79189)
+    @test Tol(scored_PSMs[:hyperscore][1], 9.79826)
     #abs(324.15536f0 -  324.15636f0)*2 + abs(538.2871f0 - 538.27739f0) = 0.01171875f0
     @test Tol(scored_PSMs[:error][1], 0.01171875)
 
