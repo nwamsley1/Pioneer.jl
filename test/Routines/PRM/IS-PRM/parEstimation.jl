@@ -165,4 +165,212 @@ heavy = [1.0, 2.0, 3.0, 4.0]
 light = [1.4, 2.6, 3.3, 3.8, 4.1]
 getScanPairs(heavy, light)
 end
+
+light_scans = [1, 2, 3, 4, 5, 6]
+heavy_scans = [1, 2, 3, 4, 5, 6]
+light_transitions = UnorderedDictionary(
+    ["y3+1","y4+1","y5+1"],
+    [
+        Float32[1.024025f6
+        1.6092901f6
+        3.0412648f6
+        5.4651805f6
+        8.631513f6
+        1.1273232f7
+        1.1273232f7
+        8.631513f6
+        5.4651805f6
+        3.0412648f6
+        1.6092901f6
+        1.024025f6],
+        Float32[ 436613.62
+        704660.44
+             1.3229029f6
+             2.3309442f6
+             3.7873248f6
+             4.8260845f6
+             4.8260845f6
+             3.7873248f6
+             2.3309442f6
+             1.3229029f6
+        704660.44
+        436613.62],
+        Float32[ 519827.88
+        772209.56
+             1.4236808f6
+             2.6672412f6
+             3.9857915f6
+             5.183467f6
+             5.183467f6
+             3.9857915f6
+             2.6672412f6
+             1.4236808f6
+        772209.56
+        519827.88]
+    ]
+)
+heavy_transitions = UnorderedDictionary{String, Vector{Float32}}()
+for (key, value) in pairs(light_transitions)
+    insert!(heavy_transitions, key, 100*value)
+end
+function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
+    heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, prot_name::String,
+    peptide_sequence::String, 
+    par::Real, goodness_of_fit::Real, out_path::String)
+    prot_name = replace(prot_name, r"/" => "|")
+    p = plot(title = prot_name*"-"*peptide_sequence, fontfamily="helvetica", legend=:outertopright)
+    if (length(heavy_rts) == 0) | (length(light_rts) == 0)
+        return 
+    end
+    max_light = 0.0
+    max_heavy = 0.0
+
+    for (color, t) in enumerate(keys(heavy_transitions))
+        if isassigned(light_transitions, t)
+            if maximum(light_transitions[t])>max_light
+                max_light = maximum(light_transitions[t])
+            end
+        end
+        if maximum(heavy_transitions[t])>max_heavy
+            max_heavy = maximum(heavy_transitions[t])
+        end
+    end
+
+    for (color, t) in enumerate(keys(heavy_transitions))
+        if isassigned(light_transitions, t)
+            I = (light_transitions[t].>=1e-12)
+            #I = (light_transitions[t].>=1e-12)
+            plot!(p, light_rts[I], -1*(max_heavy/max_light)*light_transitions[t][I], color = color, legend = false, label = nothing)
+            plot!(p, light_rts[I], -1*(max_heavy/max_light)*light_transitions[t][I], seriestype=:scatter, legend = false, color = color, label = nothing)
+        end
+        I = (heavy_transitions[t].>=1e-12)
+        #I = (heavy_transitions[t].>=1e-12)
+        plot!(p, heavy_rts[I], heavy_transitions[t][I], color = color, legend = :outertopright, label = t)
+        plot!(p, heavy_rts[I], heavy_transitions[t][I], seriestype=:scatter, color = color, label = nothing)
+    end
+
+    ticks = [1*max_heavy, 0, -1*(max_heavy/max_light)*max_light]
+    ticklabels = [ @sprintf "%.2E" x for x in [max_heavy, 0, max_light]]
+    #println("par ", par)
+    #par = string(par)
+    par = @sprintf "%.2E" par
+    goodness_of_fit= @sprintf "%.2E" 100.0*goodness_of_fit
+    annotate!(minimum(heavy_rts), max_heavy, fontfamily = "helvetica", text("PAR $par \nstderr/mean % $goodness_of_fit", :black, :top, :left, 8))
+    yticks!((ticks, 
+             ticklabels), 
+             axis = 1)
+    #savefig(joinpath(out_path, prot_name*"-"*peptide_sequence*".pdf"))
+    #plot!(legend=:outertopright)
+end
+
+light_transitions = UnorderedDictionary(
+    ["y3+1","y4+1","y5+1"],
+    [
+        Float32[1.024025f6
+        1.6092901f6
+        3.0412648f6
+        5.4651805f6
+        8.631513f6
+        1.1273232f7
+        1.1273232f7
+        8.631513f6
+        5.4651805f6
+        3.0412648f6
+        1.6092901f6
+        1.024025f6],
+        Float32[ 436613.62
+        704660.44
+             1.3229029f6
+             2.3309442f6
+             3.7873248f6
+             4.8260845f6
+             4.8260845f6
+             3.7873248f6
+             2.3309442f6
+             1.3229029f6
+        704660.44
+        436613.62],
+        Float32[ 519827.88
+        772209.56
+             1.4236808f6
+             2.6672412f6
+             3.9857915f6
+             5.183467f6
+             5.183467f6
+             3.9857915f6
+             2.6672412f6
+             1.4236808f6
+        772209.56
+        519827.88]
+    ]
+)
+heavy_transitions = UnorderedDictionary{String, Vector{Float32}}()
+heavy_transitions = UnorderedDictionary{String, Vector{Float32}}()
+for (key, value) in pairs(light_transitions)
+    insert!(heavy_transitions, key, 100*value)
+end
+times = [Float32(x) for x in 1:12]
+plotPairedFragmentIonChromatogram(light_transitions, heavy_transitions, times, times, "Examaple","", 0.0, 0.0, "test")
+savefig("/Users/n.t.wamsley/Desktop/chromatogram_no_interference.pdf")
+par, goodness_of_fit = fitPAR(light_scans, heavy_scans, light_transitions, heavy_transitions)
+X = Float32[]
+for (key, value) in pairs(light_transitions)
+    append!(X, value)
+end
+X = reshape(X, (length(X), 1))
+y = Float32[]
+for (key, value) in pairs(heavy_transitions)
+    append!(y, value)
+end
+p = plot()
+for (color, key) in enumerate(keys(light_transitions))
+    plot!(p, light_transitions[key], heavy_transitions[key], seriestype=:scatter,color = color)
+end
+plot!(p, [0.0, maximum(X)], [0.0, (X\y)[1]*maximum(X)], label = "OLS")
+plot!([0.0, maximum(X)], [0.0, par*maximum(X)], label = "Robust")
+p
+savefig("/Users/n.t.wamsley/Desktop/ModelFit_no_interference.pdf")
+
+light_transitions["y4+1"] .*= 2
+plotPairedFragmentIonChromatogram(light_transitions, heavy_transitions, times, times, "test","test", 0.0, 0.0, "test")
+savefig("/Users/n.t.wamsley/Desktop/chromatogram_interference_a.pdf")
+par, goodness_of_fit = fitPAR(light_scans, heavy_scans, light_transitions, heavy_transitions)
+X = Float32[]
+for (key, value) in pairs(light_transitions)
+    append!(X, value)
+end
+X = reshape(X, (length(X), 1))
+y = Float32[]
+for (key, value) in pairs(heavy_transitions)
+    append!(y, value)
+end
+p = plot()
+for (color, key) in enumerate(keys(light_transitions))
+    plot!(p, light_transitions[key], heavy_transitions[key], seriestype=:scatter,color = color)
+end
+plot!(p, [0.0, maximum(X)], [0.0, (X\y)[1]*maximum(X)], label = "OLS")
+plot!([0.0, maximum(X)], [0.0, par*maximum(X)], label = "Robust")
+p
+savefig("/Users/n.t.wamsley/Desktop/ModelFit_interference_a.pdf")
+light_transitions["y4+1"] .= 0.5e7
+plotPairedFragmentIonChromatogram(light_transitions, heavy_transitions, times, times, "test","test", 0.0, 0.0, "test")
+savefig("/Users/n.t.wamsley/Desktop/chromatogram_interference_b.pdf")
+par, goodness_of_fit = fitPAR(light_scans, heavy_scans, light_transitions, heavy_transitions)
+X = Float32[]
+for (key, value) in pairs(light_transitions)
+    append!(X, value)
+end
+X = reshape(X, (length(X), 1))
+y = Float32[]
+for (key, value) in pairs(heavy_transitions)
+    append!(y, value)
+end
+p = plot()
+for (color, key) in enumerate(keys(light_transitions))
+    plot!(p, light_transitions[key], heavy_transitions[key], seriestype=:scatter,color = color)
+end
+plot!(p, [0.0, maximum(X)], [0.0, (X\y)[1]*maximum(X)], label = "OLS")
+plot!([0.0, maximum(X)], [0.0, par*maximum(X)], label = "Robust")
+p
+savefig("/Users/n.t.wamsley/Desktop/ModelFit_interference_b.pdf")
 =#
