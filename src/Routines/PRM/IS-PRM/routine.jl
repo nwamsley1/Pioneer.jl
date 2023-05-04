@@ -1,6 +1,6 @@
 #julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
 #julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
-#julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
+#julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -65,7 +65,7 @@ function parse_mods(fixed_mods)
     return fixed_mods_parsed
 end
 #Parse argments
-#params = JSON.parse(read("./data/test.json", String))
+#params = JSON.parse(read("./data/example_config/IS-PRM-TEST.json", String))
 params = (
 right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
 left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
@@ -166,7 +166,8 @@ combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
 MS_RT = Dict{UInt32, Vector{Float32}}()
 println("Starting Search...")
 lk = ReentrantLock()
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow","/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA4953_SQ_Kinome_H358_Rep1_EWZ_Rerun.arrow"]
+#,"/Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out/MA5032_SQ_Kinome_HCC827_Rep1_EWZ.arrow"]
 @time begin
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         #println("MS_TABLE_PATH ", MS_TABLE_PATH)
@@ -200,6 +201,12 @@ println("Compiling best PSMs...")
     @time begin
         best_psms = getBestPSMs(combined_scored_psms, ptable, MS_RT, UInt8(1));
     end
+    transform!(test, AsTable(:) => ByRow(psm -> getPepIDFromPrecID(ptable, psm[:precursor_idx])) => :pep_idx)
+    transform!(test, AsTable(:) => ByRow(psm -> getSeq(ptable.id_to_pep[psm[:pep_idx]])) => :sequence)
+    transform!(test, AsTable(:) => ByRow(psm -> MS_RT[psm[:ms_file_idx]][psm[:scan_idx]]) => :retention_time)
+    test[test.sequence .== "GAQASSGSPALPR", :]
+    test[test.sequence .== "GAQASSGSPALPR[Harg]", :]
+    best_psms[best_psms.sequence .== "GAQASSGSPALPR[Harg]", :]
 ##########
 #Get MS1 Peak Heights
 ##########
@@ -251,8 +258,10 @@ println("Building Precursor Chromatograms...")
                                                                                                                     UInt32(ms_file_idx))
                                                                                                         )
                 ) 
+    
         end
     end 
+
 
     #Names and charges for the "n" most intense fragment ions for each precursor
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestTransitions(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]),

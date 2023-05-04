@@ -69,7 +69,7 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, Fast
         end
         (abs(logfac(max(1, score.b_count))) + 
         abs(logfac(max(1, score.y_count))) + 
-        max(log(score.y_int*score.b_int), 0)
+        max(log(score.y_int), 0) + max(log(score.b_int), 0)
         )
     end
 
