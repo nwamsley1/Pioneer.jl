@@ -74,9 +74,11 @@ function plotAllFragmentIonChromatograms(matched_precursors::UnorderedDictionary
 end
 
 function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionary{String, Vector{Float32}}, 
-    heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, title::String, 
+    heavy_transitions::UnorderedDictionary{String, Vector{Float32}}, light_rts::Vector{Float32}, heavy_rts::Vector{Float32}, prot_name::String,
+    peptide_sequence::String, 
     par::Real, goodness_of_fit::Real, out_path::String)
-    p = plot(title = title, fontfamily="helvetica", legend=:outertopright)
+    prot_name = replace(prot_name, r"/" => "|")
+    p = plot(title = prot_name*"-"*peptide_sequence, fontfamily="helvetica", legend=:outertopright)
     if (length(heavy_rts) == 0) | (length(light_rts) == 0)
         return 
     end
@@ -117,7 +119,7 @@ function plotPairedFragmentIonChromatogram(light_transitions::UnorderedDictionar
     yticks!((ticks, 
              ticklabels), 
              axis = 1)
-    savefig(joinpath(out_path, title*".pdf"))
+    savefig(joinpath(out_path, prot_name*"-"*peptide_sequence*".pdf"))
     #plot!(legend=:outertopright)
 end
 
@@ -156,20 +158,25 @@ function plotAllPairedFragmentIonChromatograms(ptable::ISPRMPrecursorTable,
         if (length(light_transitions) == 0) & (length(heavy_transitions) == 0)
             continue
         end
+        
+        prot_ids = collect(getProtIDs(getPepGroup(ptable, 
+                                getPepGroupID(getPep(ptable, lh_pair.heavy_pep_id)))))
+        prot_name = join(sort([getName(getProt(ptable, prot_id)) for prot_id in prot_ids]), "|")
+
         plotPairedFragmentIonChromatogram(
             light_transitions, 
             heavy_transitions,
             light_rts, 
             heavy_rts,
+            prot_name,
             lh_pair.light_sequence,
             par, 
             goodness_of_fit,
             out_path)
     end
-        files = filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path))
-        if length(files)>0
-            merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
-        end
-
+    files = sort(filter(x -> isfile(joinpath(out_path, x)) && match(r"\.pdf$", x) != nothing, readdir(out_path)))
+    if length(files)>0
+        merge_pdfs(map(file -> joinpath(out_path,file), files), joinpath(out_path, fname), cleanup=true)
+    end
 end
 

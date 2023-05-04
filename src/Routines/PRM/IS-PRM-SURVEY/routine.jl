@@ -1,6 +1,6 @@
 #julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
 #julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
-#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
+#julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -103,17 +103,17 @@ include("../../../getPrecursors.jl")
 include("../../../PSM_TYPES/PSM.jl")
 include("../../../PSM_TYPES/FastXTandem.jl")
 #include("../../../searchSpectra.jl")
-include("../../../Routines/PRM/getBestPSMs.jl")
 include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/plotPRM.jl")
 include("../../../Routines/PRM/getMS1PeakHeights.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/initTransitions.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/selectTransitions.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/buildPrecursorTable.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
 include("../../../SearchRAW.jl")
-include("../../../Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
-
+include("../../../Routines/PRM/IS-PRM-SURVEY/writeTables.jl")
+include("../../../applyMods.jl")
+include("../../../Routines/PRM/IS-PRM-SURVEY/plotPRM.jl")
 #=
 include("src/precursor.jl")
 include("src/binaryRangeQuery.jl")
@@ -135,11 +135,11 @@ include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
 include("src/Routines/applyMods.jl")
 =#
 
-
+using ProgressBars
 ##########
 #Read Precursor Table
 ##########
-@time begin 
+@time begin
     ptable = PrecursorTable()
     buildPrecursorTable!(ptable, 
                         params[:fixed_mods], 
@@ -242,8 +242,10 @@ MS_RT = Dict{UInt32, Vector{Float32}}()
     end 
 
     #Names and charges for the "n" most intense fragment ions for each precursor
+    #display(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]))
+    #println(typeof(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])))
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestTransitions(getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]]),
-                                                                        params[:fragments_to_select])) => :best_transitions)
+                                                                        maximum_fragment_count = params[:fragments_to_select])) => :best_transitions)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:name][psm[:best_transitions]]) => :transition_names)
     transform!(best_psms, AsTable(:) => ByRow(psm -> getBestPSM(precursor_chromatograms[psm[:ms_file_idx]][psm[:precursor_idx]])[:mz][psm[:best_transitions]]) => :transition_mzs)
 
@@ -279,18 +281,20 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> MS_FILE_ID_TO_CONDITION[psm[:ms
     #Get best_psm for each peptide across all ms_file
     best_psms = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(best_psms, :pep_idx)) 
 
+    filter!(row -> (row.total_ions > params[:minimum_fragment_count]), best_psms)
+
     writeTransitionList(best_psms, joinpath(MS_DATA_DIR, "transition_list.csv"))
     writeIAPIMethod(best_psms, joinpath(MS_DATA_DIR, "iapi_method.csv"))
-
+    
     println(" Scored "*string(size(best_psms)[1])*" precursors")
 #end
 end
 ##########
 #Make Plots
 ##########
-#=
+
 if ARGS["make_plots"]
-    for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
+    @time for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
         plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
@@ -303,4 +307,4 @@ if ARGS["make_plots"]
                                         joinpath("./figures/precursor_chromatograms/", sample_name),
                                         join(sample_name*"_precursor_chromatograms"*".pdf"))
     end
-end=#
+end

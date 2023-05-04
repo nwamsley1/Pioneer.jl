@@ -1,5 +1,5 @@
 
-include("./precursor.jl");
+#include("./precursor.jl");
 using Combinatorics, Dictionaries
 
 """
