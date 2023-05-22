@@ -54,6 +54,9 @@ ADD2	VNVADEVQR
 .
 .
 ```
+#### Output
+transition_list.csv is written into the `data_dir`
+
 ### IS-PRM Analysis
 ```
 julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
