@@ -55,8 +55,17 @@ ADD2	VNVADEVQR
 .
 ```
 #### Output
-transition_list.csv is written into the `data_dir`
-
+Writes transition_list.csv written into the user supplied `data_dir` (folder that contains the survey run). See below for example. 
+#### Transition List Example
+```
+protein_name,sequence,precursor_charge,precursor_isotope,transition_names
+ABCB6,YYNAESYEVER[Harg],2,0,y10+1;y7+1;y8+1;y9+1;y6+1
+ABCB6,ALNVLVPIFYR[Harg],2,0,y6+1;y8+1;y7+1;b4+1;y9+1
+ABHD4,YVSLPNQNK[Hlys],2,0,b4+1;y7+1;y5+2;y3+1;y5+1
+.
+.
+.
+```
 ### IS-PRM Analysis
 ```
 julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
@@ -68,17 +77,7 @@ julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json 
  |transition_list||mandatory|"Path to a tab delimited table of transitions"
  |--make_plots|true|-p|"Whether to make plots. Defaults to `true`"
  |--print_params|false|-s|"Whether to print the parameters from the json. Defaults to `false`"
- 
- #### Transition List Example
-```
-protein_name,sequence,precursor_charge,precursor_isotope,transition_names
-ABCB6,YYNAESYEVER[Harg],2,0,y10+1;y7+1;y8+1;y9+1;y6+1
-ABCB6,ALNVLVPIFYR[Harg],2,0,y6+1;y8+1;y7+1;b4+1;y9+1
-ABHD4,YVSLPNQNK[Hlys],2,0,b4+1;y7+1;y5+2;y3+1;y5+1
-.
-.
-.
-```
+
 ## Example Outputs
 
 ## Configuration files
