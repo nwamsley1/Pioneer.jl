@@ -40,17 +40,9 @@ ARGS = parse_commandline()
 params = JSON.parse(read(ARGS["params_json"], String))
 MS_DATA_DIR = ARGS["data_dir"]
 PRECURSOR_LIST_PATH = ARGS["precursor_list"]
-#MS_DATA_DIR = "./data/parquet/"
-#PRECURSOR_LIST_PATH = "./data/NRF2_SIL.txt"
-#Get all files in the `MS_DATA_DIR` ending in ".arrow" and append their names to the `MS_DATA_DIR` path. 
+println("MS_DATA_DIR: $MS_DATA_DIR")
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
-
-
-# Print the argument
-#println("Parameters: $params")
-#println("MS_DATA_DIR: $MS_DATA_DIR")
 println("Processing: "*string(length(MS_TABLE_PATHS))*" files")
-#println("PRECURSOR_LIST_PATH: $PRECURSOR_LIST_PATH")
 
 function parse_mods(fixed_mods)
     fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
@@ -61,7 +53,6 @@ function parse_mods(fixed_mods)
 end
 
 #Parse argments
-#params = JSON.parse(read("./data/test.json", String))
 params = (
 right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
 left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
@@ -96,6 +87,7 @@ end
 ##########
 using Arrow, DataFrames, Tables
 using Plots
+#=
 include("../../../precursor.jl")
 include("../../../binaryRangeQuery.jl")
 include("../../../matchpeaks.jl")
@@ -114,53 +106,50 @@ include("../../../SearchRAW.jl")
 include("../../../Routines/PRM/IS-PRM-SURVEY/writeTables.jl")
 include("../../../applyMods.jl")
 include("../../../Routines/PRM/IS-PRM-SURVEY/plotPRM.jl")
-#=
-include("src/precursor.jl")
-include("src/binaryRangeQuery.jl")
-include("src/matchpeaks.jl")
-include("src/getPrecursors.jl")
-include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/FastXTandem.jl")
-#include("../../../searchSpectra.jl")
-include("src/Routines/PRM/getBestPSMs.jl")
-include("src/Routines/PRM/precursorChromatogram.jl")
-include("src/Routines/PRM/plotPRM.jl")
-include("src/Routines/PRM/getMS1PeakHeights.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/initTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/selectTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/getBestTransitions.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/buildPrecursorTable.jl")
-include("src/SearchRAW.jl")
-include("src/Routines/PRM/IS-PRM_SURVEY/writeTables.jl")
-include("src/Routines/applyMods.jl")
 =#
+
+if Sys.iswindows()
+    #Generic files in src directory
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\")))]
+    #Files needed for PRM routines
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM")))]
+    #Files needed for IS-PRM-SURVEY routines
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM","IS-PRM-SURVEY")))]
+else
+    #Generic files in src directory
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../")))]
+    #Files needed for PRM routines
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM")))]
+    #Files needed for IS-PRM-SURVEY routines
+    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM","IS-PRM-SURVEY")))]
+end
 
 using ProgressBars
 ##########
 #Read Precursor Table
 ##########
 @time begin
-    ptable = PrecursorTable()
-    buildPrecursorTable!(ptable, 
-                        params[:fixed_mods], 
-                        params[:variable_mods], 
-                        params[:max_variable_mods], 
-                        PRECURSOR_LIST_PATH)
-    addPrecursors!(
-                        ptable, 
-                        params[:precursor_charges], 
-                        params[:precursor_isotopes], 
-                        params[:modification_masses]
-                        )
-    addTransitions!(
-                        ptable, 
-                        params[:transition_charges],
-                        params[:transition_isotopes],
-                        params[:b_ladder_start],
-                        params[:y_ladder_start],
-                        params[:fragment_match_ppm]
+
+ptable = PrecursorTable()
+buildPrecursorTable!(ptable, 
+                    params[:fixed_mods], 
+                    params[:variable_mods], 
+                    params[:max_variable_mods], 
+                    PRECURSOR_LIST_PATH)
+addPrecursors!(
+                    ptable, 
+                    params[:precursor_charges], 
+                    params[:precursor_isotopes], 
+                    params[:modification_masses]
                     )
-    #println(getPrecIDToTransitions(ptable))
+addTransitions!(
+                    ptable, 
+                    params[:transition_charges],
+                    params[:transition_isotopes],
+                    params[:b_ladder_start],
+                    params[:y_ladder_start],
+                    params[:fragment_match_ppm]
+                )
 ##########
 #Search Survey Runs
 ##########
@@ -297,14 +286,25 @@ if ARGS["make_plots"]
     @time for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         sample_name = split(MS_FILE_ID_TO_NAME[ms_file_idx], ".")[1]
+
+        best_spectra_path = ""
+        precursor_chromatograms_path = ""
+        if Sys.iswindows()
+            best_spectra_path = joinpath(":c","figures","best_spectra", sample_name)
+            precursor_chromatograms_path = joinpath(":c","figures","precursor_chromatogram", sample_name)
+        else
+            best_spectra_path = joinpath("./","figures","best_spectra", sample_name)
+            precursor_chromatograms_path = joinpath("./","figures","precursor_chromatogram", sample_name)
+        end
+
         plotAllBestSpectra(precursor_chromatograms[ms_file_idx], 
                             ptable, 
                             MS_TABLE,
-                            joinpath("./figures/best_spectra/", sample_name),
+                            best_spectra_path,
                             join(sample_name*"_best_spectra"*".pdf"))
         plotAllFragmentIonChromatograms(precursor_chromatograms[ms_file_idx], 
                                         ptable,
-                                        joinpath("./figures/precursor_chromatograms/", sample_name),
+                                        precursor_chromatograms_path,
                                         join(sample_name*"_precursor_chromatograms"*".pdf"))
     end
 end
