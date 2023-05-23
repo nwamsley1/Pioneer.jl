@@ -32,9 +32,15 @@
 ## Usage
 
 ### Survey Run Analyses
+###### POSIX
 ```
-julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
+julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json ./data/parquet/ ./data/NRF2_SIL.txt
 ```
+###### Windows
+```
+julia c:\\src\\Routines\\PRM\\IS-PRM-SURVEY\\routine.jl c:\\data\\example_config\\IS-PRM-SURVEY-TEST.json c:\\data\\parquet\\ c:\\data\\NRF2_SIL.txt
+```
+
 |Name                |Default| Short        |Description                    |
  |--------------------|-------|-------------|--------------------|
  |params_json||mandatory|Path to a .json file with the parameters (see Configuration)
@@ -67,8 +73,13 @@ ABHD4,YVSLPNQNK[Hlys],2,0,b4+1;y7+1;y5+2;y3+1;y5+1
 .
 ```
 ### IS-PRM Analysis
+###### POSIX
 ```
-julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
+julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-TEST.json ./data/parquet ./data/parquet/transition_list.csv
+```
+###### Windows
+```
+julia --threads 24 c:\\src\\Routines\\PRM\\IS-PRM\\routine.jl c:\\data\\example_config\\IS-PRM-TEST.json c:\\data\\parquet c:\\data\\parquet\\transition_list.csv
 ```
 |Name                |Default| Short        |Description                    |
  |--------------------|-------|-------------|--------------------|
