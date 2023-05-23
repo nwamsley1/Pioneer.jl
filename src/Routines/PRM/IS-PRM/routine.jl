@@ -1,5 +1,4 @@
-#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json ./data/parquet ./data/parquet/transition_list.csv
-#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/IS-PRM_TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
+#julia ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json ./data/parquet/ ./data/parquet/transition_list.csv
 #julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/parquet_out /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs/transition_list.csv
 using JSON
 using PrettyPrinting
@@ -108,21 +107,16 @@ include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
 include("../../../LFQ.jl")
 include("../../../Routines/PRM/plotPRM.jl")=#
 
-if Sys.iswindows()
-    #Generic files in src directory
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\")))]
-    #Files needed for PRM routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM")))]
-    #Files needed for IS-PRM routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM","IS-PRM")))]
-else
-    #Generic files in src directory
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../")))]
-    #Files needed for PRM routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM")))]
-    #Files needed for IS-PRM routine
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM","IS-PRM")))]
-end
+#Generic files in src directory
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRaw.jl","applyMods.jl"]]
+#Files needed for PRM routines
+[include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["precursorChromatogram.jl","getMS1PeakHeights.jl"]]
+#Files needed for PSM scoring
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","FastXTandem.jl"]]
+#Files needed for IS-PRM routine
+[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM", jl_file)) for jl_file in ["initTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","selectTransitions.jl","getBestPSMs.jl","getIntegrationBounds.jl","parEstimation.jl"]]
+[include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["plotPRM.jl"]]
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["LFQ.jl"]]
 
 ##########
 #Read Precursor Table

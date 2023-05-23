@@ -1,6 +1,4 @@
-#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json ./data/parquet/ ./data/NRF2_SIL.txt
-#julia ./src/Routines/PRM/IS-PRM_SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
-#julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/test.json /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/survey_runs /Users/n.t.wamsley/RIS_Temp/EWZ_KINOME/KINOME_MAR23.txt
+#julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json ./data/parquet/ ./data/NRF2_SIL.txt
 using JSON
 using PrettyPrinting
 using PDFmerger
@@ -87,42 +85,14 @@ end
 ##########
 using Arrow, DataFrames, Tables
 using Plots
-#=
-include("../../../precursor.jl")
-include("../../../binaryRangeQuery.jl")
-include("../../../matchpeaks.jl")
-include("../../../getPrecursors.jl")
-include("../../../PSM_TYPES/PSM.jl")
-include("../../../PSM_TYPES/FastXTandem.jl")
-#include("../../../searchSpectra.jl")
-include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/getMS1PeakHeights.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/initTransitions.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/selectTransitions.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/buildPrecursorTable.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
-include("../../../SearchRAW.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/writeTables.jl")
-include("../../../applyMods.jl")
-include("../../../Routines/PRM/IS-PRM-SURVEY/plotPRM.jl")
-=#
-
-if Sys.iswindows()
-    #Generic files in src directory
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\")))]
-    #Files needed for PRM routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM")))]
-    #Files needed for IS-PRM-SURVEY routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "..\\..\\..\\","Routines","PRM","IS-PRM-SURVEY")))]
-else
-    #Generic files in src directory
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../")))]
-    #Files needed for PRM routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM")))]
-    #Files needed for IS-PRM-SURVEY routines
-    [include(jl_file) for jl_file in filter(file -> isfile(file) && match(r"\.jl$", file) != nothing, readdir(joinpath("c:", "../../../","Routines","PRM","IS-PRM-SURVEY")))]
-end
+#Generic files in src directory
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRaw.jl","applyMods.jl"]]
+#Files needed for PRM routines
+[include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["precursorChromatogram.jl","getMS1PeakHeights.jl"]]
+#Files needed for PSM scoring
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","FastXTandem.jl"]]
+#Files needed for IS-PRM-SURVEY routine
+[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM-SURVEY", jl_file)) for jl_file in ["initTransitions.jl","selectTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","getBestPSMs.jl","writeTables.jl","plotPRM.jl"]]
 
 using ProgressBars
 ##########
