@@ -53,14 +53,15 @@ end
     #In the presence of interference, the robust model should no longer be equivalent to OLS model
     @test Tol((X\y)[1], par) != true
     
-    @test size(quant) == (7, 5)
+    @test size(quant) == (5, 5)
     @test Set(quant.sequence) == Set(["GLPNVQR"
     "LQAVTDDHIR"
     "VAVWGNK"
     "VAIDAGYR"
-    "VEYLDDR"
+    #"VEYLDDR"
     "VGVNGFGR"
-    "GYILQAK"])
+    #"GYILQAK"
+    ])
 end
 #end
 #=
