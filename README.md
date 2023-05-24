@@ -33,7 +33,7 @@
 2) Open an instance of the julia REPL
 3) Type ";" to activate the shell from within the REPL. Then, navigate to the desired directory and clone the Titus.jl repository.
 ```
-shell> git clone [https://github.com/nwamsley1/Titus.jl](https://github.com/nwamsley1/Titus.jl.git)
+shell> git clone https://github.com/nwamsley1/Titus.jl.git
 ```
 4) Return to julia by hitting the backspace key. Activate the julia package manager by typing "]" into the REPL and enter the following:
 ```
