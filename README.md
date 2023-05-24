@@ -28,7 +28,19 @@
 - Some performance issues in "precursors.jl" that should be reasonably easy to resolve. 
 - Future support of standard PRM and DIA using prosit libraries and spectral devonvolution?
 - Lots of others. Suggest your own....
-
+## Installation
+1) Titus requires an installation of Julia 1.4 or later. Download [julia](https://pages.github.com/) and add it to the PATH. 
+2) Open an instance of the julia REPL
+3) Type ";" to activate the shell from within the REPL. Then, navigate to the desired directory and clone the Titus.jl repository.
+```
+shell> git clone https://github.com/nwamsley1/Titus.jl
+```
+4) Return to julia by hitting the backspace key. Activate the julia package manager by typing "]" into the REPL and enter the following:
+```
+(@v1.9) plg> activate .
+(Titus) pkg> instantiate
+```
+Downloading dependencies using "instantiate" may take several minutes
 ## Usage
 
 ### Survey Run Analyses
@@ -38,7 +50,7 @@ julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/example_config/IS-PRM-S
 ```
 ###### Windows
 ```
-julia c:\\src\\Routines\\PRM\\IS-PRM-SURVEY\\routine.jl c:\\data\\example_config\\IS-PRM-SURVEY-TEST.json c:\\data\\parquet\\ c:\\data\\NRF2_SIL.txt
+julia .\\src\\Routines\\PRM\\IS-PRM-SURVEY\\routine.jl .\\data\\example_config\\IS-PRM-SURVEY-TEST.json .\\data\\parquet\\ .\\data\\NRF2_SIL.txt
 ```
 
 |Name                |Default| Short        |Description                    |
@@ -79,7 +91,7 @@ julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS
 ```
 ###### Windows
 ```
-julia --threads 24 c:\\src\\Routines\\PRM\\IS-PRM\\routine.jl c:\\data\\example_config\\IS-PRM-TEST.json c:\\data\\parquet c:\\data\\parquet\\transition_list.csv
+julia --threads 24 .\\src\\Routines\\PRM\\IS-PRM\\routine.jl .\\data\\example_config\\IS-PRM-TEST.json .\\data\\parquet .\\data\\parquet\\transition_list.csv
 ```
 |Name                |Default| Short        |Description                    |
  |--------------------|-------|-------------|--------------------|
