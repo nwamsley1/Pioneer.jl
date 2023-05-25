@@ -8,12 +8,7 @@ const NEUTRON::Float64 = Float64(1.00335)
 const default_mods::Dict{String, Float64} = Dict{String, Float64}(
     "Carb" => Float64(57.021464))
 
-export PROTON, H2O, NEUTRON
-#Representation of Amino Acid
-##########
-
-function getMass(residue::Char)
-    AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
+const AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
         'A' => 71.03711,
         'R' => 156.10111,
         'N' => 114.04293,
@@ -37,7 +32,17 @@ function getMass(residue::Char)
         'U' => 150.95363,
         'O' => 237.14773
         )
-    AA_to_mass[residue]
+
+export PROTON, H2O, NEUTRON
+#Representation of Amino Acid
+##########
+
+function getMass(residue::Char)::Float64
+    if haskey(AA_to_mass, residue)
+        AA_to_mass[residue]
+    else
+        0.0
+    end
 end
 
 """
@@ -64,23 +69,30 @@ There can be three types of modifications.
 In this case mods_dict["Carb"] should return the appropriate mass
 
 """
-function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: AbstractFloat}
-    try
+#function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: AbstractFloat}
+function getMass(residue::String, mods_dict::Dict{String, T}) where {T <: AbstractFloat}
+   #try
         #Single, unmodified amino acid
         if length(residue) == 1
-            getMass(residue[1])
+        getMass(first(residue))
         #Modified amino acid, so interpret modification
         else
             m = match(r"^[A-Z]\[(.*)\]$", residue)
-            if startswith(m[1], "+")
-                parse(T, m[1][2:end]) + getMass(residue[1]) #"K[+8.014199]"
-            else 
-                mods_dict[m[1]] + getMass(residue[1]) #getAA("C[Carb]")
+            if m != nothing
+                if startswith(first(m), "+")
+                    Float64(parse(T, @view(m[1][2:end])) + getMass(residue[1])::Float64) #"K[+8.014199]"
+                elseif haskey(mods_dict, first(m))
+                    Float64(mods_dict[first(m)] + getMass(first(residue))::Float64) #getAA("C[Carb]")
+                end
+            else
+                0.0
             end
+            
+            0.0
         end
-    catch
-        throw(ErrorException("$residue could not be parsed as given"))
-    end 
+    #catch
+    #    throw(ErrorException("$residue could not be parsed as given"))
+    #end 
 end
 
 
@@ -134,7 +146,15 @@ Residue(residue::Char, mod_mass::T) where {T<:AbstractFloat} = Residue(getMass(r
 
 function getResidues(sequence::String, mods_dict::Dict{String, T} = default_mods) where {T<:AbstractFloat}
     matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
-    return [Residue(sequence[m], mods_dict) for m in matches]
+    residues = Vector{Residue{T}}()
+    if matches == nothing
+        push!(residues, Residue(convert(T, 0.0)))
+    else
+        for match in matches
+            push!(residues, Residue(sequence[match], mods_dict))
+        end
+    end
+    return residues
 end
 
 #Getter methods
