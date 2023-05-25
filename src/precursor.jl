@@ -147,6 +147,54 @@ Mod() = Mod(0.0)
 getMass(mod::Mod) = mod.mass    
 export Mod
 
+function getMass(residue::Char)
+    AA_to_mass::Dict{Char, Float32} = Dict{Char, Float32}(
+        'A' => 71.03711,
+        'R' => 156.10111,
+        'N' => 114.04293,
+        'D' => 115.02694,
+        'C' => 103.00919,
+        'E' => 129.04259,
+        'Q' => 128.05858,
+        'G' => 57.02146,
+        'H' => 137.05891,
+        'I' => 113.08406,
+        'L' => 113.08406,
+        'K' => 128.09496,
+        'M' => 131.04049,
+        'F' => 147.06841,
+        'P' => 97.05276,
+        'S' => 87.03203,
+        'T' => 101.04768,
+        'W' => 186.07931,
+        'Y' => 163.06333,
+        'V' => 99.06841,
+        'U' => 150.95363,
+        'O' => 237.14773
+        )
+    AA_to_mass[residue]
+end
+
+function getMass(residue::String, mods_dict::Dict{String, Float32} = Dict{String, Float32}())
+    try
+        #Single, unmodified amino acid
+        if length(mod) == 1
+            getMass(residue[1])
+        #Modified amino acid, so interpret modification
+        else
+            m = match(r"^[A-Z]\[(.*)\]$", mod)
+            if startswith(m[1], "+")
+                parse(Float32, m[1][2:end]) + getMass(residue[1]) #"K[+8.014199]"
+            else 
+                mods_dict[m[1]] + getMass(residue[1]) #getAA("C[Carb]")
+            end
+        end
+    catch
+        throw(ErrorException("$mod could not be parsed as given"))
+    end 
+end
+
+
 ##########
 #Residue. Implementation of amino acid with custom mass modifications
 ##########
@@ -188,17 +236,17 @@ function Residue(aa::AA)
 end
 
 #Residue('A')
-Residue(aa::Char) = Residue(AA(aa))
+Residue(aa::Char) = Residue(getMass(aa))
 
-Residue(aa::AA, mod::Mod) = Residue(getMass(mod)+getMass(aa))
+#Residue(aa::AA, mod::Mod) = Residue(getMass(mod)+getMass(aa))
 
-Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(AA(residue[1]), Mod(residue, mods_dict))
+Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(getMass(residue, mods_dict))
 
-Residue(residue::String) = Residue(residue, Dict{String, Float32}())
+Residue(residue::String) = Residue(getMass(residue))
 
-Residue(residue::String, mod_mass::Float32) = Residue(getMass(AA(residue[1])) + mod_mass)
+Residue(residue::String, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
 
-Residue(residue::Char, mod_mass::Float32) = Residue(getMass(AA(residue)) + mod_mass)
+Residue(residue::Char, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
 
 function getResidues(sequence::String, mods_dict::Dict{String, Float32} = default_mods)
     matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
