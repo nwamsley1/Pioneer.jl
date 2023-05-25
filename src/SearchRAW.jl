@@ -9,12 +9,13 @@ function SearchRAW(
                    b_start::Int64,
                    y_start::Int64,
                    fragment_match_ppm::Float32,
-                   ms_file_idx::UInt32,
-                   )
+                   ms_file_idx::UInt32;
+                   DataType::Type{T} = Float32
+                   ) where {T<:Real}
     
-    scored_PSMs = makePSMsDict(FastXTandem())
+    scored_PSMs = makePSMsDict(FastXTandem(DataType))
     #not goinig to want this for all methods
-    allFragmentMatches = Vector{FragmentMatch}()
+    allFragmentMatches = Vector{FragmentMatch{T}}()
 
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
@@ -42,7 +43,7 @@ function SearchRAW(
                                     ms_file_idx = ms_file_idx)
         #sort(getTransitions(selectPrecursors(spectrum)),  
         #                    by = t-> getMZ(t))
-        unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem}()
+        unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
         

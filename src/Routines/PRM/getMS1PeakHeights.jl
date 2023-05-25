@@ -6,13 +6,13 @@ function rangeQuerySorted(sorted_array::Vector{T}, l_bnd::T, u_bnd::T) where T <
 end
 
 function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T}, 
-                        precursors::Dictionary{UInt32, Precursor}, 
+                        precursors::Dictionary{UInt32, Precursor{P}}, 
                         MS1::Vector{Union{Missing, T}}, 
                         INTENSITIES::Vector{Union{Missing, T}}, 
                         precursor_rts::Vector{R}, 
                         precursor_idxs::Vector{UInt32}, 
                         precursor_ms_file_idxs::Vector{UInt32}, 
-                        rt::R, rt_tol::R, left_mz_tol::T, right_mz_tol::T, ms_file_idx::UInt32) where {T <: Number, R <: Number}
+                        rt::R, rt_tol::R, left_mz_tol::T, right_mz_tol::T, ms_file_idx::UInt32) where {P,T,R <: Real}
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
     start::Int, stop::Int = rangeQuerySorted(precursor_rts,rt - rt_tol, rt + rt_tol)

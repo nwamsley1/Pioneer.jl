@@ -1,4 +1,4 @@
-function binaryGetNearest(arr::Vector{Union{Missing, T}}, query::T, low_tol::T, high_tol::T) where T <: Real
+function binaryGetNearest(arr::Vector{Union{Missing, U}}, query::T, low_tol::T, high_tol::T) where {U,T <: Real}
 
     #Check special cases (is the answer on the boundary or is the array empty?)
     n = length(arr)
@@ -6,7 +6,7 @@ function binaryGetNearest(arr::Vector{Union{Missing, T}}, query::T, low_tol::T, 
     if query <= arr[1] - high_tol return 0 end
     if query >= arr[n] + low_tol return 0 end
 
-    function getNearest(arr::Vector{Union{Missing, T}}, lo::Int, hi::Int, query::T) where T <: Real
+    function getNearest(arr::Vector{Union{Missing, T}}, lo::Int, hi::Int, query::U) where {T,U <: Real}
         if hi - lo>1
             smallest_distance = abs(query - arr[lo])
             best_idx = 1
