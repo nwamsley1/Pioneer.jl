@@ -20,10 +20,10 @@ also sorted by MZ just like `precursorLit`
 ### Examples 
 
 """
-function selectTransitions(window_center::Float32, 
+function selectTransitions(window_center::T, 
                                 ptable::ISPRMPrecursorTable,
-                                right_precursor_tolerance::Float32,
-                                left_precursor_tolerance::Float32)
+                                right_precursor_tolerance::U,
+                                left_precursor_tolerance::U) where {T,U<:Real}
 
     transitions = Vector{Transition}();
     

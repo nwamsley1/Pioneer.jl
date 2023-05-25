@@ -2,18 +2,18 @@ function SearchRAW(
                    spectra::Arrow.Table, 
                    ptable::PrecursorDatabase,
                    selectTransitions, 
-                   right_precursor_tolerance::Float32,
-                   left_precursor_tolerance::Float32,
+                   right_precursor_tolerance::U,
+                   left_precursor_tolerance::U,
                    transition_charges::Vector{UInt8},
                    transition_isotopes::Vector{UInt8},
                    b_start::Int64,
                    y_start::Int64,
-                   fragment_match_ppm::Float32,
+                   fragment_match_ppm::U,
                    ms_file_idx::UInt32;
-                   DataType::Type{T} = Float32
-                   ) where {T<:Real}
+                   data_type::Type{T} = Float32
+                   ) where {T,U<:Real}
     
-    scored_PSMs = makePSMsDict(FastXTandem(DataType))
+    scored_PSMs = makePSMsDict(FastXTandem(data_type))
     #not goinig to want this for all methods
     allFragmentMatches = Vector{FragmentMatch{T}}()
 
@@ -36,9 +36,12 @@ function SearchRAW(
                                         left_precursor_tolerance
                                         )
         #Named tuple for scan 
-        fragmentMatches = matchPeaks(transitions, spectrum[:masses], spectrum[:intensities], 
+        #println("transitions ", transitions)
+        fragmentMatches = matchPeaks(transitions, 
+                                    spectrum[:masses], 
+                                    spectrum[:intensities], 
                                     #δs = params[:δs],
-                                    δs = Float64[0.0],#[Float64(0)],
+                                    δs = zeros(T, (1,)),#[Float64(0)],
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx)
         #sort(getTransitions(selectPrecursors(spectrum)),  

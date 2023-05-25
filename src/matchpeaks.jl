@@ -258,7 +258,7 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = [0.0], scan_idx = UInt32(0), ms_file_idx = UInt32(0)) where {T,U<:Real}
+function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0)) where {T,U<:Real}
     matches = Vector{FragmentMatch{T}}()
     for δ in δs
         matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx, ms_file_idx)
