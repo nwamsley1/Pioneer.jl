@@ -129,7 +129,7 @@ Residue(residue::String, mods_dict::Dict{String, T}) where {T<:AbstractFloat} = 
 
 Residue(residue::String) = Residue(getMass(residue))
 
-Residue(residue::String, mod_mass::T) where {T<:RealAbstractFloat}
+#Residue(residue::String, mod_mass::T) where {T<:AbstractFloat}
 Residue(residue::Char, mod_mass::T) where {T<:AbstractFloat} = Residue(getMass(residue) + mod_mass)
 
 function getResidues(sequence::String, mods_dict::Dict{String, T} = default_mods) where {T<:AbstractFloat}
