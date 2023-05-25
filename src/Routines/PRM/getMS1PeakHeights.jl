@@ -12,7 +12,7 @@ function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T},
                         precursor_rts::Vector{R}, 
                         precursor_idxs::Vector{UInt32}, 
                         precursor_ms_file_idxs::Vector{UInt32}, 
-                        rt::R, rt_tol::R, left_mz_tol::T, right_mz_tol::T, ms_file_idx::UInt32) where {P,T,R <: Real}
+                        rt::R, rt_tol::R, left_mz_tol::T, right_mz_tol::T, ms_file_idx::UInt32) where {P,T,R <: AbstractFloat}
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
     start::Int, stop::Int = rangeQuerySorted(precursor_rts,rt - rt_tol, rt + rt_tol)
@@ -45,14 +45,14 @@ function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T},
     end
 end
 
-function getMS1PeakHeights!(ms1_max_heights::UnorderedDictionary{UInt32, Float32},
+function getMS1PeakHeights!(ms1_max_heights::UnorderedDictionary{UInt32, U},
                             ptable::PrecursorDatabase, 
                             retentionTimes::AbstractArray, 
                             masses::AbstractArray,
                             intensities::AbstractArray, 
                             msOrders::AbstractArray,
-                            precursor_rts::Vector{Float32}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
-                            rt_tol::Float32, left_mz_tol::Float32, right_mz_tol::Float32, ms_file_idx::UInt32)
+                            precursor_rts::Vector{T}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
+                            rt_tol::T, left_mz_tol::U, right_mz_tol::U, ms_file_idx::UInt32) where {T,U<:AbstractFloat}
     #println("tunction")
     #i = 1
 

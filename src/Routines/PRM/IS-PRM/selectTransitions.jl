@@ -23,7 +23,7 @@ also sorted by MZ just like `precursorLit`
 function selectTransitions(window_center::T, 
                                 ptable::ISPRMPrecursorTable,
                                 right_precursor_tolerance::U,
-                                left_precursor_tolerance::U) where {T,U<:Real}
+                                left_precursor_tolerance::U) where {T,U<:AbstractFloat}
 
     transitions = Vector{Transition}();
     

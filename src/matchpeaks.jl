@@ -32,7 +32,7 @@ Type that represents a match between a fragment ion and a mass spectrum peak
 - getIonType(f::FragmentMatch) = getIonType(f.transition)
 - getInd(f::FragmentMatch) = getInd(f.transition)
 """
-mutable struct FragmentMatch{T<:Real}
+mutable struct FragmentMatch{T<:AbstractFloat}
     transition::Transition
     intensity::T
     match_mz::T
@@ -90,7 +90,7 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(transition::Transition, masses::Vector{Union{Missing, T}}, peak::Int; δ::U = 0.0) where {T,U<:Real}
+function getNearest(transition::Transition, masses::Vector{Union{Missing, T}}, peak::Int; δ::U = 0.0) where {T,U<:AbstractFloat}
     smallest_diff = abs(masses[peak]+ δ - getMZ(transition))
     best_peak = peak
     i = 0
@@ -145,8 +145,8 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, match::Int, transition::Transition, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:Real}
-    function updateFragmentMatch!(match::FragmentMatch{T}, mass::T, intensity::T, peak_ind::Int64) where {T<:Real}
+function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, match::Int, transition::Transition, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat}
+    function updateFragmentMatch!(match::FragmentMatch{T}, mass::T, intensity::T, peak_ind::Int64) where {T<:AbstractFloat}
         match.intensity += intensity
         match.match_mz = mass
         match.count += 1
@@ -200,7 +200,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32) where {T,U<:Real}
+function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32) where {T,U<:AbstractFloat}
 
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
@@ -258,7 +258,7 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0)) where {T,U<:Real}
+function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0)) where {T,U<:AbstractFloat}
     matches = Vector{FragmentMatch{T}}()
     for δ in δs
         matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx, ms_file_idx)
