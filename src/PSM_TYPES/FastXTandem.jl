@@ -1,27 +1,28 @@
 include("PSM.jl");
 
-mutable struct FastXTandem <: PSM
+mutable struct FastXTandem{T<:Real} <: PSM
     b_count::Int64
-    b_int::Float32
+    b_int::T
     y_count::Int64
-    y_int::Float32
+    y_int::T
     y_ions::Set{UInt8}
-    error::Float64
+    error::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-FastXTandem() = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float64(0), UInt32(0), UInt32(0))
-results = UnorderedDictionary{UInt32, FastXTandem}()
+#FastXTandem(type::DataType) where {T<:Real} = FastXTandem(0, convert(typeof(T), 0), 0, convert(typeof(T), 0), Set(UInt8[]), convert(typeof(T), 0), UInt32(0), UInt32(0))
+#results = UnorderedDictionary{UInt32, FastXTandem}()
 #Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 
-
-
-function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem}, matches::Vector{FragmentMatch})
+FastXTandem(::Type{Float32}) = FastXTandem(0, Float32(0), 0, Float32(0), Set(UInt8[]), Float32(0), UInt32(0), UInt32(0))
+FastXTandem(::Type{Float64}) = FastXTandem(0, Float64(0), 0, Float64(0), Set(UInt8[]), Float64(0), UInt32(0), UInt32(0))
+FastXTandem() = FastXTandem(Float64)
+function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem{U}}, matches::Vector{FragmentMatch{T}}) where {T,U<:Real}
     #UnorderedDictionary{UInt32, FastXTandem}()
     for match in matches
         if !isassigned(results, getPrecID(match.transition))
-            insert!(results, getPrecID(match.transition), FastXTandem())
+            insert!(results, getPrecID(match.transition), FastXTandem(U))
             results[getPrecID(match.transition)].ms_file_idx = getMSFileID(match)
         end
         ModifyFeatures!(results[getPrecID(match.transition)], match.transition, match.match_mz, match.intensity)
@@ -29,7 +30,7 @@ function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, FastXTandem}
     #results
 end
 
-function ModifyFeatures!(score::FastXTandem, transition::Transition, mass::Union{Missing, Float32}, intensity::Union{Missing, Float32})
+function ModifyFeatures!(score::FastXTandem{U}, transition::Transition, mass::Union{Missing, T}, intensity::Union{Missing, T}) where {U,T<:Real}
     if getIonType(transition) == 'b'
         score.b_count += 1
         score.b_int += intensity
@@ -46,11 +47,11 @@ end
 
 using SpecialFunctions
 
-function makePSMsDict(::FastXTandem)
+function makePSMsDict(::FastXTandem{T}) where {T<:Real}
     Dict(
-        :hyperscore => Float64[],
+        :hyperscore => T[],
         #:Δhyperscore => Float64[]
-        :error => Float64[],
+        :error => T[],
         :y_ladder => Int8[],
         :scan_idx => Int64[],
         :precursor_idx => UInt32[],
@@ -59,7 +60,7 @@ function makePSMsDict(::FastXTandem)
     )
 end
 
-function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, FastXTandem}; scan_idx::Int64 = 0)
+function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, FastXTandem{T}}; scan_idx::Int64 = 0) where {T<:Real}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::FastXTandem)
