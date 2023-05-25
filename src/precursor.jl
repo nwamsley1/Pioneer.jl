@@ -11,103 +11,48 @@ const default_mods::Dict{String, Float32} = Dict{String, Float32}(
 export PROTON, H2O, NEUTRON
 #Representation of Amino Acid
 ##########
-"""
-AA
 
-Type that represents an amino acid
-
-### Fields
-
-- aa::Char -- single character AA code 
-- mass::Float32 -- mass of an amino acid
-
-### Examples
-
-- `AA(aa::Char)` -- Inner constructor
-
-"""
-struct AA 
-    aa::Char
-    mass::Float32
-    #Constructor for amino acid. Restric inputs
-    #to valid amino acid symbols and assign correct mass
-    function AA(aa::Char)
-        AA_to_mass::Dict{Char, Float32} = Dict{Char, Float32}(
-            'A' => 71.03711,
-            'R' => 156.10111,
-            'N' => 114.04293,
-            'D' => 115.02694,
-            'C' => 103.00919,
-            'E' => 129.04259,
-            'Q' => 128.05858,
-            'G' => 57.02146,
-            'H' => 137.05891,
-            'I' => 113.08406,
-            'L' => 113.08406,
-            'K' => 128.09496,
-            'M' => 131.04049,
-            'F' => 147.06841,
-            'P' => 97.05276,
-            'S' => 87.03203,
-            'T' => 101.04768,
-            'W' => 186.07931,
-            'Y' => 163.06333,
-            'V' => 99.06841,
-            'U' => 150.95363,
-            'O' => 237.14773
-            )
-        m = try
-            AA_to_mass[aa]
-        catch
-            throw(ErrorException("The character $aa cannot be interpreted as an amino acid!"))
-        end
-        return new(aa, m)
-    end
-end
-
-#Getter methods
-getMass(aa::AA) = aa.mass
-getAA(aa::AA) = aa.aa
-
-export AA
-##########
-#Modification. Simple representation of mass modifiction
-##########
-"""
-MzFeature
-
-Type that represents a mass modification
-
-### Fields
-
-- mass:Float32 -- mass of the modification
-
-### Examples
-
-- `Mod(mass::Float32)` -- default constructor
-- `Mod(mod::String, mods_dict::Dict{String, Float32} = Dict{String, Float32}()) -- Constructor 
-that parses a string representation of an amino acid to get the mass of any modification of that amino acid`
-- `Mod(name::Char) = Mod(0.0)` -- constructor for unmodified AA
-- `Mod() = Mod(0.0)` -- constructor for no input
-
-"""
-struct Mod
-    mass::Float32
+function getMass(residue::Char)
+    AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
+        'A' => 71.03711,
+        'R' => 156.10111,
+        'N' => 114.04293,
+        'D' => 115.02694,
+        'C' => 103.00919,
+        'E' => 129.04259,
+        'Q' => 128.05858,
+        'G' => 57.02146,
+        'H' => 137.05891,
+        'I' => 113.08406,
+        'L' => 113.08406,
+        'K' => 128.09496,
+        'M' => 131.04049,
+        'F' => 147.06841,
+        'P' => 97.05276,
+        'S' => 87.03203,
+        'T' => 101.04768,
+        'W' => 186.07931,
+        'Y' => 163.06333,
+        'V' => 99.06841,
+        'U' => 150.95363,
+        'O' => 237.14773
+        )
+    AA_to_mass[residue]
 end
 
 """
-    Mod(mod::String, mods_dict::Dict{String, Float32})
+    getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: Real}
 
 Parses a string that is assumed to represent an amino acid and calculates its mass
 
 ### Input
 
-- `mod::String`: -- String representation of a potentially modified amino acid. Constructor enforces formatting. 
+- `residue::String`: -- String representation of a potentially modified amino acid.
 - `mods_dict` -- Dictionary for named modifications that could appear in `mod`
 
 ### Output
 
-Object of type "Mod" with field mass::Float32 that represents the mass of the modification
+Real number (Float64 by default) that represents the mass of the modification
 
 ### Notes
 
@@ -119,33 +64,25 @@ There can be three types of modifications.
 In this case mods_dict["Carb"] should return the appropriate mass
 
 """
-function Mod(mod::String, mods_dict::Dict{String, Float32} = Dict{String, Float32}())
-
+function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: Real}
     try
         #Single, unmodified amino acid
-        if length(mod) == 1
-            Mod(0.0)
+        if length(residue) == 1
+            getMass(residue[1])
         #Modified amino acid, so interpret modification
         else
-            m = match(r"^[A-Z]\[(.*)\]$", mod)
+            m = match(r"^[A-Z]\[(.*)\]$", residue)
             if startswith(m[1], "+")
-                Mod(parse(Float32, m[1][2:end])) #"K[+8.014199]"
+                parse(T, m[1][2:end]) + getMass(residue[1]) #"K[+8.014199]"
             else 
-                Mod(mods_dict[m[1]]) #getAA("C[Carb]")
+                mods_dict[m[1]] + getMass(residue[1]) #getAA("C[Carb]")
             end
         end
     catch
-        throw(ErrorException("$mod could not be parsed as given"))
+        throw(ErrorException("$residue could not be parsed as given"))
     end 
 end
 
-#Mod(string::String) = Mod(string, Dict{String, Float32}())
-#Optionally parse mods without a mods_dict
-Mod(name::Char) = Mod(0.0)
-Mod() = Mod(0.0)
-#Getter Functions
-getMass(mod::Mod) = mod.mass    
-export Mod
 
 ##########
 #Residue. Implementation of amino acid with custom mass modifications
@@ -183,22 +120,18 @@ struct Residue
     mass::Float32
 end
 
-function Residue(aa::AA)
-    Residue(getMass(aa))
-end
-
 #Residue('A')
-Residue(aa::Char) = Residue(AA(aa))
+Residue(aa::Char) = Residue(getMass(aa))
 
-Residue(aa::AA, mod::Mod) = Residue(getMass(mod)+getMass(aa))
+#Residue(aa::AA, mod::Mod) = Residue(getMass(mod)+getMass(aa))
 
-Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(AA(residue[1]), Mod(residue, mods_dict))
+Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(getMass(residue, mods_dict))
 
-Residue(residue::String) = Residue(residue, Dict{String, Float32}())
+Residue(residue::String) = Residue(getMass(residue))
 
-Residue(residue::String, mod_mass::Float32) = Residue(getMass(AA(residue[1])) + mod_mass)
+Residue(residue::String, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
 
-Residue(residue::Char, mod_mass::Float32) = Residue(getMass(AA(residue)) + mod_mass)
+Residue(residue::Char, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
 
 function getResidues(sequence::String, mods_dict::Dict{String, Float32} = default_mods)
     matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
@@ -211,8 +144,6 @@ getMass(residue::Residue) = residue.mass
 
 export Residue
 export getMass
-export getMod
-export getAA
 
 ##########
 #Ion, Transition, Precursor
