@@ -15,37 +15,13 @@ end
     #########
     #Tests for 'AA' Struct 
     #########
-    @test getAA(AA('A')) == 'A'
-    @test Tol(getMass(AA('A')), 71.03711)
-    #"Selenocysteine"
-    @test Tol(getMass(AA('U')), 150.95363)
+    @test Tol(getMass('A'), 71.03711)
+    @test Tol(getMass('U'), 150.95363)
+    @test_throws KeyError('Z') getMass('Z')
+    @test_throws ErrorException("%[bob] could not be parsed as given") getMass("%[bob]", Dict{String, Float32}("a" => Float32(0.0)))
+    @test Tol(getMass("C[Carb]", default_mods), 160.03065f0)
+    @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass("K"))
 
-    @test_throws ErrorException("The character Z cannot be interpreted as an amino acid!") AA('Z')
-    @test_throws ErrorException("The character % cannot be interpreted as an amino acid!") AA('%')
-
-    #########
-    #Tests for 'Mod' Struct
-    #########    
-    @test Tol(getMass(Mod("K[+8.014199]")), 8.014199)
-    @test Tol(getMass(Mod("K")), 0.0)
-    @test Tol(getMass(Mod('K')), 0.0)
-    @test Tol(getMass(Mod("C[Carb]", default_mods)), 57.021464)
-    #########
-    #Tests for 'Residue' Struct
-    #########
-    #Should throw an error
-
-    @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass(AA('K')))
-    #@test getMod(Residue("K[+8.014199]")) == Mod("K[+8.014199]", 8.014199)
-
-    @test Tol(getMass(Residue("K", Float32(8.014199))), 8.014199 + getMass(AA('K')))
-    #@test getMod(Residue("K", Float32(8.014199))) == Mod("K", 8.014199)
-
-    #"C[Carb]" should be a build in modification, which users could add to 
-    @test Tol(getMass(Residue("C[Carb]", default_mods)), 57.021464 + getMass(AA('C')))
-
-    @test_throws ErrorException("C[asdf] could not be parsed as given") getMod(Residue("C[asdf]")) 
-    
     # #########
     # #Tests for getIonMZ
     # #########
