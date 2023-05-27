@@ -71,7 +71,7 @@ In this case mods_dict["Carb"] should return the appropriate mass
 """
 #function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: AbstractFloat}
 function getMass(residue::String, mods_dict::Dict{String, T}) where {T <: AbstractFloat}
-   #try
+   try
         #Single, unmodified amino acid
         if length(residue) == 1
         getMass(first(residue))
@@ -90,9 +90,9 @@ function getMass(residue::String, mods_dict::Dict{String, T}) where {T <: Abstra
             
             0.0
         end
-    #catch
-    #    throw(ErrorException("$residue could not be parsed as given"))
-    #end 
+    catch
+        throw(ErrorException("$residue could not be parsed as given"))
+    end 
 end
 
 
@@ -146,12 +146,12 @@ Residue(residue::Char, mod_mass::T) where {T<:AbstractFloat} = Residue(getMass(r
 
 function getResidues(sequence::String, mods_dict::Dict{String, T} = default_mods) where {T<:AbstractFloat}
     matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
-    residues = Vector{Residue{T}}()
+    residues = Vector{Residue{T}}(undef, length(matches))
     if matches == nothing
         push!(residues, Residue(convert(T, 0.0)))
     else
-        for match in matches
-            push!(residues, Residue(sequence[match], mods_dict))
+        for (i, match) in enumerate(matches)
+            residues[i] = Residue(sequence[match], mods_dict)
         end
     end
     return residues
