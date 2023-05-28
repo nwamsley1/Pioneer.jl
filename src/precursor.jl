@@ -74,21 +74,22 @@ function getMass(residue::String, mods_dict::Dict{String, T}) where {T <: Abstra
    try
         #Single, unmodified amino acid
         if length(residue) == 1
-        getMass(first(residue))
-        #Modified amino acid, so interpret modification
+            getMass(first(residue))
+            #Modified amino acid, so interpret modification
         else
-            m = match(r"^[A-Z]\[(.*)\]$", residue)
-            if m != nothing
-                if startswith(first(m), "+")
-                    Float64(parse(T, @view(m[1][2:end])) + getMass(residue[1])::Float64) #"K[+8.014199]"
-                elseif haskey(mods_dict, first(m))
-                    Float64(mods_dict[first(m)] + getMass(first(residue))::Float64) #getAA("C[Carb]")
+            matches = eachmatch(r"\[([^\[\]]+)\]", residue)
+            mass = getMass(first(residue))
+            for match in matches
+                capture = first(match.captures)
+                if startswith(capture, "+")
+                    #mass += parse(T, @view(capture[2:end])) #"K[+8.014199]"
+                    mass += parse(T, @view(capture[2:end])) #"K[+8.014199]"
+                elseif haskey(mods_dict, capture)
+                    mass += mods_dict[capture] #getAA("C[Carb]")
                 end
-            else
-                0.0
+                
             end
-            
-            0.0
+            return mass
         end
     catch
         throw(ErrorException("$residue could not be parsed as given"))
@@ -145,14 +146,17 @@ Residue(residue::String) = Residue(getMass(residue))
 Residue(residue::Char, mod_mass::T) where {T<:AbstractFloat} = Residue(getMass(residue) + mod_mass)
 
 function getResidues(sequence::String, mods_dict::Dict{String, T} = default_mods) where {T<:AbstractFloat}
-    matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
-    residues = Vector{Residue{T}}(undef, length(matches))
-    if matches == nothing
-        push!(residues, Residue(convert(T, 0.0)))
-    else
-        for (i, match) in enumerate(matches)
-            residues[i] = Residue(sequence[match], mods_dict)
+    residues = Vector{Residue{T}}()#(undef, length(matches))
+    i = 1
+    for match in findall(r"[A-Z](\[.*?\])+", sequence)
+        for n in i:(first(match) - 1)
+            push!(residues, Residue(sequence[n]))
         end
+        push!(residues, Residue(sequence[match], mods_dict))
+        i = last(match) + 1
+    end
+    for n in i:length(sequence)
+        push!(residues, Residue(sequence[n]))
     end
     return residues
 end
