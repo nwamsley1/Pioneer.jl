@@ -1,4 +1,4 @@
-@testset "getIntegrationBounds.jl" begin
+@testset "getScanPairs.jl" begin
     heavy_scans = Float64[1, 2, 3, 4, 5]
     light_scans = Float64[0, 1.4, 1.7, 2.4, 4.1, 5.5]
     

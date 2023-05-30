@@ -114,7 +114,7 @@ include("../../../Routines/PRM/plotPRM.jl")=#
 #Files needed for PSM scoring
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","FastXTandem.jl"]]
 #Files needed for IS-PRM routine
-[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM", jl_file)) for jl_file in ["initTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","selectTransitions.jl","getBestPSMs.jl","getIntegrationBounds.jl","parEstimation.jl"]]
+[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM", jl_file)) for jl_file in ["initTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","selectTransitions.jl","getBestPSMs.jl","getScanPairs.jl","parEstimation.jl"]]
 [include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["plotPRM.jl"]]
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["LFQ.jl"]]
 
