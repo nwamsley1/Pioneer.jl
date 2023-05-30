@@ -188,13 +188,13 @@ In addition to mandatory field for `PrecursorDatabase`
                                             UnorderedDictionary{UInt32, UInt32}())` -- constructor for a placeholder 
 
 """
-mutable struct ISPRMPrecursorTable <: PrecursorDatabase
+mutable struct ISPRMPrecursorTable{T<:AbstractFloat} <: PrecursorDatabase
     id_to_prot::UnorderedDictionary{UInt32, Protein}
     prot_to_id::UnorderedDictionary{String, UInt32}
     id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
     pepGroup_to_id::UnorderedDictionary{String, UInt32}
     id_to_pep::UnorderedDictionary{UInt32, Peptide}
-    id_to_prec::Dictionary{UInt32, Precursor}
+    id_to_prec::Dictionary{UInt32, Precursor{T}}
     sorted_prec_ids::Vector{UInt32}
     prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}}
     #Specific to ISPRMPrecursorTable
@@ -209,7 +209,7 @@ ISPRMPrecursorTable() = ISPRMPrecursorTable(UnorderedDictionary{UInt32, Protein}
                                             UnorderedDictionary{UInt32, PeptideGroup}(),
                                             UnorderedDictionary{String, UInt32}(),
                                             UnorderedDictionary{UInt32, Peptide}(),
-                                            Dictionary{UInt32, Precursor}(),
+                                            Dictionary{UInt32, Precursor{Float64}}(),
                                             Vector{UInt32}(),
                                             Dictionary{UInt32, Vector{Transition}}(), 
                                             UnorderedDictionary{UInt32, LightHeavyPrecursorPair}(), 
@@ -229,8 +229,8 @@ function addPrecIDToLHPairID(p::ISPRMPrecursorTable, prec_id::UInt32, lh_pair_id
     end
 end
 
-isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
-isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor) = isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)) ∈ getSimplePrecursorSet(p)
+isinPrecursorSet(p::ISPRMPrecursorTable, mz::T, charge::UInt8, isotope::UInt8, pep_id::UInt32) where {T<:AbstractFloat} = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
+isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor{T}) where {T<:AbstractFloat}= isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)) ∈ getSimplePrecursorSet(p)
 
 """
     buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, Float32}, f_path::String)
@@ -251,7 +251,7 @@ Builds a `PrecursorTable` given a path to a tab delimited text file where each l
 ### Examples 
 
 """
-function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, Float32}, f_path::String)
+function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, T}, f_path::String) where {T<:AbstractFloat}
 
     function readHeader(f::IOStream)
         Dict(str => ind for (ind, str) in enumerate(map(string, split(readline(f), ","))))
@@ -309,7 +309,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
         end
     end
     
-    function addPrecursors!(ptable::ISPRMPrecursorTable, light_precursor::Precursor, light_sequence::String, heavy_precursor::Precursor, heavy_sequence::String, light_pep_id::UInt32, heavy_pep_id::UInt32, max_lh_pair_id::UInt32, max_prec_id::UInt32)
+    function addPrecursors!(ptable::ISPRMPrecursorTable, light_precursor::Precursor, light_sequence::String, heavy_precursor::Precursor{T}, heavy_sequence::String, light_pep_id::UInt32, heavy_pep_id::UInt32, max_lh_pair_id::UInt32, max_prec_id::UInt32) where {T<:AbstractFloat}
         
         max_lh_pair_id += UInt32(1)
         light_prec_id = getPrecID(light_precursor)
@@ -366,7 +366,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
         end
     end
 
-    function main(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, Float32}, f_path::String)
+    function main(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, T}, f_path::String) where {T<:AbstractFloat}
         open(f_path) do f #"./data/NRF2_SIL.txt"
 
             header = readHeader(f)
@@ -411,7 +411,8 @@ end
     isotope::UInt8
     pep_id::UInt32
 end=#
-mods_dict = Dict("Carb" => Float32(57.021464),
-                 "Harg" => Float32(10.008269),
-                 "Hlys" => Float32(8.014199),
-                 "Hglu" => Float32(6))
+const mods_dict = Dict("Carb" => Float64(57.021464),
+                 "Harg" => Float64(10.008269),
+                 "Hlys" => Float64(8.014199),
+                 "Hglu" => Float64(6))
+                 

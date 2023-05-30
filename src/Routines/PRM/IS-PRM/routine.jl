@@ -56,8 +56,8 @@ function parse_mods(fixed_mods)
 end
 
 params = (
-right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
-left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
+right_precursor_tolerance = Float64(params["right_precursor_tolerance"]),
+left_precursor_tolerance = Float64(params["left_precursor_tolerance"]),
 precursor_rt_tolerance = Float64(params["precursor_rt_tolerance"]),
 b_ladder_start = Int64(params["b_ladder_start"]),
 y_ladder_start = Int64(params["y_ladder_start"]),
@@ -65,14 +65,14 @@ precursor_charges = [UInt8(charge) for charge in params["precursor_charges"]],
 precursor_isotopes = [UInt8(isotope) for isotope in params["precursor_isotopes"]],
 transition_charges = [UInt8(charge) for charge in params["transition_charges"]],
 transition_isotopes = [UInt8(isotope) for isotope in params["transition_isotopes"]],
-fragment_match_ppm = Float32(params["fragment_match_ppm"]),
+fragment_match_ppm = Float64(params["fragment_match_ppm"]),
 minimum_fragment_count = UInt8(params["minimum_fragment_count"]),
 fragments_to_select = UInt8(params["fragments_to_select"]),
-precursort_rt_window = Float32(params["precursor_rt_window"]),
+precursort_rt_window = Float64(params["precursor_rt_window"]),
 max_variable_mods = Int(params["max_variable_mods"]),
 fixed_mods = parse_mods(params["fixed_mods"]),
 variable_mods = parse_mods(params["variable_mods"]),
-modification_masses = Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"]),
+modification_masses = Dict{String, Float64}(k => Float64(v) for (k, v) in params["modification_masses"]),
 ms_file_conditions = params["ms_file_conditions"]
 )
 
@@ -87,26 +87,6 @@ end
 ##########
 #Load Dependencies 
 ##########
-#=include("../../../precursor.jl")
-include("../../../binaryRangeQuery.jl")
-include("../../../matchpeaks.jl")
-include("../../../getPrecursors.jl")
-include("../../../PSM_TYPES/PSM.jl")
-include("../../../PSM_TYPES/FastXTandem.jl")
-include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
-include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/getMS1PeakHeights.jl")
-include("../../../Routines/PRM/IS-PRM/initTransitions.jl")
-include("../../../Routines/PRM/IS-PRM/getBestTransitions.jl")
-include("../../../SearchRAW.jl")
-include("../../../Routines/PRM/IS-PRM/buildPrecursorTable.jl")
-include("../../../Routines/PRM/IS-PRM/selectTransitions.jl")
-include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
-include("../../../Routines/PRM/IS-PRM/getIntegrationBounds.jl")
-include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
-include("../../../LFQ.jl")
-include("../../../Routines/PRM/plotPRM.jl")=#
-
 #Generic files in src directory
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRaw.jl","applyMods.jl"]]
 #Files needed for PRM routines
@@ -114,7 +94,7 @@ include("../../../Routines/PRM/plotPRM.jl")=#
 #Files needed for PSM scoring
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","FastXTandem.jl"]]
 #Files needed for IS-PRM routine
-[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM", jl_file)) for jl_file in ["initTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","selectTransitions.jl","getBestPSMs.jl","getIntegrationBounds.jl","parEstimation.jl"]]
+[include(joinpath(pwd(), "src", "Routines","PRM","IS-PRM", jl_file)) for jl_file in ["initTransitions.jl","getBestTransitions.jl","buildPrecursorTable.jl","selectTransitions.jl","getBestPSMs.jl","getScanPairs.jl","parEstimation.jl"]]
 [include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["plotPRM.jl"]]
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["LFQ.jl"]]
 
@@ -122,7 +102,7 @@ include("../../../Routines/PRM/plotPRM.jl")=#
 #Read Precursor Table
 ########## 
 ptable = ISPRMPrecursorTable()
-buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
+buildPrecursorTable!(ptable, params[:modification_masses], TRANSITION_LIST_PATH)
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 println("N threads ", Threads.nthreads())
 ##########

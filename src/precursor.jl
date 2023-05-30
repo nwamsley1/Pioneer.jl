@@ -1,19 +1,14 @@
 ##########
 #Global Constants
 ##########
-const H2O::Float32 = Float32(18.010565)
-const PROTON::Float32 = Float32(1.0072764)
-const NEUTRON::Float32 = Float32(1.00335)
+const H2O::Float64 = Float64(18.010565)
+const PROTON::Float64 = Float64(1.0072764)
+const NEUTRON::Float64 = Float64(1.00335)
 
-const default_mods::Dict{String, Float32} = Dict{String, Float32}(
-    "Carb" => Float32(57.021464))
+const default_mods::Dict{String, Float64} = Dict{String, Float64}(
+    "Carb" => Float64(57.021464))
 
-export PROTON, H2O, NEUTRON
-#Representation of Amino Acid
-##########
-
-function getMass(residue::Char)
-    AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
+const AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
         'A' => 71.03711,
         'R' => 156.10111,
         'N' => 114.04293,
@@ -37,7 +32,17 @@ function getMass(residue::Char)
         'U' => 150.95363,
         'O' => 237.14773
         )
-    AA_to_mass[residue]
+
+export PROTON, H2O, NEUTRON
+#Representation of Amino Acid
+##########
+
+function getMass(residue::Char)::Float64
+    if haskey(AA_to_mass, residue)
+        AA_to_mass[residue]
+    else
+        0.0
+    end
 end
 
 """
@@ -64,19 +69,27 @@ There can be three types of modifications.
 In this case mods_dict["Carb"] should return the appropriate mass
 
 """
-function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: Real}
-    try
+#function getMass(residue::String, mods_dict::Dict{String, T} = Dict{String, Float32}()) where {T <: AbstractFloat}
+function getMass(residue::String, mods_dict::Dict{String, T}) where {T <: AbstractFloat}
+   try
         #Single, unmodified amino acid
         if length(residue) == 1
-            getMass(residue[1])
-        #Modified amino acid, so interpret modification
+            getMass(first(residue))
+            #Modified amino acid, so interpret modification
         else
-            m = match(r"^[A-Z]\[(.*)\]$", residue)
-            if startswith(m[1], "+")
-                parse(T, m[1][2:end]) + getMass(residue[1]) #"K[+8.014199]"
-            else 
-                mods_dict[m[1]] + getMass(residue[1]) #getAA("C[Carb]")
+            matches = eachmatch(r"\[([^\[\]]+)\]", residue)
+            mass = getMass(first(residue))
+            for match in matches
+                capture = first(match.captures)
+                if startswith(capture, "+")
+                    #mass += parse(T, @view(capture[2:end])) #"K[+8.014199]"
+                    mass += parse(T, @view(capture[2:end])) #"K[+8.014199]"
+                elseif haskey(mods_dict, capture)
+                    mass += mods_dict[capture] #getAA("C[Carb]")
+                end
+                
             end
+            return mass
         end
     catch
         throw(ErrorException("$residue could not be parsed as given"))
@@ -116,8 +129,8 @@ Type that represents a (potentially modified) amino acid within a peptide
                mods_dict::Dict{String, Float32} = default_mods)` -- Gets a vector of residues given a string
    representation of an amino acid sequence
 """
-struct Residue
-    mass::Float32
+struct Residue{T<:AbstractFloat}
+    mass::T
 end
 
 #Residue('A')
@@ -125,18 +138,27 @@ Residue(aa::Char) = Residue(getMass(aa))
 
 #Residue(aa::AA, mod::Mod) = Residue(getMass(mod)+getMass(aa))
 
-Residue(residue::String, mods_dict::Dict{String, Float32}) = Residue(getMass(residue, mods_dict))
+Residue(residue::String, mods_dict::Dict{String, T}) where {T<:AbstractFloat} = Residue(getMass(residue, mods_dict))
 
 Residue(residue::String) = Residue(getMass(residue))
 
-Residue(residue::String, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
+#Residue(residue::String, mod_mass::T) where {T<:AbstractFloat}
+Residue(residue::Char, mod_mass::T) where {T<:AbstractFloat} = Residue(getMass(residue) + mod_mass)
 
-Residue(residue::Char, mod_mass::Float32) = Residue(getMass(residue) + mod_mass)
-
-function getResidues(sequence::String, mods_dict::Dict{String, Float32} = default_mods)
-    matches = findall(r"[A-Z]\[.*?\]|[A-Z]", sequence)
-    residues = [Residue(sequence[m], mods_dict) for m in matches]
-    residues
+function getResidues(sequence::String, mods_dict::Dict{String, T} = default_mods) where {T<:AbstractFloat}
+    residues = Vector{Residue{T}}()#(undef, length(matches))
+    i = 1
+    for match in findall(r"[A-Z](\[.*?\])+", sequence)
+        for n in i:(first(match) - 1)
+            push!(residues, Residue(sequence[n]))
+        end
+        push!(residues, Residue(sequence[match], mods_dict))
+        i = last(match) + 1
+    end
+    for n in i:length(sequence)
+        push!(residues, Residue(sequence[n]))
+    end
+    return residues
 end
 
 #Getter methods
@@ -170,12 +192,12 @@ Type that represents an m/z ratio with a ppm tolerance
 - getLow(mz_feature::MzFeature) = mz_feature.low
 - getHigh(mz_feature::MzFeature) = mz_feature.high
 """
-struct MzFeature
-    mono::Float32
-    low::Float32
-    high::Float32
-    function MzFeature(mono::Float32; ppm::Float32 = Float32(20))
-        new(mono, Float32(mono*(1 - ppm/1e6)), Float32(mono*(1 + ppm/1e6)))
+struct MzFeature{T<:AbstractFloat}
+    mono::T
+    low::T
+    high::T
+    function MzFeature(mono::S; ppm::S = Float32(20)) where {S <: AbstractFloat}
+        new{S}(mono, convert(S, (mono*(1 - ppm/1e6))), convert(S, (mono*(1 + ppm/1e6))))
     end
 end
 
@@ -248,7 +270,7 @@ struct Transition <: Ion
     ind::UInt8 #for b3+1 ion, the "ind" is 3
     charge::UInt8
     iosotope::UInt8 #diference in number of neutrons between the monoisotopic
-    function Transition(frag_mz::Float32, prec_id::UInt32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm = Float32(20))
+    function Transition(frag_mz::T, prec_id::UInt32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm::T = convert(T, 20)) where {T <: AbstractFloat}
         new(MzFeature(frag_mz, ppm = ppm), 
                        prec_id, ion_type, ind, charge, isotope
                        )
@@ -263,7 +285,7 @@ Transition() = Transition(Float32(0.0), UInt32(0), '_', UInt8(0), UInt8(0), UInt
     
     Constructor for the `Transition` struct. Given a list of amino acid residues, ion type (b or y), charge state, and isotopic state makes a transition with the correct mz. 
 """
-function Transition(residues::Vector{Residue}; ion_type::Char = 'y', charge::UInt8 = UInt8(1), ind::UInt8 = UInt8(length(residues)), isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0))
+function Transition(residues::Vector{Residue{T}}; ion_type::Char = 'y', charge::UInt8 = UInt8(1), ind::UInt8 = UInt8(length(residues)), isotope::UInt8 = UInt8(0), prec_id::UInt32 = UInt32(0)) where {T<:AbstractFloat}
     #function Transition(frag_mz::Float32, prec_id::UInt32, ion_type::Char, ind::UInt8, charge::UInt8, isotope::UInt8; ppm = Float32(20))
     #function getFragIonMZ(residues::Vector{Residue}, modifier::Float32, charge::UInt8, isotope::UInt8)              
     #    (sum(map(residue->getMass(residue), residues)) .+ (modifier + isotope*NEUTRON))/charge
@@ -323,8 +345,8 @@ Type that represents a precursor (A peptide parent ion)
 
 - getResidues(precursor::Precursor) = precursor.residues
 """
-struct Precursor <: Ion
-    residues::Vector{Residue}
+struct Precursor{T<:AbstractFloat} <: Ion
+    residues::Vector{Residue{T}}
     mz::MzFeature
     charge::UInt8
     isotope::UInt8
@@ -336,8 +358,8 @@ struct Precursor <: Ion
     Inner constructor for the `Precursor` struct. Given a list of amino acid residues, an mz, charge, and
     an isotope state, makes a precursor object with the correct mz.
     """
-    function Precursor(residues::Vector{Residue}, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32, prec_id::UInt32; ppm = Float32(20))
-        new(residues, MzFeature(mz, ppm = ppm), 
+    function Precursor(residues::Vector{Residue{S}}, mz::S, charge::UInt8, isotope::UInt8, pep_id::UInt32, prec_id::UInt32; ppm = convert(S, 20)) where {S<:AbstractFloat}
+        new{S}(residues, MzFeature(mz, ppm = ppm), 
                        charge, isotope, pep_id, prec_id)
             
     end
@@ -352,7 +374,7 @@ Constructor for the `Precursor` struct. Given a list of amino acid residues, a c
 an isotope state, makes a precursor object with the correct mz. 
 (link to Precursor)
 """
-function Precursor(residues::Vector{Residue}, charge::UInt8, isotope::UInt8 = UInt8(0), pep_id::UInt32 = UInt32(0), prec_id::UInt32 = UInt32(0))
+function Precursor(residues::Vector{Residue{T}}, charge::UInt8, isotope::UInt8 = UInt8(0), pep_id::UInt32 = UInt32(0), prec_id::UInt32 = UInt32(0)) where {T<:AbstractFloat}
     Precursor(
               residues,
               getIonMZ(residues, charge, isotope = isotope),
@@ -370,16 +392,18 @@ Alternate constructor for the `Precursor` struct. Can accept a string representa
 and convert to residues `Array{Residue, 1}`. 
 (link to Precusor)
 """
-Precursor(sequence::String; mods_dict::Dict{String, Float32} = Dict{String, Float32}(), 
+function Precursor(sequence::String; mods_dict::Dict{String, T} = Dict{String, Float64}(), 
             charge::UInt8 = UInt8(2), isotope::UInt8 = UInt8(0), 
             pep_id::UInt32 = UInt32(0), prec_id::UInt32 = UInt32(0)
-        ) = Precursor(getResidues(sequence, mods_dict), charge, isotope, pep_id, prec_id)
+        ) where {T<:AbstractFloat}
+    Precursor(getResidues(sequence, mods_dict), charge, isotope, pep_id, prec_id)
+end
 
 """
     Precursor()
     Constructor for an "empty" or "default" precursor
 """
-Precursor() = Precursor(Vector{Residue}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0))
+Precursor() = Precursor(Vector{Residue{T}}(), MzFeature(), UInt8(0), UInt8(0), UInt32(0), UInt32(0)) where {T<:AbstractFloat}
 
 getResidues(precursor::Precursor) = precursor.residues
 addProtein(precursor::Precursor) = push!(precursor.pep_id)
@@ -395,16 +419,16 @@ length(precursor::Precursor) = length(getResidues(precursor))
     getBIonModifier(charge::UInt8)
 Mass modification that needs to be added to b-ions
 """
-function getBIonModifier(charge::UInt8)
-    PROTON*charge
+function getBIonModifier(charge::UInt8, proton::T = PROTON) where {T<:AbstractFloat}
+    proton*charge
 end
 
 """
     getYIonModifier(charge::UInt8)
 Mass modification that needs to be added to y-ions
 """
-function getYIonModifier(charge::UInt8)
-    PROTON*charge + H2O
+function getYIonModifier(charge::UInt8, proton::T = PROTON, h2o::T = H2O) where {T<:AbstractFloat}
+    PROTON*charge + h2o
 end
 
 """
@@ -446,7 +470,7 @@ julia> getIonMZ(reverse(getResidues("PEPTIDE"))[1:6], UInt8(1))
 ```
 
 """
-function getIonMZ(residues::Vector{Residue}, charge::UInt8; modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))
+function getIonMZ(residues::Vector{Residue{T}}, charge::UInt8; modifier::T = PROTON*charge + H2O, isotope::UInt8 = UInt8(0)) where {T <: AbstractFloat}
     #modifier should be "PROTON*charge + H2O" for 'p' and 'y' ions
     #and "PROTON*charge" for 'b' ions. 
     (sum(map(residue->getMass(residue), residues))+ #Sum residue masses
@@ -471,7 +495,7 @@ Alternate getIonMZ method that chooses the correct mass modifier for 'b', 'y', a
         getIonMZ(residues::Vector{Residue}, charge::UInt8; modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))
     for more details
 """
-function getIonMZ(residues::Vector{Residue}, ion_type::Char, charge::UInt8; isotope::UInt8 = UInt8(0))
+function getIonMZ(residues::Vector{Residue{T}}, ion_type::Char, charge::UInt8; isotope::UInt8 = UInt8(0)) where {T<:AbstractFloat}
     #modifier should be "PROTON*charge + H2O" for 'p' and 'y' ions
     #and "PROTON*charge" for 'b' ions. 
     if ion_type == 'b'
@@ -504,7 +528,7 @@ export getIonMZ
 
     (link to getResidues())
  """
-function getPrecursors(residues::Vector{Residue}; charges::Vector{UInt8} = UInt8[1,2],isotopes::Vector{UInt8}=UInt8[0],pep_id::UInt32=UInt32(0))
+function getPrecursors(residues::Vector{Residue{T}}; charges::Vector{UInt8} = UInt8[1,2],isotopes::Vector{UInt8}=UInt8[0],pep_id::UInt32=UInt32(0)) where {T<:AbstractFloat}
     [Precursor(residues, charge, isotope, pep_id) for charge in charges for isotope in isotopes]
 end
 
@@ -561,9 +585,9 @@ julia> getIonSeries(getResidues("PEPTIDE"), UInt8(2), start = 4, modifier = PROT
 ```
 
 """
-function getIonSeries(residues::Vector{Residue}, charge::UInt8; start::Int = 3, modifier::Float32 = PROTON*charge + H2O, isotope::UInt8 = UInt8(0))
+function getIonSeries(residues::Vector{Residue{T}}, charge::UInt8; start::Int = 3, modifier::T = PROTON*charge + H2O, isotope::UInt8 = UInt8(0)) where {T<:AbstractFloat}
     N = length(residues)
-    cumulative_mass = zeros(Float32, N)
+    cumulative_mass = zeros(T, N)
     cumulative_mass[1] = getMass(residues[1])
     for i in 2:N
         cumulative_mass[i] = cumulative_mass[i-1] + getMass(residues[i])
@@ -640,23 +664,23 @@ Alternate convience methods
               y_start::Int = 3, 
               b_start::Int = 3)` - Gets b and y ion seriers for multiple charge and isotopic states
 """
-function getFragIons(residues::Vector{Residue}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3)
+function getFragIons(residues::Vector{Residue{T}}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3) where {T<:AbstractFloat}
     vcat(getIonSeries(residues, charge, start = b_start, modifier =  getBIonModifier(charge), isotope = isotope),
     getIonSeries(reverse(residues), charge, start = y_start, modifier =  getYIonModifier(charge), isotope = isotope))
 end
 
-getFragIons(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3
-            ) = getFragIons(getResidues(precursor),
+getFragIons(precursor::Precursor{T}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3
+            ) where {T<:Real} = getFragIons(getResidues(precursor),
                             charge = charge, isotope = isotope, y_start = y_start, b_start = b_start
-            )
+            ) 
 
-function getFragIons(precursor::Precursor,charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3)
+function getFragIons(precursor::Precursor{T},charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3) where {T<:AbstractFloat}
     vec(hcat([getFragIons(getResidues(precursor), charge = charge, isotope = isotope, y_start = y_start, b_start = b_start) for charge in charges for isotope in isotopes]...))
 end 
 
 export getAllIonMz
-function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::Float32 = H2O + PROTON*charge, ppm = Float32(20.0))
-        map(transition -> Transition(transition[2]::Float32
+function getTransitionSeries(residues::Vector{Residue{T}}, charge::UInt8 = UInt8(1); ion_type::Char = 'y', prec_id::UInt32 = UInt32(0), isotope::UInt8 = UInt8(0), start::Int = 3, modifier::T = H2O + PROTON*charge, ppm::T = 20.0) where {T<:AbstractFloat}
+        map(transition -> Transition(transition[2]::T
                             , prec_id, ion_type, UInt8(transition[1]+start - 1),
                             charge,#ind. 3 for y3+n ion.
                             #ststart -1,
@@ -671,17 +695,16 @@ function getTransitionSeries(residues::Vector{Residue}, charge::UInt8 = UInt8(1)
         )
 end
 
-function getTransitions(precursor::Precursor; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3, ppm = Float32(20.0))
+function getTransitions(precursor::Precursor{T}; charge::UInt8 = UInt8(1), isotope::UInt8 = UInt8(0), y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0) where {T<:AbstractFloat}
     vcat(getTransitionSeries(getResidues(precursor), charge, ion_type = 'b', prec_id = getPrecID(precursor), isotope = isotope, start = b_start, modifier = PROTON*charge, ppm = ppm),
     getTransitionSeries(reverse(getResidues(precursor)), charge, ion_type = 'y', prec_id = getPrecID(precursor), isotope = isotope, start = y_start, modifier = H2O + PROTON*charge, ppm = ppm))
 end
 
-function getTransitions(precursor::Precursor, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm = Float32(20.0))
+function getTransitions(precursor::Precursor{T}, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0) where {T<:AbstractFloat}
     vec(hcat([getTransitions(precursor, charge = charge, isotope = isotope, y_start = y_start, b_start = b_start, ppm= ppm) for charge in charges for isotope in isotopes]...))
 end
 
 export getTransitions
-
 
 #Can provide a list of named tuples to specify exactly which fragments to get
 export Ion
@@ -703,53 +726,3 @@ export getFragIonMZ
 export getResidues
 export MzFeature
 export getHigh, getLow, MzFeature
-##########
-#Peptide
-##########
-#=
-abstract type AbstractPrecursor end
-
-mutable struct TargetPrecursor <: AbstractPrecursor
-    sequence::String
-    unmodified_sequence::String
-    residues::Vector{Residue}
-    transitions::Vector{Transition}
-    precursor::Precursor
-    #Some sort of dataframe with rows for scans and columns for transitions
-    mods::Vector{String}
-    isotope_label::String
-    function TargetPeptide(sequence::String, mods_dict::Dict{String, Float32}; charge::Int32 = Int32(2), pep_id::Int32 = Int32(0))
-        residues = getResidues(sequence, mods_dict)
-        new(
-            sequence, #sequence
-            replace(sequence, r"(\[.*?\])"=>""), #unmodified_sequence
-            residues, #residues
-            Vector{Transition}(), #transitions
-            Precursor(residues, charge, pep_id), #mz for each isotope
-            map(mod -> sequence[mod], findall(r"[A-Z]\[.*?\]", sequence)), #Mods
-            isotope_label #isotope_label.
-        )
-    end
-end
-
-getResidues(precursor::AbstractPrecursor) = precursor.residues
-getSequence(pep::AbstractPrecursor) = pep.sequence
-getMZ(precursor::AbstractPrecursor) = getMZ(precursor.precursor)
-getCharge(precursor::AbstractPrecursor) = getCharge(precursor.precursor)
-getPepID(precursor::AbstractPrecursor) = getPepID(precursor.precursor)
-
-function frag!(precursor::AbstractPrecursor, charges::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, isotopes::Vector{Int32} = Vector{Int32}([0]))
-
-    peptide.transitions = getFragIons.(getResidues(precursor), 
-                                      getID(precursor), 
-                                      getMZ(precursor), 
-                                      charges, isotopes, y_start, b_start
-                                     )
-
-end
-export Transition
-export Precursor
-export AbstractPeptide
-export TargetPeptide
-=#
-

@@ -1,4 +1,5 @@
 using DataFrames
+
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
 include("../src/PSM_TYPES/FastXTandem.jl")
@@ -28,9 +29,9 @@ include("../src/Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
 #include("./Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
 include("Routines/PRM/IS-PRM-SURVEY/getBestTransitions.jl")
 
-include("../src/Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("../src/Routines/PRM/IS-PRM/getScanPairs.jl")
 #include("./Routines/PRM/IS-PRM/getIntegrationBounds.jl")
-include("Routines/PRM/IS-PRM/getIntegrationBounds.jl")
+include("Routines/PRM/IS-PRM/getScanPairs.jl")
 
 include("../src/LFQ.jl")
 include("LFQ.jl")
@@ -55,8 +56,8 @@ using Arrow, JSON, Tables, DataFrames, Plots
         return fixed_mods_parsed
     end
     params = (
-    right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
-    left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
+    right_precursor_tolerance = Float64(params["right_precursor_tolerance"]),
+    left_precursor_tolerance = Float64(params["left_precursor_tolerance"]),
     precursor_rt_tolerance = Float64(params["precursor_rt_tolerance"]),
     b_ladder_start = Int64(params["b_ladder_start"]),
     y_ladder_start = Int64(params["y_ladder_start"]),
@@ -64,7 +65,7 @@ using Arrow, JSON, Tables, DataFrames, Plots
     precursor_isotopes = [UInt8(isotope) for isotope in params["precursor_isotopes"]],
     transition_charges = [UInt8(charge) for charge in params["transition_charges"]],
     transition_isotopes = [UInt8(isotope) for isotope in params["transition_isotopes"]],
-    fragment_match_ppm = Float32(params["fragment_match_ppm"]),
+    fragment_match_ppm = Float64(params["fragment_match_ppm"]),
     minimum_fragment_count = UInt8(params["minimum_fragment_count"]),
     fragments_to_select = UInt8(params["fragments_to_select"]),
     precursort_rt_window = Float32(params["precursor_rt_window"]),
@@ -79,6 +80,10 @@ using Arrow, JSON, Tables, DataFrames, Plots
                        "../data/parquet/GSTM4_VAVWGNK.arrow"]
     TRANSITION_LIST_PATH = "../data/parquet/transition_list.csv"
     ptable = ISPRMPrecursorTable()
+    const mods_dict = Dict("Carb" => Float64(57.021464),
+                 "Harg" => Float64(10.008269),
+                 "Hlys" => Float64(8.014199),
+                 "Hglu" => Float64(6))
     buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
     combined_scored_psms = makePSMsDict(FastXTandem())
     combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()
@@ -101,8 +106,8 @@ using Arrow, JSON, Tables, DataFrames, Plots
                                                 params[:b_ladder_start],
                                                 params[:y_ladder_start],
                                                 params[:fragment_match_ppm],
-                                                UInt32(ms_file_idx)
-                                                )
+                                                UInt32(ms_file_idx),
+                                                data_type = eltype(disallowmissing(MS_TABLE[:masses][1])))
         lock(lk) do 
             for key in keys(combined_scored_psms)
                 append!(combined_scored_psms[key], scored_psms[key])
@@ -138,5 +143,20 @@ using Arrow, JSON, Tables, DataFrames, Plots
     include("../src/Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
     #include("./Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
     include("Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
+
+    ######
+    #IS-PRM-Survey
+    ######
+    #Make sure this routine doesn't cause any errors. 
+    cd("../")
+    IS_PRM_SURVEY = `julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json ./data/parquet/ ./data/NRF2_SIL.txt`
+    run(IS_PRM_SURVEY)
+    cd("test/")
+    
+    
+    cd("../")
+    IS_PRM = `julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-TEST.json ./data/parquet ./data/parquet/transition_list.csv`
+    run(IS_PRM)
+    cd("test/")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")

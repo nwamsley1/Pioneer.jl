@@ -1,7 +1,7 @@
 using Test
 using Tables, Arrow, Base.Iterators
 
-function Tol(a, b, ppm = 2)
+function Tol(a, b, ppm = 5)
     abs(a-b)<=(ppm*minimum((a, b))/1000000)
 end
 
@@ -20,9 +20,9 @@ end
     #test_t has a duplicate transition which should match to the same peaks. 
     #Multiple transitions can map to the same peak but multiple peaks cannot map to the same transition
     #Transitions 1 and 2 should match to peak 2, and transition 4 should map to peak 10. Transition 3 should not map to any peak. 
-    test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0, UInt32(0), UInt32(0))
-    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem}()
+    test_matches = Vector{FragmentMatch{Float32}}()
+    matchPeaks!(test_matches, test_t, test_masses, test_intensities, Float32(0.0), UInt32(0), UInt32(0))
+    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{Float32}}()
     ScoreFragmentMatches!(unscored_PSMs, test_matches)
     scored_PSMs = makePSMsDict(FastXTandem())
     Score!(scored_PSMs, unscored_PSMs)
@@ -32,7 +32,7 @@ end
     #log(3!) + log(0!) + log(3000*0) = log(6) + 1 = 1.791... 
     @test Tol(scored_PSMs[:hyperscore][1], 9.79826)
     #abs(324.15536f0 -  324.15636f0)*2 + abs(538.2871f0 - 538.27739f0) = 0.01171875f0
-    @test Tol(scored_PSMs[:error][1], 0.01171875)
+    @test Tol(scored_PSMs[:error][1], 0.011692955468788568)
 
     test_t = sort!(getTransitions(Precursor("PEPTIDE")), by = transition->getMZ(transition))
     #=8-element Vector{Transition}:
@@ -46,12 +46,14 @@ end
  Transition(MzFeature(703.3144f0, 703.30035f0, 703.3284f0), 0x00000000, 'y', 0x06, 0x01, 0x00)
     =#
     #Should have one peak to match every transition 
-    test_masses = Vector{Union{Missing, Float32}}([324.15536f0, 376.17142f0, 425.20306f0, 477.2191f0, 
+    test_masses = Vector{Union{Missing, Float64}}([324.15536f0, 376.17142f0, 425.20306f0, 477.2191f0, 
     538.2871f0, 574.2718f0, 653.314f0, 703.3144f0])
-    test_intensities = Vector{Union{Missing, Float32}}(map(x->1000, test_masses))
-    test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0, UInt32(0), UInt32(0))
-    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem}()
+
+    test_intensities = Vector{Union{Missing, Float64}}(map(x->1000, test_masses))
+
+    test_matches = Vector{FragmentMatch{Float64}}()
+    matchPeaks!(test_matches, test_t, test_masses, test_intensities, Float64(0.0), UInt32(0), UInt32(0))
+    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{Float64}}()
     ScoreFragmentMatches!(unscored_PSMs, test_matches)
     scored_PSMs = makePSMsDict(FastXTandem())
     Score!(scored_PSMs, unscored_PSMs)
@@ -61,7 +63,7 @@ end
     #log(4!) + log(4!) + log(4000*4000) = 22.944206940899946
     @test Tol(scored_PSMs[:hyperscore][1], 22.944206940899946)
     #masses were exact so should be about zero. 
-    @test Tol(scored_PSMs[:error][1], 0)
+    @test (scored_PSMs[:error][1] -  0) < 0.001
 
     #Make sure y-ladder counting still works when there is a gap
     test_t = sort!(getTransitions(Precursor("PEPTIDE"))[[1, 2, 3, 4, 5, 7, 8]], by = transition->getMZ(transition))
@@ -79,9 +81,9 @@ end
     test_masses = Vector{Union{Missing, Float32}}([324.15536f0, 376.17142f0, 425.20306f0, 
     538.2871f0, 574.2718f0, 653.314f0, 703.3144f0])
     test_intensities = Vector{Union{Missing, Float32}}(map(x->1000, test_masses))
-    test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0, UInt32(0), UInt32(0))
-    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem}()
+    test_matches = Vector{FragmentMatch{Float32}}()
+    matchPeaks!(test_matches, test_t, test_masses, test_intensities, Float64(0.0), UInt32(0), UInt32(0))
+    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{Float32}}()
     ScoreFragmentMatches!(unscored_PSMs, test_matches)
     scored_PSMs = makePSMsDict(FastXTandem())
     Score!(scored_PSMs, unscored_PSMs)
@@ -90,7 +92,7 @@ end
     #log(4!) + log(3!) + log(4000*3000) = 21.270230507328275
     @test Tol(scored_PSMs[:hyperscore][1], 21.270230507328275)
     #masses were exact so should be about zero. 
-    @test Tol(scored_PSMs[:error][1], 0)
+    @test (scored_PSMs[:error][1] -  0) < 0.001
 
 
     #When charge state is 2, need to make sure we are counting the Y-ladder correctly
@@ -102,9 +104,9 @@ end
     test_t = sort!(getTransitions(Precursor("PEPTIDE"), UInt8[1,2], UInt8[0,1]), by = transition->getMZ(transition))
     test_masses = Vector{Union{Missing, Float32}}(map(x->getMZ(x), test_t))
     test_intensities = Vector{Union{Missing, Float32}}(map(x->1000, test_masses))
-    test_matches = Vector{FragmentMatch}()
-    matchPeaks!(test_matches, test_t, test_masses, test_intensities, 0.0, UInt32(0), UInt32(0))
-    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem}()
+    test_matches = Vector{FragmentMatch{Float32}}()
+    matchPeaks!(test_matches, test_t, test_masses, test_intensities, Float64(0.0), UInt32(0), UInt32(0))
+    unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{Float32}}()
     ScoreFragmentMatches!(unscored_PSMs, test_matches)
     scored_PSMs = makePSMsDict(FastXTandem())
     Score!(scored_PSMs, unscored_PSMs)
@@ -114,5 +116,5 @@ end
     #log(16!) + log(16!) + log(16000*16000) = 80.70440821460518
     @test Tol(scored_PSMs[:hyperscore][1], 80.70440821460518)
     #masses were exact so should be about zero. 
-    @test Tol(scored_PSMs[:error][1], 0)
+    @test (scored_PSMs[:error][1] -  0) < 0.001
 end

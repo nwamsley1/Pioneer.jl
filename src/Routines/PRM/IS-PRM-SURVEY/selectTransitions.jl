@@ -20,16 +20,16 @@ also sorted by MZ just like `precursorLit`
 ### Examples 
 
 """
-function selectTransitions(window_center::Float32, 
+function selectTransitions(window_center::T, 
                                 ptable::PrecursorTable, 
-                                right_precursor_tolerance::Float32,
-                                left_precursor_tolerance::Float32,
+                                right_precursor_tolerance::U,
+                                left_precursor_tolerance::U,
                                 #transition_charges::Vector{UInt8},
                                 #transition_isotopes::Vector{UInt8},
                                 #b_start::Int64,
                                 #y_start::Int64,
                                 #fragment_match_ppm::Float32
-                                )
+                                ) where {T,U<:Real}
 
     transitions = Vector{Transition}();
 

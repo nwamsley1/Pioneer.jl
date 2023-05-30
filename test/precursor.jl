@@ -1,9 +1,6 @@
 #using Titus
 using Test
-const default_mods::Dict{String, Float32} = 
-Dict{String, Float32}(
-    "Carb" => Float32(57.021464)
-)
+
 function Tol(a, b, ppm = 2)
     abs(a-b)<=(ppm*minimum((a, b))/1000000)
 end
@@ -17,27 +14,27 @@ end
     #########
     @test Tol(getMass('A'), 71.03711)
     @test Tol(getMass('U'), 150.95363)
-    @test_throws KeyError('Z') getMass('Z')
-    @test_throws ErrorException("%[bob] could not be parsed as given") getMass("%[bob]", Dict{String, Float32}("a" => Float32(0.0)))
+    @test Tol(0.0, getMass('Z'))
+    @test Tol(0.0, getMass("%[bob]", Dict{String, Float32}("a" => Float32(0.0))))
     @test Tol(getMass("C[Carb]", default_mods), 160.03065f0)
-    @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass("K"))
+    @test Tol(getMass(Residue("K[+8.014199]", default_mods)), 8.014199 + getMass("K", default_mods))
 
     # #########
     # #Tests for getIonMZ
     # #########
-    TIDE = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
+    TIDE = Array{Residue{Float64}, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E')])
     @test Tol(getIonMZ(TIDE, 'y', UInt8(1)), 477.219119)
     @test Tol(getIonMZ(TIDE, 'y', UInt8(2)), 239.113198)
 
-    PEP = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P')])
+    PEP = Array{Residue{Float64}, 1}([Residue('P') , Residue('E'), Residue('P')])
     @test Tol(getIonMZ(PEP, 'b', UInt8(1)), 324.155397)
     @test Tol(getIonMZ(PEP, 'b', UInt8(2)), 162.581336)
 
-    TIDEK_mod = Array{Residue, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
+    TIDEK_mod = Array{Residue{Float64}, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]", default_mods)])
     @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(1)), 613.328281)
     @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(2)), 307.167779)
 
-    PEPTIDE = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
+    PEPTIDE = Array{Residue{Float64}, 1}([Residue('P') , Residue('E'), Residue('P'),
                                  Residue('T') , Residue('I'), Residue('D'), 
                                  Residue('E')])
     
@@ -50,9 +47,9 @@ end
     @test Tol(getIonMZ(PEPTIDE,'p',UInt8(3),isotope = UInt8(1)), 267.79494)
     @test Tol(getIonMZ(PEPTIDE,'p',UInt8(3),isotope = UInt8(2)), 268.129116)
 
-    PEPTIDEK_mod = Array{Residue, 1}([Residue('P') , Residue('E'), Residue('P'),
+    PEPTIDEK_mod = Array{Residue{Float64}, 1}([Residue('P') , Residue('E'), Residue('P'),
                                       Residue('T') , Residue('I'), Residue('D'), 
-                                      Residue('E'), Residue("K[+8.014199]")])
+                                      Residue('E'), Residue("K[+8.014199]", default_mods)])
 
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(0)), 468.741839)
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(1)), 469.243364)
@@ -96,7 +93,7 @@ end
     #########
     #Tests for 'getFragIons' function and methods
     #########
-    PEPTIDE_frags_charge1 = sort(Float32[
+    PEPTIDE_frags_charge1 = sort(Float64[
     227.102633, # b2+1
     324.155397, # b3+1
     425.203075, # b4+1
@@ -114,7 +111,7 @@ end
                         PEPTIDE_frags_charge1
                         )
     @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
-    PEPTIDE_frags_charge2 = sort(Float32[
+    PEPTIDE_frags_charge2 = sort(Float64[
         162.581336, # b3+1
         213.105176, # b4+1
         269.647208, # b5+1
@@ -130,12 +127,10 @@ end
                             PEPTIDE_frags_charge2
                             )
       @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
-
       
       compare_frags = zip(sort([getMZ(x) for x in getTransitions(PEPTIDE_1, charge = UInt8(2), y_start = 2, b_start = 2)]), 
       PEPTIDE_frags_charge2
       )
-
       @test all([Tol(pair[1], pair[2]) for pair in compare_frags])
 
 end
