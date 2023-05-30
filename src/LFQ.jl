@@ -1,8 +1,8 @@
 using Statistics 
 
-function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where T <: Real
+function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
     #S = allowmissing(Matrix(missings(M, N)))
-    S = Array{Union{Missing,Float64}}(undef, (M, N))
+    S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
             if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
                if abundance[i] != 0.0
@@ -15,7 +15,7 @@ function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int6
     return S
 end
 
-function getB(S::Matrix{Union{Missing, Float64}}, N::Int, M::Int)
+function getB(S::Matrix{Union{Missing, T}}, N::Int, M::Int) where {T<:Real}
     B = zeros(N + 1)
     for i in 1:N
         for j in 1:N
@@ -53,7 +53,7 @@ function getA(N::Int)
 end
 
 function getProtAbundance(protein::String, peptides::AbstractVector{String}, experiments::AbstractVector{UInt32}, abundance::AbstractVector{Union{T, Missing}},
-                          protein_out::Vector{String}, peptides_out::Vector{String}, experiments_out::Vector{UInt32}, log2_abundance_out::Vector{Float64}) where T <: Real
+                          protein_out::Vector{String}, peptides_out::Vector{String}, experiments_out::Vector{UInt32}, log2_abundance_out::Vector{Float64}) where {T <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -64,9 +64,9 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
     peptides_dict = Dict(zip(unique_peptides, 1:M))
     experiments_dict = Dict(zip(unique_experiments, 1:N))
 
-    function appendResults!(protein::String, peptides::Vector{String}, log2_abundances::Vector{Float64}, protein_out::Vector{String}, peptides_out::Vector{String}, log2_abundance_out::Vector{Float64}, S::Matrix{Union{Missing, Float64}})
+    function appendResults!(protein::String, peptides::Vector{String}, log2_abundances::Vector{T}, protein_out::Vector{String}, peptides_out::Vector{String}, log2_abundance_out::Vector{T}, S::Matrix{Union{Missing, U}}) where {T,U<:Real}
         
-        function appendPeptides!(peptides_out::Vector{String}, peptides::Vector{String}, S::Matrix{Union{Missing, Float64}})
+        function appendPeptides!(peptides_out::Vector{String}, peptides::Vector{String}, S::Matrix{Union{Missing,U}})
             for j in eachindex(eachcol(S))
                 peps = String[]
                 for i in eachindex(@view(S[:,j]))
