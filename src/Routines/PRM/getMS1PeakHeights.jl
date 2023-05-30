@@ -5,14 +5,14 @@ function rangeQuerySorted(sorted_array::Vector{T}, l_bnd::T, u_bnd::T) where T <
     return start, stop
 end
 
-function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T}, 
-                        precursors::Dictionary{UInt32, Precursor{P}}, 
-                        MS1::Vector{Union{Missing, T}}, 
-                        INTENSITIES::Vector{Union{Missing, T}}, 
+function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, V}, 
+                        precursors::Dictionary{UInt32, Precursor{T}}, 
+                        MS1::Vector{Union{Missing, P}}, 
+                        INTENSITIES::Vector{Union{Missing, P}}, 
                         precursor_rts::Vector{R}, 
                         precursor_idxs::Vector{UInt32}, 
                         precursor_ms_file_idxs::Vector{UInt32}, 
-                        rt::R, rt_tol::R, left_mz_tol::T, right_mz_tol::T, ms_file_idx::UInt32) where {P,T,R <: AbstractFloat}
+                        rt::R, rt_tol::R, left_mz_tol::U, right_mz_tol::U, ms_file_idx::UInt32) where {T,P,R,U,V <: AbstractFloat}
     
     #Get precursors for which the best scan RT is within `rt_tol` of the current scan `rt`
     start::Int, stop::Int = rangeQuerySorted(precursor_rts,rt - rt_tol, rt + rt_tol)
@@ -45,14 +45,14 @@ function getMS1Peaks!(ms1_max_heights::UnorderedDictionary{UInt32, T},
     end
 end
 
-function getMS1PeakHeights!(ms1_max_heights::UnorderedDictionary{UInt32, U},
+function getMS1PeakHeights!(ms1_max_heights::UnorderedDictionary{UInt32, T},
                             ptable::PrecursorDatabase, 
                             retentionTimes::AbstractArray, 
                             masses::AbstractArray,
                             intensities::AbstractArray, 
                             msOrders::AbstractArray,
-                            precursor_rts::Vector{T}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
-                            rt_tol::T, left_mz_tol::U, right_mz_tol::U, ms_file_idx::UInt32) where {T,U<:AbstractFloat}
+                            precursor_rts::Vector{R}, precursor_idxs::Vector{UInt32}, precursor_ms_file_idxs::Vector{UInt32},
+                            rt_tol::R, left_mz_tol::U, right_mz_tol::U, ms_file_idx::UInt32) where {T,R,U<:AbstractFloat}
     #println("tunction")
     #i = 1
 

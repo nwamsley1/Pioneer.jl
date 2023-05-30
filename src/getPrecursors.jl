@@ -228,13 +228,13 @@ Inherits from `PrecursorDatabase`. Minimal implementation of methods required fo
     Vector{Precursor}())` -- constructor for a placeholder 
 
 """
-mutable struct PrecursorTable <: PrecursorDatabase
+mutable struct PrecursorTable{T<:AbstractFloat} <: PrecursorDatabase
     id_to_prot::UnorderedDictionary{UInt32, Protein}
     prot_to_id::UnorderedDictionary{String, UInt32}
     id_to_pepGroup::UnorderedDictionary{UInt32, PeptideGroup}
     pepGroup_to_id::UnorderedDictionary{String, UInt32}
     id_to_pep::UnorderedDictionary{UInt32, Peptide}
-    id_to_prec::Dictionary{UInt32, Precursor}
+    id_to_prec::Dictionary{UInt32, Precursor{T}}
     sorted_prec_ids::Vector{UInt32}
     prec_id_to_transitions::Dictionary{UInt32, Vector{Transition}}
 end
@@ -258,7 +258,7 @@ PrecursorTable() = PrecursorTable(
                                     UnorderedDictionary{String, UInt32}(),
                                     UnorderedDictionary{UInt32, Peptide}(),
                                     #UnorderedDictionary{UInt32, SimplePrecursor}(),
-                                    Dictionary{UInt32, Precursor}(),
+                                    Dictionary{UInt32, Precursor{Float64}}(),
                                     Vector{UInt32}(),
                                     Dictionary{UInt32, Vector{Transition}}())
 
@@ -306,7 +306,7 @@ function insertPep!(p::PrecursorDatabase, sequence::String, pep_id::UInt32, pepG
 end
 
 addTransition!(p::PrecursorDatabase, prec_id::UInt32, t::Transition) = push!(getTransitions(p, prec_id), t)
-insertPrecursor!(p::PrecursorDatabase, prec::Precursor) = insert!(getIDToPrec(p), getPrecID(prec), prec)
+insertPrecursor!(p::PrecursorDatabase, prec::Precursor{T}) where {T<:AbstractFloat}= insert!(getIDToPrec(p), getPrecID(prec), prec)
 """
     setSortedPrecursorKeys!(p::PrecursorDatabase)
 

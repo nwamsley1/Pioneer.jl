@@ -1,4 +1,5 @@
 using DataFrames
+
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
 include("../src/PSM_TYPES/FastXTandem.jl")
@@ -142,5 +143,20 @@ using Arrow, JSON, Tables, DataFrames, Plots
     include("../src/Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
     #include("./Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
     include("Routines/PRM/IS-PRM-SURVEY/getBestPSMs.jl")
+
+    ######
+    #IS-PRM-Survey
+    ######
+    #Make sure this routine doesn't cause any errors. 
+    cd("../")
+    IS_PRM_SURVEY = `julia ./src/Routines/PRM/IS-PRM-SURVEY/routine.jl ./data/example_config/IS-PRM-SURVEY-TEST.json ./data/parquet/ ./data/NRF2_SIL.txt`
+    run(IS_PRM_SURVEY)
+    cd("test/")
+    
+    
+    cd("../")
+    IS_PRM = `julia --threads 24 ./src/Routines/PRM/IS-PRM/routine.jl ./data/example_config/IS-PRM-TEST.json ./data/parquet ./data/parquet/transition_list.csv`
+    run(IS_PRM)
+    cd("test/")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")

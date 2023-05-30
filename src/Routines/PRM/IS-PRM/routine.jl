@@ -87,26 +87,6 @@ end
 ##########
 #Load Dependencies 
 ##########
-#=include("../../../precursor.jl")
-include("../../../binaryRangeQuery.jl")
-include("../../../matchpeaks.jl")
-include("../../../getPrecursors.jl")
-include("../../../PSM_TYPES/PSM.jl")
-include("../../../PSM_TYPES/FastXTandem.jl")
-include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
-include("../../../Routines/PRM/precursorChromatogram.jl")
-include("../../../Routines/PRM/getMS1PeakHeights.jl")
-include("../../../Routines/PRM/IS-PRM/initTransitions.jl")
-include("../../../Routines/PRM/IS-PRM/getBestTransitions.jl")
-include("../../../SearchRAW.jl")
-include("../../../Routines/PRM/IS-PRM/buildPrecursorTable.jl")
-include("../../../Routines/PRM/IS-PRM/selectTransitions.jl")
-include("../../../Routines/PRM/IS-PRM/getBestPSMs.jl")
-include("../../../Routines/PRM/IS-PRM/getIntegrationBounds.jl")
-include("../../../Routines/PRM/IS-PRM/parEstimation.jl")
-include("../../../LFQ.jl")
-include("../../../Routines/PRM/plotPRM.jl")=#
-
 #Generic files in src directory
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRaw.jl","applyMods.jl"]]
 #Files needed for PRM routines
@@ -122,7 +102,7 @@ include("../../../Routines/PRM/plotPRM.jl")=#
 #Read Precursor Table
 ########## 
 ptable = ISPRMPrecursorTable()
-buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
+buildPrecursorTable!(ptable, params[:modification_masses], TRANSITION_LIST_PATH)
 MS_TABLES = Dict{UInt32, Arrow.Table}()
 println("N threads ", Threads.nthreads())
 ##########

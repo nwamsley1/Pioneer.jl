@@ -1,5 +1,4 @@
 using Dictionaries
-export FragmentMatch, getNearest, matchPeaks, matchPeaks!
 """
     FragmentMatch
 
@@ -266,5 +265,4 @@ function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missin
     matches
 end
 
-
-export FragmentMatch, getNearest, matchPeaks
+export FragmentMatch, getNearest, matchPeaks, matchPeaks!

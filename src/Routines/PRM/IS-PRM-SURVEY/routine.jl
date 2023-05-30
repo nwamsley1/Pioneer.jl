@@ -158,14 +158,14 @@ MS_RT = Dict{UInt32, Vector{Float32}}()
 #Get MS1 Peak Heights
 ##########
     #First key is ms_file_idx (identifier of the ms file), second key is pep_idx (peptide id)
-    ms1_peak_heights = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, Float32}}()
+    ms1_peak_heights = UnorderedDictionary{UInt32, UnorderedDictionary{UInt32, Float64}}()
     #Peak heights are zero to begin with
     precursor_idxs = unique(best_psms[!,:precursor_idx])
     for (ms_file_idx, MS_TABLE_PATH) in enumerate(MS_TABLE_PATHS)
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         insert!(ms1_peak_heights, 
                 UInt32(ms_file_idx), 
-                UnorderedDictionary(precursor_idxs, zeros(Float32, length(precursor_idxs)))
+                UnorderedDictionary(precursor_idxs, zeros(Float64, length(precursor_idxs)))
                 )
 
         getMS1PeakHeights!( ms1_peak_heights[ms_file_idx],
