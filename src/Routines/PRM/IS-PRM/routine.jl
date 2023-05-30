@@ -56,8 +56,8 @@ function parse_mods(fixed_mods)
 end
 
 params = (
-right_precursor_tolerance = Float32(params["right_precursor_tolerance"]),
-left_precursor_tolerance = Float32(params["left_precursor_tolerance"]),
+right_precursor_tolerance = Float64(params["right_precursor_tolerance"]),
+left_precursor_tolerance = Float64(params["left_precursor_tolerance"]),
 precursor_rt_tolerance = Float64(params["precursor_rt_tolerance"]),
 b_ladder_start = Int64(params["b_ladder_start"]),
 y_ladder_start = Int64(params["y_ladder_start"]),
@@ -65,14 +65,14 @@ precursor_charges = [UInt8(charge) for charge in params["precursor_charges"]],
 precursor_isotopes = [UInt8(isotope) for isotope in params["precursor_isotopes"]],
 transition_charges = [UInt8(charge) for charge in params["transition_charges"]],
 transition_isotopes = [UInt8(isotope) for isotope in params["transition_isotopes"]],
-fragment_match_ppm = Float32(params["fragment_match_ppm"]),
+fragment_match_ppm = Float64(params["fragment_match_ppm"]),
 minimum_fragment_count = UInt8(params["minimum_fragment_count"]),
 fragments_to_select = UInt8(params["fragments_to_select"]),
-precursort_rt_window = Float32(params["precursor_rt_window"]),
+precursort_rt_window = Float64(params["precursor_rt_window"]),
 max_variable_mods = Int(params["max_variable_mods"]),
 fixed_mods = parse_mods(params["fixed_mods"]),
 variable_mods = parse_mods(params["variable_mods"]),
-modification_masses = Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"]),
+modification_masses = Dict{String, Float64}(k => Float64(v) for (k, v) in params["modification_masses"]),
 ms_file_conditions = params["ms_file_conditions"]
 )
 

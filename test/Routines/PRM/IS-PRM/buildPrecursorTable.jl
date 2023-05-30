@@ -154,10 +154,10 @@
 
     """
 
-    mods_dict = Dict("Carb" => Float32(57.021464),
-                    "Harg" => Float32(10.008269),
-                    "Hlys" => Float32(8.014199),
-                    "Hglu" => Float32(6)
+    mods_dict = Dict("Carb" => Float64(57.021464),
+                    "Harg" => Float64(10.008269),
+                    "Hlys" => Float64(8.014199),
+                    "Hglu" => Float64(6)
                     )
 
     testPtable = ISPRMPrecursorTable()

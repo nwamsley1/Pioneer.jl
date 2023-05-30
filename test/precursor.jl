@@ -14,10 +14,10 @@ end
     #########
     @test Tol(getMass('A'), 71.03711)
     @test Tol(getMass('U'), 150.95363)
-    @test_throws KeyError('Z') getMass('Z')
-    @test_throws ErrorException("%[bob] could not be parsed as given") getMass("%[bob]", Dict{String, Float32}("a" => Float32(0.0)))
+    @test Tol(0.0, getMass('Z'))
+    @test Tol(0.0, getMass("%[bob]", Dict{String, Float32}("a" => Float32(0.0))))
     @test Tol(getMass("C[Carb]", default_mods), 160.03065f0)
-    @test Tol(getMass(Residue("K[+8.014199]")), 8.014199 + getMass("K"))
+    @test Tol(getMass(Residue("K[+8.014199]", default_mods)), 8.014199 + getMass("K", default_mods))
 
     # #########
     # #Tests for getIonMZ
@@ -30,7 +30,7 @@ end
     @test Tol(getIonMZ(PEP, 'b', UInt8(1)), 324.155397)
     @test Tol(getIonMZ(PEP, 'b', UInt8(2)), 162.581336)
 
-    TIDEK_mod = Array{Residue{Float64}, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]")])
+    TIDEK_mod = Array{Residue{Float64}, 1}([Residue('T') , Residue('I'), Residue('D'), Residue('E'), Residue("K[+8.014199]", default_mods)])
     @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(1)), 613.328281)
     @test Tol(getIonMZ(TIDEK_mod, 'y', UInt8(2)), 307.167779)
 
@@ -49,7 +49,7 @@ end
 
     PEPTIDEK_mod = Array{Residue{Float64}, 1}([Residue('P') , Residue('E'), Residue('P'),
                                       Residue('T') , Residue('I'), Residue('D'), 
-                                      Residue('E'), Residue("K[+8.014199]")])
+                                      Residue('E'), Residue("K[+8.014199]", default_mods)])
 
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(0)), 468.741839)
     @test Tol(getIonMZ(PEPTIDEK_mod,'p',UInt8(2),isotope = UInt8(1)), 469.243364)

@@ -79,6 +79,10 @@ using Arrow, JSON, Tables, DataFrames, Plots
                        "../data/parquet/GSTM4_VAVWGNK.arrow"]
     TRANSITION_LIST_PATH = "../data/parquet/transition_list.csv"
     ptable = ISPRMPrecursorTable()
+    const mods_dict = Dict("Carb" => Float64(57.021464),
+                 "Harg" => Float64(10.008269),
+                 "Hlys" => Float64(8.014199),
+                 "Hglu" => Float64(6))
     buildPrecursorTable!(ptable, mods_dict, TRANSITION_LIST_PATH)
     combined_scored_psms = makePSMsDict(FastXTandem())
     combined_fragment_matches = Dict{UInt32, Vector{FragmentMatch}}()

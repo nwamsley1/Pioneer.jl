@@ -229,7 +229,7 @@ function addPrecIDToLHPairID(p::ISPRMPrecursorTable, prec_id::UInt32, lh_pair_id
     end
 end
 
-isinPrecursorSet(p::ISPRMPrecursorTable, mz::Float32, charge::UInt8, isotope::UInt8, pep_id::UInt32) = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
+isinPrecursorSet(p::ISPRMPrecursorTable, mz::T, charge::UInt8, isotope::UInt8, pep_id::UInt32) where {T<:AbstractFloat} = SimplePrecursor(mz, charge, isotope, pep_id) ∈ getSimplePrecursorSet(p)
 isinPrecursorSet(p::ISPRMPrecursorTable, prec::Precursor) = isinPrecursorSet(p, getMZ(prec), getCharge(prec), getIsotope(prec), getPepID(prec)) ∈ getSimplePrecursorSet(p)
 
 """
@@ -251,7 +251,7 @@ Builds a `PrecursorTable` given a path to a tab delimited text file where each l
 ### Examples 
 
 """
-function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, Float32}, f_path::String)
+function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, T}, f_path::String) where {T<:AbstractFloat}
 
     function readHeader(f::IOStream)
         Dict(str => ind for (ind, str) in enumerate(map(string, split(readline(f), ","))))
@@ -366,7 +366,7 @@ function buildPrecursorTable!(ptable::ISPRMPrecursorTable, mods_dict::Dict{Strin
         end
     end
 
-    function main(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, Float32}, f_path::String)
+    function main(ptable::ISPRMPrecursorTable, mods_dict::Dict{String, T}, f_path::String) where {T<:AbstractFloat}
         open(f_path) do f #"./data/NRF2_SIL.txt"
 
             header = readHeader(f)
@@ -411,7 +411,7 @@ end
     isotope::UInt8
     pep_id::UInt32
 end=#
-mods_dict = Dict("Carb" => Float32(57.021464),
+#=mods_dict = Dict("Carb" => Float32(57.021464),
                  "Harg" => Float32(10.008269),
                  "Hlys" => Float32(8.014199),
-                 "Hglu" => Float32(6))
+                 "Hglu" => Float32(6))=#
