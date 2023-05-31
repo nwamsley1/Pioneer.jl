@@ -17,7 +17,7 @@ Type that represents a match between a fragment ion and a mass spectrum peak
 ### Examples
 
 - `FragmentMatch(transition::Transition, intensity::Float32, mass::Float32, count::UInt8, peak_ind::Int64) --
-     default internal constructor
+    default internal constructor
 - `FragmentMatch()` -- constructor for null/empty precursor
 
 ### GetterMethods
