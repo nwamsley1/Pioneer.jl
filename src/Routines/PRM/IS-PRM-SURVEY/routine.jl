@@ -86,7 +86,7 @@ end
 using Arrow, DataFrames, Tables
 using Plots
 #Generic files in src directory
-[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRaw.jl","applyMods.jl"]]
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","binaryRangeQuery.jl","matchpeaks.jl","getPrecursors.jl","SearchRAW.jl","applyMods.jl"]]
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","PRM", jl_file)) for jl_file in ["precursorChromatogram.jl","getMS1PeakHeights.jl"]]
 #Files needed for PSM scoring
