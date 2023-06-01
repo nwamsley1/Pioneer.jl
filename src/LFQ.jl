@@ -8,9 +8,12 @@ was not seen in the i'th experiment, then S[i, j] == missing.
 
 ### Input 
 - `peptides::AbstractVector{String}` -- MxN List of peptides for the protein. 
-- `peptides_dict::Dict{String, Int64}` -- Maps N peptides by name to rows numbers in S 
-- `experiments::AbstractVector{UInt32}` -- Maps N peptides by name to rows numbers in S 
-
+- `peptides_dict::Dict{String, Int64}` -- Maps N peptides by name to column numbers in S 
+- `experiments::AbstractVector{UInt32}` -- MxN List of experiments 
+- `experiments_dict::Dict{UInt32, Int64` -- Maps M experiment IDs by name to rows numbers in S 
+- `abundance::AbstractVector{Union{T, Missing}}` -- MxN list of peptide abundances
+- `M::Int` -- Number of experiments/rows in S
+- `N::Int` -- Number of peptides/columns in S
 
 
 ### Examples 
@@ -64,8 +67,7 @@ function getB(S::Matrix{Union{Missing, T}}, N::Int, M::Int) where {T<:Real}
     for row in eachrow(S)
         norm += sum(log2.(skipmissing(row)))*(length(row)/(length(row) - sum(ismissing.(row))))
     end
-
-    B[end] = norm/M 
+    B[end] = norm/M #For scaling
     B
 end
 
@@ -210,20 +212,6 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
 
     #ixj matrix where rows are for experiments and columns are for peptides. Each entry is the abundance of the peptide
     #in the given experiment, or missing if peptide j was not seen in experiment i. 
-    println("peptides")
-    println(peptides)
-
-    println("peptides_dict")
-    println(peptides_dict)
-
-    println("experiments")
-    println(experiments)
-
-    println("experiments_dict")
-    println(experiments_dict)
-
-    println("abundance")
-    println(abundance)
     S = allowmissing(getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N))
 
     #Column vector. The response matrix in Ax=B
