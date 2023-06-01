@@ -3,14 +3,27 @@ using Statistics
 """
     getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
 
-MxN matrix of intensities of each peptide in each experiment. Rows stand for experiments and columns for peptides. If the j'th peptide 
-was not seen in the i'th experiment, there S[i, j] == missing. 
+Get MxN matrix of intensities of each peptide in each experiment. Rows stand for experiments and columns for peptides. If the j'th peptide 
+was not seen in the i'th experiment, then S[i, j] == missing. 
+
+### Input 
+- `peptides::AbstractVector{String}` -- MxN List of peptides for the protein. 
+- `peptides_dict::Dict{String, Int64}` -- Maps N peptides by name to column numbers in S 
+- `experiments::AbstractVector{UInt32}` -- MxN List of experiments 
+- `experiments_dict::Dict{UInt32, Int64` -- Maps M experiment IDs by name to rows numbers in S 
+- `abundance::AbstractVector{Union{T, Missing}}` -- MxN list of peptide abundances
+- `M::Int` -- Number of experiments/rows in S
+- `N::Int` -- Number of peptides/columns in S
+
+
+### Examples 
+
 """
 function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
-    #S = allowmissing(Matrix(missings(M, N)))
+    #Initialize
     S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
-            if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
+            if !ismissing(abundance[i]) #Abundance of the the peptide 
                if abundance[i] != 0.0
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
                else
@@ -54,8 +67,7 @@ function getB(S::Matrix{Union{Missing, T}}, N::Int, M::Int) where {T<:Real}
     for row in eachrow(S)
         norm += sum(log2.(skipmissing(row)))*(length(row)/(length(row) - sum(ismissing.(row))))
     end
-
-    B[end] = norm/M 
+    B[end] = norm/M #For scaling
     B
 end
 
