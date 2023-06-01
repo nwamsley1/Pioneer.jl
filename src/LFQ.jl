@@ -3,14 +3,24 @@ using Statistics
 """
     getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
 
-MxN matrix of intensities of each peptide in each experiment. Rows stand for experiments and columns for peptides. If the j'th peptide 
-was not seen in the i'th experiment, there S[i, j] == missing. 
+Get MxN matrix of intensities of each peptide in each experiment. Rows stand for experiments and columns for peptides. If the j'th peptide 
+was not seen in the i'th experiment, then S[i, j] == missing. 
+
+### Input 
+- `peptides::AbstractVector{String}` -- MxN List of peptides for the protein. 
+- `peptides_dict::Dict{String, Int64}` -- Maps N peptides by name to rows numbers in S 
+- `experiments::AbstractVector{UInt32}` -- Maps N peptides by name to rows numbers in S 
+
+
+
+### Examples 
+
 """
 function getS(peptides::AbstractVector{String}, peptides_dict::Dict{String, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
-    #S = allowmissing(Matrix(missings(M, N)))
+    #Initialize
     S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
-            if !ismissing(abundance[i])#isinf(log2(coalesce(abundance[i], 0.0)))
+            if !ismissing(abundance[i]) #Abundance of the the peptide 
                if abundance[i] != 0.0
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
                else
@@ -200,6 +210,20 @@ function getProtAbundance(protein::String, peptides::AbstractVector{String}, exp
 
     #ixj matrix where rows are for experiments and columns are for peptides. Each entry is the abundance of the peptide
     #in the given experiment, or missing if peptide j was not seen in experiment i. 
+    println("peptides")
+    println(peptides)
+
+    println("peptides_dict")
+    println(peptides_dict)
+
+    println("experiments")
+    println(experiments)
+
+    println("experiments_dict")
+    println(experiments_dict)
+
+    println("abundance")
+    println(abundance)
     S = allowmissing(getS(peptides, peptides_dict, experiments, experiments_dict, abundance, M, N))
 
     #Column vector. The response matrix in Ax=B
