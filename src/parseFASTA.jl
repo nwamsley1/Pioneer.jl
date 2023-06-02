@@ -224,7 +224,7 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
                                 fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
                                 var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
                                 n::Int)
-    max_prot_id, pepGroup_id, pep_id, prec_id = UInt32(1), UInt32(1), UInt32(1), UInt32(1)
+    max_prot_id, pepGroup_id, max_pep_id, prec_id = UInt32(1), UInt32(1), UInt32(1), UInt32(1)
     
     #Most recently encoutnered peptide sequence
     #It is assumed that `peptides_fasta` is sorted by the `sequence` field
@@ -250,7 +250,12 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
             ######
             #Apply Variable modifications
             #######
-
+            max_pep_id = applyMods!(ptable.id_to_pep,
+                        var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
+                        getSeq(peptide),
+                        pepGroup_id,
+                        max_pep_id,
+                        n = n); 
         else #Duplicated peptide, so add a protein to the peptide group
 
             #Apply fixed modifications
@@ -263,10 +268,112 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
     end
 end
 
-test_table = PrecursorTable()
-fixed_mods = [(p=r"C", r="C[Carb]")]
-var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
-@time buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, 2)
+
+using FASTX
+using CodecZlib
+using Dictionaries
+file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_10090.fasta.gz"
+
+@time begin 
+    peptides_fasta = digestFasta(parseFasta(file_path))
+    test_table = PrecursorTable()
+    fixed_mods = [(p=r"C", r="C[Carb]")]
+    var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+    buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, 2)
+end
+
+const mods_dict = Dict("Carb" => Float64(57.021464),
+"Harg" => Float64(10.008269),
+"Hlys" => Float64(8.014199),
+"Hglu" => Float64(6))
+
+#1) build id_to_prec in ptable
+#2) build big list of (frag_mz, prec_mz, prec_id)
+#3) build fragment index from said list. 
+test = Vector{Tuple{Float64, UInt32, Float64}}()
+@time begin 
+    for (id, peptide) in pairs(test_table.id_to_pep)
+        residues = getResidues(getSeq(peptide), mods_dict)
+        prec_mz = getIonMZ(residues, UInt8(1))
+        for frag_charge in (UInt8(1), UInt8(2))
+            ion_series = getIonSeries(getResidues(getSeq(peptide), mods_dict), UInt8(2))
+            append!(test, [(frag, id, prec_mz) for frag in ion_series])
+        end
+    end
+    sort!(test, by = x -> first(x))
+end
+
+frag_bins = Vector{FragBin}(undef, length(test)÷32 + 1)
+precursor_bins = Vector{PrecursorBin}(undef, length(test)÷32 + 1)
+
+N = 32
+charges = UInt8[1, 2, 3, 4]
+function makeFragmentIndex(frag_ions::Vector{Tuple{Float64, UInt32, Float64}}, N::Int = 32, charges::Vector{UInt8} = UInt8[2, 3, 4])
+    frag_index = FragmentIndex(Float64, N*length(charges), length(frag_ions)÷N)
+    println(length(frag_index.fragment_bins))
+    println(length(frag_index.preursor_bins))
+    
+    for bin in 1:(length(frag_ions)÷N)
+        start = 1 + (bin - 1)*N
+        stop = (bin)*N
+        frag_index.fragment_bins[bin] = FragBin(first(frag_ions[start]),first(frag_ions[stop]),bin)
+        prec_bin = frag_index.preursor_bins[bin]
+        #Frag ions only includes precursor_mz for the +1 charge state.
+        #We want the precursor bin to include the precursor_mzs for all charge states in `charges`
+        i = 1
+            for ion_index in start:stop
+                for charge in charges
+                    ion = test[ion_index]
+                    prec_bin.precs[i] = (ion[2], (last(ion) + PROTON*charge)/charge)
+                    i += 1
+            end
+        end
+        if bin%100000 == 0
+            println(bin)
+        end
+        #println(bin)
+    end
+    return frag_index
+end
+
+for bin in 1:(length(test)÷N)
+    frag_bins[bin] = FragBin(
+                                first(test[1 + (bin - 1)*N]),
+                                first(test[(bin)*N]),
+                                Int32(bin)
+                            )
+
+    precursor_bins[bin] = PrecursorBin(Vector{Tuple{UInt32, Float64}}(undef, N*length(charges)))
+    for charge in charges
+        for (i, frag) in enumerate(@view(test[(1 + (bin - 1)*32):((bin)*32)]))
+            precursor_bins[bin].precs[i] = (frag[2], (last(frag) + PROTON*charge)/charge)
+        end
+    end
+    sort!(precursor_bins[bin].precs, by = x->last(x))
+end
+struct PrecursorBin{T<:AbstractFloat}
+    precs::Vector{Tuple{UInt32, T}}
+end
+
+PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{Tuple{UInt32, T}}(undef, N))
+
+
+struct FragBin{T<:AbstractFloat}
+    lb::T
+    ub::T
+    prec_bin::Int
+end
+
+FragBin() = FragBin(0.0, 0.0, Int64(0))
+
+struct FragmentIndex{T<:AbstractFloat}
+    fragment_bins::Vector{FragBin{T}}
+    preursor_bins::Vector{PrecursorBin{T}}
+end
+
+FragmentIndex(T::DataType, M::Int, N::Int) = FragmentIndex(fill(FragBin(), N), fill(PrecursorBin(T, M), N))
+
+
 #=
 println(i)
 
