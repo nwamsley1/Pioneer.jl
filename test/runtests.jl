@@ -1,5 +1,7 @@
 using DataFrames
 
+include("../src/parseFASTA.jl")
+#=
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
 include("../src/PSM_TYPES/FastXTandem.jl")
@@ -160,3 +162,5 @@ using Arrow, JSON, Tables, DataFrames, Plots
     cd("test/")
 #include("./PSM_TYPES/FastXTandem.jl")
 #include("getPrecursors.jl")
+
+=#
