@@ -312,7 +312,7 @@ function makeFragmentIndex(frag_ions::Vector{Tuple{Float64, UInt32, Float64}}, N
     frag_index = FragmentIndex(Float64, N*length(charges), length(frag_ions)÷N)
     println(length(frag_index.fragment_bins))
     println(length(frag_index.preursor_bins))
-    
+
     for bin in 1:(length(frag_ions)÷N)
         start = 1 + (bin - 1)*N
         stop = (bin)*N
@@ -327,6 +327,7 @@ function makeFragmentIndex(frag_ions::Vector{Tuple{Float64, UInt32, Float64}}, N
                     prec_bin.precs[i] = (ion[2], (last(ion) + PROTON*charge)/charge)
                     i += 1
             end
+            sort!(prec_bin.precs, by = x->last(x))
         end
         if bin%100000 == 0
             println(bin)
@@ -351,6 +352,12 @@ for bin in 1:(length(test)÷N)
     end
     sort!(precursor_bins[bin].precs, by = x->last(x))
 end
+
+mutable struct Frag{T<:AbstractFloat}
+    prec_id::UInt32
+    prec_mz::T
+end
+
 struct PrecursorBin{T<:AbstractFloat}
     precs::Vector{Tuple{UInt32, T}}
 end
