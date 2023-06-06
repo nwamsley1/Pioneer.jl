@@ -37,7 +37,7 @@ import Base.>
 
 function getSortedFragmentList(peptides::UnorderedDictionary{UInt32, Peptide}, mods_dict::Dict{String, T}; 
                                 frag_charges::Vector{UInt8} = UInt8[1, 2], frag_isotopes::Vector{UInt8} = UInt8[0],
-                                y_start::Int = 3, b_start::Int = 3, low_mz::Float64 = 200.0, high_mz::Float64 = 1700.0)::Vector{FragmentIon{T}} where {T<:AbstractFloat}
+                                y_start::Int = 3, b_start::Int = 3, low_mz::Float64 = 300.0, high_mz::Float64 = 1700.0)::Vector{FragmentIon{T}} where {T<:AbstractFloat}
     fragment_list = Vector{FragmentIon{T}}()
 
     for (id, peptide) in pairs(peptides) #Each iteration of the loop gets adds the fragments for one peptide
@@ -112,8 +112,9 @@ struct PrecursorBin{T<:AbstractFloat}
     precs::Vector{PrecursorBinItem{T}}
 end
 
-getPrecursors(pb::PrecursorBin) = pb.precs
-
+getPrecursors(pb::PrecursorBin)  = pb.precs
+getPrecursor(pb::PrecursorBin, i::Int64) = pb.precs[i] 
+getLength(pb::PrecursorBin)= length(pb.precs)
 
 function setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
     pb.precs[index] = pbi
@@ -190,6 +191,10 @@ struct FragmentIndex{T<:AbstractFloat}
     precursor_bins::Vector{PrecursorBin{T}}
 end
 
+getFragBins(fi::FragmentIndex) = fi.fragment_bins
+getPrecBins(fi::FragmentIndex) = fi.precursor_bins
+
+
 FragmentIndex(T::DataType, M::Int, N::Int) = FragmentIndex(fill(FragBin(), N), fill(PrecursorBin(T, M), N))
 
 getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
@@ -199,6 +204,7 @@ function setFragmentBin!(fi::FragmentIndex{T}, bin::Int64, frag_bin::FragBin{T})
 end
 
 getPrecursorBin(fi::FragmentIndex, bin::Int64) = fi.precursor_bins[bin]
+getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
 
 function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int64, index::Int64, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
     setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
