@@ -49,7 +49,7 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
    
     N = getLength(precursor_bin)
 
-    if N>100
+    if N>1000
         return nothing, nothing
     end
 
@@ -61,7 +61,7 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
         if getPrecMZ(getPrecursor(precursor_bin, mid)) < window_min
             lo = mid + 1
         else
-            hi = mid
+            hi = mid - 1
         end
     end
 
@@ -103,6 +103,58 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
     return window_stop, window_start#window_start, window_stop#window_stop
 end
 
+function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, precursor_bin::PrecursorBin{T}, intensity::Float32, window_min::U, window_max::U) where {T,U<:AbstractFloat}
+   
+    N = getLength(precursor_bin)
+
+    if N>1000
+        return nothing, nothing
+    end
+
+    lo, hi = 1, N
+
+    while lo <= hi
+        mid = (lo + hi) ÷ 2
+        if getPrecMZ(getPrecursor(precursor_bin, mid)) < window_min
+            lo = mid + 1
+        else
+            hi = mid - 1
+        end
+    end
+
+    window_start = (lo <= N ? lo : return nothing, nothing)
+
+    if getPrecMZ(getPrecursor(precursor_bin, window_start)) > window_max
+        return nothing, nothing
+    end
+
+    lo, hi = window_start, N
+
+    while lo < hi
+        mid = (lo + hi) ÷ 2
+        if getPrecMZ(getPrecursor(precursor_bin, mid)) > window_max
+            hi = mid - 1
+        else
+            lo = mid + 1
+        end
+    end
+
+    window_stop = hi
+
+    for precursor_idx in window_start:window_stop
+
+        prec_id = getPrecID(getPrecursor(precursor_bin, precursor_idx))
+
+        if haskey(precs, prec_id)
+            addMatch!(precs[prec_id], intensity)
+        else
+            insert!(precs, prec_id, IonIndexMatch(intensity, 1))
+        end
+    end
+
+    return window_stop, window_start#window_start, window_stop#window_stop
+end
+
 function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, intensity::Float32, frag_min::U, frag_max::U, prec_min::U, prec_max::U) where {T,U<:AbstractFloat}
     first_frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     if (first_frag_bin === nothing)
@@ -112,7 +164,6 @@ function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_
         return min_frag_bin
     end
     while getLowMZ(getFragmentBin(frag_index, first_frag_bin)) < frag_max
-        #println(first_frag_bin)
         searchPrecursorBin!(precs, getPrecursorBin(frag_index, first_frag_bin), intensity, prec_min, prec_max)
         first_frag_bin += 1
     end
@@ -145,17 +196,46 @@ function addMatch!(im::IonIndexMatch{T}, int::T) where {T<:AbstractFloat}
     im.summed_intensity += int
     im.count += 1
 end
-precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
+
 #min_frag_bin = 0
+test = UInt32[]
 @time begin
-    i = 1
-    for (mass, intensity) in zip(test_masses, test_intensities)
-        mass = coalesce(mass, 0.0)
-        FRAGMIN = mass - 10*(mass/1e6)
-        FRAGMAX = mass + 10*(mass/1e6)
-        min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, 500.0, 508.0)
-        i += 1
-        
-        #println(i)
+    for scan in 1:length(MS_TABLE[:msOrder])#[10001]
+        if MS_TABLE[:msOrder] == 1
+            continue
+        end
+        precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
+        test_masses = MS_TABLE[:masses][scan]
+        test_intensities = MS_TABLE[:intensities][scan]
+        i = 1
+        for (mass, intensity) in zip(test_masses, test_intensities)
+            mass = coalesce(mass, 0.0)
+            FRAGMIN = mass - 10*(mass/1e6)
+            FRAGMAX = mass + 10*(mass/1e6)
+            min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, 500.0, 508.0)
+            i += 1
+
+        end
+        if length(precs) > 0
+            push!(test, keys(sort(precs, by = x->x.count))[end])
+        end
     end
 end
+
+searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, precursor_bin::PrecursorBin{T}, intensity::Float32, window_min::U, window_max::U)
+
+precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
+test_masses = MS_TABLE[:masses][43]
+test_intensities = MS_TABLE[:intensities][43]
+i = 1
+for (mass, intensity) in zip(test_masses, test_intensities)
+    mass = coalesce(mass, 0.0)
+    FRAGMIN = mass - 10*(mass/1e6)
+    FRAGMAX = mass + 10*(mass/1e6)
+    #println("FRAGMIN ", FRAGMIN)
+    #println("FRAGMAX ", FRAGMAX)
+    #println(i)
+    min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, 500.0, 508.0)
+    i += 1
+end
+#searchPrecursorBin!(precs, f_index.precursor_bins[44], Float32(10.0), 500.0, 501.0)
