@@ -195,7 +195,11 @@ getFragBins(fi::FragmentIndex) = fi.fragment_bins
 getPrecBins(fi::FragmentIndex) = fi.precursor_bins
 
 
-FragmentIndex(T::DataType, M::Int, N::Int) = FragmentIndex(fill(FragBin(), N), fill(PrecursorBin(T, M), N))
+#FragmentIndex(T::DataType, M::Int, N::Int) =  FragmentIndex(fill(FragBin(), N), fill(PrecursorBin(T, M), N))
+
+function FragmentIndex(T::DataType) 
+    return FragmentIndex(Vector{FragBin{T}}(), Vector{PrecursorBin{T}}())
+end
 
 getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
 
@@ -210,52 +214,56 @@ function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int64, index::Int64, pr
     setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
 end
 
-function makeFragmentIndex!(ptable::PrecursorTable, frag_ions::Vector{FragmentIon{T}}, N::Int = 32, charges::Vector{UInt8} = UInt8[2, 3, 4]) where {T<:AbstractFloat}
+function makeFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, charges::Vector{UInt8} = UInt8[2, 3, 4]) where {T<:AbstractFloat}
    
     #The fragment ions are divided into bins of size N*length(charges). 
-    bin_count = length(frag_ions)÷N + 1
-    bin_size = N*length(charges)
+    #bin_count = lengthfrag_ions)÷N + 1
+    #bin_size = N*length(charges)
 
     #Pre-allocate the FragmentIndex to the correct size
-    frag_index = FragmentIndex(T, bin_size, bin_count) 
+    #println("0")
+    frag_index = FragmentIndex(T) 
 
-    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, bin::Int, test_start::Int, stop::Int)
+    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, bin::Int, start::Int, stop::Int)
         i = 1
-        for ion_index in start:stop
+        for ion_index in range(start, stop)
             
             for charge in charges
                 ion = frag_ions[ion_index]
                 #Add precursor corresponding to the charge state
-                setPrecursorBinItem!(frag_index, 
+                #=setPrecursorBinItem!(frag_index, 
                                     bin, 
                                     i, 
                                     PrecursorBinItem(getPepID(ion), (getPrecMZ(ion)+ PROTON*charge)/charge)
-                                    )
+                                    )=#
+                frag_index.precursor_bins[bin].precs[i] = PrecursorBinItem(getPepID(ion), (getPrecMZ(ion)+ PROTON*charge)/charge)
                 i += 1
             end
         end
     end
+    bin = 1
+    start = 1
+    for stop in 2:length(frag_ions)#bin in 1:(bin_count - 1)
+        #Ready to make another precursor bin. 
+        if (getFragMZ(frag_ions[stop]) - getFragMZ(frag_ions[start])) > 0.001
+            
+            #Add a new fragment bin
+            #println("A")
+            push!(frag_index.fragment_bins, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)))
+            #setFragmentBin!(frag_index, bin, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)));
 
-    for bin in 1:(bin_count - 1)
-        start = 1 + (bin - 1)*N
-        stop = (bin)*N
-        setFragmentBin!(frag_index, bin, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)));
-        #prec_bin = getPrecursorBin(frag_index, bin)#frag_index.preursor_bins[bin]
-        #Frag ions only includes precursor_mz for the +1 charge state.
-        #We want the precursor bin to include the precursor_mzs for all charge states in `charges`
-        fillPrecursorBin!(frag_index, frag_ions, bin, start, stop)
-        #Sort fragment ions in the precursor bin by their precursor m/z
-        sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
+            #Add a new precursor bin
+            #println("B")
+            push!(frag_index.precursor_bins, PrecursorBin(Vector{PrecursorBinItem{T}}(undef, (stop - start + 1)*length(charges)))) #PrecursorBin(T, start - stop))
+            #println("C")
+            fillPrecursorBin!(frag_index, frag_ions, bin, start, stop)
+
+            
+            sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
+            bin += 1
+            start = stop 
+        end
     end
-
-    #Last bin is special case
-    bin = bin_count 
-    start = 1 + (bin-1)*N
-    stop = length(frag_ions)
-    setFragmentBin!(frag_index, bin, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)));
-    fillPrecursorBin!(frag_index, frag_ions, bin, start, stop)
-    sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
-
     return frag_index
 end
 

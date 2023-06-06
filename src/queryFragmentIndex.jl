@@ -45,10 +45,14 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Dictionary{UInt32, Int64}, precursor_bin::PrecursorBin{T}, window_min::U, window_max::U) where {T,U<:AbstractFloat}
+function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, precursor_bin::PrecursorBin{T}, intensity::Float32, window_min::U, window_max::U) where {T,U<:AbstractFloat}
    
     N = getLength(precursor_bin)
-    
+
+    if N>100
+        return nothing, nothing
+    end
+
     lo, hi = 1, N + 1
 
     while lo < hi
@@ -68,11 +72,13 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, Int64}, precursor_bin::Pr
     end
 
     window_stop = window_start
+
     prec_id = getPrecID(getPrecursor(precursor_bin, window_stop))
+
     if haskey(precs, prec_id)
-        precs[prec_id] += 1
+        addMatch!(precs[prec_id], intensity)
     else
-        insert!(precs, prec_id, 1)
+        insert!(precs, prec_id, IonIndexMatch(intensity, 1))
     end
 
     if (window_stop + 1) > N
@@ -84,9 +90,9 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, Int64}, precursor_bin::Pr
         window_stop += 1
         prec_id = getPrecID(getPrecursor(precursor_bin, window_stop))
         if haskey(precs, prec_id)
-            precs[prec_id] += 1
+            addMatch!(precs[prec_id], intensity)
         else
-            insert!(precs, prec_id, 1)
+            insert!(precs, prec_id, IonIndexMatch(intensity, 1))
         end
         if (window_stop + 1) > N
             return #window_start, window_stop
@@ -97,7 +103,7 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, Int64}, precursor_bin::Pr
     return window_stop, window_start#window_start, window_stop#window_stop
 end
 
-function queryFragment!(precs::Dictionary{UInt32, Int64}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::U, frag_max::U, prec_min::U, prec_max::U) where {T,U<:AbstractFloat}
+function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, intensity::Float32, frag_min::U, frag_max::U, prec_min::U, prec_max::U) where {T,U<:AbstractFloat}
     first_frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     if (first_frag_bin === nothing)
         return min_frag_bin
@@ -106,8 +112,8 @@ function queryFragment!(precs::Dictionary{UInt32, Int64}, frag_index::FragmentIn
         return min_frag_bin
     end
     while getLowMZ(getFragmentBin(frag_index, first_frag_bin)) < frag_max
-        println(first_frag_bin)
-        searchPrecursorBin!(precs, getPrecursorBin(frag_index, first_frag_bin), prec_min, prec_max)
+        #println(first_frag_bin)
+        searchPrecursorBin!(precs, getPrecursorBin(frag_index, first_frag_bin), intensity, prec_min, prec_max)
         first_frag_bin += 1
     end
     return first_frag_bin - 1
@@ -127,18 +133,29 @@ precs = Dictionary{UInt32, Int64}()
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 
 
-test_masses = disallowmissing(MS_TABLE[:masses][10001])
+test_masses = MS_TABLE[:masses][10002]
+test_intensities = MS_TABLE[:intensities][10002]
 
-precs = Dictionary{UInt32, Int64}()
-min_frag_bin = 0
-for mass in test_masses[1:200]
-    FRAGMIN = mass - 10*(mass/1e6)
-    FRAGMAX = mass + 10*(mass/1e6)
-    first = findFirstFragmentBin(getFragBins(f_index), FRAGMIN, FRAGMAX)
-    if first != nothing
-        println(first, " ", FRAGMIN, " ", FRAGMAX)
+mutable struct IonIndexMatch{T<:AbstractFloat}
+    summed_intensity::T
+    count::Int64
+end
+
+function addMatch!(im::IonIndexMatch{T}, int::T) where {T<:AbstractFloat}
+    im.summed_intensity += int
+    im.count += 1
+end
+precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
+#min_frag_bin = 0
+@time begin
+    i = 1
+    for (mass, intensity) in zip(test_masses, test_intensities)
+        mass = coalesce(mass, 0.0)
+        FRAGMIN = mass - 10*(mass/1e6)
+        FRAGMAX = mass + 10*(mass/1e6)
+        min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, 500.0, 508.0)
+        i += 1
+        
+        #println(i)
     end
-    #println(FRAGMIN)
-    #println(FRAGMAX)
-    #min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, FRAGMIN, FRAGMAX, 500.0, 508.0)
 end
