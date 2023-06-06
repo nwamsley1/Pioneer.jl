@@ -1,3 +1,24 @@
+"""
+    FragmentIon{T<:AbstractFloat}
+
+Simple representation of a fragment ion for use in building fragment indices. 
+
+### Fields
+
+- frag_mz::T -- m/z ratio of the fragment ion
+- pep_id::UInt32 -- Identifier of the peptide from which the fragment came
+- prec_mz::T  -- m/z ratio of the precursor from which the fragment came
+
+### Examples
+
+### GetterMethods
+
+- getFragMZ(f::FragmentIon) = f.frag_mz
+- getPepID(f::FragmentIon) = f.pep_id
+- getPrecMZ(f::FragmentIon) = f.prec_mz
+- <(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) < x
+- >(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) > x
+"""
 struct FragmentIon{T<:AbstractFloat}
     frag_mz::T
     pep_id::UInt32
@@ -8,6 +29,7 @@ getFragMZ(f::FragmentIon) = f.frag_mz
 getPepID(f::FragmentIon) = f.pep_id
 getPrecMZ(f::FragmentIon) = f.prec_mz
 
+#Make sortable by fragment mz. 
 import Base.<
 import Base.>
 <(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) < x
@@ -17,22 +39,46 @@ function getSortedFragmentList(peptides::UnorderedDictionary{UInt32, Peptide}, m
                                 frag_charges::Vector{UInt8} = UInt8[1, 2], frag_isotopes::Vector{UInt8} = UInt8[0],
                                 y_start::Int = 3, b_start::Int = 3, low_mz::Float64 = 200.0, high_mz::Float64 = 1700.0)::Vector{FragmentIon{T}} where {T<:AbstractFloat}
     fragment_list = Vector{FragmentIon{T}}()
-    #fragment_list = Vector{Tuple{Float64, UInt32, Float64}}()
-    for (id, peptide) in pairs(peptides)
-        residues = getResidues(getSeq(peptide), mods_dict)
-        prec_mz = getIonMZ(residues, UInt8(1))
+
+    for (id, peptide) in pairs(peptides) #Each iteration of the loop gets adds the fragments for one peptide
+        residues = getResidues(getSeq(peptide), mods_dict)::Vector{Residue{T}} #AA Residues for the given peptide. 
+
+        #IMPORTANT: Should only consider +1 precursor charge here. Can calculate m/z for other precursor charge states later. 
+        prec_mz = getIonMZ(residues, UInt8(1)) #Charge state for the peptide with +1 charge
+
+        #Get fragments for each precursor that derives from the given peptide 
+        #Charge and isotopic state distinguish precursors deriving from the same peptide. 
         for (frag_charge, frag_isotope) in zip(frag_charges, frag_isotopes)
+            #Get the fragment ion mz's
             for frag_mz in getFragIons(getResidues(getSeq(peptide), mods_dict), charge = frag_charge, isotope = frag_isotope, b_start = b_start, y_start = y_start)
-                if (frag_mz > low_mz) & (frag_mz < high_mz)
-                    push!(fragment_list, FragmentIon(frag_mz, id, prec_mz))
+                if (frag_mz > low_mz) & (frag_mz < high_mz) #Filter fragments with high or low m/z's 
+                    push!(fragment_list, FragmentIon(frag_mz, id, prec_mz)) #Add a fragment. 
                 end
             end
         end
     end
-    sort!(fragment_list, by = x -> getFragMZ(x))
+    sort!(fragment_list, by = x -> getFragMZ(x)) #Sort fragment List. 
     return fragment_list
 end
 
+"""
+    PrecursorBinItem{T<:AbstractFloat}
+
+Item in a precursor bin. Minimal information required to know if the fragment has a correct precursor mass, and if so, 
+what the precursor ID is.  
+
+### Fields
+
+- prec_id::UInt32 -- Unique identifier for the precursor
+- prec_mz::T -- m/z of the precursor
+
+### Examples
+
+### GetterMethods
+
+- getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
+- getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
+"""
 struct PrecursorBinItem{T<:AbstractFloat}
     prec_id::UInt32
     prec_mz::T
@@ -41,11 +87,33 @@ end
 getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
 
+"""
+    PrecursorBin{T<:AbstractFloat}
+
+Container for precursor Items. 
+
+### Fields
+
+- precs::Vector{PrecursorBinItem{T}} -- Precursor items
+
+### Examples
+
+- PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{PrecursorBinItem{T}}(undef, N)) -- Constructor
+
+### GetterMethods
+
+- getPrecursors(pb::PrecursorBin) = pb.precs
+
+### Methods
+
+- setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
+"""
 struct PrecursorBin{T<:AbstractFloat}
     precs::Vector{PrecursorBinItem{T}}
 end
 
 getPrecursors(pb::PrecursorBin) = pb.precs
+
 
 function setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
     pb.precs[index] = pbi
@@ -53,16 +121,70 @@ end
 
 PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{PrecursorBinItem{T}}(undef, N))
 
+"""
+    FragBin{T<:AbstractFloat}
+
+Represents a bin of sorted fragment ions. Gives the lowest and highest m/z ratio of ions in the bin. 
+Also contains a unique identifier for the corresponding precursor bin. 
+
+### Fields
+
+- lb::T -- Lowest m/z of a fragment ion in the `FragBin`
+- ub::T -- Highest m/z of a fragment ion in the `FragBin`
+- prec_bin::UInt32 -- Identifier of the corresponding `PrecursorBin`
+
+### Examples
+
+- FragBin() = FragBin(0.0, 0.0, UInt32(0)) -- Constructor
+
+### GetterMethods
+
+- getLowMZ(fb::FragBin) = fb.lb
+- getHighMZ(fb::FragBin) = fb.ub
+- getPrecBinID(fb::FragBin) = fb.prec_bin
+
+### Methods
+
+- setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
+"""
 struct FragBin{T<:AbstractFloat}
     lb::T
     ub::T
     prec_bin::UInt32
 end
 
-getLB(fb::FragBin) = fb.lb
-getUB(fb::FragBin) = fb.ub
+getLowMZ(fb::FragBin) = fb.lb
+getHighMZ(fb::FragBin) = fb.ub
+getPrecBinID(fb::FragBin) = fb.prec_bin
 FragBin() = FragBin(0.0, 0.0, UInt32(0))
 
+
+"""
+    FragmentIndex{T<:AbstractFloat}
+
+A fragment index for an MSFragger-style/fragment-centric search. Contains fragment bins 
+that indicate the highest and lowest m/z of a fragment ion in the bin. Each `FragBin` links
+to a `PrecursorBin`. A precursor bin has the precursor m/z's and peptide ID's for each fragment ion. 
+
+### Fields
+
+- fragment_bins::Vector{FragBin{T}} -- Lowest m/z of a fragment ion in the `FragBin`
+- precursor_bins::Vector{PrecursorBin{T}} -- Highest m/z of a fragment ion in the `FragBin`
+
+### Examples
+
+- FragmentIndex(T::DataType, M::Int, N::Int) = FragmentIndex(fill(FragBin(), N), fill(PrecursorBin(T, M), N))
+
+### GetterMethods
+
+- getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
+- getPrecursorBin(fi::FragmentIndex, bin::Int64) = fi.precursor_bins[bin]
+
+### Methods
+
+- setFragmentBin!(fi::FragmentIndex, bin::Int64, frag_bin::FragBin)
+- setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int64, index::Int64, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
+"""
 struct FragmentIndex{T<:AbstractFloat}
     fragment_bins::Vector{FragBin{T}}
     precursor_bins::Vector{PrecursorBin{T}}
@@ -72,7 +194,7 @@ FragmentIndex(T::DataType, M::Int, N::Int) = FragmentIndex(fill(FragBin(), N), f
 
 getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
 
-function setFragmentBin!(fi::FragmentIndex, bin::Int64, frag_bin::FragBin)
+function setFragmentBin!(fi::FragmentIndex{T}, bin::Int64, frag_bin::FragBin{T}) where {T<:AbstractFloat}
     fi.fragment_bins[bin] = frag_bin
 end
 
@@ -84,8 +206,11 @@ end
 
 function makeFragmentIndex!(ptable::PrecursorTable, frag_ions::Vector{FragmentIon{T}}, N::Int = 32, charges::Vector{UInt8} = UInt8[2, 3, 4]) where {T<:AbstractFloat}
    
+    #The fragment ions are divided into bins of size N*length(charges). 
     bin_count = length(frag_ions)÷N + 1
     bin_size = N*length(charges)
+
+    #Pre-allocate the FragmentIndex to the correct size
     frag_index = FragmentIndex(T, bin_size, bin_count) 
 
     function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, bin::Int, test_start::Int, stop::Int)
@@ -151,19 +276,3 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
     @time f_index = makeFragmentIndex!(test_table, f_list, 256);
 end
 
-function query_frag_index(frag_index::Vector{FragBin{T}}, query::T) where {T<:AbstractFloat}
-    lo, hi = 1, length(frag_index)
-    while lo <= hi
-        mid = (lo + hi) ÷ 2
-        if getUB(frag_index[mid]) < (query)
-             lo = mid + 1
-        elseif getLB(frag_index[mid]) > (query)
-            hi = mid - 1
-        else
-            return lo
-        end
-    end
-end
-BIN = f_index.fragment_bins
-QUERY = 1500.0
-FUNC = (t,x)->x.lb>t
