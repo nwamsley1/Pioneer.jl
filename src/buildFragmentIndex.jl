@@ -236,7 +236,7 @@ function makeFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, charges::Vector{U
                                     i, 
                                     PrecursorBinItem(getPepID(ion), (getPrecMZ(ion)+ PROTON*charge)/charge)
                                     )=#
-                frag_index.precursor_bins[bin].precs[i] = PrecursorBinItem(getPepID(ion), (getPrecMZ(ion)+ PROTON*charge)/charge)
+                frag_index.precursor_bins[bin].precs[i] = PrecursorBinItem(getPepID(ion), (getPrecMZ(ion) + PROTON*(charge-1))/charge)
                 i += 1
             end
         end
@@ -287,6 +287,6 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
     "Hglu" => Float64(6))
 
     @time f_list = getSortedFragmentList(test_table.id_to_pep, mods_dict);
-    @time f_index = makeFragmentIndex!(test_table, f_list, 256);
+    @time f_index = makeFragmentIndex!(f_list);
 end
 

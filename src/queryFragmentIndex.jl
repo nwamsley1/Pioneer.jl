@@ -31,7 +31,8 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
         i += 1
         mid = (lo + hi) ÷ 2
         #If either frag_min or frag_max are in the FragBin
-        if ((frag_min > getLowMZ(frag_index[mid])) & (frag_min < getHighMZ(frag_index[mid])))
+        #if ((frag_min > getLowMZ(frag_index[mid])) & (frag_min < getHighMZ(frag_index[mid])))
+        if ((frag_max > getHighMZ(frag_index[mid])) & (frag_min < getHighMZ(frag_index[mid])))
             potential_match = mid
             hi = mid - 1
         #frag_max is below the FragBin
@@ -194,8 +195,11 @@ function searchScan(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, f_index::
     min_frag_bin = 0
     for (mass, intensity) in zip(massess, intensities)
         mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
+        #println("mass ", mass)
         FRAGMIN = mass - ppm*(mass/1e6)
         FRAGMAX = mass + ppm*(mass/1e6)
+        #println("FRAGMIN ", FRAGMIN)
+        #println("FRAGMAX ", FRAGMAX)
         min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, window - width, window + width)
     end 
     return precs
@@ -203,16 +207,18 @@ end
 i = 0
 #precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
 @time begin
-    for scan in 1:length(MS_TABLE[:msOrder])#[10001]
+    for scan in [4473]#1:length(MS_TABLE[:msOrder])#[10001]
         precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
         if (MS_TABLE[:msOrder][scan] == 1) #& !ismissing(MS_TABLE[:precursorMZ])
             continue
         end
         i += 1
-        searchScan(precs, f_index, MS_TABLE[:masses][scan], MS_TABLE[:intensities][scan], MS_TABLE[:precursorMZ][scan], 10.0, 0.5)
-        if length(filter(x->x.count>3, precs)) > 0
-            println(length(filter(x->x.count>3, precs)))
-        end
+        searchScan(precs, f_index, MS_TABLE[:masses][scan], MS_TABLE[:intensities][scan], MS_TABLE[:precursorMZ][scan], 100.0, 0.5)
+        #if length(filter(x->x.count>4, precs)) > 0
+            println(length(precs))
+            println(filter(x->x.count>4, precs))
+            println(scan)
+        #end
     end
 end
 precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
