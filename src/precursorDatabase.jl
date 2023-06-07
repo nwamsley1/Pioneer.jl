@@ -74,12 +74,14 @@ struct PeptideGroup
     prot_ids::Set{UInt32}
     pep_ids::Set{UInt32}
     sequence::String
+    decoy::Bool
 end
-PeptideGroup(sequence::String) = PeptideGroup(Set{UInt32}(), Set{UInt32}(), sequence)
+PeptideGroup(sequence::String, decoy::Bool) = PeptideGroup(Set{UInt32}(), Set{UInt32}(), sequence, decoy)
 
 getProtIDs(pg::PeptideGroup) = pg.prot_ids
 getPepIDs(pg::PeptideGroup) = pg.pep_ids
 getSeq(pg::PeptideGroup) = pg.sequence
+isDecoy(pg::PeptideGroup) = pg.decoy
 addProtID!(pg::PeptideGroup, prot_id::UInt32) = push!(pg.prot_ids, prot_id)
 addPepID!(pg::PeptideGroup, pep_id::UInt32) = push!(pg.pep_ids, pep_id)
 
@@ -115,11 +117,13 @@ struct Peptide
     sequence::String
     pepGroup_id::UInt32
     prec_ids::Set{UInt32}
+    decoy::Bool
 end
 
 getSeq(p::Peptide) = p.sequence
 getPepGroupID(p::Peptide) = p.pepGroup_id
 getPrecIDs(p::Peptide) = p.prec_ids
+isDecoy(p::Peptide) = p.decoy
 addPrecID!(p::Peptide, prec_id::UInt32) = push!(p.prec_ids, prec_id)
 
 struct SimplePrecursor
@@ -208,7 +212,7 @@ getProtID(pt::PrecursorTable, prot_name::String) = pt.prot_to_id[prot_name]
 addPepGroupToProtein!(pt::PrecursorTable, prot_id::UInt32, pepGroup_id::UInt32) = push!(getPepGroupIDs(getProtein(pt, prot_id)), pepGroup_id)
 
 getPepGroup(pt::PrecursorTable, pepGroup_id) = pt.id_to_pepGroup[pepGroup_id]
-addPepGroup!(pt::PrecursorTable, pepGroup_id::UInt32, sequence::String) = insert!(pt.id_to_pepGroup, pepGroup_id, PeptideGroup(sequence))
+addPepGroup!(pt::PrecursorTable, pepGroup_id::UInt32, sequence::String, decoy::Bool) = insert!(pt.id_to_pepGroup, pepGroup_id, PeptideGroup(sequence, decoy))
 addProtToPepGroup!(pt::PrecursorTable, pepGroup_id::UInt32, prot_id::UInt32) = addProtID!(getPepGroup(pt, pepGroup_id), prot_id)
 
 getPep(pt::PrecursorTable, pep_id) = pt.id_to_pep[pep_id]
@@ -218,6 +222,9 @@ addPrecToPep!(pt::PrecursorTable, pep_id::UInt32, prec_id::UInt32) = addPrecID!(
 getPrec(pt::PrecursorTable, prec_id::UInt32) = pt.id_to_prec[prec_id]
 addPrec!(pt::PrecursorTable, prec_id::UInt32, pep_id::UInt32, charge::UInt8, isotope::UInt8) = insert!(pt.id_to_prec, prec_id, SimplePrecursor(charge, isotope, pep_id))
 
+function getProtFromPepID(pt::PrecursorTable, pep_id::Int)
+    getProtIDs(pt.id_to_pepGroup[getPepGroupID(pt.id_to_pep[pep_id])])
+end
 """
     getProtID!(ptable::PrecursorTable, prot_name::String, max_prot_id::UInt32)
 
@@ -239,6 +246,7 @@ end
 
 include("applyMods.jl")
 
+
 function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{FastaEntry},  
                                 fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
                                 var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
@@ -250,32 +258,37 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
     #so duplicated peptides are adjacent in the list
     previous_peptide = ""
     for peptide in peptides_fasta
+        sequence = getSeq(peptide)
         #Current peptide differs from previous
-        if getSeq(peptide) != previous_peptide
-
+        if sequence != previous_peptide
+            decoy = isDecoy(peptide)
+            if decoy
+                sequence = shufflefast(sequence)
+            end
             #Apply fixed modifications
-            peptide_sequence_fixed_mods = fixedMods(getSeq(peptide), fixed_mods)
+            peptide_sequence_fixed_mods = fixedMods(sequence, fixed_mods)
 
             pepGroup_id += UInt32(1)
-            addPepGroup!(ptable, pepGroup_id, peptide_sequence_fixed_mods)
+            addPepGroup!(ptable, pepGroup_id, peptide_sequence_fixed_mods, decoy)
 
             max_prot_id, prot_id = getProtID!(ptable, 
-                                             getID(peptide), 
-                                             max_prot_id)
-            addPepGroupToProtein!(ptable, prot_id, pepGroup_id)
-            
-            addProtToPepGroup!(ptable, pepGroup_id, prot_id)
-
-            previous_peptide = getSeq(peptide)
+                                            getID(peptide), 
+                                            max_prot_id)
+            if !decoy
+                addPepGroupToProtein!(ptable, prot_id, pepGroup_id)
+                addProtToPepGroup!(ptable, pepGroup_id, prot_id)
+                previous_peptide = sequence
+            end
 
             ######
             #Apply Variable modifications
             #######
             max_pep_id = applyMods!(ptable.id_to_pep,
                         var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
-                        getSeq(peptide),
+                        sequence,
                         pepGroup_id,
                         max_pep_id,
+                        decoy,
                         n = n); 
         else #Duplicated peptide, so add a protein to the peptide group
 

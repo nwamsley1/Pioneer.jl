@@ -76,7 +76,7 @@ adds the unmodified peptide.
 ### Examples 
 - See `applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, input_string::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)`
 """
-function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matches::Vector{Tuple{UnitRange{Int64}, String}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, n::Int)
+function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matches::Vector{Tuple{UnitRange{Int64}, String}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, n::Int, decoy::Bool)
     
     function applyMods(combination, unmod_seq::String)
         output_str = [""] #Build the modified sequence from scratch
@@ -93,11 +93,12 @@ function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matc
     insertPeptide!(peptides::UnorderedDictionary{UInt32, Peptide}, 
                    seq::String, 
                    group_id::UInt32, 
-                   pep_id::UInt32) = insert!(peptides, pep_id, Peptide(seq, group_id, Set(UInt32[])))
+                   pep_id::UInt32,
+                   decoy::Bool) = insert!(peptides, pep_id, Peptide(seq, group_id, Set(UInt32[]), decoy))
 
     #Peptide with 0 variable mods. 
     #pep_id += UInt32(1);
-    insertPeptide!(peptides, unmod_seq, group_id, pep_id);
+    insertPeptide!(peptides, unmod_seq, group_id, pep_id, decoy);
     pep_id += UInt32(1);
     # #Apply all combinations of n or fewer variable mods
     for N in 1:min(n, length(matches)) #min(n, length(matches)) because there could be fewer than `n` matches
@@ -105,7 +106,7 @@ function applyVariableMods!(peptides::UnorderedDictionary{UInt32, Peptide}, matc
             #Maybe the sorting could somehow ber done all at once outside the loop. Could be more efficient?
             sort!(combination, by=match->match[1][end]); #Sort applied variable mods in order of appearance in "unmod_seq". 
             modified_seq = applyMods(combination, unmod_seq) #Get the modified sequence for the given combination of mods
-            insertPeptide!(peptides, join(modified_seq), group_id, pep_id);
+            insertPeptide!(peptides, join(modified_seq), group_id, pep_id, decoy);
             pep_id += UInt32(1);
         end
     end
@@ -156,13 +157,14 @@ applyMods!(test_peps_dict, var_mods, test_pep, group_id, pep_id, n=1);
                                                             "PEPEPCPEPE[modE]P"
                                                             ])
 """
-function applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32; n::Int = 3)
+function applyMods!(peptides::UnorderedDictionary{UInt32, Peptide}, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, unmod_seq::String, group_id::UInt32, pep_id::UInt32, decoy::Bool; n::Int = 3)
     applyVariableMods!(peptides,
                     matchVarMods(var_mods, unmod_seq),
                     unmod_seq,
                     group_id,
                     pep_id,
-                    n
+                    n,
+                    decoy
                     )
 end
 export applyMods!

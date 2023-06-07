@@ -243,25 +243,27 @@ function makeFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, charges::Vector{U
     end
     bin = 1
     start = 1
+    diff = 10.0*(getFragMZ(frag_ions[start])/1e6)
     for stop in 2:length(frag_ions)#bin in 1:(bin_count - 1)
         #Ready to make another precursor bin. 
-        if (getFragMZ(frag_ions[stop]) - getFragMZ(frag_ions[start])) > 0.001
-            
+        if (getFragMZ(frag_ions[stop]) - getFragMZ(frag_ions[start])) > diff
+            _stop = stop - 1
             #Add a new fragment bin
             #println("A")
-            push!(frag_index.fragment_bins, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)))
+            push!(frag_index.fragment_bins, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[_stop]),UInt32(bin)))
             #setFragmentBin!(frag_index, bin, FragBin(getFragMZ(frag_ions[start]),getFragMZ(frag_ions[stop]),UInt32(bin)));
 
             #Add a new precursor bin
             #println("B")
-            push!(frag_index.precursor_bins, PrecursorBin(Vector{PrecursorBinItem{T}}(undef, (stop - start + 1)*length(charges)))) #PrecursorBin(T, start - stop))
+            push!(frag_index.precursor_bins, PrecursorBin(Vector{PrecursorBinItem{T}}(undef, (_stop - start + 1)*length(charges)))) #PrecursorBin(T, start - stop))
             #println("C")
-            fillPrecursorBin!(frag_index, frag_ions, bin, start, stop)
+            fillPrecursorBin!(frag_index, frag_ions, bin, start, _stop)
 
             
             sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
             bin += 1
-            start = stop 
+            start = stop
+            diff = 10.0*(getFragMZ(frag_ions[start])/1e6)
         end
     end
     return frag_index
@@ -283,10 +285,19 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
 
     const mods_dict = Dict("Carb" => Float64(57.021464),
     "Harg" => Float64(10.008269),
-    "Hlys" => Float64(8.014199),
-    "Hglu" => Float64(6))
+    "Hlys" => Float64(8.014199))
 
     @time f_list = getSortedFragmentList(test_table.id_to_pep, mods_dict);
     @time f_index = makeFragmentIndex!(f_list);
 end
 
+using Dictionaries
+using Combinatorics
+using Random
+using Arrow
+using Tables
+
+include("src/precursor.jl")
+include("src/parseFASTA.jl")
+include("src/PrecursorDatabase.jl")
+include("src/applyMods.jl")

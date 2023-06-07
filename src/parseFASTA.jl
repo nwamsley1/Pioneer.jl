@@ -69,14 +69,41 @@ struct FastaEntry
     uniprot_id::String
     description::String
     sequence::String
+    decoy::Bool
 end
 
 getID(fe::FastaEntry) = fe.uniprot_id
 getDescription(fe::FastaEntry) = fe.description
 getSeq(fe::FastaEntry) = fe.sequence
+isDecoy(fe::FastaEntry) = fe.decoy
 
 
-FastaEntry() = FastaEntry("","","")
+FastaEntry() = FastaEntry("","","", false)
+
+function shufflefast(s::String)
+ 
+    ss = sizeof(s)
+    l = length(s)
+
+    v = Vector{Int}(undef, l)
+    i = 1
+    for j in 1:l
+        v[j] = i
+        i = nextind(s, i)
+    end
+    #println("TEST")
+    p = pointer(s)
+    u = Vector{UInt8}(undef, ss)
+    k = 1
+    for i in randperm(l)
+        for j in v[i]:(i == l ? ss : v[i+1]-1)
+            u[k] = unsafe_load(p, j)
+            k += 1
+        end
+    end
+    u[end] = unsafe_load(p, ss);
+    return String(u)
+end
 
 """
     parseFasta(fasta_path::String, parse_identifier::Function = x -> x)::Vector{FastaEntry}
@@ -105,13 +132,15 @@ function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(
 
     #In memory representation of FastaFile
     fasta = Vector{FastaEntry}()
+    sequence = ""
     @time begin
         for record in reader
-            push!(fasta, 
-                    FastaEntry(parse_identifier(FASTA.identifier(record)),
-                               FASTA.description(record),
-                               FASTA.sequence(record))
-            )
+                push!(fasta, 
+                        FastaEntry(parse_identifier(FASTA.identifier(record)),
+                                FASTA.description(record),
+                                FASTA.sequence(record),
+                                false)
+                )
         end
     end
 
@@ -122,9 +151,15 @@ function digestFasta(fasta::Vector{FastaEntry}; regex::Regex = r"[KR][^P|$]", ma
     peptides_fasta = Vector{FastaEntry}()
     for entry in fasta
         for peptide in digest(getSeq(entry), regex = regex, max_length = max_length, min_length = min_length, missed_cleavages = missed_cleavages)
-            push!(peptides_fasta, FastaEntry(getID(entry), 
+            for decoy in [false, true]
+                if decoy
+                    peptide = shufflefast(String(peptide))
+                end
+                push!(peptides_fasta, FastaEntry(getID(entry), 
                                                 "",#getDescription(entry), 
-                                                peptide))
+                                                peptide,
+                                                decoy))
+            end
         end
     end
     return sort!(peptides_fasta, by = x -> getSeq(x))
