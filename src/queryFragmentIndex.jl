@@ -121,16 +121,18 @@ function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_
     return frag_bin - 1
 end
 
-function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 4) where {T,U<:AbstractFloat}
+function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 0) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::T) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
     function filterPrecursorMatches!(precs::Dictionary{UInt32, IonIndexMatch{T}}, topN::Int = 30, min_frag_count::Int = 4) where {T<:AbstractFloat}
         #Do not consider peptides wither fewer than 
+        match_count = sum(map(prec->getCount(prec), precs))
+        prec_count = length(precs)
         filter!(prec->getCount(prec)>min_frag_count, precs)
         sort!(precs, by = prec->getScore(prec), rev = true)
         #Iterator of Peptide ID's for the `topN` scoring peptides
-        return Iterators.take(keys(precs), min(topN, length(keys(precs))))
+        return Iterators.take(keys(precs), min(topN, length(keys(precs)))), prec_count, match_count
         #=if length(precs) >0
             return first(pairs(precs))
         end=#
@@ -179,6 +181,9 @@ function SearchRAW(
                    ) where {T,U<:Real}
     
     scored_PSMs = makePSMsDict(FastXTandem(data_type))
+    k = Dictionary{Int64, Float64}()
+    peaks = Dictionary{Int64, Int64}()
+    spectrum_entropy = Dictionary{Int64, Float64}()
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
@@ -191,8 +196,10 @@ function SearchRAW(
         end
         ms2 += 1
         precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
-        pep_id_iterator = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
-
+        pep_id_iterator, prec_count, match_count = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
+        insert!(k, Int64(i), match_count/prec_count)
+        insert!(peaks, Int64(i), length(spectrum[:intensities]))
+        insert!(spectrum_entropy, Int64(i), entropy(spectrum[:intensities]))
         #transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1])
         transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
         #min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities])[end - (min(length(spectrum[:intensities]) - 1, 200))]]
@@ -213,7 +220,7 @@ function SearchRAW(
         Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(i))
     end
     println("processed $ms2 scans!")
-    return scored_PSMs
+    return scored_PSMs, k, peaks, spectrum_entropy
 end
 
 
@@ -245,8 +252,12 @@ end
 combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
 
 bin_sizes = [length(x.precs) for x in f_index.precursor_bins]
-PSMs = DataFrame(test)
-
+PSMs = DataFrame(test[1])
+k = test[2]
+peaks = test[3]
+ent = test[4]
+plot([x for x in peaks], [x for x in ent], ylims = (-2.0e9, 0.1e9), seriestype = :scatter)
+plot([x for x in peaks], [log(-x) for x in ent], seriestype = :scatter)
 sort!(PSMs, [:scan_idx, :hyperscore])
 
 diff_scores = Vector{Float64}()
@@ -270,12 +281,22 @@ end
 
 PSMs = subs
 #=
-PSMs = DataFrame(test)
+PSMs = DataFrame(test[1])
+k = test[2]
 transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:precursor_idx]))) => :decoy)
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
 transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
 transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
-
+transform!(PSMs, AsTable(:) => ByRow(psm -> k[psm[:scan_idx]]) => :expected)
+transform!(PSMs, AsTable(:) => ByRow(psm -> peaks[psm[:scan_idx]]) => :count)
+transform!(PSMs, AsTable(:) => ByRow(psm -> log(-ent[psm[:scan_idx]])) => :ent)
+function getPoisson(lam::Float64, observed::Int)
+    function logfac(N)
+        N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
+    end
+    log((lam^observed)*exp(-lam)) - logfac(observed)
+end
+transform!(PSMs, AsTable(:) => ByRow(psm -> getPoisson(psm[:expected], Int64(psm[:total_ions]))) => :poisson)
 diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 
 PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
@@ -302,8 +323,8 @@ P
 p = plot(layout=(1,2), size=(800,300))
 targets = X[X_labels.==false,:]
 decoys = X[X_labels.==true,:]
- PSMs[:, :diff_hyperscore] = disallowmissing(PSMs[:, :diff_hyper])
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore]])'
+PSMs[:, :diff_hyperscore] = disallowmissing(PSMs[:, :diff_hyper])
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore,:poisson,:count, :ent]])'
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error]])'
 #X = transpose(Matrix(PSMs[!,[:hyperscore,:total_ions,:y_ladder,:length,:error]]))
 X_labels = Vector(PSMs[1:1:end, :decoy])
@@ -328,14 +349,14 @@ t = filter(row->row.x1.>0.0, sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeun
 plot!(p[1], title="PCA", alpha = 0.5)
 plot!(p[2], title="LDA", alpha = 0.5)
 
-histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(Ylda[X_labels.==false], alpha = 0.5)# normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-sum(Ylda[X_labels.==true].>0.025)
-sum(Ylda[X_labels.==false].>0.025)
-
-sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1])
-
+sum(Ylda[X_labels.==true].<0.026)
+sum(Ylda[X_labels.==false].<0.026)
+length(unique(PSMs[PSMs[:,:x1].<0.0255,:][:,:sequence]))
+PSMs = sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1])
+passedfdr = PSMs[PSMs[:,:x1].<-0.006,:]
 sum(Ylda[X_labels.==true].>0.08)/sum(Ylda[X_labels.==false].<-0.08)
 #sum(Ylda[X_labels.==false].>0.08)
 

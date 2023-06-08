@@ -36,8 +36,8 @@ import Base.>
 >(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) > x
 
 function getSortedFragmentList(peptides::UnorderedDictionary{UInt32, Peptide}, mods_dict::Dict{String, T}; 
-                                frag_charges::Vector{UInt8} = UInt8[1, 2], frag_isotopes::Vector{UInt8} = UInt8[0],
-                                y_start::Int = 3, b_start::Int = 3, low_mz::Float64 = 300.0, high_mz::Float64 = 1700.0)::Vector{FragmentIon{T}} where {T<:AbstractFloat}
+                                frag_charges::Vector{UInt8} = UInt8[1], frag_isotopes::Vector{UInt8} = UInt8[0],
+                                y_start::Int = 3, b_start::Int = 3, low_mz::Float64 = 150.0, high_mz::Float64 = 1700.0)::Vector{FragmentIon{T}} where {T<:AbstractFloat}
     fragment_list = Vector{FragmentIon{T}}()
 
     for (id, peptide) in pairs(peptides) #Each iteration of the loop gets adds the fragments for one peptide
