@@ -285,7 +285,7 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
             #######
             max_pep_id = applyMods!(ptable.id_to_pep,
                         var_mods,              #and lastly, apply variable mods and ad them to the peptide hash table
-                        sequence,
+                        peptide_sequence_fixed_mods,
                         pepGroup_id,
                         max_pep_id,
                         decoy,

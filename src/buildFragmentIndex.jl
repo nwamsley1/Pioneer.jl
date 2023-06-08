@@ -279,13 +279,15 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
         peptides_fasta = digestFasta(parseFasta(file_path))
         test_table = PrecursorTable()
         fixed_mods = [(p=r"C", r="C[Carb]")]
-        var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]")]
+        var_mods = [(p=r"(K$)", r="[Hlys]"), (p=r"(R$)", r="[Harg]"), (p=r"(M)", r="[MOx]")]
         buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, 2)
     end
 
     const mods_dict = Dict("Carb" => Float64(57.021464),
     "Harg" => Float64(10.008269),
-    "Hlys" => Float64(8.014199))
+    "Hlys" => Float64(8.014199),
+    "MOx" => Float64(15.9949))
+
 
     @time f_list = getSortedFragmentList(test_table.id_to_pep, mods_dict);
     @time f_index = makeFragmentIndex!(f_list);

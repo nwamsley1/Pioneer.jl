@@ -199,13 +199,17 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32) where {T,U<:AbstractFloat}
+function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T) where {T,U<:AbstractFloat}
 
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
     peak, transition, match = 1, 1, 1
     while (peak <= length(masses)) & (transition <= length(Transitions))
+        if intensities[peak] <  min_intensity
+            peak += 1
+            continue
+        end
         #Is the peak within the tolerance of the transition m/z?
         if (masses[peak]+ δ >= getLow(Transitions[transition]))
             if (masses[peak]+ δ <= getHigh(Transitions[transition]))
@@ -257,10 +261,10 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0)) where {T,U<:AbstractFloat}
+function matchPeaks(Transitions::Vector{Transition}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0)) where {T,U<:AbstractFloat}
     matches = Vector{FragmentMatch{T}}()
     for δ in δs
-        matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx, ms_file_idx)
+        matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity)
     end
     matches
 end

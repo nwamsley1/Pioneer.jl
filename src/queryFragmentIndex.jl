@@ -183,6 +183,7 @@ function SearchRAW(
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
     ms2 = 0
+    min_intensity = Float32(0.0)
     for spectrum in Tables.namedtupleiterator(spectra)
         i += 1
         if spectrum[:msOrder] != 2
@@ -193,15 +194,16 @@ function SearchRAW(
         pep_id_iterator = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
 
         #transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1])
-        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1], mods_dict = mods_dict)
-
+        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
+        #min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities])[end - (min(length(spectrum[:intensities]) - 1, 200))]]
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
                                     #δs = params[:δs],
                                     δs = zeros(T, (1,)),#[Float64(0)],
                                     scan_idx = UInt32(i),
-                                    ms_file_idx = ms_file_idx)
+                                    ms_file_idx = ms_file_idx,
+                                    min_intensity = min_intensity)
 
         unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
 
@@ -216,9 +218,12 @@ end
 
 
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
+MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
 @time test = SearchRAW(MS_TABLE, test_table, f_index, UInt32(1))
+t = [length(x.precs) for x in f_index.precursor_bins]
 histogram(t[t .< 3e4])
+
 function diffhyper(scores::AbstractArray)
     if length(scores) > 1
         sorted = sortperm(scores)
@@ -227,17 +232,53 @@ function diffhyper(scores::AbstractArray)
         return scores[1]
     end
 end
-#=
+
+function diffhyper(scores::AbstractArray)
+    if length(scores) > 1
+        sorted = sortperm(scores)
+        #return push!(diff(scores[sorted]), scores[sorted][end])
+        return scores[sorted][end] - scores[sorted][end-1]
+    else
+        return scores[1]
+    end
+end
+combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
+
+bin_sizes = [length(x.precs) for x in f_index.precursor_bins]
 PSMs = DataFrame(test)
 
+sort!(PSMs, [:scan_idx, :hyperscore])
+
+diff_scores = Vector{Float64}()
+start, stop = 1, 1
+for (i, scan_idx) in enumerate(PSMs[2:size(PSMs)[1],:scan_idx])
+    previous = PSMs[:, :scan_idx][i]
+    if previous != scan_idx
+        append!(diff_scores, diffhyper(PSMs[start:stop, :hyperscore]))
+        start, stop = i+1, i+1
+    end
+end
+
+scans = []#SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}()
+i = 1
+subs = DataFrame()
+for x in groupby(PSMs, [:scan_idx])
+    #display(typeof(x))
+    x[:,:diff_hyper] .= diffhyper(x[:,:hyperscore])
+    subs = vcat(subs, DataFrame(x))
+end
+
+PSMs = subs
+#=
+PSMs = DataFrame(test)
 transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:precursor_idx]))) => :decoy)
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
 transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
 transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
 
-diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
+diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 
-PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx])), diffs[:, :x1])
+PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 rename!(PSMs, :x1 => :diff_hyperscore)
 
 
@@ -253,15 +294,17 @@ target_scores = filter(row -> !row.decoy, PSMs)[!, :y_ladder]
 
 println(mean(target_scores) - mean(decoy_scores))
 MannWhitneyUTest(decoy_scores, target_scores)
-histogram(decoy_scores, alpha = 0.5, normalize = :pdf)
-histogram!(target_scores, alpha = 0.5, normalize = :pdf)
+histogram(decoy_scores, alpha = 0.5)#, normalize = :pdf)
+histogram!(target_scores, alpha = 0.5)#, normalize = :pdf)
 
 P
 
 p = plot(layout=(1,2), size=(800,300))
 targets = X[X_labels.==false,:]
 decoys = X[X_labels.==true,:]
+ PSMs[:, :diff_hyperscore] = disallowmissing(PSMs[:, :diff_hyper])
 X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error]])'
 #X = transpose(Matrix(PSMs[!,[:hyperscore,:total_ions,:y_ladder,:length,:error]]))
 X_labels = Vector(PSMs[1:1:end, :decoy])
 #X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
@@ -285,13 +328,13 @@ t = filter(row->row.x1.>0.0, sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeun
 plot!(p[1], title="PCA", alpha = 0.5)
 plot!(p[2], title="LDA", alpha = 0.5)
 
-histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.06)
-histogram!(Ylda[X_labels.==false], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.06)
+histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.5)# normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-sum(Ylda[X_labels.==true].>0.0)
-sum(Ylda[X_labels.==false].>0.0)
+sum(Ylda[X_labels.==true].>0.025)
+sum(Ylda[X_labels.==false].>0.025)
 
-sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1_1])
+sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1])
 
 sum(Ylda[X_labels.==true].>0.08)/sum(Ylda[X_labels.==false].<-0.08)
 #sum(Ylda[X_labels.==false].>0.08)
@@ -404,4 +447,62 @@ for (mass, intensity) in zip(test_masses, test_intensities)
     i += 1
 end
 #searchPrecursorBin!(precs, f_index.precursor_bins[44], Float32(10.0), 500.0, 501.0)
+=#
+
+#=
+
+string1 = "I think this is good"
+string2 = "This is good, I think"
+
+function areWordsEquivalent(s1::String, s2::String)
+    function splitAndLower(s::String)
+        #1) Make all letters lowercase
+        #2) Divide into words,
+        # r"\W" is a regular expression that matches whitespace 
+        split(lowercase(s), r"\W", keepempty = false)
+    end
+    #\cap is the tab completion sequence for "union" 
+    #character https://docs.julialang.org/en/v1/manual/unicode-input/
+    return Set(splitAndLower(s1)) == Set(splitAndLower(s2))
+    #return all([(first(word) == last(word)) for word in zip(sort(splitAndLower(s1)), sort(splitAndLower(s2)))])
+end
+
+function areWordsEquivalentSet(s1::String, s2::String)
+    function splitAndLower(s::String)
+        #1) Make all letters lowercase
+        #2) Divide into words,
+        # r"\W" is a regular expression that matches whitespace 
+        split(lowercase(s), r"\W", keepempty = false)
+    end
+    #\cap is the tab completion sequence for "union" 
+    #character https://docs.julialang.org/en/v1/manual/unicode-input/
+    return issetequal(Set(splitAndLower(s1)), Set(splitAndLower(s2)))
+    #return all([(first(word) == last(word)) for word in zip(sort(splitAndLower(s1)), sort(splitAndLower(s2)))])
+end
+
+sonnet = "Unthrifty loveliness, why dost thou spend
+Upon thyself thy beauty's legacy?
+Nature's bequest gives nothing, but doth lend,
+And being frank she lends to those are free:
+Then, beauteous niggard, why dost thou abuse
+The bounteous largess given thee to give?
+Profitless usurer, why dost thou use
+So great a sum of sums, yet canst not live?
+For having traffic with thyself alone,
+Thou of thyself thy sweet self dost deceive:
+Then how when nature calls thee to be gone,
+What acceptable audit canst thou leave?
+    Thy unused beauty must be tombed with thee,
+    Which, used, lives th' executor to be."
+
+function areWordsEquivalentSet(s1::String, s2::String)
+    function splitAndLower(s::String)
+        #1) Make all letters lowercase
+        #2) Divide into words,
+        # r"\W" is a regular expression that matches whitespace 
+        split(lowercase(s), r"\W", keepempty = false)
+    end
+
+    return issetequal(Set(splitAndLower(s1)), Set(splitAndLower(s2)))
+end
 =#
