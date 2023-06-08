@@ -46,7 +46,7 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
    
     N = getLength(precursor_bin)
 
-    if N>10000
+    if N>30000
         return nothing, nothing
     end
 
@@ -95,7 +95,7 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
 
     addFragmentMatches!(precs, precursor_bin, window_start, window_stop)
 
-    return
+    return window_start, window_stop
 
 end
 
@@ -121,7 +121,7 @@ function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_
     return frag_bin - 1
 end
 
-function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 100, min_frag_count::Int = 4) where {T,U<:AbstractFloat}
+function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 4) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::T) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
@@ -150,16 +150,16 @@ function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::Fragm
     return filterPrecursorMatches!(precs, topN, min_frag_count)
 end
 
-function selectTransitions(ptable::PrecursorTable, pep_ids::Base.Iterators.Take{Indices{UInt32}}, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0) where {T<:AbstractFloat}
+function selectTransitions(ptable::PrecursorTable, pep_ids::Base.Iterators.Take{Indices{UInt32}}, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0, mods_dict::Dict{String, Float64} = Dict{String, Float64}()) where {T<:AbstractFloat}
     transitions = Vector{Transition}()
     for pep_id in pep_ids
-        append!(transitions, getTransitions(getPep(ptable,pep_id), pep_id, charges, isotopes, y_start = y_start, b_start = b_start, ppm = ppm))
+        append!(transitions, getTransitions(getPep(ptable,pep_id), pep_id, charges, isotopes, y_start = y_start, b_start = b_start, ppm = ppm, mods_dict = mods_dict))
     end
     return sort!(transitions, by = x->getMZ(x))
 end
 
-function getTransitions(peptide::Peptide, pep_id::UInt32, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0) where {T<:AbstractFloat}
-    getTransitions(Precursor(getSeq(peptide), prec_id = pep_id), charges, isotopes, y_start = y_start, b_start = b_start, ppm = ppm)
+function getTransitions(peptide::Peptide, pep_id::UInt32, charges::Vector{UInt8}, isotopes::Vector{UInt8}; y_start::Int = 3, b_start::Int = 3, ppm::T = 20.0, mods_dict::Dict{String, Float64} = Dict{String, Float64}()) where {T<:AbstractFloat}
+    getTransitions(Precursor(getSeq(peptide), prec_id = pep_id, mods_dict = mods_dict), charges, isotopes, y_start = y_start, b_start = b_start, ppm = ppm)
 end
 
 function SearchRAW(
@@ -193,7 +193,7 @@ function SearchRAW(
         pep_id_iterator = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
 
         #transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1])
-        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0])
+        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1], mods_dict = mods_dict)
 
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -214,13 +214,33 @@ function SearchRAW(
     return scored_PSMs
 end
 
+
+MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
+
 @time test = SearchRAW(MS_TABLE, test_table, f_index, UInt32(1))
+histogram(t[t .< 3e4])
+function diffhyper(scores::AbstractArray)
+    if length(scores) > 1
+        sorted = sortperm(scores)
+        return scores[sorted[end]] - scores[sorted[end - 1]]
+    else
+        return scores[1]
+    end
+end
 #=
 PSMs = DataFrame(test)
 
 transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:precursor_idx]))) => :decoy)
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
-PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx])) 
+transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
+transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
+
+diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
+
+PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx])), diffs[:, :x1])
+rename!(PSMs, :x1 => :diff_hyperscore)
+
+
 decoy_scores = filter(row -> row.decoy, PSMs)[!, :hyperscore]
 target_scores = filter(row -> !row.decoy, PSMs)[!, :hyperscore]
 
@@ -233,15 +253,15 @@ target_scores = filter(row -> !row.decoy, PSMs)[!, :y_ladder]
 
 println(mean(target_scores) - mean(decoy_scores))
 MannWhitneyUTest(decoy_scores, target_scores)
-histogram(decoy_scores, alpha = 0.5)#, normalize = :pdf)
-histogram!(target_scores, alpha = 0.5)#, normalize = :pdf)
+histogram(decoy_scores, alpha = 0.5, normalize = :pdf)
+histogram!(target_scores, alpha = 0.5, normalize = :pdf)
 
 P
 
 p = plot(layout=(1,2), size=(800,300))
 targets = X[X_labels.==false,:]
 decoys = X[X_labels.==true,:]
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error]])'
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore]])'
 #X = transpose(Matrix(PSMs[!,[:hyperscore,:total_ions,:y_ladder,:length,:error]]))
 X_labels = Vector(PSMs[1:1:end, :decoy])
 #X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
@@ -254,20 +274,24 @@ p = plot(layout=(1,2), size=(800,300))
 for s in [true, false]
 
     points = Ypca[:,X_labels.==s]
-    scatter!(p[1], points[1,:],points[2,:], label=s, legend=:bottomleft)
+    scatter!(p[1], points[1,:],points[2,:], label=s, legend=:bottomleft, alpha = 0.5)
     points = Ylda[:,X_labels.==s]
-    scatter!(p[2], points[1,:],points[2,:], label=s, legend=:bottomleft)
+    scatter!(p[2], points[1,:],points[2,:], label=s, legend=:bottomleft, alpha = 0.5)
 
 end
 
-plot!(p[1], title="PCA")
-plot!(p[2], title="LDA")
+t = filter(row->row.x1.>0.0, sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1]))
 
-histogram(Ylda[X_labels.==true], alpha = 0.5)
-histogram!(Ylda[X_labels.==false], alpha = 0.5)
+plot!(p[1], title="PCA", alpha = 0.5)
+plot!(p[2], title="LDA", alpha = 0.5)
 
-sum(Ylda[X_labels.==true].>0.05)
-sum(Ylda[X_labels.==false].>0.05)
+histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.06)
+histogram!(Ylda[X_labels.==false], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.06)
+
+sum(Ylda[X_labels.==true].>0.0)
+sum(Ylda[X_labels.==false].>0.0)
+
+sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1_1])
 
 sum(Ylda[X_labels.==true].>0.08)/sum(Ylda[X_labels.==false].<-0.08)
 #sum(Ylda[X_labels.==false].>0.08)
