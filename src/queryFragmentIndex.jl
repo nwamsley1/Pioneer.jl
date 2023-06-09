@@ -258,6 +258,7 @@ peaks = test[3]
 ent = test[4]
 plot([x for x in peaks], [x for x in ent], ylims = (-2.0e9, 0.1e9), seriestype = :scatter)
 plot([x for x in peaks], [log(-x) for x in ent], seriestype = :scatter)
+plot([x for x in k], [log(-x) for x in ent], seriestype = :scatter)
 sort!(PSMs, [:scan_idx, :hyperscore])
 
 diff_scores = Vector{Float64}()
@@ -527,3 +528,29 @@ function areWordsEquivalentSet(s1::String, s2::String)
     return issetequal(Set(splitAndLower(s1)), Set(splitAndLower(s2)))
 end
 =#
+using ScikitLearn: fit!, predict
+using ScikitLearn.GridSearch: RandomizedSearchCV
+using DecisionTree
+mod = RandomForestRegressor()
+
+param_dist = Dict("n_trees"=>[50 , 100, 200, 300],
+                  "max_depth"=> [3, 5, 6 ,8 , 9 ,10])
+
+model = RandomizedSearchCV(mod, param_dist, n_iter=10, cv=5)
+fit!(model, X', X_labels)
+
+model = DecisionTreeClassifier(max_depth=2)
+fit!(model, X', X_labels)
+
+predict(model, X')
+
+
+model = build_forest(X_labels, X', 2, 10, 0.5, 6)
+apply_forest(model, X)
+
+probs = apply_forest_proba(model, X',[true, false])
+
+PSMs = hcat(PSMs, reshape(probs[:,2], length(probs[:,2])), makeunique=true)
+
+histogram(PSMs[X_labels.==true,:x1_1], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[X_labels.==false, :x1_1], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
