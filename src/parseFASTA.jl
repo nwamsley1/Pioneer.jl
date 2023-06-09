@@ -132,7 +132,6 @@ function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(
 
     #In memory representation of FastaFile
     fasta = Vector{FastaEntry}()
-    sequence = ""
     @time begin
         for record in reader
                 push!(fasta, 
@@ -149,18 +148,22 @@ end
 
 function digestFasta(fasta::Vector{FastaEntry}; regex::Regex = r"[KR][^P|$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1)
     peptides_fasta = Vector{FastaEntry}()
+    #For eacbh protein in the FASTA
     for entry in fasta
+        #Digest the protein into peptides
         for peptide in digest(getSeq(entry), regex = regex, max_length = max_length, min_length = min_length, missed_cleavages = missed_cleavages)
+            #Make a target and decoy for each peptide
             for decoy in [false, true]
                 if decoy
                     peptide = shufflefast(String(peptide))
                 end
                 push!(peptides_fasta, FastaEntry(getID(entry), 
-                                                "",#getDescription(entry), 
+                                                "",#getDescription(entry) This justs wastes time and memory here 
                                                 peptide,
                                                 decoy))
             end
         end
     end
+    #Sort the peptides
     return sort!(peptides_fasta, by = x -> getSeq(x))
 end

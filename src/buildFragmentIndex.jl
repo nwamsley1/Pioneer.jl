@@ -225,12 +225,12 @@ function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int, index::Int, prec_b
     setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
 end
 
-function addPrecursorBinItem!(fi::FragmentIndex{T}, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
-    push!(getPrecBins(fi), prec_bin_item)
+function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where {T<:AbstractFloat}
+    push!(getPrecBins(fi), prec_bin)
 end
 
 
-function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, charges::Vector{UInt8} = UInt8[2, 3, 4], bin_ppm::T) where {T<:AbstractFloat}
+function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T, charges::Vector{UInt8} = UInt8[2, 3, 4]) where {T<:AbstractFloat}
    
     #The fragment ions are divided into bins of roughtly equal m/z width.
     #That should correspond to roughly half the fragment mass accuracy of the detector?
@@ -278,7 +278,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, charges::Vector{
                                     bin
                                     )
                             )
-            addPrecursorBinItem!(frag_index, 
+            addPrecursorBin!(frag_index, 
                                 #Preallocate an empty precursor bin of the correct length 
                                 PrecursorBin(Vector{PrecursorBinItem{T}}(undef, (last_frag_in_bin - start + 1)*length(charges)))
                                 )
@@ -301,6 +301,7 @@ end
 using FASTX
 using CodecZlib
 using Dictionaries
+#Example gzipped mouse proteome. 
 file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_10090.fasta.gz"
 @time begin
     @time begin 
@@ -318,9 +319,10 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
 
 
     @time f_list = getSortedFragmentList(test_table.id_to_pep, mods_dict);
-    @time f_index = makeFragmentIndex!(f_list);
+    @time f_index = buildFragmentIndex!(f_list, 10.0);
 end
 
+println("Size of precursor bins in GB: ", (sum([sum([sizeof(prec) for prec in prec_bin]) for prec_bin in f_index.precursor_bins]))/1e9)
 using Dictionaries
 using Combinatorics
 using Random
