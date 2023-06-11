@@ -88,6 +88,7 @@ what the precursor ID is.
 struct PrecursorBinItem{T<:AbstractFloat}
     prec_id::UInt32
     prec_mz::T
+    charge::UInt8
 end
 
 getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
@@ -119,7 +120,7 @@ struct PrecursorBin{T<:AbstractFloat}
 end
 
 getPrecursors(pb::PrecursorBin)  = pb.precs
-getPrecursor(pb::PrecursorBin, i::Int64) = getPrecursors(pb.precs)[i] 
+getPrecursor(pb::PrecursorBin, i::Int64) = getPrecursors(pb)[i] 
 getLength(pb::PrecursorBin)= length(pb.precs)
 
 function setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
@@ -218,12 +219,18 @@ function addFragmentBin!(fi::FragmentIndex{T}, frag_bin::FragBin{T}) where {T<:A
     push!(getFragBins(fi), frag_bin)
 end
 
-getPrecursorBin(fi::FragmentIndex, bin::Int) = fi.precursor_bins[bin]
+getPrecursorBin(fi::FragmentIndex, bin::UInt32) = fi.precursor_bins[bin]
 getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
 
-function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int, index::Int, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
+function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::UInt32, index::Int, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
     setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
 end
+
+function addPrecursorBinItem!(fi::FragmentIndex{T}, bin::UInt32, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
+    push!(getPrecursors(fi.precursor_bins[bin]), prec_bin_item)
+end
+
+
 
 function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where {T<:AbstractFloat}
     push!(getPrecBins(fi), prec_bin)
@@ -236,18 +243,20 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T, char
     #That should correspond to roughly half the fragment mass accuracy of the detector?
     frag_index = FragmentIndex(T) 
 
-    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, charges::Vector{UInt8}, bin::Int, start::Int, stop::Int)
+    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, charges::Vector{UInt8}, bin::UInt32, start::Int, stop::Int; low_prec_mz::Float64 = 300.0, high_prec_mz::Float64 = 1100.0)
         i = 1 #Index of current fragme nt
         for ion_index in range(start, stop)
-            
+            pep_id = getPepID(frag_ions[ion_index])
             for charge in charges #For each precursor charge 
-                pep_id = get_PepID(frag_ions[ion_index])
-                prec_mz = (getPrecMZ(ion) + PROTON*(charge-1))/charge #m/z of the precursor
+                prec_mz = (getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
+                if (prec_mz < low_prec_mz) | (prec_mz > high_prec_mz) #Precursor m/z outside the bounds
+                    continue
+                end
                 #Add precursor corresponding to the charge state
-                setPrecursorBinItem(frag_index,
+                addPrecursorBinItem!(frag_index,
                                     bin,
-                                    i,
-                                    PrecursorBinItem(pep_id, prec_mz)
+                                    #i,
+                                    PrecursorBinItem(pep_id, prec_mz, charge)
                                     )
                 #frag_index.precursor_bins[bin].precs[i] = PrecursorBinItem(getPepID(ion), (getPrecMZ(ion) + PROTON*(charge-1))/charge)
                 i += 1 #Move to the next fragment 
@@ -280,7 +289,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T, char
                             )
             addPrecursorBin!(frag_index, 
                                 #Preallocate an empty precursor bin of the correct length 
-                                PrecursorBin(Vector{PrecursorBinItem{T}}(undef, (last_frag_in_bin - start + 1)*length(charges)))
+                                PrecursorBin(Vector{PrecursorBinItem{T}}())#undef, (last_frag_in_bin - start + 1)*length(charges)))
                                 )
         
             fillPrecursorBin!(frag_index, frag_ions, charges, bin, start, last_frag_in_bin)
@@ -322,7 +331,19 @@ file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_
     @time f_index = buildFragmentIndex!(f_list, 10.0);
 end
 
-println("Size of precursor bins in GB: ", (sum([sum([sizeof(prec) for prec in prec_bin]) for prec_bin in f_index.precursor_bins]))/1e9)
+println("Size of precursor bins in GB: ", (sum([sum([sizeof(prec) for prec in prec_bin.precs]) for prec_bin in f_index.precursor_bins]))/1e9)
+println("Size of fragment list in GB: ", sum([sizeof(x) for x in f_list])/1e9)
+println("Size of fragment bins in GB: ", sum([sizeof(x) for x in f_index.fragment_bins])/1e9)
+
+using Plots
+bin_sizes = [length(prec_bin.precs) for prec_bin in f_index.precursor_bins]
+n = length(bin_sizes)
+p = plot((1:n), cumsum(sort(bin_sizes))/sum(bin_sizes),
+    xlabel = "sample", ylabel = "Probability", 
+    title = "Empirical Cumluative Distribution", label = "")
+histogram(bin_sizes[(bin_sizes.<4e4) .& (bin_sizes.>1000)])
+histogram(bin_sizes)
+f_list = nothing
 using Dictionaries
 using Combinatorics
 using Random

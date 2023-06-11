@@ -27,13 +27,14 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
         mid = (lo + hi) ÷ 2
 
         if (frag_min) < getHighMZ(frag_index[mid])
-            if (frag_max) > getHighMZ(frag_index[mid])
+            if (frag_max) > getHighMZ(frag_index[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
                 potential_match = mid
             end
             hi = mid - 1
-        elseif (frag_max) > getLowMZ(frag_index[mid])
+        elseif (frag_max) > getLowMZ(frag_index[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
             if (frag_min) < getLowMZ(frag_index[mid])
-                potential_match = mid
+                #potential_match = mid
+                return mid
             end
             lo = mid + 1
         end
@@ -46,9 +47,9 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
    
     N = getLength(precursor_bin)
 
-    if N>30000
-        return nothing, nothing
-    end
+    #if N>1000000
+    #    return nothing, nothing
+    #end
 
     lo, hi = 1, N
 
@@ -109,7 +110,7 @@ function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_
 
     while getLowMZ(getFragmentBin(frag_index, frag_bin)) < frag_max
         if frag_bin > min_frag_bin
-            searchPrecursorBin!(precs, getPrecursorBin(frag_index, frag_bin), intensity, prec_min, prec_max)
+            searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, prec_min, prec_max)
         end
         frag_bin += 1
 
@@ -121,7 +122,7 @@ function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_
     return frag_bin - 1
 end
 
-function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 0) where {T,U<:AbstractFloat}
+function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 2) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::T) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
@@ -201,7 +202,7 @@ function SearchRAW(
         insert!(peaks, Int64(i), length(spectrum[:intensities]))
         insert!(spectrum_entropy, Int64(i), entropy(spectrum[:intensities]))
         #transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1])
-        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
+        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1,2], UInt8[0], mods_dict = mods_dict)
         #min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities])[end - (min(length(spectrum[:intensities]) - 1, 200))]]
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -223,7 +224,9 @@ function SearchRAW(
     return scored_PSMs, k, peaks, spectrum_entropy
 end
 
-
+include("src/matchpeaks.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
@@ -259,6 +262,8 @@ ent = test[4]
 plot([x for x in peaks], [x for x in ent], ylims = (-2.0e9, 0.1e9), seriestype = :scatter)
 plot([x for x in peaks], [log(-x) for x in ent], seriestype = :scatter)
 plot([x for x in k], [log(-x) for x in ent], seriestype = :scatter)
+plot([x for x in k], [x for x in peaks], seriestype = :scatter)
+
 sort!(PSMs, [:scan_idx, :hyperscore])
 
 diff_scores = Vector{Float64}()
@@ -301,6 +306,7 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> getPoisson(psm[:expected], Int64(psm
 diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 
 PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
+#PSMs_b = hcat(combine(sdf -> sdf[sortperm(sdf.hyperscore)[end - 1], :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 rename!(PSMs, :x1 => :diff_hyperscore)
 
 
@@ -325,7 +331,8 @@ p = plot(layout=(1,2), size=(800,300))
 targets = X[X_labels.==false,:]
 decoys = X[X_labels.==true,:]
 PSMs[:, :diff_hyperscore] = disallowmissing(PSMs[:, :diff_hyper])
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore,:poisson,:count, :ent]])'
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore,:poisson]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error, :poisson]])'
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error]])'
 #X = transpose(Matrix(PSMs[!,[:hyperscore,:total_ions,:y_ladder,:length,:error]]))
 X_labels = Vector(PSMs[1:1:end, :decoy])
@@ -353,11 +360,24 @@ plot!(p[2], title="LDA", alpha = 0.5)
 histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-sum(Ylda[X_labels.==true].<0.026)
-sum(Ylda[X_labels.==false].<0.026)
-length(unique(PSMs[PSMs[:,:x1].<0.0255,:][:,:sequence]))
+#function getFDR(scores::Matrix{Float64}, labels::BitVector)#
+#
+##    for i in scores
+#end
+
+histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+
+
+sum(Ylda[X_labels.==true].>0.009)
+sum(Ylda[X_labels.==false].>0.009)
+
+sum(Ylda[X_labels.==true].<-0.0035)
+sum(Ylda[X_labels.==false].<-0.0035)
+
 PSMs = sort(hcat(PSMs, reshape(Ylda, length(Ylda)), makeunique = true), [:x1])
-passedfdr = PSMs[PSMs[:,:x1].<-0.006,:]
+length(unique(PSMs[PSMs[:,:x1_1].<0.0035,:][:,:sequence]))
+passedfdr = PSMs[PSMs[:,:x1].<0.004,:]
 sum(Ylda[X_labels.==true].>0.08)/sum(Ylda[X_labels.==false].<-0.08)
 #sum(Ylda[X_labels.==false].>0.08)
 

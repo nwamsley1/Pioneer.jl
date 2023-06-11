@@ -155,7 +155,7 @@ function digestFasta(fasta::Vector{FastaEntry}; regex::Regex = r"[KR][^P|$]", ma
             #Make a target and decoy for each peptide
             for decoy in [false, true]
                 if decoy
-                    peptide = shufflefast(String(peptide))
+                    peptide = reverse(peptide[1:end -1])#shufflefast(String(peptide))
                 end
                 push!(peptides_fasta, FastaEntry(getID(entry), 
                                                 "",#getDescription(entry) This justs wastes time and memory here 
