@@ -33,8 +33,8 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
             hi = mid - 1
         elseif (frag_max) > getLowMZ(frag_index[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
             if (frag_min) < getLowMZ(frag_index[mid])
-                #potential_match = mid
-                return mid
+                potential_match = mid
+                #return mid
             end
             lo = mid + 1
         end
@@ -253,9 +253,9 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:prec
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
 transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
 transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
-#diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
-#PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
-#rename!(PSMs, :x1 => :diff_hyperscore)
+diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
+PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
+rename!(PSMs, :x1 => :diff_hyperscore)
 
 decoy_scores = filter(row -> row.decoy, PSMs)[!, :hyperscore]
 target_scores = filter(row -> !row.decoy, PSMs)[!, :hyperscore]
@@ -272,8 +272,8 @@ Ylda = predict(lda, X)
 histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-histogram(log2.(-1 .* Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(log2.(-1 .* Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(log2.(-1 * Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(-1 *Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 #diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 #PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 #rename!(PSMs, :x1 => :diff_hyperscore)

@@ -262,9 +262,9 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
         #Current peptide differs from previous
         if sequence != previous_peptide
             decoy = isDecoy(peptide)
-            if decoy
-                sequence = shufflefast(sequence)
-            end
+            #if decoy
+            #    sequence = shufflefast(sequence)
+            #end
             #Apply fixed modifications
             peptide_sequence_fixed_mods = fixedMods(sequence, fixed_mods)
 
