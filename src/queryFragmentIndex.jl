@@ -181,10 +181,7 @@ function SearchRAW(
                    data_type::Type{T} = Float64
                    ) where {T,U<:Real}
     
-    scored_PSMs = makePSMsDict(FastXTandem(data_type))
-    k = Dictionary{Int64, Float64}()
-    peaks = Dictionary{Int64, Int64}()
-    spectrum_entropy = Dictionary{Int64, Float64}()
+    scored_PSMs = makePSMsDict(XTandem(data_type))
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
@@ -198,11 +195,7 @@ function SearchRAW(
         ms2 += 1
         precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
         pep_id_iterator, prec_count, match_count = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
-        insert!(k, Int64(i), match_count/prec_count)
-        insert!(peaks, Int64(i), length(spectrum[:intensities]))
-        insert!(spectrum_entropy, Int64(i), entropy(spectrum[:intensities]))
-        #transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1, 2], UInt8[0, 1])
-        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1,2], UInt8[0], mods_dict = mods_dict)
+        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
         #min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities])[end - (min(length(spectrum[:intensities]) - 1, 200))]]
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -213,20 +206,20 @@ function SearchRAW(
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity)
 
-        unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
+        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
         
         #Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(spectrum[:scanNumber]))
-        Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(i))
+        Score!(scored_PSMs, unscored_PSMs, length(spectrum[:intensities]), Float64(sum(spectrum[:intensities])), match_count/prec_count, scan_idx = Int64(i))
     end
     println("processed $ms2 scans!")
-    return scored_PSMs, k, peaks, spectrum_entropy
+    return scored_PSMs
 end
 
 include("src/matchpeaks.jl")
 include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/FastXTandem.jl")
+include("src/PSM_TYPES/XTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
@@ -255,18 +248,38 @@ end
 combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
 
 bin_sizes = [length(x.precs) for x in f_index.precursor_bins]
-PSMs = DataFrame(test[1])
-k = test[2]
-peaks = test[3]
-ent = test[4]
-plot([x for x in peaks], [x for x in ent], ylims = (-2.0e9, 0.1e9), seriestype = :scatter)
-plot([x for x in peaks], [log(-x) for x in ent], seriestype = :scatter)
-plot([x for x in k], [log(-x) for x in ent], seriestype = :scatter)
-plot([x for x in k], [x for x in peaks], seriestype = :scatter)
+PSMs = DataFrame(test)
+transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:precursor_idx]))) => :decoy)
+transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
+transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
+transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
+#diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
+#PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
+#rename!(PSMs, :x1 => :diff_hyperscore)
 
-sort!(PSMs, [:scan_idx, :hyperscore])
+decoy_scores = filter(row -> row.decoy, PSMs)[!, :hyperscore]
+target_scores = filter(row -> !row.decoy, PSMs)[!, :hyperscore]
 
-diff_scores = Vector{Float64}()
+using Plots
+using MultivariateStats
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:entropy,:poisson,:spectrum_peaks]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:poisson]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error, :entropy, :poisson,:diff_hyperscore]])'
+X_labels = Vector(PSMs[:, :decoy])
+#X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
+lda = fit(MulticlassLDA, X, X_labels; outdim=1)
+Ylda = predict(lda, X)
+histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+
+histogram(log2.(-1 .* Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(-1 .* Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+#diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
+#PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
+#rename!(PSMs, :x1 => :diff_hyperscore)
+
+
+#=diff_scores = Vector{Float64}()
 start, stop = 1, 1
 for (i, scan_idx) in enumerate(PSMs[2:size(PSMs)[1],:scan_idx])
     previous = PSMs[:, :scan_idx][i]
@@ -274,18 +287,9 @@ for (i, scan_idx) in enumerate(PSMs[2:size(PSMs)[1],:scan_idx])
         append!(diff_scores, diffhyper(PSMs[start:stop, :hyperscore]))
         start, stop = i+1, i+1
     end
-end
+end=#
 
-scans = []#SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}()
-i = 1
-subs = DataFrame()
-for x in groupby(PSMs, [:scan_idx])
-    #display(typeof(x))
-    x[:,:diff_hyper] .= diffhyper(x[:,:hyperscore])
-    subs = vcat(subs, DataFrame(x))
-end
 
-PSMs = subs
 #=
 PSMs = DataFrame(test[1])
 k = test[2]
@@ -293,9 +297,9 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:prec
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
 transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
 transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
-transform!(PSMs, AsTable(:) => ByRow(psm -> k[psm[:scan_idx]]) => :expected)
-transform!(PSMs, AsTable(:) => ByRow(psm -> peaks[psm[:scan_idx]]) => :count)
-transform!(PSMs, AsTable(:) => ByRow(psm -> log(-ent[psm[:scan_idx]])) => :ent)
+#transform!(PSMs, AsTable(:) => ByRow(psm -> k[psm[:scan_idx]]) => :expected)
+#transform!(PSMs, AsTable(:) => ByRow(psm -> peaks[psm[:scan_idx]]) => :count)
+#transform!(PSMs, AsTable(:) => ByRow(psm -> log(-ent[psm[:scan_idx]])) => :ent)
 function getPoisson(lam::Float64, observed::Int)
     function logfac(N)
         N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
@@ -331,7 +335,7 @@ p = plot(layout=(1,2), size=(800,300))
 targets = X[X_labels.==false,:]
 decoys = X[X_labels.==true,:]
 PSMs[:, :diff_hyperscore] = disallowmissing(PSMs[:, :diff_hyper])
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error,:diff_hyperscore,:poisson]])'
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error, :entropy, :poisson]])'
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error, :poisson]])'
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:length,:error]])'
 #X = transpose(Matrix(PSMs[!,[:hyperscore,:total_ions,:y_ladder,:length,:error]]))
@@ -365,8 +369,8 @@ histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06
 ##    for i in scores
 #end
 
-histogram(Ylda[X_labels.==true], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(Ylda[X_labels.==false], alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(log2.(-1*Ylda[X_labels.==true]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(-1*Ylda[X_labels.==false]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
 
 sum(Ylda[X_labels.==true].>0.009)
