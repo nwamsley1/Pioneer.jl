@@ -26,13 +26,13 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
 
         mid = (lo + hi) ÷ 2
 
-        if (frag_min) < getHighMZ(frag_index[mid])
-            if (frag_max) > getHighMZ(frag_index[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
+        if (frag_min) <= getHighMZ(frag_index[mid])
+            if (frag_max) >= getHighMZ(frag_index[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
                 potential_match = mid
             end
             hi = mid - 1
-        elseif (frag_max) > getLowMZ(frag_index[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
-            if (frag_min) < getLowMZ(frag_index[mid])
+        elseif (frag_max) >= getLowMZ(frag_index[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
+            if (frag_min) <= getLowMZ(frag_index[mid])
                 potential_match = mid
                 #return mid
             end
@@ -102,24 +102,35 @@ end
 
 function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, intensity::Float32, frag_min::U, frag_max::U, prec_min::U, prec_max::U) where {T,U<:AbstractFloat}
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
-
     #No fragment bins contain the fragment m/z
     if (frag_bin === nothing)
         return min_frag_bin
+    elseif frag_bin <= min_frag_bin
+        return min_frag_bin
     end
+    if getLowMZ(getFragmentBin(frag_index, frag_bin)) < frag_max
 
-    while getLowMZ(getFragmentBin(frag_index, frag_bin)) < frag_max
-        if frag_bin > min_frag_bin
+        while true #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
+            #Fragment bin matches the fragment ion
             searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, prec_min, prec_max)
-        end
-        frag_bin += 1
 
-        if frag_bin > length(getFragBins(frag_index))
-            break
+            if (frag_bin > length(getFragBins(frag_index)))
+                return frag_bin - 1
+            elseif (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
+                return frag_bin
+            else
+                frag_bin += 1
+            end
+
         end
+
     end
 
-    return frag_bin - 1
+    if frag_bin > min_frag_bin
+        searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, prec_min, prec_max)
+    end
+
+    return frag_bin
 end
 
 function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 2) where {T,U<:AbstractFloat}
@@ -181,7 +192,8 @@ function SearchRAW(
                    data_type::Type{T} = Float64
                    ) where {T,U<:Real}
     
-    scored_PSMs = makePSMsDict(XTandem(data_type))
+    #scored_PSMs = makePSMsDict(XTandem(data_type))
+    scored_PSMs = makePSMsDict(FastXTandem(data_type))
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
     i = 0
@@ -193,6 +205,7 @@ function SearchRAW(
             continue
         end
         ms2 += 1
+        println("MS2 ", ms2)
         precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
         pep_id_iterator, prec_count, match_count = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
         transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
@@ -206,12 +219,13 @@ function SearchRAW(
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity)
 
-        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+        #unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+        unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
         
-        #Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(spectrum[:scanNumber]))
-        Score!(scored_PSMs, unscored_PSMs, length(spectrum[:intensities]), Float64(sum(spectrum[:intensities])), match_count/prec_count, scan_idx = Int64(i))
+        Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(spectrum[:scanNumber]))
+        #Score!(scored_PSMs, unscored_PSMs, length(spectrum[:intensities]), Float64(sum(spectrum[:intensities])), match_count/prec_count, scan_idx = Int64(i))
     end
     println("processed $ms2 scans!")
     return scored_PSMs
@@ -220,6 +234,7 @@ end
 include("src/matchpeaks.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/XTandem.jl")
+include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
@@ -259,11 +274,12 @@ rename!(PSMs, :x1 => :diff_hyperscore)
 
 decoy_scores = filter(row -> row.decoy, PSMs)[!, :hyperscore]
 target_scores = filter(row -> !row.decoy, PSMs)[!, :hyperscore]
-
+histogram(decoy_scores, alpha = 0.5)
+histogram!(target_scores, alpha = 0.5)
 using Plots
 using MultivariateStats
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:entropy,:poisson,:spectrum_peaks]])'
-#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:poisson]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:entropy,:poisson,:spectrum_peaks]])'
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder]])'
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error, :entropy, :poisson,:diff_hyperscore]])'
 X_labels = Vector(PSMs[:, :decoy])
 #X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
@@ -272,8 +288,8 @@ Ylda = predict(lda, X)
 histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-histogram(log2.(-1 * Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(log2.(-1 *Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(log2.(Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 #diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 #PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 #rename!(PSMs, :x1 => :diff_hyperscore)
