@@ -237,19 +237,19 @@ function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where
 end
 
 
-function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T, charges::Vector{UInt8} = UInt8[2, 3, 4]) where {T<:AbstractFloat}
+function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T; max_charge::UInt8 = UInt8(4), min_charge::UInt8 = UInt8(2), low_prec_mz::Float64 = 300.0, high_prec_mz::Float64 = 1100.0) where {T<:AbstractFloat}
    
     #The fragment ions are divided into bins of roughtly equal m/z width.
     #That should correspond to roughly half the fragment mass accuracy of the detector?
     frag_index = FragmentIndex(T) 
 
-    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, charges::Vector{UInt8}, bin::UInt32, start::Int, stop::Int; low_prec_mz::Float64 = 300.0, high_prec_mz::Float64 = 1100.0)
+    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, max_charge::UInt8, min_charge::UInt8, bin::UInt32, start::Int, stop::Int, low_prec_mz::Float64, high_prec_mz::Float64)
         i = 1 #Index of current fragme nt
         for ion_index in range(start, stop)
             pep_id = getPepID(frag_ions[ion_index])
-            for charge in charges #For each precursor charge 
-                prec_mz = (getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
-                if (prec_mz < low_prec_mz) | (prec_mz > high_prec_mz) #Precursor m/z outside the bounds
+            for charge in UInt8[1]#charges #For each precursor charge 
+                prec_mz = getPrecMZ(frag_ions[ion_index])#(getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
+                if (prec_mz < low_prec_mz/max_charge) | (prec_mz > high_prec_mz*min_charge) #Precursor m/z outside the bounds
                     continue
                 end
                 #Add precursor corresponding to the charge state
@@ -292,7 +292,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T, char
                                 PrecursorBin(Vector{PrecursorBinItem{T}}())#undef, (last_frag_in_bin - start + 1)*length(charges)))
                                 )
         
-            fillPrecursorBin!(frag_index, frag_ions, charges, bin, start, last_frag_in_bin)
+            fillPrecursorBin!(frag_index, frag_ions, max_charge, min_charge, bin, start, last_frag_in_bin, low_prec_mz, high_prec_mz)
 
             #Sort the precursor bin by precursor m/z
             sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
@@ -354,3 +354,51 @@ include("src/precursor.jl")
 include("src/parseFASTA.jl")
 include("src/PrecursorDatabase.jl")
 include("src/applyMods.jl")
+
+
+open("/Users/n.t.wamsley/Desktop/targets.csv", "w") do file
+    write(file, "modified_sequence,collision_energy,precursor_charge\n")
+    for (id, pep) in pairs(test_table.id_to_pep)
+        sequence = replace(getSeq(pep), r"M\[MOx\]"=>"M(ox)")
+        sequence = replace(sequence, r"C\[Carb\]"=>"C")
+
+        if (occursin("[H", sequence)) | (occursin("U", sequence)) | (occursin("O", sequence)) |  (occursin("X", sequence)) | occursin("Z", getSeq(pep)) | occursin("B", getSeq(pep))
+            continue
+        end
+
+        if (length(sequence) > 30) | (length(sequence) < 7)
+            continue
+        end 
+
+        if (isDecoy(pep) == false)
+            for charge in [2, 3, 4]
+                write(file, "$sequence, 33, $charge \n")
+            end
+        end
+    end
+end
+
+open("/Users/n.t.wamsley/Desktop/decoys.csv", "w") do file
+    write(file, "modified_sequence,collision_energy,precursor_charge\n")
+    for (id, pep) in pairs(test_table.id_to_pep)
+        sequence = replace(getSeq(pep), r"M\[MOx\]"=>"M(ox)")
+        sequence = replace(sequence, r"C\[Carb\]"=>"C")
+        if (occursin("[H", sequence)) | (occursin("U", sequence)) | (occursin("O", sequence)) |  (occursin("X", sequence)) | occursin("Z", getSeq(pep)) | occursin("B", getSeq(pep))
+            continue
+        end
+        if (length(sequence) > 30) | (length(sequence) < 7)
+            continue
+        end 
+        if (isDecoy(pep) == true)
+            for charge in [2, 3, 4]
+                write(file, "$sequence, 33, $charge \n")
+            end
+        end
+    end
+end
+
+for (id, pep) in pairs(test_table.id_to_pep)
+    if occursin("Z", getSeq(pep))
+        println(getSeq(pep))
+    end
+end

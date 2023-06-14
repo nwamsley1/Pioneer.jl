@@ -100,54 +100,57 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, 
 
 end
 
-function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, intensity::Float32, frag_min::U, frag_max::U, prec_min::U, prec_max::U) where {T,U<:AbstractFloat}
+function queryFragment!(precs::Dictionary{UInt32, IonIndexMatch{Float32}}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, intensity::Float32, frag_min::U, frag_max::U, prec_mz::Float32, prec_tol::U) where {T,U<:AbstractFloat}
+    
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
     if (frag_bin === nothing)
         return min_frag_bin
+    #This frag bin has already been searched
     elseif frag_bin <= min_frag_bin
         return min_frag_bin
     end
-    if getLowMZ(getFragmentBin(frag_index, frag_bin)) < frag_max
 
-        while true #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
-            #Fragment bin matches the fragment ion
-            searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, prec_min, prec_max)
-
-            if (frag_bin > length(getFragBins(frag_index)))
-                return frag_bin - 1
-            elseif (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
-                return frag_bin
-            else
-                frag_bin += 1
+    i = 1
+    while (frag_bin < length(getFragBins(frag_index))) #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
+        #Fragment bin matches the fragment ion
+        #println(i)
+        i += 1
+        if (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
+            return frag_bin
+        else
+            for charge in [2, 3, 4]
+                #mz = (prec_mz + PROTON*(charge - 1))/charge
+                #_min = (prec_mz - prec_tol - 1.0/charge)*charge - PROTON*(charge - 1)
+                _min = charge*(prec_mz - prec_tol - PROTON) - 1.0 + PROTON
+                _max = charge*(prec_mz + prec_tol - PROTON) + 3.0 + PROTON
+                #_max = (prec_mz + prec_tol + 3.0/charge)*charge - PROTON*(charge - 1)
+                #_min = mz - 0.5 - 1.0/charge
+                #_max = mz + 0.5 + 3.0/charge
+                searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, _min, _max)
             end
-
+            frag_bin += 1
         end
 
     end
 
-    if frag_bin > min_frag_bin
-        searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), intensity, prec_min, prec_max)
-    end
-
-    return frag_bin
+    #Only reach this point if frag_bin exceeds length(frag_index)
+    return frag_bin - 1
 end
 
-function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 30, min_frag_count::Int = 2) where {T,U<:AbstractFloat}
+function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 20, min_frag_count::Int = 2) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::T) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
-    function filterPrecursorMatches!(precs::Dictionary{UInt32, IonIndexMatch{T}}, topN::Int = 30, min_frag_count::Int = 4) where {T<:AbstractFloat}
+    function filterPrecursorMatches!(precs::Dictionary{UInt32, IonIndexMatch{T}}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
         #Do not consider peptides wither fewer than 
         match_count = sum(map(prec->getCount(prec), precs))
         prec_count = length(precs)
-        filter!(prec->getCount(prec)>min_frag_count, precs)
+        filter!(prec->getCount(prec)>=min_frag_count, precs)
+
         sort!(precs, by = prec->getScore(prec), rev = true)
         #Iterator of Peptide ID's for the `topN` scoring peptides
         return Iterators.take(keys(precs), min(topN, length(keys(precs)))), prec_count, match_count
-        #=if length(precs) >0
-            return first(pairs(precs))
-        end=#
     end
 
     min_frag_bin = 0
@@ -158,7 +161,7 @@ function searchScan!(precs::Dictionary{UInt32, IonIndexMatch{U}}, f_index::Fragm
 
         FRAGMIN, FRAGMAX = getFragTol(mass, ppm) 
 
-        min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, precursor_window - width, precursor_window + width)
+        min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, intensity, FRAGMIN, FRAGMAX, precursor_window, width)
     end 
 
     return filterPrecursorMatches!(precs, topN, min_frag_count)
@@ -180,35 +183,51 @@ function SearchRAW(
                    spectra::Arrow.Table, 
                    ptable::PrecursorDatabase,
                    frag_index::FragmentIndex{T},
-                   #selectTransitions, 
-                   #right_precursor_tolerance::U,
-                   #left_precursor_tolerance::U,
-                   #transition_charges::Vector{UInt8},
-                   #transition_isotopes::Vector{UInt8},
-                   #b_start::Int64,
-                   #y_start::Int64,
-                   #fragment_match_ppm::U,
                    ms_file_idx::UInt32;
+                   precursor_tolerance::Float64 = 0.5,
+                   fragment_tolerance::Float64 = 20.0,
+                   transition_charges::Vector{UInt8} = UInt8[1],
+                   transition_isotopes::Vector{UInt8} = UInt8[0],
+                   b_start::Int64 = 3,
+                   y_start::Int64 = 3,
+                   topN::Int64 = 10,
+                   min_frag_count::Int64 = 3,
+                   #fragment_match_ppm::U,
                    data_type::Type{T} = Float64
                    ) where {T,U<:Real}
     
-    #scored_PSMs = makePSMsDict(XTandem(data_type))
-    scored_PSMs = makePSMsDict(FastXTandem(data_type))
+    scored_PSMs = makePSMsDict(XTandem(data_type))
+    #scored_PSMs = makePSMsDict(FastXTandem(data_type))
     #precursorList needs to be sorted by precursor MZ. 
     #Iterate through rows (spectra) of the .raw data. 
-    i = 0
+    #i = 0
     ms2 = 0
     min_intensity = Float32(0.0)
-    for spectrum in Tables.namedtupleiterator(spectra)
-        i += 1
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
         end
         ms2 += 1
-        println("MS2 ", ms2)
+
         precs = Dictionary{UInt32, IonIndexMatch{Float32}}()
-        pep_id_iterator, prec_count, match_count = searchScan!(precs, frag_index, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 20.0, 0.5)
-        transitions = selectTransitions(ptable, pep_id_iterator, UInt8[1], UInt8[0], mods_dict = mods_dict)
+        pep_id_iterator, prec_count, match_count = searchScan!(precs, 
+                                                                frag_index, 
+                                                                spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
+                                                                fragment_tolerance*2, 
+                                                                precursor_tolerance,
+                                                                min_frag_count = min_frag_count, 
+                                                                topN = topN
+                                                            )
+
+        transitions = selectTransitions(ptable, 
+                                        pep_id_iterator, 
+                                        transition_charges, 
+                                        transition_isotopes, 
+                                        b_start = b_start,
+                                        y_start = y_start,
+                                        ppm = fragment_tolerance,
+                                        mods_dict = mods_dict
+                                        )
         #min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities])[end - (min(length(spectrum[:intensities]) - 1, 200))]]
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -218,14 +237,19 @@ function SearchRAW(
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity)
-
-        #unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
-        unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
+        #println(spectrum[:masses]')
+        #[println(x) for x in fragmentMatches]
+        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+        #unscored_PSMs = UnorderedDictionary{UInt32, FastXTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
         
-        Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(spectrum[:scanNumber]))
-        #Score!(scored_PSMs, unscored_PSMs, length(spectrum[:intensities]), Float64(sum(spectrum[:intensities])), match_count/prec_count, scan_idx = Int64(i))
+        #Score!(scored_PSMs, unscored_PSMs, scan_idx = Int64(spectrum[:scanNumber]))
+        Score!(scored_PSMs, unscored_PSMs, 
+                length(spectrum[:intensities]), 
+                Float64(sum(spectrum[:intensities])), 
+                match_count/prec_count, 
+                scan_idx = Int64(i))
     end
     println("processed $ms2 scans!")
     return scored_PSMs
@@ -234,11 +258,12 @@ end
 include("src/matchpeaks.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/XTandem.jl")
-include("src/PSM_TYPES/FastXTandem.jl")
+#include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
 @time test = SearchRAW(MS_TABLE, test_table, f_index, UInt32(1))
+
 t = [length(x.precs) for x in f_index.precursor_bins]
 histogram(t[t .< 3e4])
 
@@ -254,20 +279,59 @@ end
 function diffhyper(scores::AbstractArray)
     if length(scores) > 1
         sorted = sortperm(scores)
-        #return push!(diff(scores[sorted]), scores[sorted][end])
-        return scores[sorted][end] - scores[sorted][end-1]
+        return push!(diff(scores[sorted]), scores[sorted[end]])
+        #return scores[sorted][end] - scores[sorted][end-1]
     else
         return scores[1]
     end
 end
 combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
 
+function refinePSMs(PSMs::DataFrame, ptable::PrecursorTable)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(ptable, psm[:precursor_idx]))) => :decoy)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(ptable, psm[:precursor_idx])))) => :length)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(ptable, psm[:precursor_idx]))) => :sequence)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(ptable, x)) for x in collect(getProtFromPepID(ptable, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> log2(psm[:entropy]^2)) => :log2_entropy)
+
+    sort!(PSMs, [:scan_idx, :hyperscore])
+
+    function diffhyper(scan_idxs::Vector{Int64}, hyperscores::Vector{Float64})
+        diff_scores = Vector{Float64}(undef, length(scan_idxs))
+        push!(diff_scores, hyperscores[1])
+        previous_scan_idx = 1
+        for (i, scan_idx) in enumerate(scan_idxs[1:(end - 1)])
+            if previous != scan_idx
+                diff_scores[i] = hyperscore[i+1]
+            else
+                diff_scores[i] = (hyperscores[i] - hyperscores[i + 1])
+            end
+            previous_scan_idx = scan_idx
+        end
+        diff_scores
+    end
+
+    PSMs[:diff_hyper] = diffyper(PSMs[:,:scan_idx], PSMs[:,:hyperscore])
+    return PSMs
+end
 bin_sizes = [length(x.precs) for x in f_index.precursor_bins]
 PSMs = DataFrame(test)
-transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(test_table, psm[:precursor_idx]))) => :decoy)
-transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(test_table, psm[:precursor_idx])))) => :length)
-transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(test_table, psm[:precursor_idx]))) => :sequence)
-transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(test_table, x)) for x in collect(getProtFromPepID(test_table, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
+
+
+diff_scores = Vector{Float64}()
+start, stop = 1, 1
+push!(diff_scores, PSMs[1, :hyperscore])
+for (i, scan_idx) in enumerate(PSMs[1:(size(PSMs)[1] - 1),:scan_idx])
+    previous = PSMs[:, :scan_idx][i]
+    if previous != scan_idx
+        push!(diff_scores, PSMs[(i+1), :hyperscore])
+    else
+        push!(diff_scores, PSMs[(i), :hyperscore] - PSMs[min((i + 1), size(PSMs)[1]), :hyperscore])
+    end
+end
+
+PSMs[:,:diff_hyper] = diff_scores[1:(end - 1)]
+
 diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 rename!(PSMs, :x1 => :diff_hyperscore)
@@ -279,17 +343,64 @@ histogram!(target_scores, alpha = 0.5)
 using Plots
 using MultivariateStats
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:entropy,:poisson,:spectrum_peaks]])'
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder]])'
+
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:error,:y_ladder,:poisson,:b_ladder,:length,:intensity_explained,:log2_entropy,:spectrum_peaks,:diff_hyper]])'
+#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:error,:y_ladder,:poisson,:b_ladder,:diff_hyperscore,:length,:intensity_explained,:log2_entropy,:spectrum_peaks]])'
+#X = size(X)[2]*X./sum(Matrix(X), dims = 2)
+#pca = fit(PCA, X; maxoutdim=size(X)[1])
+#Xpca = predict(pca, X)
 #X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error, :entropy, :poisson,:diff_hyperscore]])'
 X_labels = Vector(PSMs[:, :decoy])
 #X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
 lda = fit(MulticlassLDA, X, X_labels; outdim=1)
 Ylda = predict(lda, X)
-histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-histogram(log2.(Ylda[X_labels.==true]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(log2.(Ylda[X_labels.==false]), alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(Ylda[X_labels.==true], alpha = 0.3)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.3)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+
+sum(Ylda[X_labels.==true].<-0.0073)
+sum(Ylda[X_labels.==false].<-0.0073)
+
+
+
+PSMs[:, :class_prob] = reshape(Ylda, length(Ylda))
+PSMs = combine(sdf -> sdf[argmin(sdf.class_prob), :], groupby(PSMs, [:scan_idx, :decoy]))
+unique(PSMs[PSMs[:,:class_prob].<-0.0073,:][:,:sequence])
+
+histogram(log2.(Ylda[X_labels.==true].^2)/2, alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(1 .* Ylda[X_labels.==false].^2)/2, alpha = 0.5)#, bins = -0.06:0.01:0.0)
+
+using ScikitLearn: fit!, predict
+using ScikitLearn.GridSearch: RandomizedSearchCV
+using DecisionTree
+mod = RandomForestRegressor()
+
+param_dist = Dict("n_trees"=>[50 , 100, 200, 300],
+                  "max_depth"=> [3, 5, 6 ,8 , 9 ,10])
+
+model = RandomizedSearchCV(mod, param_dist, n_iter=10, cv=5)
+fit!(model, X', X_labels)
+
+model = DecisionTreeClassifier(max_depth=2)
+fit!(model, X', X_labels)
+
+predict(model, X')
+
+#              multi-threaded forests must be seeded with an `Int`
+n_subfeatures=-1; n_trees=1000; partial_sampling=0.7; max_depth=-1
+min_samples_leaf=5; min_samples_split=2; min_purity_increase=0.0; seed=3
+
+model = build_forest(X_labels, X', 4, 1000, 0.5, 3)
+probs = apply_forest_proba(model, X',[true, false])
+
+PSMs[:,:prob] = probs[:,2]
+#unique(PSMs[PSMs[:,:prob].>0.99,:][:,:sequence])
+for p in range(0.99, 1.0, 10)
+    println("$p ", sum(PSMs[PSMs[:,:prob].>p,:][:,:decoy])/(sum(PSMs[PSMs[:,:prob].>p,:][:,:decoy]) + 
+    sum(true .!= PSMs[PSMs[:,:prob].>p,:][:,:decoy])), 
+    " ", sum(true .!= PSMs[PSMs[:,:prob].>p,:][:,:decoy]))
+end
+unique(PSMs[PSMs[:,:prob].>0.9955555555555555,:][:,:sequence])
 #diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
 #PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
 #rename!(PSMs, :x1 => :diff_hyperscore)
