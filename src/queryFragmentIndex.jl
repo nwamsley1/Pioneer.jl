@@ -252,120 +252,64 @@ function SearchRAW(
                 scan_idx = Int64(i))
     end
     println("processed $ms2 scans!")
-    return scored_PSMs
+    return DataFrame(scored_PSMs)
+end
+
+function refinePSMs!(PSMs::DataFrame, ptable::PrecursorTable)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(ptable, psm[:precursor_idx]))) => :decoy);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(ptable, psm[:precursor_idx])))) => :length);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(ptable, psm[:precursor_idx]))) => :sequence);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(ptable, x)) for x in collect(getProtFromPepID(ptable, Int64(psm[:precursor_idx])))], "|")) => :prot_name);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> log2(psm[:entropy]^2)) => :log2_entropy);
+
+    sort!(PSMs, [:scan_idx, :hyperscore]);
+
+    function diffhyper(scan_idxs::Vector{Int64}, hyperscores::Vector{Float64})
+        diff_scores = Vector{Float64}(undef, length(scan_idxs))
+        scan_idx = 1
+        for i in range(1, length(scan_idxs) - 1)
+            next_scan_idx = scan_idxs[i+1]
+            if next_scan_idx != scan_idx
+                diff_scores[i] = hyperscores[i]
+            else
+                diff_scores[i] = (hyperscores[i] - hyperscores[i+1])
+            end
+            scan_idx = next_scan_idx
+        end
+        return diff_scores
+    end
+
+    PSMs[:,:diff_hyper] = diffhyper(PSMs[:,:scan_idx], PSMs[:,:hyperscore]);
 end
 
 include("src/matchpeaks.jl")
 include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/XTandem.jl")
+include("src/PSM_TYPES/LibraryXTandem.jl")
 #include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 MA_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5182_MOC1_XRT_R04_PZ.arrow")
 
-@time test = SearchRAW(MS_TABLE, test_table, f_index, UInt32(1))
+@time PSMs = SearchRAW(MS_TABLE, test_table, f_index, UInt32(1))
 
-t = [length(x.precs) for x in f_index.precursor_bins]
-histogram(t[t .< 3e4])
-
-function diffhyper(scores::AbstractArray)
-    if length(scores) > 1
-        sorted = sortperm(scores)
-        return scores[sorted[end]] - scores[sorted[end - 1]]
-    else
-        return scores[1]
-    end
-end
-
-function diffhyper(scores::AbstractArray)
-    if length(scores) > 1
-        sorted = sortperm(scores)
-        return push!(diff(scores[sorted]), scores[sorted[end]])
-        #return scores[sorted][end] - scores[sorted][end-1]
-    else
-        return scores[1]
-    end
-end
-combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx])) 
-
-function refinePSMs(PSMs::DataFrame, ptable::PrecursorTable)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(getPep(ptable, psm[:precursor_idx]))) => :decoy)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> length(getSeq(getPep(ptable, psm[:precursor_idx])))) => :length)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> getSeq(getPep(ptable, psm[:precursor_idx]))) => :sequence)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> join([getName(getProtein(ptable, x)) for x in collect(getProtFromPepID(ptable, Int64(psm[:precursor_idx])))], "|")) => :prot_name)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> log2(psm[:entropy]^2)) => :log2_entropy)
-
-    sort!(PSMs, [:scan_idx, :hyperscore])
-
-    function diffhyper(scan_idxs::Vector{Int64}, hyperscores::Vector{Float64})
-        diff_scores = Vector{Float64}(undef, length(scan_idxs))
-        push!(diff_scores, hyperscores[1])
-        previous_scan_idx = 1
-        for (i, scan_idx) in enumerate(scan_idxs[1:(end - 1)])
-            if previous != scan_idx
-                diff_scores[i] = hyperscore[i+1]
-            else
-                diff_scores[i] = (hyperscores[i] - hyperscores[i + 1])
-            end
-            previous_scan_idx = scan_idx
-        end
-        diff_scores
-    end
-
-    PSMs[:diff_hyper] = diffyper(PSMs[:,:scan_idx], PSMs[:,:hyperscore])
-    return PSMs
-end
-bin_sizes = [length(x.precs) for x in f_index.precursor_bins]
-PSMs = DataFrame(test)
-
-
-diff_scores = Vector{Float64}()
-start, stop = 1, 1
-push!(diff_scores, PSMs[1, :hyperscore])
-for (i, scan_idx) in enumerate(PSMs[1:(size(PSMs)[1] - 1),:scan_idx])
-    previous = PSMs[:, :scan_idx][i]
-    if previous != scan_idx
-        push!(diff_scores, PSMs[(i+1), :hyperscore])
-    else
-        push!(diff_scores, PSMs[(i), :hyperscore] - PSMs[min((i + 1), size(PSMs)[1]), :hyperscore])
-    end
-end
-
-PSMs[:,:diff_hyper] = diff_scores[1:(end - 1)]
-
-diffs = combine(psm -> diffhyper(psm.hyperscore), groupby(PSMs, [:scan_idx,:decoy])) 
-PSMs = hcat(combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx, :decoy])), diffs[:, :x1])
-rename!(PSMs, :x1 => :diff_hyperscore)
-
-decoy_scores = filter(row -> row.decoy, PSMs)[!, :hyperscore]
-target_scores = filter(row -> !row.decoy, PSMs)[!, :hyperscore]
-histogram(decoy_scores, alpha = 0.5)
-histogram!(target_scores, alpha = 0.5)
+@time refinePSMs!(PSMs, test_table)
 using Plots
 using MultivariateStats
-#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:entropy,:poisson,:spectrum_peaks]])'
 
 X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:error,:y_ladder,:poisson,:b_ladder,:length,:intensity_explained,:log2_entropy,:spectrum_peaks,:diff_hyper]])'
-#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:error,:y_ladder,:poisson,:b_ladder,:diff_hyperscore,:length,:intensity_explained,:log2_entropy,:spectrum_peaks]])'
-#X = size(X)[2]*X./sum(Matrix(X), dims = 2)
-#pca = fit(PCA, X; maxoutdim=size(X)[1])
-#Xpca = predict(pca, X)
-#X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error, :entropy, :poisson,:diff_hyperscore]])'
 X_labels = Vector(PSMs[:, :decoy])
-#X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
 lda = fit(MulticlassLDA, X, X_labels; outdim=1)
 Ylda = predict(lda, X)
 
 histogram(Ylda[X_labels.==true], alpha = 0.3)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 histogram!(Ylda[X_labels.==false], alpha = 0.3)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
-sum(Ylda[X_labels.==true].<-0.0073)
-sum(Ylda[X_labels.==false].<-0.0073)
+sum(Ylda[X_labels.==true].>0.01)
+sum(Ylda[X_labels.==false].>0.01)
 
-
-
+https://www.proteomicsdb.org/prosit/api/download.xsjs?datasetId=0CDF1D1E5967717C453FC50C044754BD
 PSMs[:, :class_prob] = reshape(Ylda, length(Ylda))
-PSMs = combine(sdf -> sdf[argmin(sdf.class_prob), :], groupby(PSMs, [:scan_idx, :decoy]))
-unique(PSMs[PSMs[:,:class_prob].<-0.0073,:][:,:sequence])
+PSMs = combine(sdf -> sdf[argmax(sdf.class_prob), :], groupby(PSMs, [:scan_idx, :decoy]))
+unique(PSMs[PSMs[:,:class_prob].>0.01,:][:,:sequence])
 
 histogram(log2.(Ylda[X_labels.==true].^2)/2, alpha = 0.5)#, bins = -0.06:0.01:0.0)
 histogram!(log2.(1 .* Ylda[X_labels.==false].^2)/2, alpha = 0.5)#, bins = -0.06:0.01:0.0)

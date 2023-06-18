@@ -93,7 +93,7 @@ end
 
 getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
-
+getPrecCharge(pbi::PrecursorBinItem) = pbi.charge
 """
     PrecursorBin{T<:AbstractFloat}
 
@@ -229,7 +229,6 @@ end
 function addPrecursorBinItem!(fi::FragmentIndex{T}, bin::UInt32, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
     push!(getPrecursors(fi.precursor_bins[bin]), prec_bin_item)
 end
-
 
 
 function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where {T<:AbstractFloat}
@@ -402,3 +401,4 @@ for (id, pep) in pairs(test_table.id_to_pep)
         println(getSeq(pep))
     end
 end
+
