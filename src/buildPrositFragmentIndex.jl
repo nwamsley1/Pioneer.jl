@@ -1,24 +1,22 @@
-abstract type FragmentIndexType end 
+abstract type FragmentIndexType end
 
-struct FragmentIon{T<:AbstractFloat}
+getFragMZ(f::FragmentIndexType) = f.frag_mz
+getPrecID(f::FragmentIndexType) = f.prec_id
+getPrecCharge(f::FragmentIndexType) = f.prec_charge
+
+<(y::FragmentIndexType, x::T) where {T<:Real} = getFragMZ(y) < x
+<(x::T, y::FragmentIndexType) where {T<:Real} = <(y, x)
+>(y::FragmentIndexType, x::T) where {T<:Real} = getFragMZ(y) > x
+>(x::T, y::FragmentIndexType) where {T<:Real} = >(y, x)
+
+struct FragmentIon{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
-    pep_id::UInt32
+    prec_id::UInt32
     prec_mz::T
     prec_charge::UInt8
 end
 
-getFragMZ(f::FragmentIon) = f.frag_mz
-getPepID(f::FragmentIon) = f.pep_id
 getPrecMZ(f::FragmentIon) = f.prec_mz
-getPrecCharge(f::FragmentIon) = f.prec_charge
-
-#Make sortable by fragment mz. 
-import Base.<
-import Base.>
-<(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) < x
-<(x::T, y::FragmentIon) where {T<:Real} = <(y, x)
->(y::FragmentIon, x::T) where {T<:Real} = getFragMZ(y) > x
->(x::T, y::FragmentIon) where {T<:Real} = >(y, x)
 
 struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
@@ -30,46 +28,30 @@ struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     prec_id::UInt32
 end
 
-getFragMZ(f::LibraryFragment) = f.frag_mz
-getPepID(f::LibraryFragment) = f.pep_id
-getPrecMZ(f::LibraryFragment) = f.prec_mz
-
-import Base.<
-import Base.>
-<(y:: LibraryFragment, x::T) where {T<:Real} = getFragMZ(y) < x
-<(x::T, y:: LibraryFragment) where {T<:Real} = <(y, x)
->(y:: LibraryFragment, x::T) where {T<:Real} = getFragMZ(y) > x
->(x::T, y:: LibraryFragment) where {T<:Real} = >(y, x)
-
 getIntensity(f::LibraryFragment) = f.intensity
 isyIon(f::LibraryFragment) = f.is_y_ion
 getIonIndex(f::LibraryFragment) = f.ion_index
 getFragCharge(f::LibraryFragment) = f.frag_charge
-getPrecCharge(f::LibraryFragment) = f.prec_charge
-getPrecID(f::LibraryFragment) = f.prec_id
 
-function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T; max_charge::UInt8 = UInt8(4), min_charge::UInt8 = UInt8(2), low_prec_mz::Float64 = 300.0, high_prec_mz::Float64 = 1100.0) where {T<:AbstractFloat}
+function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
    
     #The fragment ions are divided into bins of roughtly equal m/z width.
     #That should correspond to roughly half the fragment mass accuracy of the detector?
     frag_index = FragmentIndex(T) 
 
-    function fillPrecursorBin!(frag_index::FragmentIndex, frag_ions::Vector{FragmentIon{T}}, max_charge::UInt8, min_charge::UInt8, bin::UInt32, start::Int, stop::Int, low_prec_mz::Float64, high_prec_mz::Float64)
-        i = 1 #Index of current fragme nt
+    function fillPrecursorBin!(frag_index::FragmentIndex{<:AbstractFloat}, frag_ions::Vector{FragmentIon{T}}, frag_bin_idx::UInt32, start::Int, stop::Int, low_prec_mz::AbstractFloat, high_prec_mz::AbstractFloat)
         for ion_index in range(start, stop)
             pep_id = getPepID(frag_ions[ion_index])
                 prec_mz = getPrecMZ(frag_ions[ion_index])#(getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
-                if (prec_mz < low_prec_mz/max_charge) | (prec_mz > high_prec_mz*min_charge) #Precursor m/z outside the bounds
+
+                if (prec_mz < low_prec_mz) | (prec_mz > high_prec_mz) #Precursor m/z outside the bounds
                     continue
                 end
                 #Add precursor corresponding to the charge state
                 addPrecursorBinItem!(frag_index,
-                                    bin,
-                                    #i,
+                                     frag_bin_idx,
                                     PrecursorBinItem(pep_id, prec_mz, getPrecCharge(frag_ions[ion_index]))
                                     )
-                #frag_index.precursor_bins[bin].precs[i] = PrecursorBinItem(getPepID(ion), (getPrecMZ(ion) + PROTON*(charge-1))/charge)
-                i += 1 #Move to the next fragment 
         end
     end
 
@@ -82,15 +64,21 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T; max_
 
     #Build bins 
     for stop in 2:length(frag_ions)
-        if getFragMZ(frag_ions[stop]) < 150.0
+
+        #Haven't reached minimum fragment m/z yet
+        if getFragMZ(frag_ions[stop]) < low_frag_mz
             start += 1
             continue
         end
-        #Ready to make another precursor bin. 
+
+        #Doex the difference between the highest and lowest m/z in the bin 
+        #enought exceed 10 ppm of the lowest m/z?
         if (getFragMZ(frag_ions[stop]) - getFragMZ(frag_ions[start])) > diff
+
             #Nedds to be stop - 1 to gaurantee the smallest and largest fragment
             #in the bin differ by less than diff 
             last_frag_in_bin = stop - 1
+
             #Add a new fragment bin
             addFragmentBin!(frag_index, 
                             FragBin(getFragMZ(frag_ions[start]),
@@ -98,12 +86,13 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T; max_
                                     bin
                                     )
                             )
+
             addPrecursorBin!(frag_index, 
                                 #Preallocate an empty precursor bin of the correct length 
                                 PrecursorBin(Vector{PrecursorBinItem{T}}())#undef, (last_frag_in_bin - start + 1)*length(charges)))
                                 )
         
-            fillPrecursorBin!(frag_index, frag_ions, max_charge, min_charge, bin, start, last_frag_in_bin, low_prec_mz, high_prec_mz)
+            fillPrecursorBin!(frag_index, frag_ions, bin, start, last_frag_in_bin, low_prec_mz, high_prec_mz)
 
             #Sort the precursor bin by precursor m/z
             sort!(getPrecursors(getPrecursorBin(frag_index, bin)), by = x->getPrecMZ(x));
@@ -112,7 +101,9 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::T; max_
             bin += UInt32(1)
             start = stop
             diff = getPPM(getFragMZ(frag_ions[start]), bin_ppm)
-            if getFragMZ(frag_ions[stop])> 1700.0
+
+            #Maximum fragment m/z reached. Stop adding bins. 
+            if getFragMZ(frag_ions[stop]) > high_frag_mz
                 break
             end
         end
@@ -122,7 +113,7 @@ end
 
 mutable struct FragmentMatch{T<:AbstractFloat}
     predicted_intensity::T
-    peak_intensity::T
+    intensity::T
     theoretical_mz::T
     match_mz::T
     peak_ind::Int64
@@ -137,18 +128,23 @@ mutable struct FragmentMatch{T<:AbstractFloat}
 end
 
 FragmentMatch() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', UInt32(0), UInt8(0), UInt32(0), UInt32(0))
-getMZ(f::FragmentMatch) = f.theoretical_mz
-getPrecID(f::FragmentMatch) = f.prec_id
+getFragMZ(f::FragmentMatch) = f.theoretical_mz
+getMatchMZ(f::FragmentMatch) = f.match_mz
+getPredictedIntenisty(f::FragmentMatch) = f.predicted_intensity
+getIntensity(f::FragmentMatch) = f.intensity
+
+getPeakInd(f::FragmentMatch) = f.peak_ind
+getFragInd(f::FragmentMatch) = f.frag_index
 getCharge(f::FragmentMatch) = f.frag_charge
 getIsotope(f::FragmentMatch) = f.frag_isotope
 getIonType(f::FragmentMatch) = f.ion_type
-getInd(f::FragmentMatch) =f.frag_index
-getPeakInd(f::FragmentMatch) = f.peak_ind
-getIntensity(f::FragmentMatch) = f.peak_intensity
+
+getPrecID(f::FragmentMatch) = f.prec_id
 getCount(f::FragmentMatch) = f.count
+getScanID(f::FragmentMatch) = f.scan_idx
 getMSFileID(f::FragmentMatch) = f.ms_file_idx
 
-function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_max::T) where {T<:AbstractFloat}
+function findFirstFragmentBin(frag_index::Vector{FragBin{<:AbstractFloat}}, frag_min::AbstractFloat, frag_max::AbstractFloat)
     #Binary Search
     lo, hi = 1, length(frag_index)
     potential_match = nothing
@@ -173,7 +169,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::T, frag_
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::U, window_max::U) where {T,U<:AbstractFloat}
+function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::U, window_max::U) where {T<:AbstractFloat}
    
     N = getLength(precursor_bin)
     lo, hi = 1, N
@@ -236,7 +232,7 @@ end
 #const upper_tol = [(3.0*NEUTRON), (3.0*NEUTRON)/2, (3.0*NEUTRON)/3, (3.0*NEUTRON)/4]
 #const lower_tol = [(1*NEUTRON), (1*NEUTRON)/2, (1*NEUTRON)/3, (1*NEUTRON)/4]
 
-function queryFragment!(precs::Dictionary{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::U, frag_max::U, prec_mz::Float32, prec_tol::U) where {T,U<:AbstractFloat}
+function queryFragment!(precs::Dictionary{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::AbstractFloat, frag_max::AbstractFloat, prec_mz::AbstractFloat, prec_tol::AbstractFloat) where {T<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
@@ -267,9 +263,9 @@ function queryFragment!(precs::Dictionary{UInt32, UInt8}, frag_index::FragmentIn
     return frag_bin - 1
 end
 
-function searchScan!(precs::Dictionary{UInt32, UInt8}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::U, ppm::T, width::T; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
+function searchScan!(precs::Dictionary{UInt32, UInt8}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
     
-    getFragTol(mass::U, ppm::T) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
+    getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
     function filterPrecursorMatches!(precs::Dictionary{UInt32, UInt8}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
         #Do not consider peptides wither fewer than 
@@ -296,8 +292,8 @@ function searchScan!(precs::Dictionary{UInt32, UInt8}, f_index::FragmentIndex{T}
     return filterPrecursorMatches!(precs, topN, min_frag_count)
 end
 
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{Float64}}}, pep_ids::Base.Iterators.Take{Indices{UInt32}}, ppm::T = 20.0) where {T<:AbstractFloat}
-    transitions = Vector{LibraryFragment{Float64}}()
+function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Iterators.Take{Indices{UInt32}}, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
+    transitions = Vector{LibraryFragment{T}}()
     for pep_id in pep_ids
         append!(transitions, fragment_list[pep_id])
     end
@@ -349,7 +345,7 @@ function SearchRAW(
                     topN = topN
                     )
 
-        transitions = selectTransitions(prosit_dict, pep_id_iterator)
+        transitions = selectTransitions(fragment_list, pep_id_iterator)
 
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -366,6 +362,9 @@ function SearchRAW(
             println("Scan # $ms2")
             println(length(fragmentMatches))
             println(length(transitions))
+            if ms2 == 5500
+                println(fragmentMatches)
+            end
             #=println("precs ", length([x for x in pep_id_iterator]))
             println(pep_id_iterator)
             println("unique precursors", prec_count)
@@ -373,66 +372,36 @@ function SearchRAW(
             println("expected ", match_count/prec_count)
             println("peaks ", length(spectrum[:masses]))=#
         end
-        #unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
-        #ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
+        ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
 
-        #=Score!(scored_PSMs, unscored_PSMs, 
+        Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
                 1.0, 
                 scan_idx = Int64(i)
-                )=#
+                )
     end
     println("processed $ms2 scans!")
-    return #DataFrame(scored_PSMs)
+    return DataFrame(scored_PSMs)
 end
 
-@time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_dict, UInt32(1))
+@time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
-
-abstract type FragmentIndexType end 
-
-
-
-struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
-    frag_mz::T
-    is_y_ion::Bool
-    ion_index::UInt8
-    frag_charge::UInt8
-    intensity::Float32
-end
-
-getFragMZ(f::FragmentIndexType) = f.frag_mz
-getPepID(f::FragmentIndexType) = f.pep_id
-getPrecMZ(f::FragmentIndexType) = f.prec_mz
-
-import Base.<
-import Base.>
-<(y:: LibraryFragment, x::T) where {T<:Real} = getFragMZ(y) < x
-<(x::T, y:: LibraryFragment) where {T<:Real} = <(y, x)
->(y:: LibraryFragment, x::T) where {T<:Real} = getFragMZ(y) > x
->(x::T, y:: LibraryFragment) where {T<:Real} = >(y, x)
-
-getIntensity(f::LibraryFragment) = f.intensity
-isyIon(f::LibraryFragment) = f.is_y_ion
-getIonIndex(f::LibraryFragment) = f.ion_index
-getFragCharge(f::LibraryFragment) = f.frag_charge
-getPrecCharge(f::LibraryFragment) = f.prec_charge
-
 
 
 
 
 
 "/Users/n.t.wamsley/Desktop/myPrositLib.csv"
-function readPrositLib(prosit_lib_path::String)
-    frag_list = Vector{FragmentIon{Float64}}()
-    frag_detailed = Vector{Vector{LibraryFragment{Float64}}}()
+function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
+    frag_list = Vector{FragmentIon{precision}}()
+    frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
 
     rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
     current_peptide = ""
-    current_charge = "1"
+    current_charge = ""
     prec_id = UInt32(0)
 
     for (i, row) in enumerate(rows)
@@ -440,25 +409,27 @@ function readPrositLib(prosit_lib_path::String)
             current_peptide = row.ModifiedPeptide::PosLenString
             current_charge = row.PrecursorCharge::PosLenString
             prec_id += UInt32(1)
-            push!(frag_detailed, Vector{LibraryFragment{Float64}}())
+            push!(frag_detailed, Vector{LibraryFragment{precision}}())
         end
 
+        #Track progress
         if (i % 1_000_000) == 0
             println(i/1_000_000)
         end
 
+        #Exclude y1, y2, b1, and b2 ions. 
         if parse(UInt8, row.FragmentNumber::PosLenString) < UInt8(3)
             continue
         end
 
-        push!(frag_list, FragmentIon(parse(Float64, row.FragmentMz::PosLenString), 
+        push!(frag_list, FragmentIon(parse(precision, row.FragmentMz::PosLenString), 
                                     prec_id, 
-                                    parse(Float64, row.PrecursorMz::PosLenString), 
+                                    parse(precision, row.PrecursorMz::PosLenString), 
                                     parse(UInt8, row.PrecursorCharge::PosLenString)))
 
-        push!(frag_detailed[prec_id], LibraryFragment(parse(Float64, row.FragmentMz::PosLenString), 
+        push!(frag_detailed[prec_id], LibraryFragment(parse(precision, row.FragmentMz::PosLenString), 
                                                       parse(UInt8, row.FragmentCharge::PosLenString),
-                                                      (row.FragmentType::PosLenString == 'y'),
+                                                      occursin("y", row.FragmentType::PosLenString),
                                                       parse(UInt8, row.FragmentNumber::PosLenString),
                                                       parse(Float32, row.RelativeIntensity::PosLenString),
                                                       parse(UInt8, row.PrecursorCharge::PosLenString),

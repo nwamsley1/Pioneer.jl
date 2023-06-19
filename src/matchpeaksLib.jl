@@ -156,14 +156,14 @@ function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, transition::Librar
     #else
     push!(matches, FragmentMatch(getIntensity(transition), 
                                  intensity,
-                                 getFragMZ(transition),
+                                 Float32(getFragMZ(transition)),
                                  mass,
                                  peak_ind,
                                  getIonIndex(transition),
                                  getFragCharge(transition),
                                  UInt8(0),
                                  true == isyIon(transition) ? 'y' : 'b',
-                                 getPepID(transition),
+                                 getPrecID(transition),
                                  UInt8(1), 
                                  scan_idx,
                                  ms_file_idx)
@@ -240,6 +240,9 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Libr
                 best_peak = getNearest(masses, getFragMZ(Transitions[transition]), high, peak, δ=δ)
                 setFragmentMatch!(matches, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak, scan_idx, ms_file_idx);
                 transition += 1
+                if transition > length(Transitions)
+                    return
+                end
                 low, high = getPPM(Transitions[transition], 20.0)
                 match += 1
                 continue
@@ -247,6 +250,9 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Libr
             #Important that this is also within the first if statement. 
             #Need to check the next fragment against the current peak. 
             transition += 1
+            if transition > length(Transitions)
+                return
+            end
             low, high = getPPM(Transitions[transition], 20.0)
             continue
         end
