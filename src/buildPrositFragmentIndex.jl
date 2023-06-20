@@ -4,6 +4,9 @@ getFragMZ(f::FragmentIndexType) = f.frag_mz
 getPrecID(f::FragmentIndexType) = f.prec_id
 getPrecCharge(f::FragmentIndexType) = f.prec_charge
 
+import Base.<
+import Base.>
+
 <(y::FragmentIndexType, x::T) where {T<:Real} = getFragMZ(y) < x
 <(x::T, y::FragmentIndexType) where {T<:Real} = <(y, x)
 >(y::FragmentIndexType, x::T) where {T<:Real} = getFragMZ(y) > x
@@ -22,6 +25,7 @@ struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
     frag_charge::UInt8
     is_y_ion::Bool
+    ion_position::UInt8
     ion_index::UInt8
     intensity::Float32
     prec_charge::UInt8
@@ -31,6 +35,7 @@ end
 getIntensity(f::LibraryFragment) = f.intensity
 isyIon(f::LibraryFragment) = f.is_y_ion
 getIonIndex(f::LibraryFragment) = f.ion_index
+getIonPosition(f::LibraryFragment) = f.ion_position
 getFragCharge(f::LibraryFragment) = f.frag_charge
 
 function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
@@ -41,7 +46,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
 
     function fillPrecursorBin!(frag_index::FragmentIndex{<:AbstractFloat}, frag_ions::Vector{FragmentIon{T}}, frag_bin_idx::UInt32, start::Int, stop::Int, low_prec_mz::AbstractFloat, high_prec_mz::AbstractFloat)
         for ion_index in range(start, stop)
-            pep_id = getPepID(frag_ions[ion_index])
+            pep_id = getPrecID(frag_ions[ion_index])
                 prec_mz = getPrecMZ(frag_ions[ion_index])#(getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
 
                 if (prec_mz < low_prec_mz) | (prec_mz > high_prec_mz) #Precursor m/z outside the bounds
@@ -144,7 +149,7 @@ getCount(f::FragmentMatch) = f.count
 getScanID(f::FragmentMatch) = f.scan_idx
 getMSFileID(f::FragmentMatch) = f.ms_file_idx
 
-function findFirstFragmentBin(frag_index::Vector{FragBin{<:AbstractFloat}}, frag_min::AbstractFloat, frag_max::AbstractFloat)
+function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::AbstractFloat, frag_max::AbstractFloat) where {T<:AbstractFloat}
     #Binary Search
     lo, hi = 1, length(frag_index)
     potential_match = nothing
@@ -169,7 +174,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{<:AbstractFloat}}, frag
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::U, window_max::U) where {T<:AbstractFloat}
+function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat) where {T<:AbstractFloat}
    
     N = getLength(precursor_bin)
     lo, hi = 1, N
@@ -326,6 +331,8 @@ function SearchRAW(
     #i = 0
     ms2 = 0
     min_intensity = Float32(0.0)
+    test_frags = ""
+    test_matches = ""
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
@@ -359,11 +366,12 @@ function SearchRAW(
         #println(length(fragmentMatches))
         if (ms2 % 500) == 0
             #println(transitions)
-            println("Scan # $ms2")
-            println(length(fragmentMatches))
-            println(length(transitions))
-            if ms2 == 5500
-                println(fragmentMatches)
+            #println("Scan # $ms2")
+            #println(length(fragmentMatches))
+            #println(length(transitions))
+            if ms2 == 8000
+                test_frags = transitions
+                test_matches = fragmentMatches
             end
             #=println("precs ", length([x for x in pep_id_iterator]))
             println(pep_id_iterator)
@@ -384,11 +392,13 @@ function SearchRAW(
                 )
     end
     println("processed $ms2 scans!")
-    return DataFrame(scored_PSMs)
+    return test_frags, test_matches#DataFrame(scored_PSMs)
 end
 
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
+
+@time test_frags, test_matches = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 
 
 
@@ -403,12 +413,13 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
     current_peptide = ""
     current_charge = ""
     prec_id = UInt32(0)
-
+    ion_position = UInt8(1)
     for (i, row) in enumerate(rows)
         if (row.ModifiedPeptide::PosLenString != current_peptide) | (row.PrecursorCharge::PosLenString != current_charge)
             current_peptide = row.ModifiedPeptide::PosLenString
             current_charge = row.PrecursorCharge::PosLenString
             prec_id += UInt32(1)
+            ion_position = UInt8(1)
             push!(frag_detailed, Vector{LibraryFragment{precision}}())
         end
 
@@ -418,7 +429,7 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
         end
 
         #Exclude y1, y2, b1, and b2 ions. 
-        if parse(UInt8, row.FragmentNumber::PosLenString) < UInt8(3)
+        if parse(Int, row.FragmentNumber::PosLenString) < 3
             continue
         end
 
@@ -431,20 +442,63 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
                                                       parse(UInt8, row.FragmentCharge::PosLenString),
                                                       occursin("y", row.FragmentType::PosLenString),
                                                       parse(UInt8, row.FragmentNumber::PosLenString),
+                                                      ion_position,
                                                       parse(Float32, row.RelativeIntensity::PosLenString),
                                                       parse(UInt8, row.PrecursorCharge::PosLenString),
                                                       prec_id,
                                                     )
                                  )
+        ion_position += UInt8(1)
     end
     sort!(frag_list, by = x->getFragMZ(x))
     return frag_list, frag_detailed
 end
 
-rows = CSV.Rows("/Users/n.t.wamsley/Desktop/myPrositLib.csv")
+using Dictionaries
+using CSV, Arrow, Tables, DataFrames, StatsBase
+include("src/precursor.jl")
+#include("src/buildFragmentIndex.jl")
 
-@time prosit_list, prosit_list_detailed = readPrositLib("/Users/n.t.wamsley/Desktop/myPrositLib.csv")
+@time prosit_list_simple, prosit_list_detailed = readPrositLib("/Users/n.t.wamsley/Desktop/myPrositLib.csv")
 
-@save "/Users/n.t.wamsley/Projects/prosit_list.jld2"  prosit_list 
-@save "/Users/n.t.wamsley/Projects/prosit_dict.jld2"  prosit_dict 
+@save "/Users/n.t.wamsley/Projects/prosit_list_simple.jld2"  prosit_list_simple
+@save "/Users/n.t.wamsley/Projects/prosit_list_detailed.jld2"  prosit_list_detailed
 
+@load "/Users/n.t.wamsley/Projects/prosit_list_simple.jld2"  prosit_list_simple
+@load "/Users/n.t.wamsley/Projects/prosit_list_detailed.jld2"  prosit_list_detailed
+
+prosit_index = buildFragmentIndex!(prosit_list_simple, 10.0)
+
+X = reshape([Float64(x) for x in range(1, 10)], (1, 10))
+
+W, H = NMF.randinit(X, 2)
+
+W = reshape([0.1, 0.9], (1, 2))
+
+H = [1.0 2 3 4 5 0 0 0 0 0; 0 0 0 0 0 6 7 8 9 10]
+
+NMF.solve!(NMF.CoordinateDescent{Float64}(maxiter=50, α=0.5, l₁ratio=1.0, update_H = false), X, W, H)
+
+
+function buildDesignMatrix(library_frags::Vector{LibraryFragment{T}}, seed_size::Int) where {T<:AbstractFloat}
+    H = zeros(T, (length(library_frags)), seed_size)
+
+    precID_to_column = UnorderedDictionary{UInt32, UInt8}()
+    prec_col = UInt8(0)
+
+    for frag in library_frags
+        if !haskey(precID_to_column,  getPrecID(frag))
+            prec_col += UInt8(1)
+            insert!(precID_to_column, getPrecID(frag), prec_col)
+        end
+
+        H[getIonIndex(frag), precID_to_column[getPrecID(frag)]] = getIntensity(frag)
+
+    end
+
+    return H
+end
+
+function initializeWeights(prec_id_to_weight::UnorderedDictionary{UInt32, AbstractFloat}, predID_to_column::UnorderedDictionary{UInt32, UInt8})
+    W = zeros()
+end
