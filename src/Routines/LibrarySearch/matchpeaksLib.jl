@@ -32,30 +32,37 @@ Type that represents a match between a fragment ion and a mass spectrum peak
 - getInd(f::FragmentMatch) = getInd(f.transition)
 """
 mutable struct FragmentMatch{T<:AbstractFloat}
-    transition::Transition
+    predicted_intensity::T
     intensity::T
+    theoretical_mz::T
     match_mz::T
-    count::UInt8
     peak_ind::Int64
+    frag_index::UInt8
+    frag_charge::UInt8
+    frag_isotope::UInt8
+    ion_type::Char
+    prec_id::UInt32
+    count::UInt8
     scan_idx::UInt32
     ms_file_idx::UInt32
 end
-export FragmentMatch
 
-FragmentMatch() = FragmentMatch(Transition(), Float64(0), Float64(0), UInt8(0), 0, UInt32(0), UInt32(0))
-getMZ(f::FragmentMatch) = getMZ(f.transition)
-getLow(f::FragmentMatch) = getLow(f.transition)
-getHigh(f::FragmentMatch) = getHigh(f.transition)
-getPrecID(f::FragmentMatch) = getPrecID(f.transition)
-getCharge(f::FragmentMatch) = getCharge(f.transition)
-getIsotope(f::FragmentMatch) = getIsotope(f.transition)
-getIonType(f::FragmentMatch) = getIonType(f.transition)
-getInd(f::FragmentMatch) = getInd(f.transition)
-getPeakInd(f::FragmentMatch) = f.peak_ind
+FragmentMatch() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', UInt32(0), UInt8(0), UInt32(0), UInt32(0))
+getFragMZ(f::FragmentMatch) = f.theoretical_mz
+getMatchMZ(f::FragmentMatch) = f.match_mz
+getPredictedIntenisty(f::FragmentMatch) = f.predicted_intensity
 getIntensity(f::FragmentMatch) = f.intensity
-getCount(f::FragmentMatch) = f.count
-getMSFileID(f::FragmentMatch) = f.ms_file_idx
 
+getPeakInd(f::FragmentMatch) = f.peak_ind
+getFragInd(f::FragmentMatch) = f.frag_index
+getCharge(f::FragmentMatch) = f.frag_charge
+getIsotope(f::FragmentMatch) = f.frag_isotope
+getIonType(f::FragmentMatch) = f.ion_type
+
+getPrecID(f::FragmentMatch) = f.prec_id
+getCount(f::FragmentMatch) = f.count
+getScanID(f::FragmentMatch) = f.scan_idx
+getMSFileID(f::FragmentMatch) = f.ms_file_idx
 export getMZ, getLow, getHigh, getPrecID, getCharge, getIsotope
 export getIonType, getInd, getPeakInd, getIntensity, getCount, getMSFileID
 
