@@ -305,7 +305,6 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pe
     return sort!(transitions, by = x->getFragMZ(x))
 end
 
-
 function SearchRAW(
                     spectra::Arrow.Table, 
                     #ptable::PrecursorDatabase,
@@ -318,7 +317,7 @@ function SearchRAW(
                     transition_isotopes::Vector{UInt8} = UInt8[0],
                     b_start::Int64 = 3,
                     y_start::Int64 = 3,
-                    topN::Int64 = 30,
+                    topN::Int64 = 20,
                     min_frag_count::Int64 = 4,
                     #fragment_match_ppm::U,
                     data_type::Type{T} = Float64
@@ -333,14 +332,12 @@ function SearchRAW(
     min_intensity = Float32(0.0)
     test_frags = ""
     test_matches = ""
+    test_misses = ""
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
         end
         ms2 += 1
-        #if ms2  != 6600
-        #    continue
-        #end
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         precs = Dictionary{UInt32, UInt8}()
         pep_id_iterator, prec_count, match_count = searchScan!(precs, 
@@ -354,7 +351,7 @@ function SearchRAW(
 
         transitions = selectTransitions(fragment_list, pep_id_iterator)
 
-        fragmentMatches = matchPeaks(transitions, 
+        fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
                                     #δs = params[:δs],
@@ -363,23 +360,38 @@ function SearchRAW(
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity
                                     )
-        #println(length(fragmentMatches))
-        if (ms2 % 500) == 0
-            #println(transitions)
-            #println("Scan # $ms2")
-            #println(length(fragmentMatches))
-            #println(length(transitions))
-            if ms2 == 8000
-                test_frags = transitions
-                test_matches = fragmentMatches
-            end
-            #=println("precs ", length([x for x in pep_id_iterator]))
-            println(pep_id_iterator)
-            println("unique precursors", prec_count)
-            println("macth_coutn", match_count)
-            println("expected ", match_count/prec_count)
-            println("peaks ", length(spectrum[:masses]))=#
+
+        X, H, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+
+        #Does this always coincide with there being zero fragmentMatches?
+        #Could change to length(fragmentMatches) == 0 ?
+        if size(H)[2] == 0
+            continue
         end
+
+        #Initialize weights for each precursor template. 
+        #Should find a more sophisticated way of doing this. 
+        W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
+
+        #Solve NMF. 
+        weights = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
+                                                    lambda_w = 1e4, 
+                                                    tol = 1e-6, #Need a reasonable way to choos lambda?
+                                                    update_H = false #Important to keep H constant. 
+                                                    ), X, W, H).W[1,:]
+
+        spectral_contrast = getSpectralContrast(H, X)
+
+        #For progress and debugging. 
+        if (ms2 % 1000) == 0
+            println("ms2: $ms2")
+            if ms2 == 8000
+                #test_frags = transitions
+                #test_matches = fragmentMatches
+                #test_misses = fragmentMisses
+            end
+        end
+
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
@@ -387,40 +399,62 @@ function SearchRAW(
         Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                1.0, 
+                match_count/prec_count, spectral_contrast, weights, IDtoROW,
                 scan_idx = Int64(i)
                 )
     end
     println("processed $ms2 scans!")
-    return test_frags, test_matches#DataFrame(scored_PSMs)
+    return DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
 
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
 
-@time test_frags, test_matches = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
+@time test_frags, test_matches, test_misses = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
+
+struct LibraryPrecursor{T<:AbstractFloat}
+    iRT::T
+    isDecoy::Bool
+    charge::UInt8
+end
+
+prosit_simple_targets, prosit_detailed_targets, prosit_precs_targets, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_targets.csv")
+prosit_simple_decoys, prosit_detailed_decoys, prosit_precs_decoys, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_decoys.csv", isDecoys = true, first_prec_id = prec_id)
 
 
+@save "/Users/n.t.wamsley/Projects/prosit_simple_targets.jld2"  prosit_simple_targets
+@save "/Users/n.t.wamsley/Projects/prosit_detailed_targets.jld2"  prosit_detailed_targets
+@save "/Users/n.t.wamsley/Projects/prosit_precs_targets.jld2"  prosit_precs_targets
+
+@save "/Users/n.t.wamsley/Projects/prosit_simple_decoys.jld2"  prosit_simple_decoys
+@save "/Users/n.t.wamsley/Projects/prosit_detailed_decoys.jld2"  prosit_detailed_decoys
+@save "/Users/n.t.wamsley/Projects/prosit_precs_decoys.jld2"  prosit_precs_decoys
 
 
-
-"/Users/n.t.wamsley/Desktop/myPrositLib.csv"
-function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
+function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
     frag_list = Vector{FragmentIon{precision}}()
     frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
+    precursor_list = Vector{LibraryPrecursor}()
 
-    rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
+    rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :iRT, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
     current_peptide = ""
     current_charge = ""
-    prec_id = UInt32(0)
+    prec_id = first_prec_id
+    id = UInt32(0)
     ion_position = UInt8(1)
     for (i, row) in enumerate(rows)
         if (row.ModifiedPeptide::PosLenString != current_peptide) | (row.PrecursorCharge::PosLenString != current_charge)
             current_peptide = row.ModifiedPeptide::PosLenString
             current_charge = row.PrecursorCharge::PosLenString
             prec_id += UInt32(1)
+            id = UInt32(1)
             ion_position = UInt8(1)
             push!(frag_detailed, Vector{LibraryFragment{precision}}())
+            push!(precursor_list, LibraryPrecursor(
+                                                    parse(precision, row.iRT::PosLenString),
+                                                    isDecoys,
+                                                    parse(UInt8, row.PrecursorCharge::PosLenString)
+                                                ))
         end
 
         #Track progress
@@ -438,7 +472,7 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
                                     parse(precision, row.PrecursorMz::PosLenString), 
                                     parse(UInt8, row.PrecursorCharge::PosLenString)))
 
-        push!(frag_detailed[prec_id], LibraryFragment(parse(precision, row.FragmentMz::PosLenString), 
+        push!(frag_detailed[id], LibraryFragment(parse(precision, row.FragmentMz::PosLenString), 
                                                       parse(UInt8, row.FragmentCharge::PosLenString),
                                                       occursin("y", row.FragmentType::PosLenString),
                                                       parse(UInt8, row.FragmentNumber::PosLenString),
@@ -451,8 +485,9 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64)
         ion_position += UInt8(1)
     end
     sort!(frag_list, by = x->getFragMZ(x))
-    return frag_list, frag_detailed
+    return frag_list, frag_detailed, precursor_list, prec_id
 end
+
 
 using Dictionaries
 using CSV, Arrow, Tables, DataFrames, StatsBase
@@ -473,32 +508,92 @@ X = reshape([Float64(x) for x in range(1, 10)], (1, 10))
 
 W, H = NMF.randinit(X, 2)
 
-W = reshape([0.1, 0.9], (1, 2))
+W = reshape([1.0 for x in range(1,30)], (1, 30))
 
-H = [1.0 2 3 4 5 0 0 0 0 0; 0 0 0 0 0 6 7 8 9 10]
+H = Matrix([1.0 2 3 4 5 0 0 0 0 0; 0 0 0 0 0 6 7 8 9 10]')
 
 NMF.solve!(NMF.CoordinateDescent{Float64}(maxiter=50, α=0.5, l₁ratio=1.0, update_H = false), X, W, H)
 
 
-function buildDesignMatrix(library_frags::Vector{LibraryFragment{T}}, seed_size::Int) where {T<:AbstractFloat}
-    H = zeros(T, (length(library_frags)), seed_size)
+NMF.solve!(NMF.CoordinateDescent{Float64}(maxiter=50, α=0.5, l₁ratio=1.0, update_H = false), test_X, 1000*W, test_H)
 
-    precID_to_column = UnorderedDictionary{UInt32, UInt8}()
-    prec_col = UInt8(0)
 
-    for frag in library_frags
-        if !haskey(precID_to_column,  getPrecID(frag))
-            prec_col += UInt8(1)
-            insert!(precID_to_column, getPrecID(frag), prec_col)
+NMF.solve!(NMF.CoordinateDescent{Float64}(maxiter=50, α=0.5, l₁ratio=1.0, update_H = false), test_X, 1000*W, test_H)
+
+
+W = reshape([Float32(1000) for x in range(1,30)], (1, 30))
+out = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, lambda_w = 1e3, tol = 1e-6, update_H = false), test_X, W, test_H)
+
+function spectralContrast(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
+    dot(a, b)/(norm(a)*norm(b))
+end
+
+function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vector{FragmentMatch{Float32}}, seed_size::Int) #where {T<:AbstractFloat}
+
+    #Number of unique matched peaks.
+    matched_peaks = length(unique([getPeakInd(x) for x in matches]))
+    #Number of rows equals the number of unique matched peaks + the number of expected fragments that 
+    #failed to match a peak in the spectrm
+    M = (matched_peaks + length(misses))
+    #Design matrix. One row for every precursor template. One column for every matched + missed peak. 
+    H = zeros(Float32, (seed_size, M))
+    #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
+    X = zeros(Float32, (1, M))
+
+    #Maps a precursor id to a row of H. 
+    precID_to_row = UnorderedDictionary{UInt32, UInt8}()
+
+    #Current highest row encountered
+    prec_row = UInt8(0)
+    col = 0
+    #Number of unique peaks encountered. 
+    last_peak_ind = 0
+    for match in matches
+        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
+        if !haskey(precID_to_row,  getPrecID(match))
+            prec_row  += UInt8(1)
+            insert!(precID_to_row, getPrecID(match), prec_row )
         end
 
-        H[getIonIndex(frag), precID_to_column[getPrecID(frag)]] = getIntensity(frag)
+        #If this peak has not been encountered yet, then start filling a new column
+        if getPeakInd(match) != last_peak_ind
+            col += 1
+            last_peak_ind = getPeakInd(match)
+        end
 
+        row = precID_to_row[getPrecID(match)]
+        H[row, col] = getPredictedIntenisty(match)
+        X[1, col] = getIntensity(match)
     end
 
-    return H
+    for miss in misses
+        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
+        if !haskey(precID_to_row,  getPrecID(miss))
+            prec_row  += UInt8(1)
+            insert!(precID_to_row, getPrecID(miss), prec_row)
+        end
+        col = getPeakInd(miss) + matched_peaks
+        row = precID_to_row[getPrecID(miss)]
+        H[row, col] = getPredictedIntenisty(miss)
+    end
+
+    return X, H, precID_to_row
 end
 
-function initializeWeights(prec_id_to_weight::UnorderedDictionary{UInt32, AbstractFloat}, predID_to_column::UnorderedDictionary{UInt32, UInt8})
-    W = zeros()
+function getSpectralContrast(H::Matrix{T}, X::Matrix{T}) where {T<:AbstractFloat}
+    function spectralContrast(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
+        dot(a, b)/(norm(a)*norm(b))
+    end
+
+    N = size(H)[1]
+    spectral_contrast = Vector{T}(undef, N)
+
+    for row in range(1, N)
+        non_zero = H[N,:].!=0
+        spectral_contrast[row] = spectralContrast(H[N, non_zero], X[1, non_zero])
+    end
+
+    return spectral_contrast 
 end
+
+spectral_contrast = [spectralContrast(H[N,H[N,:].!=0], X[1,H[N,:].!=0]) for N in range(1, topN)]
