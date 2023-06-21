@@ -440,12 +440,12 @@ histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06
 ##    for i in scores
 #end
 
-histogram(log2.(-1*Ylda[X_labels.==true]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
-histogram!(log2.(-1*Ylda[X_labels.==false]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram(log2.(Ylda[X_labels.==true]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(log2.(Ylda[X_labels.==false]), alpha = 0.5)#, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
 
-sum(Ylda[X_labels.==true].>0.009)
-sum(Ylda[X_labels.==false].>0.009)
+sum(Ylda[X_labels.==true].>0.005)
+sum(Ylda[X_labels.==false].>0.005)
 
 sum(Ylda[X_labels.==true].<-0.0035)
 sum(Ylda[X_labels.==false].<-0.0035)

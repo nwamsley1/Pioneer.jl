@@ -215,8 +215,8 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::Pr
             prec_id = getPrecID(precursor)
             charge = getPrecCharge(precursor)
 
-            prec_mz_min = window_min - 3.0*NEUTRON/charge#upper_tol[charge]
-            prec_mz_max = window_max + 1.0*NEUTRON/charge#lower_tol[charge]
+            prec_mz_min = window_min - 1.0*NEUTRON/charge#upper_tol[charge]
+            prec_mz_max = window_max + 3.0*NEUTRON/charge#lower_tol[charge]
             if (prec_mz_min <= prec_mz) & (prec_mz_max >= prec_mz)
                 if haskey(precs, prec_id)
                     precs[prec_id] += UInt8(1)
@@ -375,7 +375,7 @@ function SearchRAW(
 
         #Solve NMF. 
         weights = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
-                                                    lambda_w = 1e4, 
+                                                    lambda_w = 1e3, 
                                                     tol = 1e-6, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:]
@@ -410,13 +410,70 @@ end
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
 
-@time test_frags, test_matches, test_misses = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
+@time test_table = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
+PSMs = test_table
+transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
+transform!(PSMs, AsTable(:) => ByRow(psm -> getIRT(prosit_precs[psm[:precursor_idx]])) => :iRT)
+transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :RT)
+transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] == 0) => :nmf)
+
+
+best_PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx])) 
+#transform!(best_PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :RT)
+plot(best_PSMs[:,:iRT][best_PSMs[:,:decoy].==false], best_PSMs[:,:RT][best_PSMs[:,:decoy].==false], seriestype = :scatter)
+plot!(best_PSMs[:,:iRT][best_PSMs[:,:decoy].==true], best_PSMs[:,:RT][best_PSMs[:,:decoy].==true], seriestype = :scatter)
+
+iRTs = best_PSMs[:,:iRT][(best_PSMs[:,:decoy].==false) .& (best_PSMs[:,:spectral_contrast].>=0.7)]
+iRTs = reshape(iRTs, (length(iRTs), 1))
+RTs = best_PSMs[:,:RT][(best_PSMs[:,:decoy].==false) .& (best_PSMs[:,:spectral_contrast].>=0.7)]
+RTs  = [Float64(x) for x in RTs]
+iRTs= hcat(iRTs, ones(length(iRTs)))
+rlm(iRTs, RTs, TauEstimator{TukeyLoss}(), initial_scale=:mad, maxiter = 200)
+
+
+plot(iRTs, RTs, seriestype = :scatter)
+plot!([0, 150], [18.6381, 150*0.263446 + 18.6381])
+
+transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:iRT]*0.263446 + 18.6381) => :predRT)
+
+transform!(PSMs, AsTable(:) => ByRow(psm -> abs(psm[:RT] - psm[:predRT])) => :RTdiff)
+X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RTdiff]])'
+X_labels = Vector(PSMs[1:1:end, :decoy])
+lda = fit(MulticlassLDA, X, X_labels; outdim=1)
+Ylda = predict(lda, X)
+PSMs[:,:score] = Ylda[1,:]
+histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+
+plot(PSMs[X_labels.==true,:spectral_contrast], PSMs[X_labels.==true,:RTdiff], alpha = 0.5, seriestype=:scatter)#, bins = -0.06:0.01:0.0)
+
+plot!(PSMs[X_labels.==false,:spectral_contrast], PSMs[X_labels.==false,:RTdiff], alpha = 0.5, seriestype=:scatter)#, bins = -0.06:0.01:0.0)
+
+
+sum(Ylda[X_labels.==true].<-0.0085)
+sum(Ylda[X_labels.==false].<-0.0085)
+
+model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
+probs = apply_forest_proba(model, X',[true, false])
+PSMs[:,:prob] = probs[:,2]
+
+
+histogram(PSMs[X_labels.==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[X_labels.==false,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+
+
+sum(PSMs[X_labels.==true,:prob].>0.91)
+sum(PSMs[X_labels.==false,:prob].>0.91)
+
+unique(PSMs[PSMs[:,:prob].>0.91,:precursor_idx])
 
 struct LibraryPrecursor{T<:AbstractFloat}
     iRT::T
     isDecoy::Bool
     charge::UInt8
 end
+isDecoy(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.isDecoy
+getIRT(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.iRT
 
 prosit_simple_targets, prosit_detailed_targets, prosit_precs_targets, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_targets.csv")
 prosit_simple_decoys, prosit_detailed_decoys, prosit_precs_decoys, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_decoys.csv", isDecoys = true, first_prec_id = prec_id)
@@ -431,6 +488,28 @@ prosit_simple_decoys, prosit_detailed_decoys, prosit_precs_decoys, prec_id = rea
 @save "/Users/n.t.wamsley/Projects/prosit_precs_decoys.jld2"  prosit_precs_decoys
 
 
+@load "/Users/n.t.wamsley/Projects/prosit_simple_decoys.jld2" prosit_simple_decoys
+@load "/Users/n.t.wamsley/Projects/prosit_simple_targets.jld2" prosit_simple_targets
+max_ = 0
+function getMaxID()
+max_ = 0
+for decoy in prosit_simple_all
+    if getPrecID(decoy)>max_
+        max_ = getPrecID(decoy)
+    end
+end
+
+prosit_detailed = append!(prosit_detailed_targets, prosit_detailed_decoys)
+@save "/Users/n.t.wamsley/Projects/prosit_detailed.jld2"  prosit_detailed 
+prosit_simple_all = append!(prosit_simple_targets, prosit_simple_decoys)
+sort!(prosit_simple_all, by = x->getFragMZ(x))
+@save "/Users/n.t.wamsley/Projects/prosit_simple_all.jld2"  prosit_simple_all
+prosit_precs = append!(prosit_precs_targets, prosit_precs_decoys)
+@save "/Users/n.t.wamsley/Projects/prosit_precs.jld2"  prosit_precs
+
+prosit_index_all = buildFragmentIndex!(prosit_simple_all, 10.0)
+@save "/Users/n.t.wamsley/Projects/prosit_index_all.jld2"  prosit_index_all
+
 function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
     frag_list = Vector{FragmentIon{precision}}()
     frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
@@ -439,7 +518,7 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, i
     rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :iRT, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
     current_peptide = ""
     current_charge = ""
-    prec_id = first_prec_id
+    prec_id = UInt32(first_prec_id)
     id = UInt32(0)
     ion_position = UInt8(1)
     for (i, row) in enumerate(rows)
@@ -447,7 +526,7 @@ function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, i
             current_peptide = row.ModifiedPeptide::PosLenString
             current_charge = row.PrecursorCharge::PosLenString
             prec_id += UInt32(1)
-            id = UInt32(1)
+            id += UInt32(1)
             ion_position = UInt8(1)
             push!(frag_detailed, Vector{LibraryFragment{precision}}())
             push!(precursor_list, LibraryPrecursor(
@@ -589,8 +668,8 @@ function getSpectralContrast(H::Matrix{T}, X::Matrix{T}) where {T<:AbstractFloat
     spectral_contrast = Vector{T}(undef, N)
 
     for row in range(1, N)
-        non_zero = H[N,:].!=0
-        spectral_contrast[row] = spectralContrast(H[N, non_zero], X[1, non_zero])
+        non_zero = H[row,:].!=0
+        spectral_contrast[row] = spectralContrast(H[row, non_zero], X[1, non_zero])
     end
 
     return spectral_contrast 
