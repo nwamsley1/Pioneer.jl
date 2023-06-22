@@ -237,7 +237,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
         return
     end
 
-    low, high = getPPM(Transitions[transition], 20.0)
+    low, high = getPPM(Transitions[transition], 40.0)
     
     while (peak <= length(masses)) & (transition <= length(Transitions))
         if intensities[peak] <  min_intensity
