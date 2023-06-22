@@ -6,51 +6,60 @@
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
 @time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
 
-@time test_table = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
-PSMs = test_table
-transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
-transform!(PSMs, AsTable(:) => ByRow(psm -> getIRT(prosit_precs[psm[:precursor_idx]])) => :iRT)
-transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :RT)
-transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] == 0) => :nmf)
+@time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
 
+##########
+#Get features
+##########
+function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getIRT(precursors[psm[:precursor_idx]])) => :iRT)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :RT)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] == 0) => :nmf)
+    function predictRTs!(PSMs::DataFrame; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
+    
+        targets = PSMs[:,:decoy].==false
+        spectral_contrast = PSMs[:,:decoy].>=min_spectral_contrast
+    
+        best_matches = targets .& spectral_contrast
+    
+        #Predicted iRTs
+        iRTs = hcat(PSMs[:,:iRT][best_matches], ones(sum(best_matches)))
+        #Emperical retention times
+        RTs = PSMs[:,:RT][best_matches]
+    
+        slope, intercept = RobustModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
+    
+        transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
 
-best_PSMs = combine(sdf -> sdf[argmax(sdf.hyperscore), :], groupby(PSMs, [:scan_idx])) 
-#transform!(best_PSMs, AsTable(:) => ByRow(psm -> MS_TABLE[:retentionTime][psm[:scan_idx]]) => :RT)
-plot(best_PSMs[:,:iRT][best_PSMs[:,:decoy].==false], best_PSMs[:,:RT][best_PSMs[:,:decoy].==false], seriestype = :scatter)
-plot!(best_PSMs[:,:iRT][best_PSMs[:,:decoy].==true], best_PSMs[:,:RT][best_PSMs[:,:decoy].==true], seriestype = :scatter)
-
-
-function predictRTs(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
-    targets = PSMs[:,:decoy].==false
-    spectral_contrast = PSMs[:,:decoy].>=min_spectral_contrast
-
-    best_matches = targets .& spectral_contrast
-
-    iRTs = hcat(PSMs[:,:iRT][best_matches], ones(sum(best_matches)))
-    RTs = PSMs[:,:RT][best_matches]
-
-    return RobestModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
+    end
+    predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
+end
+refinePSMs!(PSMs, prosit_precs)
+########
+#
+########
+function rankPSMs(PSMs::DataFrame)
+    X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RTdiff]])'
+    X_labels = PSMs[:, :decoy]
+    model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
+    probs = apply_forest_proba(model, X',[true, false])
+    PSMs[:,:prob] = probs[:,2]
 end
 
-iRTs = best_PSMs[:,:iRT][(best_PSMs[:,:decoy].==false) .& (best_PSMs[:,:spectral_contrast].>=0.7)]
-iRTs = reshape(iRTs, (length(iRTs), 1))
-RTs = best_PSMs[:,:RT][(best_PSMs[:,:decoy].==false) .& (best_PSMs[:,:spectral_contrast].>=0.7)]
-RTs  = [Float64(x) for x in RTs]
-iRTs= hcat(iRTs, ones(length(iRTs)))
-rlm(iRTs, RTs, TauEstimator{TukeyLoss}(), initial_scale=:mad, maxiter = 200)
-
-
-plot(iRTs, RTs, seriestype = :scatter)
-plot!([0, 150], [18.6381, 150*0.263446 + 18.6381])
-
-transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:iRT]*0.263446 + 18.6381) => :predRT)
-
-transform!(PSMs, AsTable(:) => ByRow(psm -> abs(psm[:RT] - psm[:predRT])) => :RTdiff)
-X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RTdiff]])'
-X_labels = Vector(PSMs[1:1:end, :decoy])
-lda = fit(MulticlassLDA, X, X_labels; outdim=1)
-Ylda = predict(lda, X)
-PSMs[:,:score] = Ylda[1,:]
+function getFDR(probs::Matrix{Float64}, threshold)
+    sorted_probs = probs[sortperm(probs[:1]),:]
+    PSMs[:m:decoy][sortperm(probs[:1])]
+    targets = 0
+    decoys = 0
+    #use bisection algorithm
+    N = length(sorted_probs)
+    eachrow(sorted_probs[N:end,:])
+    lo = Int64(N/2), hi = N
+    while lo <= hi#eachrow(sorted_probs[N:end,:])
+        sum(PSMs[:,:decoy][lo:end].>)
+    end
+end
 histogram(Ylda[X_labels.==true], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 histogram!(Ylda[X_labels.==false], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
 
