@@ -34,14 +34,15 @@ function SearchRAW(
             continue
         end
         ms2 += 1
-        if ms2 < 50000
+        if ms2 < 100000#50000
             continue
-        elseif ms2 > 51000
+        elseif ms2 > 101000#51000#51000
             continue
         end
+        
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         precs = Dictionary{UInt32, UInt8}()
-        pep_id_iterator, prec_count, match_count = searchScan!(precs, 
+        match_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(precs, 
                     frag_index, 
                     spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -49,10 +50,9 @@ function SearchRAW(
                     min_frag_count = min_frag_count, 
                     topN = topN
                     )
-
         fragger_time = @elapsed transitions = selectTransitions(fragment_list, pep_id_iterator)
         push!(fragger_times, fragger_time)
-        match_time = @elapsed fragmentMatches, fragmentMisses = matchPeaks(transitions, 
+        fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
                                     #δs = params[:δs],
@@ -64,6 +64,7 @@ function SearchRAW(
         push!(match_times, match_time)
         #println("matches ", length(fragmentMatches))
         #println("misses ", length(fragmentMisses))
+        
         build_design_time = @elapsed X, H, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
         push!(build_design_times, build_design_time)
         #Does this always coincide with there being zero fragmentMatches?
@@ -71,10 +72,9 @@ function SearchRAW(
         if size(H)[2] == 0
             continue
         end
-
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
-        #nmf_time = @elapsed W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
+        nmf_time = @elapsed W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
 
         #Solve NMF. 
         #=nmf_time += @elapsed weights = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
@@ -83,13 +83,17 @@ function SearchRAW(
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:]=#
 
-        #=nmf_time += @elapsed weights = NMF.solve!(NMF.ProjectedALS{Float32}(maxiter=50, verbose = false, 
-                                                    lambda_w = 1e3, 
+        nmf_time += @elapsed weights = (NMF.solve!(NMF.ProjectedALS{Float32}(maxiter=50, verbose = false, 
+                                                    lambda_w = 1e4, 
                                                     tol = 1e-6, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
-                                                    ), X, W, H).W[1,:]=#
-
-        nmf_time = @elapsed weights = coef(fit(LassoModel, H, X[1,:]))
+                                                    ), X, W, H).W[1,:])
+        #weights = W[1,:]                           
+        #println(size(H))
+        #println(size(X))
+        #tH = H'
+        
+        #nmf_time = @elapsed weights = coef(fit(LassoModel, tH, X[1,:], λ=[1e2], cd_tol=1, criterion=:obj))
         push!(nmf_times, nmf_time)
         sc_time = @elapsed spectral_contrast = getSpectralContrast(H, X)
         push!(spectral_contrast_times, sc_time)
@@ -115,12 +119,14 @@ function SearchRAW(
                 scan_idx = Int64(i)
                 )
         push!(score_times, score)
+    
     end
     println("processed $ms2 scans!")
     println("mean build: ", mean(build_design_times))
     println("mean fragger: ", mean(fragger_times))
     println("mean matches: ", mean(match_times))
     println("mean nmf: ", mean(nmf_times))
+    println("median nmf: ", median(nmf_times))
     println("mean s_contrast: ", mean(spectral_contrast_times))
     println("mean score: ", mean(score_times))
     return DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)

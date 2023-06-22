@@ -23,7 +23,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::Abstract
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat) where {T<:AbstractFloat}
+function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T<:AbstractFloat}
    
     N = getLength(precursor_bin)
     lo, hi = 1, N
@@ -59,22 +59,23 @@ function searchPrecursorBin!(precs::Dictionary{UInt32, UInt8}, precursor_bin::Pr
     function addFragmentMatches!(precs::Dictionary{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat, start::Int, stop::Int) where {T<:AbstractFloat}
         for precursor_idx in start:stop
             
-            precursor = getPrecursor(precursor_bin, precursor_idx)
-            prec_mz = getPrecMZ(precursor)
-            prec_id = getPrecID(precursor)
-            charge = getPrecCharge(precursor)
+            #precursor = getPrecursor(precursor_bin, precursor_idx)
+            #prec_mz = getPrecMZ(precursor)
+            prec_id = getPrecID(getPrecursor(precursor_bin, precursor_idx))
+            #charge = getPrecCharge(precursor)
 
-            prec_mz_min = window_min - 1.0*NEUTRON/charge#upper_tol[charge]
-            prec_mz_max = window_max + 3.0*NEUTRON/charge#lower_tol[charge]
-            if (prec_mz_min <= prec_mz) & (prec_mz_max >= prec_mz)
+            #prec_mz_min = window_min - 1.0*NEUTRON/charge#upper_tol[charge]
+            #prec_mz_max = window_max + 3.0*NEUTRON/charge#lower_tol[charge]
+            #if (prec_mz_min <= prec_mz) & (prec_mz_max >= prec_mz)
+            #if (window_min <= prec_mz) & (window_max >= prec_mz)
                 if haskey(precs, prec_id)
                     precs[prec_id] += UInt8(1)
                 else
                     insert!(precs, prec_id, UInt8(1))
                 end
-            end
+            #end
         end
-
+        #println(stop - start)
     end
 
     addFragmentMatches!(precs, precursor_bin, window_min, window_max, window_start, window_stop)
@@ -98,6 +99,8 @@ function queryFragment!(precs::Dictionary{UInt32, UInt8}, frag_index::FragmentIn
     end
 
     i = 1
+    prec_min = prec_mz - prec_tol
+    prec_max = prec_mz + prec_tol
     while (frag_bin < length(getFragBins(frag_index))) #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
         #Fragment bin matches the fragment ion
         #println(i)
@@ -105,8 +108,8 @@ function queryFragment!(precs::Dictionary{UInt32, UInt8}, frag_index::FragmentIn
         if (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
             return frag_bin
         else
-            prec_min = prec_mz - prec_tol - 3.0*NEUTRON
-            prec_max = prec_mz + prec_tol + 1.0*NEUTRON
+            #prec_min = prec_mz - prec_tol - 3.0*NEUTRON These lines are a 25% increase in time. 
+            #prec_max = prec_mz + prec_tol + 1.0*NEUTRON
             searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), prec_min, prec_max)
             frag_bin += 1
         end
