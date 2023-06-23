@@ -1,5 +1,5 @@
 
-using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree
+using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization
 include("src/precursor.jl")
 #include("src/buildFragmentIndex.jl")
 include("src/Routines/LibrarySearch/buildFragmentIndex.jl")
@@ -9,6 +9,8 @@ include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/selectTransitions.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
+include("src/PSM_TYPES/PSM.jl")
+include("src/PSM_TYPES/LibraryXTandem.jl")
 
 
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_detailed.jld2"  prosit_detailed
@@ -25,6 +27,7 @@ MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_o
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
 @time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1), precursor_tolerance = 4.25, fragment_tolerance = 40.0)
 
+MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
 @time time_psms = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
 
 ##########
@@ -227,3 +230,15 @@ mean([length(MS_TABLE[:masses][i]) for (i, order) in enumerate(MS_TABLE[:msOrder
 
 sort([length(MS_TABLE[:masses][i]) for (i, order) in enumerate(MS_TABLE[:msOrder]) if (order == 1)])
 [i for i in  MS_TABLE[:msOrder]]
+
+test = ones(UInt32, 9387261)
+
+function makezeros(list::Vector{UInt32})
+    for i ∈ eachindex(list)
+        if list[i] == 1
+            list[i] = UInt32(0)
+        end
+    end
+end
+test = ones(UInt32, 9387261÷2)
+filter(x->x==0, test)

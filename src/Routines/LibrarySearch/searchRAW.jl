@@ -29,20 +29,40 @@ function SearchRAW(
     build_design_times = Float64[]
     spectral_contrast_times = Float64[]
     score_times = Float64[]
+    prec_counts = zeros(UInt32, 9387261)
+    precs_temp = ones(UInt32, 100000)
+    pep_ids = ones(UInt32, topN)
+    function clearprecs!(list::Vector{UInt32})
+        @inbounds @simd for i ∈ eachindex(list)
+        #for i ∈ eachindex(list)
+            list[i] = UInt32(1)
+        end
+    end
+
+    function makezeros!(list::Vector{UInt32}, indices::Vector{UInt32})
+        @inbounds @simd for i ∈ indices
+        #for i ∈ indices
+            list[i] = UInt32(0)
+        end
+    end
+
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
         end
         ms2 += 1
         if ms2 < 100000#50000
+            #println("TEST")
             continue
         elseif ms2 > 101000#51000#51000
             continue
         end
         
         fragmentMatches = Vector{FragmentMatch{Float32}}()
-        precs = Dictionary{UInt32, UInt8}()
-        match_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(precs, 
+        #precs = Dictionary{UInt32, UInt8}()
+        match_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(prec_counts,
+                    precs_temp, 
+                    pep_ids,
                     frag_index, 
                     spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -50,6 +70,12 @@ function SearchRAW(
                     min_frag_count = min_frag_count, 
                     topN = topN
                     )
+        #println(length(prec_counts))
+        makezeros!(prec_counts, precs_temp)
+        clearprecs!(precs_temp)
+        clearprecs!(pep_ids)
+
+
         fragger_time = @elapsed transitions = selectTransitions(fragment_list, pep_id_iterator)
         push!(fragger_times, fragger_time)
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
@@ -61,6 +87,7 @@ function SearchRAW(
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity
                                     )
+
         push!(match_times, match_time)
         #println("matches ", length(fragmentMatches))
         #println("misses ", length(fragmentMisses))
@@ -131,3 +158,16 @@ function SearchRAW(
     println("mean score: ", mean(score_times))
     return DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
+
+#=unction find_nth_largest(array, n)
+    # Perform insertion sort in descending order
+    for i in 2:length(array)
+        j = i
+        while j > 1 && array[j] > array[j-1]
+            array[j], array[j-1] = array[j-1], array[j]
+            j -= 1
+        end
+    end
+
+    return array[n]
+end=#
