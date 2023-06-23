@@ -29,22 +29,7 @@ function SearchRAW(
     build_design_times = Float64[]
     spectral_contrast_times = Float64[]
     score_times = Float64[]
-    prec_counts = zeros(UInt32, 9387261)
-    precs_temp = ones(UInt32, 100000)
-    pep_ids = ones(UInt32, topN)
-    function clearprecs!(list::Vector{UInt32})
-        @inbounds @simd for i ∈ eachindex(list)
-        #for i ∈ eachindex(list)
-            list[i] = UInt32(1)
-        end
-    end
 
-    function makezeros!(list::Vector{UInt32}, indices::Vector{UInt32})
-        @inbounds @simd for i ∈ indices
-        #for i ∈ indices
-            list[i] = UInt32(0)
-        end
-    end
 
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
@@ -54,15 +39,13 @@ function SearchRAW(
         if ms2 < 100000#50000
             #println("TEST")
             continue
-        elseif ms2 > 101000#51000#51000
+        elseif ms2 > 100100#51000#51000
             continue
         end
         
         fragmentMatches = Vector{FragmentMatch{Float32}}()
-        #precs = Dictionary{UInt32, UInt8}()
-        match_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(prec_counts,
-                    precs_temp, 
-                    pep_ids,
+        precs = Accumulator{UInt32, UInt8}()
+        match_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -71,9 +54,6 @@ function SearchRAW(
                     topN = topN
                     )
         #println(length(prec_counts))
-        makezeros!(prec_counts, precs_temp)
-        clearprecs!(precs_temp)
-        clearprecs!(pep_ids)
 
 
         fragger_time = @elapsed transitions = selectTransitions(fragment_list, pep_id_iterator)
@@ -101,7 +81,7 @@ function SearchRAW(
         end
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
-        nmf_time = @elapsed W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
+        nmf_time = @elapsed W = reshape([Float32(100) for x in range(1,size(H)[1])], (1, size(H)[1]))
 
         #Solve NMF. 
         #=nmf_time += @elapsed weights = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
@@ -148,14 +128,14 @@ function SearchRAW(
         push!(score_times, score)
     
     end
-    println("processed $ms2 scans!")
+    #=println("processed $ms2 scans!")
     println("mean build: ", mean(build_design_times))
     println("mean fragger: ", mean(fragger_times))
     println("mean matches: ", mean(match_times))
     println("mean nmf: ", mean(nmf_times))
     println("median nmf: ", median(nmf_times))
     println("mean s_contrast: ", mean(spectral_contrast_times))
-    println("mean score: ", mean(score_times))
+    println("mean score: ", mean(score_times))=#
     return DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
 

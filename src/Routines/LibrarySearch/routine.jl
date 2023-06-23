@@ -25,11 +25,11 @@ include("src/PSM_TYPES/LibraryXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 @time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
-@time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1), precursor_tolerance = 4.25, fragment_tolerance = 40.0)
+@time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1), precursor_tolerance = 4.25, fragment_tolerance = 20.0)
 
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
 @time time_psms = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
-
+#PSMs = time_psms
 ##########
 #Get features
 ##########
@@ -42,7 +42,7 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
     function predictRTs!(PSMs::DataFrame; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
     
         targets = PSMs[:,:decoy].==false
-        spectral_contrast = PSMs[:,:spectral_contrast].>=0.8#min_spectral_contrast
+        spectral_contrast = PSMs[:,:spectral_contrast].>=0.95#min_spectral_contrast
     
         best_matches = targets .& spectral_contrast
     
@@ -50,17 +50,18 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         iRTs = hcat(PSMs[:,:iRT][best_matches], ones(Float32, sum(best_matches)))
         #Emperical retention times
         RTs = PSMs[:,:RT][best_matches]
-    
+        #plot(iRTs, RTs, seriestype=:scatter)
         slope, intercept = RobustModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
     
         transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
-
+        return RTs, iRTs
     end
-    predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
-end
-refinePSMs!(PSMs, prosit_precs)
 
-transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
+    return predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
+end
+RTs, iRTs = refinePSMs!(PSMs, prosit_precs)
+
+transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precursor_idx]])) => :charge)
 ########
 #
 ########
@@ -121,7 +122,12 @@ histogram(PSMs[PSMs[:,:decoy].==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.
 histogram!(PSMs[PSMs[:,:decoy].==false,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 
 
-histogram(PSMs[PSMs[:,:decoy].==true,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[PSMs[:,:decoy].==true,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+
+
+
+histogram(PSMs[PSMs[:,:decoy].==true,:], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 histogram!(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 
 histogram(PSMs[X_labels.==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
@@ -151,10 +157,16 @@ a = sort(PSMs[PSMs[:,:precursor_idx] .==   1894282      ,[:weight,:RT]], :RT);
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 
-sum(PSMs[X_labels.==true,:prob].>0.92)
-sum(PSMs[X_labels.==false,:prob].>0.92)
+sum(PSMs[PSMs[:,:decoy].==true,:prob].>0.89)
+sum(PSMs[PSMs[:,:decoy].==false,:prob].>0.89)
 
-unique(PSMs[PSMs[:,:prob].>0.92,:precursor_idx])
+
+sum(PSMs[PSMs[:,:decoy].==true,:q_values].<=0.01)
+sum(PSMs[PSMs[:,:decoy].==false,:q_values].<=0.01)
+
+
+
+unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==true),:precursor_idx])
 
 
 X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RTdiff]])
@@ -163,8 +175,14 @@ X_labels = PSMs[:, :decoy]
 probs = apply_forest_proba(model, X',[true, false])
 PSMs[:,:prob] = probs[:,2]
 PSMs[:,:q_value] = getQvalues(PSMs[:,:prob], PSMs[:,:decoy])
+histogram(PSMs[PSMs[:,:decoy].==true,:q_values], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5, normalize = :pdf)#, bins = -0.06:0.01:0.0)
+
 histogram(PSMs[PSMs[:,:decoy].==true,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
-histogram!(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = 
+
+histogram(PSMs[PSMs[:,:decoy].==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[PSMs[:,:decoy].==false,:prob], alpha = 0.5)#, bins = 
 
 function getQvalues(probs::Vector{Float64}, labels::Vector{Bool}, bootstrap_n::Int = 1000)
     #Could bootstratp to get more reliable values. 

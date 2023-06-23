@@ -219,7 +219,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{FragmentMatch{T}}, Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T) where {T,U<:AbstractFloat}
+function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{FragmentMatch{T}}, Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat}
 
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
@@ -237,7 +237,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
         return
     end
 
-    low, high = getPPM(Transitions[transition], 40.0)
+    low, high = getPPM(Transitions[transition], ppm)
     
     while (peak <= length(masses)) & (transition <= length(Transitions))
         if intensities[peak] <  min_intensity
@@ -254,7 +254,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
                 if transition > length(Transitions)
                     return
                 end
-                low, high = getPPM(Transitions[transition], 20.0)
+                low, high = getPPM(Transitions[transition], ppm)
                 match += 1
                 continue
             end
@@ -266,7 +266,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
             if transition > length(Transitions)
                 return
             end
-            low, high = getPPM(Transitions[transition], 20.0)
+            low, high = getPPM(Transitions[transition], ppm)
             continue
         end
         #No additional matches possible for the current peak. Move on to the next. 

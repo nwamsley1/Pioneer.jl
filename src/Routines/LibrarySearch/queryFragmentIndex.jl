@@ -23,7 +23,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::Abstract
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, precs_encountered::Int, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T<:AbstractFloat}
+function searchPrecursorBin!(precs::Accumulator{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T<:AbstractFloat}
    
     N = getLength(precursor_bin)
     lo, hi = 1, N
@@ -37,10 +37,10 @@ function searchPrecursorBin!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, 
         end
     end
 
-    window_start = (lo <= N ? lo : return precs_encountered)
+    window_start = (lo <= N ? lo : return)
 
     if getPrecMZ(getPrecursor(precursor_bin, window_start)) > window_max
-        return precs_encountered
+        return 
     end
 
     lo, hi = window_start, N
@@ -56,50 +56,33 @@ function searchPrecursorBin!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, 
 
     window_stop = hi
 
-    function addFragmentMatches!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, precs_encountered::Int64, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat, start::Int, stop::Int) where {T<:AbstractFloat}
+    function addFragmentMatches!(precs::Accumulator{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat, start::Int, stop::Int) where {T<:AbstractFloat}
         #@inbounds @simd for precursor_idx in start:stop
         for precursor_idx in start:stop
-            
-            #precursor = getPrecursor(precursor_bin, precursor_idx)
-            #prec_mz = getPrecMZ(precursor)
-            #prec_id = getPrecID(getPrecursor(precursor_bin, precursor_idx))
-            #charge = getPrecCharge(precursor)
-
-            #prec_mz_min = window_min - 1.0*NEUTRON/charge#upper_tol[charge]
-            #prec_mz_max = window_max + 3.0*NEUTRON/charge#lower_tol[charge]
-            #if (prec_mz_min <= prec_mz) & (prec_mz_max >= prec_mz)
-            #if (window_min <= prec_mz) & (window_max >= prec_mz)
-                #if haskey(precs, prec_id)
-                #    precs[prec_id] += UInt8(1)
-                #else
-                #    insert!(precs, prec_id, UInt8(1))
-                #end
-            prec_id = getPrecID(getPrecursor(precursor_bin, precursor_idx))
-            precs_encountered += 1
-            precs_temp[precs_encountered] = prec_id
-            precs[prec_id] += UInt8(1)
-            #end
-        
+            inc!(precs, getPrecID(getPrecursor(precursor_bin, precursor_idx)))
         end
-        return precs_encountered
+
+        return
     end
-    addFragmentMatches!(precs, precs_temp, precs_encountered, precursor_bin, window_min, window_max, window_start, window_stop)
-    return  addFragmentMatches!(precs, precs_temp, precs_encountered, precursor_bin, window_min, window_max, window_start, window_stop)
+
+    addFragmentMatches!(precs, precursor_bin, window_min, window_max, window_start, window_stop)
+
+    return 
 
 end
 
 #const upper_tol = [(3.0*NEUTRON), (3.0*NEUTRON)/2, (3.0*NEUTRON)/3, (3.0*NEUTRON)/4]
 #const lower_tol = [(1*NEUTRON), (1*NEUTRON)/2, (1*NEUTRON)/3, (1*NEUTRON)/4]
 
-function queryFragment!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, precs_encountered::Int, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T<:AbstractFloat}
+function queryFragment!(precs::Accumulator{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
     if (frag_bin === nothing)
-        return min_frag_bin, precs_encountered
+        return min_frag_bin
     #This frag bin has already been searched
     elseif frag_bin <= min_frag_bin
-        return min_frag_bin, precs_encountered
+        return min_frag_bin
     end
 
     i = 1
@@ -110,60 +93,47 @@ function queryFragment!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, precs
         #println(i)
         i += 1
         if (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
-            return frag_bin, precs_encountered
+            return frag_bin
         else
             #prec_min = prec_mz - prec_tol - 3.0*NEUTRON These lines are a 25% increase in time. 
             #prec_max = prec_mz + prec_tol + 1.0*NEUTRON
-            precs_encountered = searchPrecursorBin!(precs, precs_temp, precs_encountered, getPrecursorBin(frag_index, UInt32(frag_bin)), prec_min, prec_max)
+            searchPrecursorBin!(precs, getPrecursorBin(frag_index, UInt32(frag_bin)), prec_min, prec_max)
             frag_bin += 1
         end
 
     end
 
     #Only reach this point if frag_bin exceeds length(frag_index)
-    return frag_bin - 1, precs_encountered
+    return frag_bin - 1
 end
 
-function searchScan!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, prec_ids::Vector{UInt32}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
+function searchScan!(precs::Accumulator{UInt32, UInt8}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
-    function filterPrecursorMatches!(precs::Vector{UInt32}, precs_temp::Vector{UInt32}, precs_encountered::Int, prec_ids::Vector{UInt32}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
+    function filterPrecursorMatches!(precs::Accumulator{UInt32, UInt8}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
         #Do not consider peptides wither fewer than 
         match_count = sum(precs)
         prec_count = length(precs)
-        # if precs_encountered < 1
-        #     return @view(UInt32[1][1:1]), prec_count, match_count
-        #end
-        #filter!(count->(count>=min_frag_count), precs)
-        #n = 0
-        #@view(sort(filter(x->x>min_frag_count, [precs[x] for x in @view(precs_temp[1:precs_encountered])]), rev = true)[1:topN])
-        #sort!(prec_ids, rev = true)
-        #println(precs)
-        #Iterator of Peptide ID's for the `topN` scoring peptides
-        #return Iterators.take([x[1] for x in test], min(topN, length(test))), prec_count, match_count
-        return @view(sort(filter(x->x>min_frag_count, precs), 
-                        rev = true)[1:topN]), prec_count, match_count
-        #end
+        return [first(x) for x in sort(filter(x->last(x)>=min_frag_count,collect(precs)), by=x->last(x), rev = true)][1:min(topN, end)], match_count, prec_count
     end
-
+    println("TEST")
     min_frag_bin = 0
-    precs_encountered = 0
     #println("start")
     #@time begin
-    #println("start ", precs_encountered)
-    for (mass, intensity) in zip(massess, intensities)
+        #println("start ")
+        for (mass, intensity) in zip(massess, intensities)
 
-        mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
+            mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
 
-        FRAGMIN, FRAGMAX = getFragTol(mass, ppm) 
+            FRAGMIN, FRAGMAX = getFragTol(mass, ppm) 
 
-        min_frag_bin, precs_encountered = queryFragment!(precs, precs_temp, precs_encountered, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
-    end 
-    #println("stop ", precs_encountered)
+            min_frag_bin = queryFragment!(precs, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
+        end 
     #end
+    #println("stop ", length(precs))
     #println("PRECS $precs")
     #println("stop")
-    return filterPrecursorMatches!(precs, precs_temp, precs_encountered, prec_ids, topN, min_frag_count)
+    return filterPrecursorMatches!(precs, topN, min_frag_count)
 end
 
