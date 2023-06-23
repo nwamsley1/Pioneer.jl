@@ -9,6 +9,7 @@ include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/selectTransitions.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
+include("src/Routines/LibrarySearch/queryFragmentInc.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/LibraryXTandem.jl")
 
@@ -29,6 +30,9 @@ MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToPar
 
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
 @time time_psms = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
+
+import Base.empty!
+empty!(a::Accumulator) = empty!(a.map)
 #PSMs = time_psms
 ##########
 #Get features
@@ -60,7 +64,13 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
     return predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
 end
 RTs, iRTs = refinePSMs!(PSMs, prosit_precs)
+targets = PSMs[:,:decoy].==false
+spectral_contrast = PSMs[:,:spectral_contrast].>=0.8#min_spectral_contrast
 
+sum(spectral_contrast .& targets)
+
+randperm(size(PS)[1])[1:60000]
+test = combine(sdf -> sdf[argmin(sdf.q_value), :], groupby(PSMs, [:scan_idx]))
 transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precursor_idx]])) => :charge)
 ########
 #
@@ -90,6 +100,12 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 5)
     #probs = apply_forest_proba(model, X',[true, false])
     #PSMs[:,:prob] = probs[:,2]
 end
+
+best_PSMs = combine(sdf -> sdf[argmin(sdf.q_values), :], groupby(PSMs, [:precursor_idx]))
+best = (best_PSMs[:,:q_values].<=0.01) .& (best_PSMs[:,:decoy].!=true)
+plot(best_PSMs[best,:iRT], best_PSMs[best,:RT], seriestype=:scatter)
+random = randperm(size(PSMs)[1])[1:sum(best)]
+plot(PSMs[random,:iRT], PSMs[random,:RT], seriestype=:scatter)
 @time rankPSMs!(PSMs)
 train = randperm(size(PSMs)[1])[1:60000]
 X = Matrix(PSMs[train,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
@@ -260,3 +276,87 @@ function makezeros(list::Vector{UInt32})
 end
 test = ones(UInt32, 9387261÷2)
 filter(x->x==0, test)
+
+pre_aloc_size = 1000
+test_dict = Dict{UInt32, UInt8}(zeros(UInt8, pre_aloc_size), zeros(UInt32, pre_aloc_size), zeros(UInt8, pre_aloc_size), 0, 0, 0, pre_aloc_size, 0)
+
+struct MyKey
+    val::UInt
+end
+
+import Base.hash 
+Base.hash(a::UInt32, h::UInt32) = xor(a, h)
+#Base.==(a::UInt, b::UInt) = a.val == b.val
+import Base.empty!
+empty!(h::Accumulator{K,V}) where V where K = empty!(h.map)
+
+
+test_dict = Dict{UInt32, UInt32}()
+ints = [UInt32(x) for x in range(1, 200000)]
+
+function makedicttest1(vals::Vector{UInt32})
+    for i in 1:1000
+        test_dict = Dict{UInt32, UInt32}()
+        for i in vals
+            if !haskey(test_dict, i)
+                test_dict[i] = UInt32(1)
+            else
+                test_dict[i] += UInt32(1)
+            end
+        end
+    end
+end
+
+function makedicttest2(vals::Vector{UInt32})
+    test_dict = Dict{UInt32, UInt32}()
+    for i in 1:1000
+        for i in vals
+            if !haskey(test_dict, i)
+                test_dict[i] = UInt32(1)
+            else
+                test_dict[i] += UInt32(1)
+            end
+        end
+        empty!(test_dict)
+    end
+end
+
+function makedicttest3(vals::Vector{UInt32})
+    test_dict = Accumulator{UInt32, UInt32}()
+    for i in 1:1000
+        for i in vals
+            inc!(test_dict, i)#test_dict[i] = UInt32(1)
+        end
+        empty!(test_dict)
+    end
+end
+
+function makedicttest4(vals::Vector{UInt32})
+    test_dict = SortedDict{UInt32, UInt32}()
+    for i in 1:1000
+        for i in vals
+            if !haskey(test_dict, i)
+                test_dict[i] = UInt32(1)
+            else
+                test_dict[i] += UInt32(1)
+            end
+        end
+        empty!(test_dict)
+    end
+end
+
+test_acc = Accumulator{UInt32, UInt32}()
+    for i in rand(UInt32, 1, 10000)
+        for n in range(1, rand([1, 2, 3, 4, 5, 6]))
+            inc!(test_acc, i)#test_dict[i] = UInt32(1)
+        end
+    end
+
+sort!(test_acc)
+test_iterator = (first(pair) for pair in sort(filter(pair -> val(pair) > 1, pairs(test_acc)), by = pair -> last(pair)))
+
+@time begin
+    makedicttest(ints)
+end
+
+(first(pair) for pair in sort(filter(kv -> last(kv) > 1, pairs(test_acc)), by = x -> last(x)))
