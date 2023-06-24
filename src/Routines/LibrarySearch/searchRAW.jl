@@ -31,12 +31,12 @@ function SearchRAW(
             continue
         end
         ms2 += 1
-        if ms2 < 100000#50000
+        #=if ms2 < 100000#50000
             #println("TEST")
             continue
         elseif ms2 > 102000#51000#51000
             continue
-        end
+        end=#
         
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         #println(" a scan")
@@ -101,14 +101,14 @@ function SearchRAW(
         spectral_contrast = getSpectralContrast(H, X)
 
         #For progress and debugging. 
-        #=if (ms2 % 1000) == 0
+        if (ms2 % 1000) == 0
             println("ms2: $ms2")
             if ms2 == 8000
                 #test_frags = transitions
                 #test_matches = fragmentMatches
                 #test_misses = fragmentMisses
             end
-        end=#
+        end
 
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
@@ -146,3 +146,11 @@ end
 
     return array[n]
 end=#
+
+prec_ids = UInt32[1, 10, 5, 7, 0, 0, 0, 0, 0, 0]
+prec_counts = UInt8[1, 0, 0, 0, 1, 0, 2, 0, 0, 11]
+#Every time we encoutner a precursor, check value to see if it has been assigned. 
+#If not, then add one to the indexer and place the precursor key in keys. 
+function sortby(prec_ids::Vector{UInt32}, prec_counts::Vector{UInt8}, max_n::Int)
+    return sort(filter(x->prec_counts[x].>1, @view(prec_ids[1:max_n])), by = x->prec_counts[x], rev = true)
+end

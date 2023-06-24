@@ -161,19 +161,19 @@ function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, transition::Librar
     #if isassigned(matches, match)
     ##    updateFragmentMatch!(matches[match], mass, intensity, peak_ind)
     #else
-    push!(matches, FragmentMatch(getIntensity(transition), 
-                                 intensity,
+    push!(matches, FragmentMatch(getIntensity(transition)::Float32, 
+                                 intensity::Float32,
                                  Float32(getFragMZ(transition)),
-                                 mass,
-                                 peak_ind,
-                                 getIonIndex(transition),
-                                 getFragCharge(transition),
+                                 mass::Float32,
+                                 peak_ind::Int64,
+                                 getIonIndex(transition)::UInt8,
+                                 getFragCharge(transition)::UInt8,
                                  UInt8(0),
                                  true == isyIon(transition) ? 'y' : 'b',
                                  getPrecID(transition),
                                  UInt8(1), 
                                  scan_idx,
-                                 ms_file_idx)
+                                 ms_file_idx)::FragmentMatch{Float32}
         )
     #end
 end

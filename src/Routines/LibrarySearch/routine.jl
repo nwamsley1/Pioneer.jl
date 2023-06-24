@@ -294,9 +294,19 @@ empty!(h::Accumulator{K,V}) where V where K = empty!(h.map)
 test_dict = Dict{UInt32, UInt32}()
 ints = [UInt32(x) for x in range(1, 200000)]
 
+test_dict = Accumulator{UInt32, UInt32}()
+for i in 1:1000
+    for i in vals
+        inc!(test_dict, i)#test_dict[i] = UInt32(1)
+    end
+    empty!(test_dict)
+end
+
+
 function makedicttest1(vals::Vector{UInt32})
-    for i in 1:1000
-        test_dict = Dict{UInt32, UInt32}()
+    test_dict = Dict{UInt32, UInt32}()
+    for i in 1:1
+        #test_dict = Dict{UInt32, UInt32}()
         for i in vals
             if !haskey(test_dict, i)
                 test_dict[i] = UInt32(1)
@@ -305,6 +315,7 @@ function makedicttest1(vals::Vector{UInt32})
             end
         end
     end
+    return test_dict
 end
 
 function makedicttest2(vals::Vector{UInt32})
@@ -319,6 +330,7 @@ function makedicttest2(vals::Vector{UInt32})
         end
         empty!(test_dict)
     end
+    return test_dict
 end
 
 function makedicttest3(vals::Vector{UInt32})
@@ -360,3 +372,40 @@ test_iterator = (first(pair) for pair in sort(filter(pair -> val(pair) > 1, pair
 end
 
 (first(pair) for pair in sort(filter(kv -> last(kv) > 1, pairs(test_acc)), by = x -> last(x)))
+
+import Base.hash
+Base.hash(x::UInt32) = hash(x, zero(UInt))
+Base.hash(x::UInt32, h::UInt) = x #hash(Int64(x), h)
+#hash(x::Any) = hash(x, zero(UInt))
+import Base.hashindex
+function Base.hashindex(key::UInt32, sz)
+    hsh = hash(key)
+    idx = (((hsh % Int) & (sz-1)) + 1)::Int
+    return idx, _shorthash7(hsh)
+end
+import Base._shorthash7
+_shorthash7(hsh::UInt32) = (hsh >> UInt(25))%UInt8 | 0x80
+import Base.ht_keyindex
+function Base.ht_keyindex(h::Dict{K,V}, key) where V where K
+    isempty(h) && return -1
+    sz = length(h.keys)
+    iter = 0
+    maxprobe = h.maxprobe
+    index, sh = hashindex(key, sz)
+    keys = h.keys
+    println("index ", index)
+    println("sh ", sh)
+    @inbounds while true
+        isslotempty(h,index) && return -1
+        if h.slots[index] == sh
+            k = keys[index]
+            if (key ===  k || isequal(key, k))
+                return index
+            end
+        end
+
+        index = (index & (sz-1)) + 1
+        (iter += 1) > maxprobe && return -1
+    end
+    # This line is unreachable
+end
