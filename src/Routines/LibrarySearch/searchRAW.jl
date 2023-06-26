@@ -25,25 +25,28 @@ function SearchRAW(
     min_intensity = Float32(0.0)
 
     #precs = Dict{UInt32, UInt8}()
-    precs = Accumulator{UInt32, UInt8}()
+    #precs = Accumulator{UInt32, UInt8}()
+    precs = Counter(UInt32, UInt8, 9387261)
+    match_times = []
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
         end
         ms2 += 1
-        #=if ms2 < 100000#50000
+        if ms2 < 100000#50000
             #println("TEST")
             continue
         elseif ms2 > 102000#51000#51000
             continue
-        end=#
+        end
         
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         #println(" a scan")
         #precs = Dict{UInt32, UInt8}(zeros(UInt8, pre_aloc_size), zeros(UInt32, pre_aloc_size), zeros(UInt8, pre_aloc_size), 0, 0, 0, pre_aloc_size, 0)
         #precs = Dict{UInt32, UInt8}()
         
-        pep_id_iterator, prec_count, match_count = searchScan!(precs,
+        #frag_time = @elapsed 
+        frag_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -51,11 +54,21 @@ function SearchRAW(
                     min_frag_count = min_frag_count, 
                     topN = topN
                     )
+        
         #println(length(prec_counts))
 
-
         transitions = selectTransitions(fragment_list, pep_id_iterator)
-        empty!(precs)
+        if precs.size > 1
+            frag_time += @elapsed reset!(precs)
+            push!(match_times, frag_time)
+        else
+            push!(match_times, frag_time)
+            continue
+        end
+        #frag_time += @elapsed empty!(precs)
+        #push!(match_times, frag_time)
+        #frag_time += @elapsed reset!(precs)
+        #push!(match_times, frag_time)
         #push!(fragger_times, fragger_time)
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
@@ -123,6 +136,10 @@ function SearchRAW(
         #push!(score_times, score)
     
     end
+
+    println("processed $ms2 scans!")
+    println("mean matches: ", mean(match_times))
+    println("mean matches: ", median(match_times))
     #=println("processed $ms2 scans!")
     println("mean build: ", mean(build_design_times))
     println("mean fragger: ", mean(fragger_times))
@@ -131,7 +148,7 @@ function SearchRAW(
     println("median nmf: ", median(nmf_times))
     println("mean s_contrast: ", mean(spectral_contrast_times))
     println("mean score: ", mean(score_times))=#
-    return precs#DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
+    return DataFrame(scored_PSMs)#precs#DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
 
 #=unction find_nth_largest(array, n)
@@ -147,10 +164,108 @@ end
     return array[n]
 end=#
 
-prec_ids = UInt32[1, 10, 5, 7, 0, 0, 0, 0, 0, 0]
-prec_counts = UInt8[1, 0, 0, 0, 1, 0, 2, 0, 0, 11]
+#prec_ids = UInt32[1, 10, 5, 7, 0, 0, 0, 0, 0, 0]
+#prec_counts = UInt8[1, 0, 0, 0, 1, 0, 2, 0, 0, 11]
 #Every time we encoutner a precursor, check value to see if it has been assigned. 
 #If not, then add one to the indexer and place the precursor key in keys. 
-function sortby(prec_ids::Vector{UInt32}, prec_counts::Vector{UInt8}, max_n::Int)
-    return sort(filter(x->prec_counts[x].>1, @view(prec_ids[1:max_n])), by = x->prec_counts[x], rev = true)
+#function sortby(prec_ids::Vector{UInt32}, prec_counts::Vector{UInt8}, max_n::Int)
+#    return sort(filter(x->prec_counts[x].>1, @view(prec_ids[1:max_n])), by = x->prec_counts[x], rev = true)
+#end
+
+mutable struct Counter{I,C<:Unsigned}
+    ids::Vector{I}
+    counts::Vector{C}
+    size::Int64
+    function Counter(I::DataType, C::DataType, size::Int) #where {I,C<:Unsigned}
+        new{I, C}(Vector{I}(undef, size), Vector{C}(undef, size), 1)
+    end
 end
+
+
+getSize(c::Counter{I,C}) where {I,C<:Unsigned} = c.size
+getCount(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id]
+
+
+
+incSize!(c::Counter{I,C}) where {I,C<:Unsigned} = c.size += 1
+incCounter!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id] += one(C)
+
+import DataStructures.inc!
+function inc!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} 
+    if c.counts[id] == 0
+        c.ids[getSize(c)] = id;
+        incCounter!(c, id);
+        incSize!(c);
+    else
+        incCounter!(c, id);
+    end
+end
+
+import Base.sort
+function sort(counter::Counter{I,C}, num_precs::Int, min_count::Int, size::Int) where {I,C<:Unsigned} 
+    return sort(
+            filter(id -> getCount(counter, id) >= min_count,
+                    @view(counter.ids[1:size])
+                    ), 
+            by = id -> getCount(counter, id),
+            rev = true,
+            alg=PartialQuickSort(1:num_precs)
+        )[1:min(num_precs, end)]
+end
+
+function reset!(c::Counter{I,C}) where {I,C<:Unsigned}
+    
+    @turbo for i in 1:(getSize(c) - 1)
+        c.counts[c.ids[i]] = zero(C)
+    end
+    c.size = 1
+end
+
+function countFragMatches(c::Counter{I,C}) where {I,C<:Unsigned}
+    count = zero(C)
+    @turbo for i in 1:(getSize(c) - 1)
+        count += c.counts[c.ids[i]]
+    end
+    return count
+end
+
+function countFragMatches(c::Counter{I,C}, min_count::Int) where {I,C<:Unsigned}
+    frag_counts = zero(C)
+    exceeds_min = 0
+    for i in 1:(getSize(c) - 1)
+        id = c.ids[i]
+        frag_count = c.counts[id]
+        frag_counts += frag_count
+        if frag_count >= min_count
+            c.ids[exceeds_min + 1] = c.ids[i]
+            exceeds_min += 1
+        end
+    end
+    return count, exceeds_min
+end
+
+#=
+big_list = [rand([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) for x in 1:9000000]
+@btime sort(big_list, alg=PartialQuickSort(1:6), rev = true)
+
+
+@btime sort(big_list[1:10000], alg=PartialQuickSort(1:6), rev = true)
+
+
+@btime sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20]
+@btime sort(filter(x->x>0,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20]
+@btime sort(filter(x->x>13,big_list[1:100000]), alg=PartialQuickSort(1:20), rev = true)[1:20]
+@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20])#fastest
+@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), alg=QuickSort, rev = true)[1:20])
+
+@benchmark sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)#fastest
+
+@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), rev = true)[1:20])#fastest
+
+sort([5, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 4, 1, 4, 4, 5, 5], alg=PartialQuickSort(1:6), rev = true)
+
+x = rand(100);
+k = 50:100;
+
+@time sort!(x[1:10]; alg=PartialQuickSort(1:10), rev = true);
+=#

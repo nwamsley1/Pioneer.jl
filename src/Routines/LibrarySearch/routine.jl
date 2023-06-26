@@ -10,6 +10,7 @@ include("src/Routines/LibrarySearch/selectTransitions.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
 include("src/Routines/LibrarySearch/queryFragmentInc.jl")
+include("src/Routines/LibrarySearch/queryFragmentArr.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/LibraryXTandem.jl")
 

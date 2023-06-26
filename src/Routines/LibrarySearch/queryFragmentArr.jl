@@ -23,7 +23,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::Abstract
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Accumulator{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T<:AbstractFloat}
+function searchPrecursorBin!(precs::Counter{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T<:AbstractFloat}
    
     N = getLength(precursor_bin)
     lo, hi = 1, N
@@ -56,7 +56,7 @@ function searchPrecursorBin!(precs::Accumulator{UInt32, UInt8}, precursor_bin::P
 
     window_stop = hi
 
-    function addFragmentMatches!(precs::Accumulator{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat, start::Int, stop::Int) where {T<:AbstractFloat}
+    function addFragmentMatches!(precs::Counter{UInt32, UInt8}, precursor_bin::PrecursorBin{T}, window_min::AbstractFloat, window_max::AbstractFloat, start::Int, stop::Int) where {T<:AbstractFloat}
         #@inbounds @simd for precursor_idx in start:stop
         for precursor_idx in start:stop
             #inc!(precs, getPrecID(getPrecursor(precursor_bin, precursor_idx)))
@@ -80,7 +80,7 @@ end
 #const upper_tol = [(3.0*NEUTRON), (3.0*NEUTRON)/2, (3.0*NEUTRON)/3, (3.0*NEUTRON)/4]
 #const lower_tol = [(1*NEUTRON), (1*NEUTRON)/2, (1*NEUTRON)/3, (1*NEUTRON)/4]
 
-function queryFragment!(precs::Accumulator{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T<:AbstractFloat}
+function queryFragment!(precs::Counter{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
@@ -113,16 +113,18 @@ function queryFragment!(precs::Accumulator{UInt32, UInt8}, frag_index::FragmentI
     return frag_bin - 1
 end
 
-function searchScan!(precs::Accumulator{UInt32, UInt8}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
+function searchScan!(precs::Counter{UInt32, UInt8}, f_index::FragmentIndex{T}, massess::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
-    function filterPrecursorMatches!(precs::Accumulator{UInt32, UInt8}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
+    function filterPrecursorMatches!(precs::Counter{UInt32, UInt8}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
         #Do not consider peptides wither fewer than 
-        match_count = sum(values(precs))
-        prec_count = length(keys(precs))
-        #println("TEST")
-        return [first(x) for x in sort(filter(x->last(x)>=min_frag_count,collect(precs)), by=x->last(x), rev = true)][1:min(topN, end)], match_count, prec_count
+        #match_count = sum(values(precs))
+        #prec_count = length(keys(precs))
+        match_count, exceeds_min = countFragMatches(precs)
+        prec_count = precs.size
+        println("TEST")
+        return sort(precs, topN, min_frag_count), match_count, prec_count#[first(x) for x in sort(filter(x->last(x)>=min_frag_count,collect(precs)), by=x->last(x), rev = true)][1:min(topN, end)], match_count, prec_count
         #println("length ", [x for x in (pair for pair in sort(filter(pair -> last(pair) > 1, pairs(test_acc)), by = pair -> last(pair), rev = true))])
         #println([x for x in (first(pair) for pair in sort(pairs(filter(pair -> last(pair) > 1, pairs(test_acc))), by = pair -> last(pair), rev = true))][1:5])
         #println("len ", length([x for x in (first(pair) for pair in sort(pairs(filter(pair -> last(pair) > 1, pairs(test_acc))), by = pair -> last(pair), rev = true))]))
@@ -147,6 +149,3 @@ function searchScan!(precs::Accumulator{UInt32, UInt8}, f_index::FragmentIndex{T
     #println("stop")
     return filterPrecursorMatches!(precs, topN, min_frag_count)
 end
-
-import Base.empty!
-empty!(a::Accumulator{UInt32, UInt8}) = empty!(a.map)
