@@ -6,6 +6,15 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pe
     return sort!(transitions, by = x->getFragMZ(x))
 end
 
+function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, counter::Counter{I,C}, topN::Int, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat, I,C<:Unsigned}
+    transitions = Vector{LibraryFragment{T}}()
+    while i <= min(topN, counter.size)
+        append!(transitions, fragment_list[getID(counter, i)])
+        i += 1
+    end
+    return sort!(transitions, by = x->getFragMZ(x))
+end
+
 function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Generator, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
     transitions = Vector{LibraryFragment{T}}()
     i = 1

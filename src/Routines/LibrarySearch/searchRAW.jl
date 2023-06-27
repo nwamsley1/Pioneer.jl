@@ -46,7 +46,7 @@ function SearchRAW(
         #precs = Dict{UInt32, UInt8}()
         
         #frag_time = @elapsed 
-        frag_time = @elapsed pep_id_iterator, prec_count, match_count = searchScan!(precs,
+        frag_time = @elapsed prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -57,7 +57,7 @@ function SearchRAW(
         
         #println(length(prec_counts))
 
-        transitions = selectTransitions(fragment_list, pep_id_iterator)
+        transitions = selectTransitions(fragment_list, pep_id_iterator, topN)
         if precs.size > 1
             frag_time += @elapsed reset!(precs)
             push!(match_times, frag_time)
@@ -183,8 +183,9 @@ end
 
 
 getSize(c::Counter{I,C}) where {I,C<:Unsigned} = c.size
+getID(c::Counter{I,C}, idx::Int) where {I,C<:Unsigned} = c.ids[idx]
 getCount(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id]
-
+setCount!(c::Counter{I,C}, idx::Int, count::C) where {I,C<:Unsigned} = c.counts[c.ids[idx]] = count
 
 
 incSize!(c::Counter{I,C}) where {I,C<:Unsigned} = c.size += 1
@@ -201,22 +202,21 @@ function inc!(c::Counter{I,C}, id::I) where {I,C<:Unsigned}
     end
 end
 
-import Base.sort
-function sort(counter::Counter{I,C}, num_precs::Int, min_count::Int, size::Int) where {I,C<:Unsigned} 
-    return sort(
-            filter(id -> getCount(counter, id) >= min_count,
-                    @view(counter.ids[1:size])
-                    ), 
-            by = id -> getCount(counter, id),
-            rev = true,
-            alg=PartialQuickSort(1:num_precs)
-        )[1:min(num_precs, end)]
+import Base.sort!
+function sort!(counter::Counter{I,C}, size::Int) where {I,C<:Unsigned} 
+    return sort!(
+                @view(counter.ids[1:size]), 
+                by = id -> getCount(counter, id),
+                rev = true,
+                #alg=PartialQuickSort(1:num_precs)
+             )#[1:min(num_precs, end)]
 end
 
 function reset!(c::Counter{I,C}) where {I,C<:Unsigned}
     
     @turbo for i in 1:(getSize(c) - 1)
         c.counts[c.ids[i]] = zero(C)
+        #setCount(c, idx, zero(C))
     end
     c.size = 1
 end
@@ -241,7 +241,7 @@ function countFragMatches(c::Counter{I,C}, min_count::Int) where {I,C<:Unsigned}
             exceeds_min += 1
         end
     end
-    return count, exceeds_min
+    return frag_counts, exceeds_min
 end
 
 #=
