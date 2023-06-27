@@ -57,6 +57,7 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         RTs = PSMs[:,:RT][best_matches]
         #plot(iRTs, RTs, seriestype=:scatter)
         slope, intercept = RobustModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
+        
     
         transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
         return RTs, iRTs
@@ -108,13 +109,13 @@ plot(best_PSMs[best,:iRT], best_PSMs[best,:RT], seriestype=:scatter)
 random = randperm(size(PSMs)[1])[1:sum(best)]
 plot(PSMs[random,:iRT], PSMs[random,:RT], seriestype=:scatter)
 @time rankPSMs!(PSMs)
-train = randperm(size(PSMs)[1])[1:60000]
-X = Matrix(PSMs[train,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
-X_labels = PSMs[train, :decoy]
+train = randperm(size(PSMs_40)[1])[1:60000]
+X = Matrix(PSMs_40[train,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
+X_labels = PSMs_40[train, :decoy]
 model = build_forest(X_labels, X, 4, 1000, 0.5, 3)
-X = Matrix(PSMs[:,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
+X = Matrix(PSMs_40[:,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
 probs = apply_forest_proba(model, X,[true, false])
-PSMs[:,:prob] = probs[:,2]
+PSMs_40[:,:prob] = probs[:,2]
 function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool})
     #Could bootstratp to get more reliable values. 
     q_values = zeros(Float64, (length(probs),))
@@ -132,6 +133,8 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Boo
     PSMs[:,:q_values] = q_values;
 end
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+
+@time getQvalues!(PSMs_40, PSMs_40[:,:prob], PSMs_40[:,:decoy]);
 
 
 
@@ -160,13 +163,13 @@ plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 sort(counts,:nrow)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .== 2526945 ,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x00245ae9 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .== 717580 ,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x003fa754 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .==  2968051 ,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==       0x00248337,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 
@@ -183,7 +186,9 @@ sum(PSMs[PSMs[:,:decoy].==false,:q_values].<=0.01)
 
 
 
-unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==true),:precursor_idx])
+PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false),:precursor_idx]
+
+PSMs_40[(PSMs_40[:,:q_values].<=0.01) .& (PSMs_40[:,:decoy].==false),:precursor_idx]
 
 
 X = Matrix(PSMs[1:1:end,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RTdiff]])

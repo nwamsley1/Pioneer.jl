@@ -33,12 +33,15 @@ function SearchRAW(
             continue
         end
         ms2 += 1
-        if ms2 < 100000#50000
+        if i != 15687
+            continue
+        end
+        #=if ms2 < 100000#50000
             #println("TEST")
             continue
         elseif ms2 > 102000#51000#51000
             continue
-        end
+        end=#
         
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         #println(" a scan")
@@ -57,7 +60,7 @@ function SearchRAW(
         
         #println(length(prec_counts))
 
-        transitions = selectTransitions(fragment_list, pep_id_iterator, topN)
+        transitions = selectTransitions(fragment_list, precs, topN)
         if precs.size > 1
             frag_time += @elapsed reset!(precs)
             push!(match_times, frag_time)
@@ -65,6 +68,7 @@ function SearchRAW(
             push!(match_times, frag_time)
             continue
         end
+        println(length(transitions))
         #frag_time += @elapsed empty!(precs)
         #push!(match_times, frag_time)
         #frag_time += @elapsed reset!(precs)
@@ -105,12 +109,7 @@ function SearchRAW(
                                                     tol = 1e-6, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:])
-        #weights = W[1,:]                           
-        #println(size(H))
-        #println(size(X))
-        #tH = H'
-        
-        #nmf_time = @elapsed weights = coef(fit(LassoModel, tH, X[1,:], λ=[1e2], cd_tol=1, criterion=:obj))
+
         spectral_contrast = getSpectralContrast(H, X)
 
         #For progress and debugging. 
@@ -193,7 +192,7 @@ incCounter!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id] += one(
 
 import DataStructures.inc!
 function inc!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} 
-    if c.counts[id] == 0
+    if iszero(c.counts[id])#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
         c.ids[getSize(c)] = id;
         incCounter!(c, id);
         incSize!(c);
@@ -203,12 +202,12 @@ function inc!(c::Counter{I,C}, id::I) where {I,C<:Unsigned}
 end
 
 import Base.sort!
-function sort!(counter::Counter{I,C}, size::Int) where {I,C<:Unsigned} 
+function sort!(counter::Counter{I,C}, size::Int, topN::Int) where {I,C<:Unsigned} 
     return sort!(
                 @view(counter.ids[1:size]), 
                 by = id -> getCount(counter, id),
                 rev = true,
-                #alg=PartialQuickSort(1:num_precs)
+                alg=PartialQuickSort(1:topN)
              )#[1:min(num_precs, end)]
 end
 
