@@ -33,16 +33,19 @@ function SearchRAW(
             continue
         end
         ms2 += 1
-        if i != 15687
-            continue
-        end
-        #=if ms2 < 100000#50000
+        #if i !=  101334 
+        #    continue
+        #end
+        #=if ms2 < 100020#50000
             #println("TEST")
             continue
-        elseif ms2 > 102000#51000#51000
+        elseif ms2 > 101000#51000#51000
             continue
         end=#
-        
+        #=if ms2 != 100023
+            continue
+        end=#
+        #println("ms2: $ms2")
         fragmentMatches = Vector{FragmentMatch{Float32}}()
         #println(" a scan")
         #precs = Dict{UInt32, UInt8}(zeros(UInt8, pre_aloc_size), zeros(UInt32, pre_aloc_size), zeros(UInt8, pre_aloc_size), 0, 0, 0, pre_aloc_size, 0)
@@ -60,6 +63,11 @@ function SearchRAW(
         
         #println(length(prec_counts))
 
+        #println("getSize(precs)", getSize(precs))
+        if getSize(precs) <= 1
+            #println("TEST")
+            continue
+        end
         transitions = selectTransitions(fragment_list, precs, topN)
         if precs.size > 1
             frag_time += @elapsed reset!(precs)
@@ -68,7 +76,9 @@ function SearchRAW(
             push!(match_times, frag_time)
             continue
         end
-        println(length(transitions))
+        reset!(precs)
+        #println(length(transitions))
+        #println(precs.size)
         #frag_time += @elapsed empty!(precs)
         #push!(match_times, frag_time)
         #frag_time += @elapsed reset!(precs)
@@ -106,7 +116,7 @@ function SearchRAW(
 
         weights = (NMF.solve!(NMF.ProjectedALS{Float32}(maxiter=50, verbose = false, 
                                                     lambda_w = 1e4, 
-                                                    tol = 1e-6, #Need a reasonable way to choos lambda?
+                                                    tol = 1e-8, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:])
 
@@ -174,9 +184,10 @@ end=#
 mutable struct Counter{I,C<:Unsigned}
     ids::Vector{I}
     counts::Vector{C}
+    intensities::Vector{Float32}
     size::Int64
     function Counter(I::DataType, C::DataType, size::Int) #where {I,C<:Unsigned}
-        new{I, C}(Vector{I}(undef, size), Vector{C}(undef, size), 1)
+        new{I, C}(zeros(I, size), zeros(C, size), zeros(Float32, size), 1)
     end
 end
 
@@ -185,19 +196,24 @@ getSize(c::Counter{I,C}) where {I,C<:Unsigned} = c.size
 getID(c::Counter{I,C}, idx::Int) where {I,C<:Unsigned} = c.ids[idx]
 getCount(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id]
 setCount!(c::Counter{I,C}, idx::Int, count::C) where {I,C<:Unsigned} = c.counts[c.ids[idx]] = count
+getIntensity(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id]
+
 
 
 incSize!(c::Counter{I,C}) where {I,C<:Unsigned} = c.size += 1
 incCounter!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} = c.counts[id] += one(C)
+incIntensity!(c::Counter{I,C}, id::I, intensity::Float32) where {I,C<:Unsigned} = c.intensities[id] += intensity
 
 import DataStructures.inc!
-function inc!(c::Counter{I,C}, id::I) where {I,C<:Unsigned} 
+function inc!(c::Counter{I,C}, id::I, intensity::Float32) where {I,C<:Unsigned} 
     if iszero(c.counts[id])#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
         c.ids[getSize(c)] = id;
         incCounter!(c, id);
+        incIntensity!(c, id, intensity);
         incSize!(c);
     else
         incCounter!(c, id);
+        incIntensity!(c, id, intensity);
     end
 end
 
@@ -205,7 +221,7 @@ import Base.sort!
 function sort!(counter::Counter{I,C}, size::Int, topN::Int) where {I,C<:Unsigned} 
     return sort!(
                 @view(counter.ids[1:size]), 
-                by = id -> getCount(counter, id),
+                by = id -> getCount(counter, id)*getIntensity(counter, id),
                 rev = true,
                 alg=PartialQuickSort(1:topN)
              )#[1:min(num_precs, end)]
@@ -215,21 +231,22 @@ function reset!(c::Counter{I,C}) where {I,C<:Unsigned}
     
     @turbo for i in 1:(getSize(c) - 1)
         c.counts[c.ids[i]] = zero(C)
+        c.intensities[c.ids[i]] = zero(Float32)
         #setCount(c, idx, zero(C))
     end
     c.size = 1
 end
 
-function countFragMatches(c::Counter{I,C}) where {I,C<:Unsigned}
+#=function countFragMatches(c::Counter{I,C}) where {I,C<:Unsigned}
     count = zero(C)
     @turbo for i in 1:(getSize(c) - 1)
         count += c.counts[c.ids[i]]
     end
     return count
-end
+end=#
 
 function countFragMatches(c::Counter{I,C}, min_count::Int) where {I,C<:Unsigned}
-    frag_counts = zero(C)
+    frag_counts = 0
     exceeds_min = 0
     for i in 1:(getSize(c) - 1)
         id = c.ids[i]

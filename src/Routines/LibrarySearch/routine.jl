@@ -9,7 +9,7 @@ include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/selectTransitions.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
-include("src/Routines/LibrarySearch/queryFragmentInc.jl")
+#include("src/Routines/LibrarySearch/queryFragmentInc.jl")
 include("src/Routines/LibrarySearch/queryFragmentArr.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/LibraryXTandem.jl")
@@ -52,20 +52,30 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         best_matches = targets .& spectral_contrast
     
         #Predicted iRTs
-        iRTs = hcat(PSMs[:,:iRT][best_matches], ones(Float32, sum(best_matches)))
+        iRTs = PSMs[:,:iRT][best_matches]#,# ones(Float32, sum(best_matches)))
         #Emperical retention times
         RTs = PSMs[:,:RT][best_matches]
         #plot(iRTs, RTs, seriestype=:scatter)
-        slope, intercept = RobustModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
-        
+        ns1 = Splines2.ns_(iRTs,df=10,intercept=true);
+        X = ns1(iRTs);
+        fit1 = lm(X,RTs);
+        PSMs[:,:RT_pred] =  GLM.predict(fit1, ns1(PSMs[:,:iRT]))
+        PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
+        #slope, intercept = RobustModels.coef(rlm(iRTs, RTs, loss, initial_scale=:mad, maxiter = maxiter))
+        #println("slope ", slope)
+        #println("intercept ", intercept)
     
-        transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
+        #transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
         return RTs, iRTs
     end
 
     return predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
 end
 RTs, iRTs = refinePSMs!(PSMs, prosit_precs)
+
+RTs, iRTs = refinePSMs!(PSMs_40_tol10 , prosit_precs)
+
+
 targets = PSMs[:,:decoy].==false
 spectral_contrast = PSMs[:,:spectral_contrast].>=0.8#min_spectral_contrast
 
@@ -104,18 +114,28 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 5)
 end
 
 best_PSMs = combine(sdf -> sdf[argmin(sdf.q_values), :], groupby(PSMs, [:precursor_idx]))
+
+
 best = (best_PSMs[:,:q_values].<=0.01) .& (best_PSMs[:,:decoy].!=true)
-plot(best_PSMs[best,:iRT], best_PSMs[best,:RT], seriestype=:scatter)
+plot(best_PSMs[best,:RT_pred], best_PSMs[best,:RT], seriestype=:scatter)
+plot!([0, 150], [0, 150])
+
+best_PSMs = combine(sdf -> sdf[argmin(sdf.q_values), :], groupby(PSMs, [:precursor_idx]))
+best = (best_PSMs[:,:q_values].<=0.01) .& (best_PSMs[:,:decoy].!=false)
+
+histogram(best_PSMs[best,:RT_error])
+
 random = randperm(size(PSMs)[1])[1:sum(best)]
 plot(PSMs[random,:iRT], PSMs[random,:RT], seriestype=:scatter)
 @time rankPSMs!(PSMs)
-train = randperm(size(PSMs_40)[1])[1:60000]
-X = Matrix(PSMs_40[train,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
-X_labels = PSMs_40[train, :decoy]
+train = randperm(size(PSMs)[1])[1:60000]
+#train = randperm(size(PSMs)[1])[1:10000]
+X = Matrix(PSMs[train,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
+X_labels = PSMs[train, :decoy]
 model = build_forest(X_labels, X, 4, 1000, 0.5, 3)
-X = Matrix(PSMs_40[:,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
+X = Matrix(PSMs[:,[:hyperscore,:total_ions,:y_ladder,:b_ladder,:intensity_explained,:error,:poisson,:spectral_contrast,:spectrum_peaks,:nmf,:weight,:RT_error]])
 probs = apply_forest_proba(model, X,[true, false])
-PSMs_40[:,:prob] = probs[:,2]
+PSMs[:,:prob] = probs[:,2]
 function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool})
     #Could bootstratp to get more reliable values. 
     q_values = zeros(Float64, (length(probs),))
@@ -137,9 +157,16 @@ end
 @time getQvalues!(PSMs_40, PSMs_40[:,:prob], PSMs_40[:,:decoy]);
 
 
+@time getQvalues!(PSMs_40_tol10, PSMs_40_tol10[:,:prob], PSMs_40_tol10[:,:decoy]);
+
+
 
 histogram(PSMs[PSMs[:,:decoy].==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 histogram!(PSMs[PSMs[:,:decoy].==false,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+
+
+histogram(PSMs[PSMs[:,:decoy].==true,:int_ion], alpha = 0.5)#, bins = -0.06:0.01:0.0)
+histogram!(PSMs[PSMs[:,:decoy].==false,:int_ion], alpha = 0.5)#, bins = -0.06:0.01:0.0
 
 
 histogram(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = -0.06:0.01:0.0)
@@ -153,9 +180,28 @@ histogram!(PSMs[PSMs[:,:decoy].==false,:q_values], alpha = 0.5)#, bins = -0.06:0
 histogram(PSMs[X_labels.==true,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 histogram!(PSMs[X_labels.==false,:prob], alpha = 0.5)#, bins = -0.06:0.01:0.0)
 
+value_counts(df, col) = combine(groupby(df, col), nrow)
+counts = sort(value_counts(PSMs[PSMs[:,:q_values].<=0.01,:], :precursor_idx),:nrow)
+unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==true),:][:,:precursor_idx])
+unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false),:][:,:precursor_idx])
+
+
 PSMs[PSMs[:,:precursor_idx] .== 3768665,[:weight,:RT]]
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .== 3768665,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==    3619976 ,[:weight,:RT]], :RT)
+plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
+
+
+a = sort(PSMs[PSMs[:,:precursor_idx] .== 2480594,[:weight,:RT]], :RT)
+plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
+
+a = sort(PSMs[PSMs[:,:precursor_idx] .==   4466503 ,[:weight,:RT]], :RT)
+plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
+
+a = sort(PSMs[PSMs[:,:precursor_idx] .==   774613,[:weight,:RT]], :RT)
+plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
+
+a = sort(PSMs[PSMs[:,:precursor_idx] .==    4466503,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 a = sort(PSMs[PSMs[:,:precursor_idx] .== 421,[:weight,:RT]], :RT)
@@ -166,14 +212,14 @@ sort(counts,:nrow)
 a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x00245ae9 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x003fa754 ,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x000c7333 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .==       0x00248337,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==        0x000b848d,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .==   1894282      ,[:weight,:RT]], :RT);
+a = sort(PSMs[PSMs[:,:precursor_idx] .==    0x0030a4bd   ,[:weight,:RT]], :RT);
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 
@@ -184,7 +230,11 @@ sum(PSMs[PSMs[:,:decoy].==false,:prob].>0.89)
 sum(PSMs[PSMs[:,:decoy].==true,:q_values].<=0.01)
 sum(PSMs[PSMs[:,:decoy].==false,:q_values].<=0.01)
 
+sum(PSMs[PSMs[:,:decoy].==true,:int_ion].<=0.01)
+sum(PSMs[PSMs[:,:decoy].==false,:int_ion].<=0.01)
 
+sum(PSMs[PSMs[:,:decoy].==false,:int_ion].>0.02)
+sum(PSMs[PSMs[:,:decoy].==true,:int_ion].>0.02)
 
 PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false),:precursor_idx]
 
@@ -415,3 +465,20 @@ function Base.ht_keyindex(h::Dict{K,V}, key) where V where K
     end
     # This line is unreachable
 end
+
+precs.size 54622
+frag_min929.4830146472168
+frag_max 929.5016044934083
+frag_bin 96106
+frag_bin 96107
+frag_bin 96108
+prec_min 775.8543701171875
+prec_max  784.3543701171875
+precs.size 54703
+frag_min 930.4836149926758
+frag_max 930.5022248510743
+frag_bin 96206
+frag_bin 96207
+frag_bin 96208
+prec_min 775.8543701171875
+prec_max  784.3543701171875
