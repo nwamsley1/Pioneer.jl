@@ -16,10 +16,12 @@ struct FragmentIon{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
     prec_id::UInt32
     prec_mz::T
+    prec_intensity::Float32
     prec_charge::UInt8
 end
 
 getPrecMZ(f::FragmentIon) = f.prec_mz
+getIntensity(f::FragmentIon) = f.prec_intensity
 
 struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
@@ -65,7 +67,7 @@ what the precursor ID is.
 - getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 - getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
 """
-struct PrecursorBinItem{T<:AbstractFloat}
+#=struct PrecursorBinItem{T<:AbstractFloat}
     prec_id::UInt32
     prec_mz::T
     charge::UInt8
@@ -74,6 +76,21 @@ end
 getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
 getPrecCharge(pbi::PrecursorBinItem) = pbi.charge
+getIntensity(pbi::PrecursorBinItem) = pbi.intensity=#
+
+struct PrecursorBinItem{T<:AbstractFloat}
+    prec_id::UInt32
+    prec_mz::T
+    intensity::Float32
+    charge::UInt8
+end
+
+getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
+getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
+getPrecCharge(pbi::PrecursorBinItem) = pbi.charge
+getIntensity(pbi::PrecursorBinItem) = pbi.intensity
+
+
 """
     PrecursorBin{T<:AbstractFloat}
 
@@ -233,7 +250,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
                 #Add precursor corresponding to the charge state
                 addPrecursorBinItem!(frag_index,
                                      frag_bin_idx,
-                                    PrecursorBinItem(pep_id, prec_mz, getPrecCharge(frag_ions[ion_index]))
+                                    PrecursorBinItem(pep_id, prec_mz, getIntensity(frag_ions[ion_index]), getPrecCharge(frag_ions[ion_index]))
                                     )
         end
     end
@@ -293,5 +310,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
     end
     return frag_index
 end
+
+
 
 

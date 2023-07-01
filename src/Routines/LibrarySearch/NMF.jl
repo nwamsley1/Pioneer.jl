@@ -1,6 +1,7 @@
 function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vector{FragmentMatch{Float32}}, seed_size::Int) #where {T<:AbstractFloat}
 
     #Number of unique matched peaks.
+    #Should be getPeakInd(matches[end])???
     matched_peaks = length(unique([getPeakInd(x) for x in matches]))
     #Number of rows equals the number of unique matched peaks + the number of expected fragments that 
     #failed to match a peak in the spectrm

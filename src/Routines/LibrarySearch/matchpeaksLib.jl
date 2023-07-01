@@ -166,7 +166,7 @@ function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, transition::Librar
                                  Float32(getFragMZ(transition)),
                                  mass::Float32,
                                  peak_ind::Int64,
-                                 getIonIndex(transition)::UInt8,
+                                 getIonPosition(transition)::UInt8,
                                  getFragCharge(transition)::UInt8,
                                  UInt8(0),
                                  true == isyIon(transition) ? 'y' : 'b',
@@ -312,11 +312,11 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0)) where {T,U<:AbstractFloat}
+function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat}
     matches = Vector{FragmentMatch{T}}()
     unmatched = Vector{FragmentMatch{T}}()
     for δ in δs
-        matchPeaks!(matches, unmatched, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity)
+        matchPeaks!(matches, unmatched, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
     end
     matches, unmatched
 end

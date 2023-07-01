@@ -83,6 +83,7 @@ end
 function queryFragment!(precs::Dict{UInt32, UInt8}, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
+    #a = frag_bin
     #No fragment bins contain the fragment m/z
     if (frag_bin === nothing)
         return min_frag_bin
