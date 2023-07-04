@@ -31,20 +31,23 @@ function SearchRAW(
     X, H, IDtoROW = "", "", ""
     precs = Counter(UInt32, UInt8, Float32, 9387261)
     times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0)
+    MS1 = 0
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
-        if spectrum[:msOrder] != 2
+        if spectrum[:msOrder] == 1
+            MS1 = spectrum[:masses]
             continue
         end
         ms2 += 1
-        #if i !=  scan
-        #    continue
-        #end
+        if i !=  scan
+            continue
+        end
         #if ms2 < 73000#50000
         #    #println("TEST")
         #    continue
         #elseif ms2 > 78000#51000#51000
         #    continue
         #end
+        #if (ms2 % 1000) == 0
         if (ms2 % 1000) == 0
             println("$ms2 ", length(scored_PSMs[:entropy]))
             #rows = length(scored_PSMs[:entropy])
@@ -55,7 +58,7 @@ function SearchRAW(
 
         times[:counter] += @elapsed prec_count, match_count = searchScan!(precs,
                     frag_index, 
-                    min_intensity, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
+                    min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], 
                     fragment_tolerance, 
                     precursor_tolerance,
                     min_frag_count = min_frag_count, 
@@ -133,6 +136,7 @@ function SearchRAW(
         scored_PSMs[:,:RT_error] = abs.( scored_PSMs[:,:RT_pred] .-  scored_PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
         return fragmentMatches,scored_PSMs
         push!(score_times, score)=#
+        return DataFrame(scored_PSMs), MS1
     end
 
       println("processed $ms2 scans!")
@@ -143,6 +147,12 @@ function SearchRAW(
     println("mean matches: ", median(match_times))=#
     return DataFrame(scored_PSMs)#X, H, IDtoROW, sort(DataFrame(scored_PSMs),:spectral_contrast)#precs#DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
+
+#=for frag in prosit_simple_intensities
+    if getPrecID(frag) == 4211123 
+        println(getPrecMZ(frag))
+    end
+end=#
 #=
 function SearchRAW(
     spectra::Arrow.Table, 
@@ -439,6 +449,24 @@ function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat}
     c.size = 1
     c.matches = 0
 end
+
+function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
+    frag_counts = 0
+    for i in 1:(getSize(c) - 1)
+        id = c.ids[i]
+        frag_count = getCount(getRunningDP(c, id))
+        dp = getDP(c, id)
+        frag_counts += frag_count
+        if frag_count >= min_count
+            if dp>=0.65
+                c.ids[c.matches + 1] = c.ids[i]
+                c.matches += 1
+            end
+        end
+    end
+    return frag_counts
+end
+
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
     frag_counts = 0

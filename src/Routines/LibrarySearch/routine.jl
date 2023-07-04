@@ -16,6 +16,8 @@ include("src/PSM_TYPES/LibraryXTandem.jl")
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_detailed.jld2"  prosit_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_precs.jld2"  prosit_precs
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_simple_intensities.jld2" prosit_simple_intensities
 #include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 @time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
