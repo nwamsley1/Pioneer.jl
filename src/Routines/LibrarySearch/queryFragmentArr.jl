@@ -117,33 +117,10 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIn
     getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
     function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
-        #Do not consider peptides wither fewer than 
-        #match_count = sum(values(precs))
-        #prec_count = length(keys(precs))
-        #println("A")
-        #topN = 40
-        #println(precs.size)
-        #println("A")
-        #test = UInt8[]
-        #for i in 1:(25)
-        #    push!(test,precs.counts[precs.ids[i]])
-        #end
-        #println(test[1:end])
-        match_count, exceeds_min_frag_count = countFragMatches(precs, min_frag_count)
-        #=println("match_count ", match_count)
-        println("exceeds_min ", exceeds_min_frag_count)
-        println("precs_ ", getSize(precs) - 1)=#
+        match_count = countFragMatches(precs, min_frag_count)
         prec_count = getSize(precs) - 1
-        sort!(precs, exceeds_min_frag_count, topN);
-        #println(">min $exceeds_min_frag_count, and total $prec_count, and match_count: $match_count")
-        #println("B")
-       #test = UInt8[]
-       # for i in 1:(40)
-       #     push!(test,precs.counts[precs.ids[i]])
-       # end
-       # println(test[1:end])
-        precs.size = max(exceeds_min_frag_count, 1)
-        #println("esceeds_min ", exceeds_min_frag_count)
+        sort!(precs, topN);
+        #precs.size = max(exceeds_min_frag_count, 1)
         return match_count, prec_count#[first(x) for x in sort(filter(x->last(x)>=min_frag_count,collect(precs)), by=x->last(x), rev = true)][1:min(topN, end)], match_count, prec_count
     end
     #println("TEST")

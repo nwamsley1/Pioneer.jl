@@ -6,6 +6,7 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
     #Number of rows equals the number of unique matched peaks + the number of expected fragments that 
     #failed to match a peak in the spectrm
     M = (matched_peaks + length(misses))
+    #M = (matched_peaks)
     #Design matrix. One row for every precursor template. One column for every matched + missed peak. 
     H = zeros(Float32, (seed_size, M))
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)

@@ -8,34 +8,14 @@ include("src/Routines/LibrarySearch/NMF.jl")
 include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/selectTransitions.jl")
-include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
+#include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
 #include("src/Routines/LibrarySearch/queryFragmentInc.jl")
 include("src/Routines/LibrarySearch/queryFragmentArr.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/LibraryXTandem.jl")
-
-
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_detailed.jld2"  prosit_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
-#@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_all.jld2"  prosit_index_all
-#@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_simple_intensities.jld2"  prosit_simple_intensities
-#@save "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
-
-
-
-#@save ""
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_precs.jld2"  prosit_precs
-
-#@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_list_simple.jld2"  prosit_list_simple
-
-
-#@save "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
-#@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
-
-#@time PSMs = SearchRAW(MS_TABLE, prosit_index, prosit_list_detailed, UInt32(1))
-#@time PSMs = SearchRAW(MS_TABLE, prosit_index, UInt32(1))
-include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/LibraryXTandem.jl")
 #include("src/PSM_TYPES/FastXTandem.jl")
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
 @time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
@@ -56,17 +36,30 @@ empty!(a::Accumulator) = empty!(a.map)
 ##########
 #Get features
 ##########
+
+@time PSMs_20_20_0001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
+@time PSMs_20_20_001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e3, max_peaks = 200, scan = 101358)
+@time PSMs_20_20_01 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e2, max_peaks = 200, scan = 101358)
+
+@time PSMs_20_40_0001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e4, max_peaks = 200, scan = 101358)
+@time PSMs_20_40_001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e3, max_peaks = 200, scan = 101358)
+@time PSMs_20_40_01 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e2, max_peaks = 200, scan = 101358)
+
 using RobustModels
+
+@time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 10, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
+
 function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] == 0) => :nmf)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] < 10.0) => :nmf)
     function predictRTs!(PSMs::DataFrame; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
         best_PSMs = combine(sdf -> sdf[argmax(sdf.spectral_contrast), :], groupby(PSMs, [:scan_idx]))
         targets = best_PSMs[:,:decoy].==false
+        
         spectral_contrast = best_PSMs[:,:spectral_contrast].>=0.95#min_spectral_contrast
-    
+        
         best_matches = targets .& spectral_contrast
     
         #Predicted iRTs
@@ -84,16 +77,76 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         #println("intercept ", intercept)
     
         #transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
-        return RTs, iRTs
+        return fit1, ns1 # RTs, iRTs
     end
 
     return predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
 end
-RTs, iRTs = refinePSMs!(PSMs, prosit_precs)
+fit1, ns1 = refinePSMs!(PSMs, prosit_precs)
 
-RTs, iRTs = refinePSMs!(PSMs_40_tol10 , prosit_precs)
+@time PSMs_ = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 10, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
+transform!( PSMs_, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_precs[psm[:precursor_idx]]))) => :iRT)
+transform!( PSMs_, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
+PSMs_[:,:RT_pred] = GLM.predict(fit1, ns1(PSMs_[:,:iRT]))
+PSMs_[:,:RT_error] = abs.(PSMs_[:,:RT] - PSMs_[:,:RT_pred])
+probs = apply_forest_proba(predict_targets_model, Matrix(PSMs_[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder]]), [true, false])
+PSMs_[:,:prob] = probs[:,2]
+PSMs_[:,:hit] = PSMs_[:,:prob].>=0.767
+sort(PSMs_,:prob)
+#RTs, iRTs = refinePSMs!(PSMs_40_tol10 , prosit_precs)
+
+# Example DataFrame
+df = DataFrame(day = [1, 1, 2, 2, 2, 3, 3, 3],
+               score = [5, 10, 8, 12, 15, 4, 2, 6])
+
+fit1, ns1 = refinePSMs!(PSMs, prosit_precs)
+# Sort DataFrame by "day" and "score" columns
+sort!(PSMs, [:scan_idx, :total_ions]);
+
+# Group DataFrame by "day" column
+grouped_df = groupby(PSMs, :scan_idx);
 
 
+PSMs[:,:next_best] = (combine(grouped_df) do sub_df
+    pushfirst!(diff(sub_df.total_ions), zero(UInt32))
+    #next_scores = lead(sub_df.total_ions, default = missing)
+    #coalesce(next_scores, 0)
+end)[:,:x1]
+
+PSMs[:,:diff_hyper] = (combine(grouped_df) do sub_df
+    sort!(sub_df, :hyperscore)
+    pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+    #next_scores = lead(sub_df.total_ions, default = missing)
+    #coalesce(next_scores, 0)
+end)[:,:x1]
+
+PSMs[:,:diff_scribe] = (combine(grouped_df) do sub_df
+    sort!(sub_df, :scribe_score)
+    pushfirst!(diff(sub_df.scribe_score), zero(Float64))
+    #next_scores = lead(sub_df.total_ions, default = missing)
+    #coalesce(next_scores, 0)
+end)[:,:x1]
+
+PSMs[:,:median_ions] = (combine(grouped_df) do sub_df
+    #sort!(sub_df, :hyperscore)
+    #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+    repeat([median(sub_df.total_ions)], size(sub_df)[1])
+    #next_scores = lead(sub_df.total_ions, default = missing)
+    #coalesce(next_scores, 0)
+end)[:,:x1]
+
+grouped_df = groupby(PSMs, :precursor_idx);
+
+PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
+    #sort!(sub_df, :hyperscore)
+    #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+    repeat([size(sub_df)[1]], size(sub_df)[1])
+    #next_scores = lead(sub_df.total_ions, default = missing)
+    #coalesce(next_scores, 0)
+end)[:,:x1]
+
+# Print the resulting DataFrame
+println(df)
 targets = PSMs[:,:decoy].==false
 spectral_contrast = PSMs[:,:spectral_contrast].>=0.8#min_spectral_contrast
 
@@ -107,7 +160,7 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precurso
 ########
 function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
    
-    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder]])
+    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge]])
     X_labels = PSMs[:, :decoy]
     permutation = randperm(size(PSMs)[1])
     fold_size = length(permutation)÷n_folds
@@ -115,7 +168,7 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
     folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
 
     PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
-
+    model = ""
     for test_fold_idx in range(1, n_folds)
         println(test_fold_idx)
         train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
@@ -123,14 +176,15 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
         train_features = X[train_fold_idxs,:]
         train_classes = X_labels[train_fold_idxs,1]
         fraction = min(30000/length(X_labels), length(X_labels)*0.15)
-        model = build_forest(train_classes, train_features, 4, 1000, fraction, 10)
+        model = build_forest(train_classes, train_features, 10, 1000, fraction*2, 10)
         probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
         PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder][sortperm(split_importance(model))])
+        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge][sortperm(split_importance(model))])
     end
     #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
     #probs = apply_forest_proba(model, X',[true, false])
     #PSMs[:,:prob] = probs[:,2]
+    return model
 end
 
 best_PSMs = combine(sdf -> sdf[argmin(sdf.q_values), :], groupby(PSMs, [:precursor_idx]))
@@ -215,7 +269,7 @@ a = sort(PSMs[PSMs[:,:precursor_idx] .==    3619976 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .== 2480594,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x00382352,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 a = sort(PSMs[PSMs[:,:precursor_idx] .==   4466503 ,[:weight,:RT]], :RT)
@@ -227,7 +281,7 @@ plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 a = sort(PSMs[PSMs[:,:precursor_idx] .==     0x003d423a,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .== 0x001ff0a6,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x0059a963,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 sort(counts,:nrow)
@@ -235,7 +289,7 @@ sort(counts,:nrow)
 a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x00245ae9 ,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
-a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x000c7333 ,[:weight,:RT]], :RT)
+a = sort(PSMs[PSMs[:,:precursor_idx] .==  0x0009d576,[:weight,:RT]], :RT)
 plot(a[:,:RT], a[:,:weight], seriestype=:scatter)
 
 a = sort(PSMs[PSMs[:,:precursor_idx] .==        0x000b848d,[:weight,:RT]], :RT)

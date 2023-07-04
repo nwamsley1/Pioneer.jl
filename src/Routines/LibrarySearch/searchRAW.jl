@@ -27,47 +27,33 @@ function SearchRAW(
     #i = 0
     ms2 = 0
     min_intensity = Float32(0.0)
+    rows = 0
     X, H, IDtoROW = "", "", ""
-    #precs = Dict{UInt32, UInt8}()
-    #precs = Accumulator{UInt32, UInt8}()
     precs = Counter(UInt32, UInt8, Float32, 9387261)
-    match_times = []
+    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0)
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
         if spectrum[:msOrder] != 2
             continue
         end
         ms2 += 1
-        if (ms2 % 1000) == 0
-            println("ms2: $ms2")
-            println(length(scored_PSMs[:entropy]))
-        end
         #if i !=  scan
-        ##    continue
-        #end
-        if ms2 < 71000#50000
-            #println("TEST")
-            continue
-        elseif ms2 > 78000#51000#51000
-            continue
-        end
-        
-        #println("ms2: $ms2")
-        #if ms2 != scan#100024
         #    continue
         #end
-        #println("ms2: $ms2")
-        fragmentMatches = Vector{FragmentMatch{Float32}}()
-        #println(" a scan")
-        #precs = Dict{UInt32, UInt8}(zeros(UInt8, pre_aloc_size), zeros(UInt32, pre_aloc_size), zeros(UInt8, pre_aloc_size), 0, 0, 0, pre_aloc_size, 0)
-        #precs = Dict{UInt32, UInt8}()
-        
-        #frag_time = @elapsed 
-        #Ignore pekas below this intensity
+        #if ms2 < 73000#50000
+        #    #println("TEST")
+        #    continue
+        #elseif ms2 > 78000#51000#51000
+        #    continue
+        #end
+        if (ms2 % 1000) == 0
+            println("$ms2 ", length(scored_PSMs[:entropy]))
+            #rows = length(scored_PSMs[:entropy])
+        end
         min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
 
         #println(min_intensity)
 
-        frag_time = @elapsed prec_count, match_count = searchScan!(precs,
+        times[:counter] += @elapsed prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], 
                     fragment_tolerance, 
@@ -75,29 +61,15 @@ function SearchRAW(
                     min_frag_count = min_frag_count, 
                     topN = topN
                     )
-        #println(length(prec_counts))
 
-        #println("getSize(precs)", getSize(precs))
         if getSize(precs) <= 1
-            #println("TEST")
+            times[:reset] += @elapsed reset!(precs)
             continue
         end
+
         transitions = selectTransitions(fragment_list, precs, topN)
-        if precs.size > 1
-            frag_time += @elapsed reset!(precs)
-            push!(match_times, frag_time)
-        else
-            push!(match_times, frag_time)
-            continue
-        end
-        reset!(precs)
-        #println(length(transitions))
-        #println(precs.size)
-        #frag_time += @elapsed empty!(precs)
-        #push!(match_times, frag_time)
-        #frag_time += @elapsed reset!(precs)
-        #push!(match_times, frag_time)
-        #push!(fragger_times, fragger_time)
+        times[:reset] += @elapsed reset!(precs)
+
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
@@ -108,36 +80,33 @@ function SearchRAW(
                                     min_intensity = min_intensity,
                                     ppm = fragment_tolerance
                                     )
-                                    #push!(fragger_times, fragger_time)
-        #println("matches ", length(fragmentMatches))
-        #println("misses ", length(fragmentMisses))
-        
-        X, H, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
-        #Does this always coincide with there being zero fragmentMatches?
-        #Could change to length(fragmentMatches) == 0 ?
-        if size(H)[2] == 0
+        if iszero(length(fragmentMatches))
             continue
         end
+
+        times[:nmf] += @elapsed X, H, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
-        W = reshape([Float32(100) for x in range(1,size(H)[1])], (1, size(H)[1]))
-
-        #Solve NMF. 
-        #=nmf_time += @elapsed weights = NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
-                                                    lambda_w = 1e3, 
-                                                    tol = 1e-6, #Need a reasonable way to choos lambda?
-                                                    update_H = false #Important to keep H constant. 
-                                                    ), X, W, H).W[1,:]=#
-
-        #=weights = (NMF.solve!(NMF.ProjectedALS{Float32}(maxiter=50, verbose = false, 
-                                                    lambda_w = lambda, 
-                                                    tol = 1e-8, #Need a reasonable way to choos lambda?
-                                                    update_H = false #Important to keep H constant. 
-                                                    ), X, W, H).W[1,:])=#
+        W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
         
-        weights = (NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
+        #times[:nmf] += @elapsed weights = (NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
+        #                                            lambda_w = lambda, 
+        #                                            tol = 1e-4, #Need a reasonable way to choos lambda?
+        #                                            update_H = false #Important to keep H constant. 
+        #                                            ), X, W, H).W[1,:])
+        
+        #times[:nmf] += @elapsed weights = (NMF.solve!(NMF.CoordinateDescent{Float32}(maxiter=50, verbose = false, 
+        #                                            α = lambda, 
+        #                                            regularization=:transformation,
+        #                                            l₁ratio=1.0,
+        #                                            tol = 1e-4, #Need a reasonable way to choos lambda?
+        #                                            update_H = false #Important to keep H constant. 
+        #                                            ), X, W, H).W[1,:])
+        
+        times[:nmf] += @elapsed weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
                                                     lambda_w = lambda, 
-                                                    tol = 1e-8, #Need a reasonable way to choos lambda?
+                                                    tol = 100, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:])
 
@@ -156,27 +125,22 @@ function SearchRAW(
                 match_count/prec_count, spectral_contrast, scribe_score, weights, IDtoROW,
                 scan_idx = Int64(i)
                 )
-        #scored_PSMs = sort(DataFrame(scored_PSMs),:spectral_contrast)
-        #transform!( scored_PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
-        #transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_precs[psm[:precursor_idx]]))) => :iRT)
-        #transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
-        #scored_PSMs[:,:RT_pred] =  GLM.predict(fit1, ns1( scored_PSMs[:,:iRT]))
-        #scored_PSMs[:,:RT_error] = abs.( scored_PSMs[:,:RT_pred] .-  scored_PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
-        #return fragmentMatches,scored_PSMs
-        #push!(score_times, score)
+        #=scored_PSMs = sort(DataFrame(scored_PSMs),:spectral_contrast)
+        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
+        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_precs[psm[:precursor_idx]]))) => :iRT)
+        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
+        scored_PSMs[:,:RT_pred] =  GLM.predict(fit1, ns1( scored_PSMs[:,:iRT]))
+        scored_PSMs[:,:RT_error] = abs.( scored_PSMs[:,:RT_pred] .-  scored_PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
+        return fragmentMatches,scored_PSMs
+        push!(score_times, score)=#
     end
 
-    println("processed $ms2 scans!")
-    println("mean matches: ", mean(match_times))
-    println("mean matches: ", median(match_times))
-    #=println("processed $ms2 scans!")
-    println("mean build: ", mean(build_design_times))
-    println("mean fragger: ", mean(fragger_times))
-    println("mean matches: ", mean(match_times))
-    println("mean nmf: ", mean(nmf_times))
-    println("median nmf: ", median(nmf_times))
-    println("mean s_contrast: ", mean(spectral_contrast_times))
-    println("mean score: ", mean(score_times))=#
+      println("processed $ms2 scans!")
+    println("counter: ", times[:counter])
+    println("reset: ", times[:reset])
+    println("nmf : ", times[:nmf])
+    #=println("mean matches: ", mean(match_times))
+    println("mean matches: ", median(match_times))=#
     return DataFrame(scored_PSMs)#X, H, IDtoROW, sort(DataFrame(scored_PSMs),:spectral_contrast)#precs#DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
 end
 #=
@@ -419,22 +383,13 @@ getPred(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.pred
 getObsPred(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.obs_pred
 getDP(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = getObsPred(dp)/(sqrt(getPred(dp))*sqrt(getObs(dp)))
 
-#=function reset!(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat}
-    #dp.count = zero(C)
-    #dp.obs, dp.pred, dp.obs_pred = zero(T), zero(T), zero(T)
-    return runningDotP{C, T}(
-        zero(C),
-        zero(T),
-        zero(T),
-        zero(T))
-end=#
-
 mutable struct Counter{I,C<:Unsigned,T<:AbstractFloat}
     ids::Vector{I}
     dotp::Vector{runningDotP{C,T}}
     size::Int64
+    matches::Int64
     function Counter(I::DataType, C::DataType, T::DataType, size::Int) #where {I,C<:Unsigned}
-        new{I, C, T}(zeros(I, size), Vector{runningDotP{C, T}}([runningDotP(C, T) for x in range(1,size)]), 1)
+        new{I, C, T}(zeros(I, size), Vector{runningDotP{C, T}}([runningDotP(C, T) for x in range(1,size)]), 1, 0)
     end
 end
 
@@ -461,19 +416,18 @@ function inc!(c::Counter{I,C,T}, id::I, pred_intensity::T, obs_intensity::T) whe
 end
 
 import Base.sort!
-function sort!(counter::Counter{I,C,T}, size::Int, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
-    return sort!(
-                @view(counter.ids[1:size]), 
-                #by = id -> (getDP(counter, id)^2)*getCount(counter.dotp[id])*getObs(counter.dotp[id]),
+function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
+    sort!(
+                @view(counter.ids[1:counter.matches]), 
                 by = id -> getCount(counter.dotp[id]),
-                #by = id -> getCount(counter.dotp[id]),
-                rev = true, #true,
+                rev = true,
                 alg=PartialQuickSort(1:topN)
-             )#[1:min(num_precs, end)]
+             )
 end
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
     #@turbo  for i in 1:(getSize(c) - 1)
+    #println("TESTA")
     for i in 1:(getSize(c) - 1)
         c.dotp[c.ids[i]] = runningDotP{C, T}(
                                             zero(C),
@@ -483,11 +437,11 @@ function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat}
                                             )
     end
     c.size = 1
+    c.matches = 0
 end
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
     frag_counts = 0
-    exceeds_min = 0
     for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(getRunningDP(c, id))
@@ -495,12 +449,12 @@ function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigne
         frag_counts += frag_count
         if frag_count >= min_count
             if dp>=0.65
-                c.ids[exceeds_min + 1] = c.ids[i]
-                exceeds_min += 1
+                c.ids[c.matches + 1] = c.ids[i]
+                c.matches += 1
             end
         end
     end
-    return frag_counts, exceeds_min
+    return frag_counts
 end
 
 #=
@@ -528,17 +482,3 @@ k = 50:100;
 
 @time sort!(x[1:10]; alg=PartialQuickSort(1:10), rev = true);
 =#
-struct testImmutable
-    a::Float32
-    b::Int
-end
-
-struct testMutable
-    a::Float32
-    b::Int
-end
-
-mutable struct test_mutable
-    a::Float32
-    b::Int
-end

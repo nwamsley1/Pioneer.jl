@@ -1,22 +1,14 @@
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Vector{UInt32}, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
-    transitions = Vector{LibraryFragment{T}}()
-    for pep_id in pep_ids
-        append!(transitions, fragment_list[pep_id])
-    end
-    return sort!(transitions, by = x->getFragMZ(x))
-end
-
 function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, counter::Counter{I,C}, topN::Int, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat, I,C<:Unsigned}
     transitions = Vector{LibraryFragment{T}}()
     i = 1
-    while i <= min(topN, counter.size)
+    while i <= min(topN, counter.matches)
         append!(transitions, fragment_list[getID(counter, i)])
         i += 1
     end
     return sort!(transitions, by = x->getFragMZ(x))
 end
 
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Generator, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
+#=function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Generator, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
     transitions = Vector{LibraryFragment{T}}()
     i = 1
     for pep_id::UInt32 in pep_ids
@@ -29,6 +21,14 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pe
     end
     return sort!(transitions, by = x->getFragMZ(x))
 end
+
+function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Vector{UInt32}, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
+    transitions = Vector{LibraryFragment{T}}()4
+    for pep_id in pep_ids
+        append!(transitions, fragment_list[pep_id])
+    end
+    return sort!(transitions, by = x->getFragMZ(x))
+end=#
 
 #=a = [1, 2, 3, 4, 5]
 b = [10, 10, 10, 10, 1]
