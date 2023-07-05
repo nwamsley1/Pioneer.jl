@@ -38,15 +38,15 @@ function SearchRAW(
             continue
         end
         ms2 += 1
-        if i !=  scan
+        #=if i !=  scan
+            continue
+        end=#
+        if ms2 < 73000#50000
+            #println("TEST")
+            continue
+        elseif ms2 > 88000#51000#51000
             continue
         end
-        #if ms2 < 73000#50000
-        #    #println("TEST")
-        #    continue
-        #elseif ms2 > 78000#51000#51000
-        #    continue
-        #end
         #if (ms2 % 1000) == 0
         if (ms2 % 1000) == 0
             println("$ms2 ", length(scored_PSMs[:entropy]))
@@ -87,8 +87,11 @@ function SearchRAW(
             continue
         end
 
-        times[:nmf] += @elapsed X, H, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
-
+        times[:nmf] += @elapsed X, H, IDtoROW, matched = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+        #println(norm(X[:,1:matched]))
+        #println("matched: $matched")
+        ##println(size(X[1,1:matched]))
+        #println(size(H[:,1:matched]))
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
         W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
@@ -106,15 +109,14 @@ function SearchRAW(
         #                                            tol = 1e-4, #Need a reasonable way to choos lambda?
         #                                            update_H = false #Important to keep H constant. 
         #                                            ), X, W, H).W[1,:])
-        
         times[:nmf] += @elapsed weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
                                                     lambda_w = lambda, 
                                                     tol = 100, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
-                                                    ), X, W, H).W[1,:])
+                                                    ), X[:,1:matched], W, H[:,1:matched]).W[1,:])
 
         spectral_contrast = getSpectralContrast(H, X)
-        scribe_score = getScribeScore(H, X)
+        scribe_score, city_block, chebyshev, unmatched = getScribeScore(H, X)
         #For progress and debugging. 
 
 
@@ -125,7 +127,7 @@ function SearchRAW(
         Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                match_count/prec_count, spectral_contrast, scribe_score, weights, IDtoROW,
+                match_count/prec_count, spectral_contrast, scribe_score, city_block, chebyshev, unmatched, weights, IDtoROW,
                 scan_idx = Int64(i)
                 )
         #=scored_PSMs = sort(DataFrame(scored_PSMs),:spectral_contrast)
@@ -136,7 +138,8 @@ function SearchRAW(
         scored_PSMs[:,:RT_error] = abs.( scored_PSMs[:,:RT_pred] .-  scored_PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
         return fragmentMatches,scored_PSMs
         push!(score_times, score)=#
-        return DataFrame(scored_PSMs), MS1
+        #return DataFrame(scored_PSMs), MS1
+        #return X, H, W, matched, sort(DataFrame(scored_PSMs),:unmatched)
     end
 
       println("processed $ms2 scans!")
@@ -476,7 +479,7 @@ function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigne
         dp = getDP(c, id)
         frag_counts += frag_count
         if frag_count >= min_count
-            if dp>=0.65
+            if dp>=0.50
                 c.ids[c.matches + 1] = c.ids[i]
                 c.matches += 1
             end

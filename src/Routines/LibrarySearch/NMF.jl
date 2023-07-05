@@ -49,5 +49,5 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
         H[row, col] = getPredictedIntenisty(miss)
     end
 
-    return X, H, precID_to_row
+    return X, H, precID_to_row, matched_peaks
 end

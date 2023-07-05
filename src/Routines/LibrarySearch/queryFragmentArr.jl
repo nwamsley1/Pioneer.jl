@@ -59,7 +59,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
     function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS1::Vector{Union{Missing, U}}, intensity::Float32, precursor_bin::PrecursorBin{T}, start::Int, stop::Int) where {T,U<:AbstractFloat}
         #@inbounds @simd for precursor_idx in start:stop
         precursor_idx = start
-        ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(10.0))
+        ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(20.0))
         #println("a")
         prec = getPrecursor(precursor_bin, precursor_idx)
         while true 
@@ -75,8 +75,8 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
                     end
                 else
                     ms1_idx += 1
-                    if ms1_idx < length(MS1)
-                        ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(10.0))
+                    if ms1_idx <= length(MS1)
+                        ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(20.0))
                     else
                         return
                     end
@@ -150,6 +150,8 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIn
     function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, topN::Int, min_frag_count::Int) where {T<:AbstractFloat}
         match_count = countFragMatches(precs, min_frag_count)
         prec_count = getSize(precs) - 1
+        #println("matches $match_count")
+        #println("prec_count $prec_count")
         sort!(precs, topN);
         #precs.size = max(exceeds_min_frag_count, 1)
         return match_count, prec_count#[first(x) for x in sort(filter(x->last(x)>=min_frag_count,collect(precs)), by=x->last(x), rev = true)][1:min(topN, end)], match_count, prec_count
@@ -157,7 +159,10 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIn
     #println("TEST")
     min_frag_bin = 0
     ms1_idx = 1
-    while (ms1_idx < length(MS1)) & (MS1[ms1_idx]< precursor_window - width)
+    lower_bound = precursor_window - width
+    lower_bound += -20.0*lower_bound/(1e6)
+    
+    while (ms1_idx < length(MS1)) & (MS1[ms1_idx]< lower_bound)
         ms1_idx += 1
     end
 

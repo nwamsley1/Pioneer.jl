@@ -66,6 +66,9 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
 
         :spectral_contrast => Float32[],
         :scribe_score => Float32[],
+        :city_block => Float32[],
+        :chebyshev => Float32[],
+        :unmatched => Float32[],
         :weight => Float32[],
         :scan_idx => Int64[],
         :precursor_idx => UInt32[],
@@ -74,7 +77,7 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
 end
 
 function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, spectrum_peaks::Int, spectrum_intensity::T, expected_matches::Float64,
-    spectral_contrast::Vector{Float32}, scribe_score::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt8}; scan_idx::Int64 = 0) where {T<:Real}
+    spectral_contrast::Vector{Float32}, scribe_score::Vector{Float32}, city_block::Vector{Float32}, chebyshev::Vector{Float32}, unmatched::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt8}; scan_idx::Int64 = 0) where {T<:Real}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)
@@ -129,6 +132,8 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
     end
 
     for key in keys(unscored_PSMs)
+
+        index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
         append!(PSMs_dict[:y_ladder], getLongestSet(unscored_PSMs[key].y_ions))
         append!(PSMs_dict[:b_ladder], getLongestSet(unscored_PSMs[key].b_ions))
@@ -139,9 +144,12 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
         append!(PSMs_dict[:intensity_explained], (sum(unscored_PSMs[key].b_int) + sum(unscored_PSMs[key].y_int))/spectrum_intensity)
         append!(PSMs_dict[:entropy], StatsBase.entropy(unscored_PSMs[key].intensities))
 
-        append!(PSMs_dict[:spectral_contrast], spectral_contrast[IDtoROW[unscored_PSMs[key].precursor_idx]])
-        append!(PSMs_dict[:scribe_score], scribe_score[IDtoROW[unscored_PSMs[key].precursor_idx]])
-        append!(PSMs_dict[:weight], weight[IDtoROW[unscored_PSMs[key].precursor_idx]])
+        append!(PSMs_dict[:spectral_contrast], spectral_contrast[index])
+        append!(PSMs_dict[:scribe_score], scribe_score[index])
+        append!(PSMs_dict[:city_block], city_block[index])
+        append!(PSMs_dict[:chebyshev], chebyshev[index])
+        append!(PSMs_dict[:unmatched], unmatched[index])
+        append!(PSMs_dict[:weight], weight[index])
 
         append!(PSMs_dict[:scan_idx], scan_idx)
         append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)

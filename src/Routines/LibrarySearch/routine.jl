@@ -162,7 +162,7 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precurso
 ########
 function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
    
-    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge]])
+    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:unmatched]])
     X_labels = PSMs[:, :decoy]
     permutation = randperm(size(PSMs)[1])
     fold_size = length(permutation)÷n_folds
@@ -178,10 +178,10 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
         train_features = X[train_fold_idxs,:]
         train_classes = X_labels[train_fold_idxs,1]
         fraction = min(30000/length(X_labels), length(X_labels)*0.15)
-        model = build_forest(train_classes, train_features, 10, 1000, fraction*2, 10)
+        model = build_forest(train_classes, train_features, 10, 1000, fraction, 10)
         probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
         PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge][sortperm(split_importance(model))])
+        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:unmatched][sortperm(split_importance(model))])
     end
     #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
     #probs = apply_forest_proba(model, X',[true, false])
