@@ -6,60 +6,43 @@ function SearchRAW(
                     ms_file_idx::UInt32;
                     precursor_tolerance::Float64 = 4.25,
                     fragment_tolerance::Float64 = 20.0,
-                    transition_charges::Vector{UInt8} = UInt8[1],
-                    transition_isotopes::Vector{UInt8} = UInt8[0],
-                    b_start::Int64 = 3,
-                    y_start::Int64 = 3,
                     topN::Int64 = 20,
                     min_frag_count::Int64 = 4,
                     lambda::Float64 = 1e3,
-                    scan::Int = 10000, 
+                    scan_range::Tuple{Int64, Int64} = (0, 0), 
                     max_peaks::Int = 200, 
                     #fragment_match_ppm::U,
                     data_type::Type{T} = Float64
-                    ) where {T,U<:Real}
-    println("TEST3")
+                    ) where {T<:Real}
     
     scored_PSMs = makePSMsDict(XTandem(data_type))
-    #scored_PSMs = makePSMsDict(FastXTandem(data_type))
-    #precursorList needs to be sorted by precursor MZ. 
-    #Iterate through rows (spectra) of the .raw data. 
-    #i = 0
-    ms2 = 0
-    min_intensity = Float32(0.0)
-    rows = 0
-    X, H, IDtoROW = "", "", ""
-    precs = Counter(UInt32, UInt8, Float32, 9387261)
-    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0)
-    MS1 = 0
-    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    ms2, MS1, MS1_i = 0, 0, 0
+    precs = Counter(UInt32, UInt8, Float32, 9387261) #Prec counter
+    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0)
+    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+
         if spectrum[:msOrder] == 1
             MS1 = spectrum[:masses]
+            MS1_i = spectrum[:intensities]
             continue
+        else
+            ms2 += 1
         end
-        ms2 += 1
-        #=if i !=  scan
-            continue
-        end=#
-        if ms2 < 73000#50000
-            #println("TEST")
-            continue
-        elseif ms2 > 88000#51000#51000
-            continue
-        end
-        #if (ms2 % 1000) == 0
-        if (ms2 % 1000) == 0
-            println("$ms2 ", length(scored_PSMs[:entropy]))
-            #rows = length(scored_PSMs[:entropy])
-        end
-        min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
 
-        #println(min_intensity)
+        if scan_range != (0, 0)
+            i < first(scan_range) ? continue : nothing
+            i > last(scan_range) ? continue : nothing
+        end
+
+
+        min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
 
         times[:counter] += @elapsed prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], 
                     fragment_tolerance, 
+                    5.0,
                     precursor_tolerance,
                     min_frag_count = min_frag_count, 
                     topN = topN
@@ -76,83 +59,55 @@ function SearchRAW(
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
-                                    #δs = params[:δs],
-                                    δs = zeros(T, (1,)),#[Float64(0)],
+                                    δs = zeros(T, (1,)),
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity,
                                     ppm = fragment_tolerance
                                     )
+
         if iszero(length(fragmentMatches))
             continue
         end
 
-        times[:nmf] += @elapsed X, H, IDtoROW, matched = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
-        #println(norm(X[:,1:matched]))
-        #println("matched: $matched")
-        ##println(size(X[1,1:matched]))
-        #println(size(H[:,1:matched]))
+        times[:metrics] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
         W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
         
-        #times[:nmf] += @elapsed weights = (NMF.solve!(NMF.GreedyCD{Float32}(maxiter=50, verbose = false, 
-        #                                            lambda_w = lambda, 
-        #                                            tol = 1e-4, #Need a reasonable way to choos lambda?
-        #                                            update_H = false #Important to keep H constant. 
-        #                                            ), X, W, H).W[1,:])
-        
-        #times[:nmf] += @elapsed weights = (NMF.solve!(NMF.CoordinateDescent{Float32}(maxiter=50, verbose = false, 
-        #                                            α = lambda, 
-        #                                            regularization=:transformation,
-        #                                            l₁ratio=1.0,
-        #                                            tol = 1e-4, #Need a reasonable way to choos lambda?
-        #                                            update_H = false #Important to keep H constant. 
-        #                                            ), X, W, H).W[1,:])
-        times[:nmf] += @elapsed weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
+        weights = W[1,:]
+        #=times[:nmf] += @elapsed weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
                                                     lambda_w = lambda, 
                                                     tol = 100, #Need a reasonable way to choos lambda?
                                                     update_H = false #Important to keep H constant. 
-                                                    ), X[:,1:matched], W, H[:,1:matched]).W[1,:])
+                                                    ), X, W, H).W[1,:])=#
 
-        spectral_contrast = getSpectralContrast(H, X)
-        scribe_score, city_block, chebyshev, unmatched = getScribeScore(H, X)
+        times[:metrics] += @elapsed scribe_score, city_block, chebyshev, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(H, X, UNMATCHED)
         #For progress and debugging. 
-
 
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
 
-        Score!(scored_PSMs, unscored_PSMs, 
+        times[:metrics] += @elapsed Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                match_count/prec_count, spectral_contrast, scribe_score, city_block, chebyshev, unmatched, weights, IDtoROW,
+                match_count/prec_count, scribe_score, city_block, chebyshev, matched_ratio, spectral_contrast_matched, spectral_contrast_all, weights, IDtoROW,
                 scan_idx = Int64(i)
                 )
-        #=scored_PSMs = sort(DataFrame(scored_PSMs),:spectral_contrast)
-        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
-        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_precs[psm[:precursor_idx]]))) => :iRT)
-        transform!( scored_PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
-        scored_PSMs[:,:RT_pred] =  GLM.predict(fit1, ns1( scored_PSMs[:,:iRT]))
-        scored_PSMs[:,:RT_error] = abs.( scored_PSMs[:,:RT_pred] .-  scored_PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
-        return fragmentMatches,scored_PSMs
-        push!(score_times, score)=#
-        #return DataFrame(scored_PSMs), MS1
-        #return X, H, W, matched, sort(DataFrame(scored_PSMs),:unmatched)
     end
 
-      println("processed $ms2 scans!")
+    println("processed $ms2 scans!")
     println("counter: ", times[:counter])
     println("reset: ", times[:reset])
     println("nmf : ", times[:nmf])
-    #=println("mean matches: ", mean(match_times))
-    println("mean matches: ", median(match_times))=#
-    return DataFrame(scored_PSMs)#X, H, IDtoROW, sort(DataFrame(scored_PSMs),:spectral_contrast)#precs#DataFrame(scored_PSMs)# test_frags, test_matches, test_misses#DataFrame(scored_PSMs)
+    println("metrics : ", times[:metrics])
+    return DataFrame(scored_PSMs)
 end
 
 #=for frag in prosit_simple_intensities
-    if getPrecID(frag) == 4211123 
+    if getPrecID(frag) ==  1913588
         println(getPrecMZ(frag))
     end
 end=#

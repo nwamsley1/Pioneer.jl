@@ -2,13 +2,13 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
 
     #Number of unique matched peaks.
     #Should be getPeakInd(matches[end])???
-    matched_peaks = length(unique([getPeakInd(x) for x in matches]))
-    #Number of rows equals the number of unique matched peaks + the number of expected fragments that 
-    #failed to match a peak in the spectrm
-    M = (matched_peaks + length(misses))
-    #M = (matched_peaks)
-    #Design matrix. One row for every precursor template. One column for every matched + missed peak. 
+    #Number of rows equals the number of unique matched peaks
+    M = length(unique([getPeakInd(x) for x in matches]))
+    #Design matrix. One row for every precursor template. One column for every matched peak. 
     H = zeros(Float32, (seed_size, M))
+    #Design matrix. One row for every precursor template. One column for every unmatched peak. 
+    UNMATCHED = zeros(Float32, (seed_size, length(misses)))
+
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(Float32, (1, M))
 
@@ -38,16 +38,21 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
         X[1, col] = getIntensity(match)
     end
 
+    col = 0
+    last_peak_ind = 0
     for miss in misses
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
         if !haskey(precID_to_row,  getPrecID(miss))
             prec_row  += UInt8(1)
             insert!(precID_to_row, getPrecID(miss), prec_row)
         end
-        col = getPeakInd(miss) + matched_peaks
+        if getPeakInd(miss) != last_peak_ind
+            col += 1
+            last_peak_ind = getPeakInd(miss)
+        end
         row = precID_to_row[getPrecID(miss)]
-        H[row, col] = getPredictedIntenisty(miss)
+        UNMATCHED[row, col] = getPredictedIntenisty(miss)
     end
 
-    return X, H, precID_to_row, matched_peaks
+    return X, H, UNMATCHED, precID_to_row
 end

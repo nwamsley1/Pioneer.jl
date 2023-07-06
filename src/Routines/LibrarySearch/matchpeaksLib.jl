@@ -318,7 +318,7 @@ function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vecto
     for δ in δs
         matchPeaks!(matches, unmatched, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
     end
-    matches, unmatched
+    sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
 end
 
 export FragmentMatch, getNearest, matchPeaks, matchPeaks!
