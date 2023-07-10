@@ -280,6 +280,63 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
     end
 
 end
+
+function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat}
+
+    #match is a running count of the number of transitions that have been matched to a peak
+    #This is not necessarily the same as `transition` because some (perhaps most)
+    #transitions will not match to any peak. 
+    peak, transition, match = 1, 1, 1
+
+    function getPPM(transition::LibraryFragment{Float64}, ppm::Float64)
+        mz = getFragMZ(transition)
+        tol = ppm*mz/1e6
+        return mz - tol, mz + tol
+    end
+
+    if length(Transitions)<1
+        return
+    end
+
+    low, high = getPPM(Transitions[transition], ppm)
+    
+    while (peak <= length(masses)) & (transition <= length(Transitions))
+        if intensities[peak] <  min_intensity
+            peak += 1
+            continue
+        end
+        #Is the peak within the tolerance of the transition m/z?
+        if (masses[peak]+ δ >= low)
+            if (masses[peak]+ δ <= high)
+                #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
+                best_peak = getNearest(masses, getFragMZ(Transitions[transition]), high, peak, δ=δ)
+                setFragmentMatch!(matches, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+                transition += 1
+                if transition > length(Transitions)
+                    return
+                end
+                low, high = getPPM(Transitions[transition], ppm)
+                match += 1
+                continue
+            end
+            #Important that this is also within the first if statement. 
+            #Need to check the next fragment against the current peak. 
+            transition += 1
+            if transition > length(Transitions)
+                return
+            end
+            low, high = getPPM(Transitions[transition], ppm)
+            continue
+        end
+        #No additional matches possible for the current peak. Move on to the next. 
+        peak+=1
+    end
+
+    while transition <= length(Transitions)
+        transition += 1
+    end
+
+end
 export matchPeaks!
 
 """
@@ -312,13 +369,21 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat}
-    matches = Vector{FragmentMatch{T}}()
-    unmatched = Vector{FragmentMatch{T}}()
-    for δ in δs
-        matchPeaks!(matches, unmatched, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat}
+    if count_unmatched
+        matches = Vector{FragmentMatch{T}}()
+        unmatched = Vector{FragmentMatch{T}}()
+        for δ in δs
+            matchPeaks!(matches, unmatched, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+        end
+        return sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
+    else
+        matches = Vector{FragmentMatch{T}}()
+        for δ in δs
+            matchPeaks!(matches, Transitions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+        end
+        return sort(matches, by = x->getPeakInd(x))
     end
-    sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
 end
 
 export FragmentMatch, getNearest, matchPeaks, matchPeaks!

@@ -68,7 +68,6 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
         :spectral_contrast_all => Float32[],
         :scribe_score => Float32[],
         :city_block => Float32[],
-        :chebyshev => Float32[],
         :matched_ratio => Float32[],
 
         :weight => Float32[],
@@ -79,7 +78,7 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
 end
 
 function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, spectrum_peaks::Int, spectrum_intensity::T, expected_matches::Float64,
-    scribe_score::Vector{Float32}, city_block::Vector{Float32}, chebyshev::Vector{Float32}, matched_ratio::Vector{Float32}, spectral_contrast_matched::Vector{Float32}, spectral_contrast_all::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt8}; scan_idx::Int64 = 0) where {T<:Real}
+    scribe_score::Vector{Float32}, city_block::Vector{Float32}, matched_ratio::Vector{Float32}, spectral_contrast_matched::Vector{Float32}, spectral_contrast_all::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt32}; scan_idx::Int64 = 0) where {T<:Real}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)
@@ -150,7 +149,6 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
         append!(PSMs_dict[:spectral_contrast_all], spectral_contrast_all[index])
         append!(PSMs_dict[:scribe_score], scribe_score[index])
         append!(PSMs_dict[:city_block], city_block[index])
-        append!(PSMs_dict[:chebyshev], chebyshev[index])
         append!(PSMs_dict[:matched_ratio], matched_ratio[index])
         append!(PSMs_dict[:weight], weight[index])
 

@@ -1,10 +1,11 @@
 
-using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization
+using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization, Splines2, ProgressBars, GLM, RobustModels
 include("src/precursor.jl")
 #include("src/buildFragmentIndex.jl")
 include("src/Routines/LibrarySearch/buildFragmentIndex.jl")
 include("src/Routines/LibrarySearch/matchpeaksLIB.jl")
-include("src/Routines/LibrarySearch/NMF.jl")
+include("src/Routines/LibrarySearch/buildDesignMatrix.jl")
+include("src/Routines/LibrarySearch/spectralDistanceMetrics.jl")
 include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/Routines/LibrarySearch/selectTransitions.jl")
@@ -17,50 +18,23 @@ include("src/PSM_TYPES/LibraryXTandem.jl")
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_precs.jld2"  prosit_precs
 
-@load "/Users/n.t.wamsley/Projects/PROSIT/prosit_simple_intensities.jld2" prosit_simple_intensities
-#include("src/PSM_TYPES/FastXTandem.jl")
-MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ZOLKIND_MOC1_MAY23/parquet_out/MA5171_MOC1_DMSO_R01_PZ.arrow")
-@time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
-@time PSMs = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1), precursor_tolerance = 4.25, fragment_tolerance = 20.0)
-
-MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
-@time time_psms = SearchRAW(MS_TABLE, prosit_index_all, prosit_detailed, UInt32(1))
-
-
-@time time_psms = SearchRAW(MS_TABLE, best_frag_index, prosit_detailed, UInt32(1))
-
-@time X, H, IDtoROW, time_psms = SearchRAW(MS_TABLE, best_frag_index, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 200, fragment_tolerance = 5.0)
-sort(time_psms,:poisson)
-import Base.empty!
-empty!(a::Accumulator) = empty!(a.map)
-#PSMs = time_psms
-##########
-#Get features
-##########
-
-@time PSMs_20_20_0001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
-@time PSMs_20_20_001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e3, max_peaks = 200, scan = 101358)
-@time PSMs_20_20_01 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 20.0, lambda = 1e2, max_peaks = 200, scan = 101358)
-
-@time PSMs_20_40_0001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e4, max_peaks = 200, scan = 101358)
-@time PSMs_20_40_001 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e3, max_peaks = 200, scan = 101358)
-@time PSMs_20_40_01 = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 20, fragment_tolerance = 40.0, lambda = 1e2, max_peaks = 200, scan = 101358)
-
-using RobustModels
-
-@time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 10, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
-
+prosit_totals = zeros(Float32, length(prosit_detailed))
+i = 1
+for prec in ProgressBar(prosit_detailed)
+    prosit_totals[i] = sum([getIntensity(frag) for frag in prec]./norm([getIntensity(frag) for frag in prec]))
+    i += 1
+end
 function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] < 10.0) => :nmf)
     function predictRTs!(PSMs::DataFrame; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
-        best_PSMs = combine(sdf -> sdf[argmax(sdf.spectral_contrast), :], groupby(PSMs, [:scan_idx]))
+        best_PSMs = combine(sdf -> sdf[argmax(sdf.spectral_contrast_all), :], groupby(PSMs, [:scan_idx]))
         targets = best_PSMs[:,:decoy].==false
         
-        spectral_contrast = best_PSMs[:,:spectral_contrast].>=0.95#min_spectral_contrast
+        spectral_contrast = best_PSMs[:,:spectral_contrast_all].>=0.95#min_spectral_contrast
         
         best_matches = targets .& spectral_contrast
     
@@ -79,12 +53,160 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         #println("intercept ", intercept)
     
         #transform!(PSMs, AsTable(:) => ByRow(psm -> abs((psm[:iRT]*slope + intercept) - psm[:RT])) => :RT_error)
-        return fit1, ns1 # RTs, iRTs
+        return # RTs, iRTs
     end
 
-    return predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
+    predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
+    sort!(PSMs, [:scan_idx, :total_ions]);
+
+    # Group DataFrame by "day" column
+    grouped_df = groupby(PSMs, :scan_idx);
+
+
+    PSMs[:,:next_best] = (combine(grouped_df) do sub_df
+        pushfirst!(diff(sub_df.total_ions), zero(UInt32))
+        #next_scores = lead(sub_df.total_ions, default = missing)
+        #coalesce(next_scores, 0)
+    end)[:,:x1]
+
+    PSMs[:,:diff_hyper] = (combine(grouped_df) do sub_df
+        sort!(sub_df, :hyperscore)
+        pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+        #next_scores = lead(sub_df.total_ions, default = missing)
+        #coalesce(next_scores, 0)
+    end)[:,:x1]
+
+    PSMs[:,:diff_scribe] = (combine(grouped_df) do sub_df
+        sort!(sub_df, :scribe_score)
+        pushfirst!(diff(sub_df.scribe_score), zero(Float64))
+        #next_scores = lead(sub_df.total_ions, default = missing)
+        #coalesce(next_scores, 0)
+    end)[:,:x1]
+
+    PSMs[:,:median_ions] = (combine(grouped_df) do sub_df
+        #sort!(sub_df, :hyperscore)
+        #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+        repeat([median(sub_df.total_ions)], size(sub_df)[1])
+        #next_scores = lead(sub_df.total_ions, default = missing)
+        #coalesce(next_scores, 0)
+    end)[:,:x1]
+
+    grouped_df = groupby(PSMs, :precursor_idx);
+
+    PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
+        #sort!(sub_df, :hyperscore)
+        #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
+        repeat([size(sub_df)[1]], size(sub_df)[1])
+        #next_scores = lead(sub_df.total_ions, default = missing)
+        #coalesce(next_scores, 0)
+    end)[:,:x1]
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precursor_idx]])) => :charge)
+
 end
-fit1, ns1 = refinePSMs!(PSMs, prosit_precs)
+function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
+   
+    #X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio,:intensity,:count]])
+    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio]])
+    X_labels = PSMs[:, :decoy]
+    permutation = randperm(size(PSMs)[1])
+    fold_size = length(permutation)÷n_folds
+
+    folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
+
+    PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
+    model = ""
+    for test_fold_idx in range(1, n_folds)
+        println(test_fold_idx)
+        train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
+        #println("train_fold_idxs ", train_fold_idxs)
+        train_features = X[train_fold_idxs,:]
+        train_classes = X_labels[train_fold_idxs,1]
+        fraction = min(30000/length(X_labels), 0.15)
+        println(fraction)
+        fraction = 0.5
+        model = build_forest(train_classes, train_features, 10, 1000, fraction, 10)
+        probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
+        PSMs[folds[test_fold_idx],:prob] = probs[:,2]
+        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio][sortperm(split_importance(model))])
+    end
+    #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
+    #probs = apply_forest_proba(model, X',[true, false])
+    #PSMs[:,:prob] = probs[:,2]
+    return model
+end
+function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool})
+    #Could bootstratp to get more reliable values. 
+    q_values = zeros(Float64, (length(probs),))
+    order = reverse(sortperm(probs))
+    targets = 0
+    decoys = 0
+    for i in order
+        if labels[i] == true
+            decoys += 1
+        else
+            targets += 1
+        end
+        q_values[i] = decoys/(targets + decoys)
+    end
+    PSMs[:,:q_values] = q_values;
+end
+PSMs = 0
+
+@time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = i, fragment_tolerance = 15.6, lambda = 1e5, max_peaks = 1000, scan_range = (70000, 70000), precursor_tolerance = 20.0)
+   
+for i in [20]
+    @time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = i, fragment_tolerance = 15.6, lambda = 1e5, max_peaks = 1000, scan_range = (0, 300000), precursor_tolerance = 20.0)
+    refinePSMs!(PSMs, prosit_precs)
+    rankPSMs!(PSMs, 2)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("HITS ", length(unique(PSMs[(PSMs[:,:q_values].<0.01) .& (PSMs[:,:decoy].==false), :][:,:precursor_idx])))
+end
+
+combine(sdf -> sdf[argmax(sdf.prob), :], groupby(PSMs, [:precursor_idx]))
+for i in [50, 100]
+    @time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = i, fragment_tolerance = 15.6, lambda = 1e5, max_peaks = 1000, scan_range = (70001, 80000), precursor_tolerance = 30.0)
+    refinePSMs!(PSMs, prosit_precs)
+    rankPSMs!(PSMs, 2)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("HITS ", length(unique(PSMs[(PSMs[:,:q_values].<0.01) .& (PSMs[:,:decoy].==false), :][:,:precursor_idx])))
+end
+
+for bin in prosit_index_intensities.precursor_bins
+    for prec in bin.precs
+        if getPrecID() == 
+
+for i in [1000]
+    @time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = i, fragment_tolerance = 15.6, lambda = 1e5, max_peaks = 1000, scan_range = (70001, 80000), precursor_tolerance = 30.0)
+    refinePSMs!(PSMs, prosit_precs)
+    rankPSMs!(PSMs, 2)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("HITS ", length(unique(PSMs[(PSMs[:,:q_values].<0.01) .& (PSMs[:,:decoy].==false), :][:,:precursor_idx])))
+end
+ecdfplot(log2.(PSMs[(PSMs[:,:q_values].>0.01), :][:,:matched_ratio]))
+ecdfplot!(log2.(PSMs[(PSMs[:,:q_values].<0.01) .& (PSMs[:,:decoy].==false), :][:,:matched_ratio]))
+PSMs = 0 
+
+length(unique(PSMs[(PSMs[:,:q_values].<0.1) .& (PSMs[:,:decoy].==false), :][:,:precursor_idx]))
+hits_per_scan = combine(sdf->nrow(sdf), groupby(PSMs[PSMs[:,:q_values].<=0.05,:],:scan_idx))
+
+prosit_totals = zeros(Float32, length(prosit_detailed))
+i = 1
+for prec in ProgressBar(prosit_detailed)
+    prosit_totals[i] = sum([getIntensity(frag) for frag in prec]./norm([getIntensity(frag) for frag in prec]))
+    i += 1
+end
+
+prosit_totals = zeros(Float32, length(prosit_detailed))
+i = 1
+for prec in ProgressBar(prosit_detailed)
+    prosit_totals[i] = sum([getIntensity(frag) for frag in prec]./norm([getIntensity(frag) for frag in prec]))
+    i += 1
+end
+2210
+
+norm([getIntensity(x) for x in prosit_detailed[4211123]])
+
+refinePSMs!(PSMs, prosit_precs)
 
 @time PSMs_ = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = 10, fragment_tolerance = 20.0, lambda = 1e4, max_peaks = 200, scan = 101358)
 transform!( PSMs_, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_precs[psm[:precursor_idx]]))) => :iRT)
@@ -103,49 +225,7 @@ df = DataFrame(day = [1, 1, 2, 2, 2, 3, 3, 3],
 
 fit1, ns1 = refinePSMs!(PSMs, prosit_precs)
 # Sort DataFrame by "day" and "score" columns
-sort!(PSMs, [:scan_idx, :total_ions]);
 
-# Group DataFrame by "day" column
-grouped_df = groupby(PSMs, :scan_idx);
-
-
-PSMs[:,:next_best] = (combine(grouped_df) do sub_df
-    pushfirst!(diff(sub_df.total_ions), zero(UInt32))
-    #next_scores = lead(sub_df.total_ions, default = missing)
-    #coalesce(next_scores, 0)
-end)[:,:x1]
-
-PSMs[:,:diff_hyper] = (combine(grouped_df) do sub_df
-    sort!(sub_df, :hyperscore)
-    pushfirst!(diff(sub_df.hyperscore), zero(Float64))
-    #next_scores = lead(sub_df.total_ions, default = missing)
-    #coalesce(next_scores, 0)
-end)[:,:x1]
-
-PSMs[:,:diff_scribe] = (combine(grouped_df) do sub_df
-    sort!(sub_df, :scribe_score)
-    pushfirst!(diff(sub_df.scribe_score), zero(Float64))
-    #next_scores = lead(sub_df.total_ions, default = missing)
-    #coalesce(next_scores, 0)
-end)[:,:x1]
-
-PSMs[:,:median_ions] = (combine(grouped_df) do sub_df
-    #sort!(sub_df, :hyperscore)
-    #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
-    repeat([median(sub_df.total_ions)], size(sub_df)[1])
-    #next_scores = lead(sub_df.total_ions, default = missing)
-    #coalesce(next_scores, 0)
-end)[:,:x1]
-
-grouped_df = groupby(PSMs, :precursor_idx);
-
-PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
-    #sort!(sub_df, :hyperscore)
-    #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
-    repeat([size(sub_df)[1]], size(sub_df)[1])
-    #next_scores = lead(sub_df.total_ions, default = missing)
-    #coalesce(next_scores, 0)
-end)[:,:x1]
 
 # Print the resulting DataFrame
 println(df)
@@ -160,34 +240,7 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precurso
 ########
 #
 ########
-function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
-   
-    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:unmatched]])
-    X_labels = PSMs[:, :decoy]
-    permutation = randperm(size(PSMs)[1])
-    fold_size = length(permutation)÷n_folds
 
-    folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
-
-    PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
-    model = ""
-    for test_fold_idx in range(1, n_folds)
-        println(test_fold_idx)
-        train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
-        #println("train_fold_idxs ", train_fold_idxs)
-        train_features = X[train_fold_idxs,:]
-        train_classes = X_labels[train_fold_idxs,1]
-        fraction = min(30000/length(X_labels), length(X_labels)*0.15)
-        model = build_forest(train_classes, train_features, 10, 1000, fraction, 10)
-        probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
-        PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:weight,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:next_best,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:unmatched][sortperm(split_importance(model))])
-    end
-    #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
-    #probs = apply_forest_proba(model, X',[true, false])
-    #PSMs[:,:prob] = probs[:,2]
-    return model
-end
 
 best_PSMs = combine(sdf -> sdf[argmin(sdf.q_values), :], groupby(PSMs, [:precursor_idx]))
 
@@ -229,7 +282,7 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Boo
     PSMs[:,:q_values] = q_values;
 end
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
-
+length(unique(PSMs[PSMs[:,:q_values].<0.01,:][:,:precursor_idx]))
 @time getQvalues!(PSMs_40, PSMs_40[:,:prob], PSMs_40[:,:decoy]);
 
 

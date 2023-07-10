@@ -311,6 +311,3 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
     return frag_index
 end
 
-
-
-

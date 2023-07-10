@@ -4,7 +4,8 @@ function SearchRAW(
                     frag_index::FragmentIndex{T},
                     fragment_list::Vector{Vector{LibraryFragment{Float64}}},
                     ms_file_idx::UInt32;
-                    precursor_tolerance::Float64 = 4.25,
+                    isolation_width::Float64 = 4.25,
+                    precursor_tolerance::Float64 = 5.0,
                     fragment_tolerance::Float64 = 20.0,
                     topN::Int64 = 20,
                     min_frag_count::Int64 = 4,
@@ -18,7 +19,7 @@ function SearchRAW(
     scored_PSMs = makePSMsDict(XTandem(data_type))
     ms2, MS1, MS1_i = 0, 0, 0
     precs = Counter(UInt32, UInt8, Float32, 9387261) #Prec counter
-    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0)
+    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0, :match_peaks => 0.0, :build => 0.0, :score => 0.0)
     for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -42,8 +43,8 @@ function SearchRAW(
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], 
                     fragment_tolerance, 
-                    5.0,
                     precursor_tolerance,
+                    isolation_width,
                     min_frag_count = min_frag_count, 
                     topN = topN
                     )
@@ -52,28 +53,31 @@ function SearchRAW(
             times[:reset] += @elapsed reset!(precs)
             continue
         end
-
         transitions = selectTransitions(fragment_list, precs, topN)
+        if length(transitions) == 0
+            continue
+        end
         times[:reset] += @elapsed reset!(precs)
 
-        fragmentMatches, fragmentMisses = matchPeaks(transitions, 
+        times[:match_peaks] += @elapsed fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
+                                    count_unmatched=true,
                                     δs = zeros(T, (1,)),
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity,
                                     ppm = fragment_tolerance
                                     )
-
         if iszero(length(fragmentMatches))
             continue
         end
 
-        times[:metrics] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+        times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
 
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
+        #W = reshape([Float32(1000) for x in range(1,H.m)], (1, H.m))
         W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
         
         weights = W[1,:]
@@ -83,17 +87,17 @@ function SearchRAW(
                                                     update_H = false #Important to keep H constant. 
                                                     ), X, W, H).W[1,:])=#
 
-        times[:metrics] += @elapsed scribe_score, city_block, chebyshev, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(H, X, UNMATCHED)
+        times[:metrics] += @elapsed scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(H, X, UNMATCHED)
         #For progress and debugging. 
 
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
         ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
 
-        times[:metrics] += @elapsed Score!(scored_PSMs, unscored_PSMs, 
+        times[:score] += @elapsed Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                match_count/prec_count, scribe_score, city_block, chebyshev, matched_ratio, spectral_contrast_matched, spectral_contrast_all, weights, IDtoROW,
+                match_count/prec_count, scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, weights, IDtoROW,
                 scan_idx = Int64(i)
                 )
     end
@@ -103,6 +107,9 @@ function SearchRAW(
     println("reset: ", times[:reset])
     println("nmf : ", times[:nmf])
     println("metrics : ", times[:metrics])
+    println("build : ", times[:build])
+    println("score : ", times[:score])
+    println("match_peaks : ", times[:match_peaks])
     return DataFrame(scored_PSMs)
 end
 
@@ -334,6 +341,7 @@ struct runningDotP{C<:Unsigned,T<:AbstractFloat}
     obs::T
     pred::T
     obs_pred::T
+    sum::T
 end
 
 function update!(dp::runningDotP{C,T}, obs::T, pred::T) where {C<:Unsigned,T<:AbstractFloat}
@@ -341,15 +349,19 @@ function update!(dp::runningDotP{C,T}, obs::T, pred::T) where {C<:Unsigned,T<:Ab
             dp.count + one(C),
             dp.obs + obs*obs,
             dp.pred + pred*pred,
-            dp.obs_pred + obs*pred)
+            dp.obs_pred + obs*pred,
+            dp.sum + pred
+            )
 end
 
-runningDotP(C::DataType, T::DataType) = runningDotP(zero(C), zero(T), zero(T), zero(T)) 
+runningDotP(C::DataType, T::DataType) = runningDotP(zero(C), zero(T), zero(T), zero(T), zero(T)) 
 getCount(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.count
 getObs(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.obs
+getSum(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.sum
 getPred(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.pred
 getObsPred(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = dp.obs_pred
 getDP(dp::runningDotP{C,T}) where {C<:Unsigned,T<:AbstractFloat} = getObsPred(dp)/(sqrt(getPred(dp))*sqrt(getObs(dp)))
+getMatchedRatio(dp::runningDotP{C,T}, totals::Vector{Float32}, id::UInt32) where {C<:Unsigned,T<:AbstractFloat} = getSum(dp)/(totals[id] - getSum(dp))
 
 mutable struct Counter{I,C<:Unsigned,T<:AbstractFloat}
     ids::Vector{I}
@@ -384,14 +396,18 @@ function inc!(c::Counter{I,C,T}, id::I, pred_intensity::T, obs_intensity::T) whe
 end
 
 import Base.sort!
-function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
+function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
     sort!(
                 @view(counter.ids[1:counter.matches]), 
-                by = id -> getCount(counter.dotp[id]),
+                #by = id -> getCount(counter.dotp[id]),
+                by = id -> getMatchedRatio(counter.dotp[id], prosit_totals, id),#getPred(counter.dotp[id])/(prosit_totals[id] - getPred(counter.dotp[id])),
+                #by = id -> getPred(counter.dotp[id]),#/(prosit_totals[id] - getPred(counter.dotp[id])),
                 rev = true,
                 alg=PartialQuickSort(1:topN)
              )
 end
+
+1.0969202031097876
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
     #@turbo  for i in 1:(getSize(c) - 1)
@@ -401,6 +417,7 @@ function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat}
                                             zero(C),
                                             zero(T),
                                             zero(T),
+                                            zero(T),
                                             zero(T)
                                             )
     end
@@ -408,22 +425,25 @@ function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat}
     c.matches = 0
 end
 
-function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
+#=function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
     frag_counts = 0
     for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(getRunningDP(c, id))
         dp = getDP(c, id)
         frag_counts += frag_count
+        
         if frag_count >= min_count
-            if dp>=0.65
-                c.ids[c.matches + 1] = c.ids[i]
-                c.matches += 1
+            if getMatchedRatio(c.dotp[id], prosit_totals, id)>=0.8
+                if dp>=0.65
+                    c.ids[c.matches + 1] = c.ids[i]
+                    c.matches += 1
+                end
             end
         end
     end
     return frag_counts
-end
+end=#
 
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
@@ -434,14 +454,18 @@ function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigne
         dp = getDP(c, id)
         frag_counts += frag_count
         if frag_count >= min_count
-            if dp>=0.50
-                c.ids[c.matches + 1] = c.ids[i]
-                c.matches += 1
+            if getMatchedRatio(c.dotp[id], prosit_totals, id)>=0.8
+                if dp>=0.65
+                    c.ids[c.matches + 1] = c.ids[i]
+                    c.matches += 1
+                end
             end
         end
     end
     return frag_counts
 end
+
+#for prec in prosit_detailed
 
 #=
 big_list = [rand([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) for x in 1:9000000]

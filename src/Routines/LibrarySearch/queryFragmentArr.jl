@@ -58,7 +58,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
 
     function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS1::Vector{Union{Missing, U}}, prec_ppm::AbstractFloat, intensity::Float32, precursor_bin::PrecursorBin{T}, start::Int, stop::Int) where {T,U<:AbstractFloat}
         #initialize
-        precursor_idx = start
+        #=precursor_idx = start
         ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(prec_ppm))
         prec = getPrecursor(precursor_bin, precursor_idx)
 
@@ -80,11 +80,11 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
                 precursor_idx += 1
                 (precursor_idx <= stop) ? prec = getPrecursor(precursor_bin, precursor_idx) : return
             end
-        end
-        #=for precursor_idx in start:stop
+        end=#
+        for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
             inc!(precs, getPrecID(prec), getIntensity(prec), intensity)
-        end=#
+        end
     end
 
     addFragmentMatches!(precs, ms1_idx, MS1, prec_ppm, intensity, precursor_bin, window_start, window_stop)
