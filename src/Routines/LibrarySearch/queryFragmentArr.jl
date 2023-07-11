@@ -83,7 +83,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
         end=#
         for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
-            inc!(precs, getPrecID(prec), getIntensity(prec), intensity)
+            inc!(precs, getPrecID(prec), getIntensity(prec))
         end
     end
 

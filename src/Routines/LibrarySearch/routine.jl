@@ -1,5 +1,5 @@
 
-using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization, Splines2, ProgressBars, GLM, RobustModels
+using Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization, Splines2, ProgressBars, GLM, RobustModels, LoopVectorization
 include("src/precursor.jl")
 #include("src/buildFragmentIndex.jl")
 include("src/Routines/LibrarySearch/buildFragmentIndex.jl")
@@ -8,12 +8,12 @@ include("src/Routines/LibrarySearch/buildDesignMatrix.jl")
 include("src/Routines/LibrarySearch/spectralDistanceMetrics.jl")
 include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
-include("src/Routines/LibrarySearch/selectTransitions.jl")
 #include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
 #include("src/Routines/LibrarySearch/queryFragmentInc.jl")
 include("src/Routines/LibrarySearch/queryFragmentArr.jl")
 include("src/PSM_TYPES/PSM.jl")
 include("src/PSM_TYPES/LibraryXTandem.jl")
+include("src/Routines/LibrarySearch/selectTransitions.jl")
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_detailed.jld2"  prosit_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_index_intensities.jld2"  prosit_index_intensities
 @load "/Users/n.t.wamsley/Projects/PROSIT/prosit_precs.jld2"  prosit_precs
@@ -151,6 +151,30 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Boo
     PSMs[:,:q_values] = q_values;
 end
 PSMs = 0
+refinePSMs!(PSMs, prosit_precs)
+X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio]])
+replace!(X, NaN=>0.0)
+replace!(X, -Inf=>0.0)
+replace!(X, Inf=>0.0)
+lda = fit(MulticlassLDA, X', X_labels; outdim=1)
+X_labels = PSMs[:, :decoy]
+Ylda = MultivariateStats.predict(lda, X')
+transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_precs[psm[:precursor_idx]])) => :decoy)
+  
+test_ = ("target","decoy")
+test_ = [test_[Int(x) + 1] for x in PSMs[:,:decoy]]
+decoy_cv = glmnetcv(X, test_)
+
+logit = round.(GLMNet.predict(decoy_cv, X, outtype = :prob), digits=3)
+
+histogram(PSMs[PSMs[:,:decoy].==false,:logit], alpha = 0.5)
+histogram!(PSMs[PSMs[:,:decoy].==true,:logit], alpha = 0.5)
+sum(PSMs[PSMs[:,:logit].<0.4,:decoy])
+sum(PSMs[PSMs[:,:logit].<0.4,:decoy].==false)
+PSMs[:,:lda] = Ylda[1,:]
+sum(PSMs[PSMs[:,:lda].>0.005,:decoy])
+
+sum(PSMs[PSMs[:,:lda].>0.005,:decoy].==false)
 
 @time PSMs = SearchRAW(MS_TABLE, prosit_index_intensities, prosit_detailed, UInt32(1), min_frag_count = 4, topN = i, fragment_tolerance = 15.6, lambda = 1e5, max_peaks = 1000, scan_range = (70000, 70000), precursor_tolerance = 20.0)
    

@@ -71,7 +71,7 @@ function getDistanceMetrics(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::
         row_counts = zeros(Int64, A.m)
         row_dot = zeros(T, A.m)
 
-        @turbo for (i, nzval) in enumerate(A.nzval)
+        for (i, nzval) in enumerate(A.nzval)
             rownorms_A[A.rowval[i]] += nzval^2
             row_counts[A.rowval[i]] += 1
             rownorms_X[A.rowval[i]] += X[A.colptr[i]]^2
@@ -82,14 +82,17 @@ function getDistanceMetrics(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::
         end
 
         rownorms_ALL = copy(rownorms_A)
-        @turbo for (i, nzval) in enumerate(C.nzval)
+        for (i, nzval) in enumerate(C.nzval)
             rownorms_ALL[C.rowval[i]] += nzval^2
             rowsums_C[C.rowval[i]] += nzval
         end
+
         return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C
     end
-    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED = rowNormsAndSums(H, X, UNMATCHED)
 
+    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED = rowNormsAndSums(H, X, UNMATCHED)
+    #println(rowsums_MATCHED[2])
+    #println(rowsums_UNMATCHED[2])
     function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
         #-1*log(mean(((a/a_sum) .- (b/b_sum)).^2))
         ((a/a_sum) - (b/b_sum))^2

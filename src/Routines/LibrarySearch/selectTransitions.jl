@@ -8,7 +8,7 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, co
     return sort!(transitions, by = x->getFragMZ(x))
 end
 
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, rt_index::retentionTimeIndex{T, U}, rt::T, rt_tol::T, prec_mz::U, prec_tol::U) where {T,U<:AbstractFloat}
+#=function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, rt_index::retentionTimeIndex{T, U}, rt::T, rt_tol::T, prec_mz::U, prec_tol::U) where {T,U<:AbstractFloat}
     transitions = Vector{LibraryFragment{T}}()
     i = 1
     rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1)
@@ -27,7 +27,7 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, rt
     end
 
     return sort!(transitions, by = x->getFragMZ(x))
-end
+end=#
 #=function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Generator, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
     transitions = Vector{LibraryFragment{T}}()
     i = 1
