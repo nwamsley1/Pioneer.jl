@@ -1,5 +1,6 @@
 function SearchRAW(
                     spectra::Arrow.Table, 
+                    prec_norms::Vector{Float32},
                     #ptable::PrecursorDatabase,
                     frag_index::FragmentIndex{T},
                     fragment_list::Vector{Vector{LibraryFragment{Float64}}},
@@ -9,6 +10,8 @@ function SearchRAW(
                     fragment_tolerance::Float64 = 20.0,
                     topN::Int64 = 20,
                     min_frag_count::Int64 = 4,
+                    min_matched_ratio::Float32 = Float32(0.8),
+                    min_spectral_contrast::Float32 = Float32(0.65),
                     lambda::Float64 = 1e3,
                     scan_range::Tuple{Int64, Int64} = (0, 0), 
                     max_peaks::Int = 200, 
@@ -42,12 +45,14 @@ function SearchRAW(
 
         #times[:counter] += @elapsed prec_count, match_count = searchScan!(precs,
         prec_count, match_count = searchScan!(precs,
+                    prec_norms,
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], 
                     fragment_tolerance, 
                     precursor_tolerance,
                     isolation_width,
                     min_frag_count = min_frag_count, 
+                    min_ratio = min_matched_ratio,
                     topN = topN
                     )
         #return precs
@@ -110,7 +115,8 @@ function SearchRAW(
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
                 match_count/prec_count, scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, weights, IDtoROW,
-                scan_idx = Int64(i)
+                scan_idx = Int64(i),
+                min_spectral_contrast = min_spectral_contrast
                 )
         n += 1
     end
@@ -126,135 +132,3 @@ function SearchRAW(
     return DataFrame(scored_PSMs)
 end
 
-#=struct runningCount{C<:Unsigned,T<:AbstractFloat}
-    count::Base.RefValue{C}
-    sum::Base.RefValue{T}
-    function runningCount(count::C, sum::T) where {C<:Unsigned, T<:AbstractFloat}
-        new{C, T}(Ref(count), Ref(sum))
-    end
-end=#
-
-#=runningCount(C::DataType, T::DataType) = runningCount(zero(C),zero(T)) 
-getCount(rc::runningCount{C,T}) where {C<:Unsigned,T<:AbstractFloat} = rc.count[]
-getSum(rc::runningCount{C,T}) where {C<:Unsigned,T<:AbstractFloat} = rc.sum[]=#
-
-
-mutable struct Counter{I,C<:Unsigned,T<:AbstractFloat}
-    ids::Vector{I}
-    counts::Vector{C}
-    sums::Vector{T}
-    size::Int64
-    matches::Int64
-    function Counter(I::DataType, C::DataType, T::DataType, size::Int) #where {I,C<:Unsigned}
-        new{I, C, T}(zeros(I, size), zeros(C,size), zeros(T,size), 1, 0)
-    end
-end
-
-getCount(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = c.counts[id]
-getSums(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = c.sums[id]
-function getMatchedRatio(c::Counter{I,C,T}, totals::Vector{Float32}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    matched_intensity = getSums(c, id)
-    matched_intensity/(totals[id] - matched_intensity)
-end
-
-getSize(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size
-incSize!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size += 1
-getID(c::Counter{I,C,T}, idx::Int) where {I,C<:Unsigned,T<:AbstractFloat} = c.ids[idx]
-
-function update!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {C,I<:Unsigned,T<:AbstractFloat}
-    c.counts[id] += one(C);
-    c.sums[id] += pred_intensity;
-    return nothing
-end
-
-function reset!(c::Counter{I,C,T}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    
-    c.counts[id] = zero(C);
-    c.sums[id] = zero(T);
-
-    return nothing
-end
-#getObs(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getObs(c.dotp[id])
-#getPred(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getPred(c.dotp[id])
-#getObsPred(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getObsPred(c.dotp[id])
-#getCount(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getCount(c.dotp[id])
-#getDP(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getDP(c.[id])
-
-import DataStructures.inc!
-function inc!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {I,C<:Unsigned,T<:AbstractFloat} 
-    if iszero(c.counts[id])#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
-        c.ids[getSize(c)] = id;
-        update!(c,id,pred_intensity);
-        incSize!(c);
-    else
-        update!(c,id,pred_intensity);
-    end
-    return nothing
-end
-
-import Base.sort!
-function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
-    sort!(
-                @view(counter.ids[1:counter.matches]), 
-                by = id -> getMatchedRatio(counter, prosit_totals, id),
-                rev = true,
-                alg=PartialQuickSort(1:topN)
-             )
-    return nothing
-end
-
-function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    @turbo for i in 1:(getSize(c) - 1)
-        id = c.ids[i]
-        c.counts[id] = zero(C)
-        c.sums[id] = zero(T)
-        #reset!(c, c.ids[i])
-    end
-    c.size = 1
-    c.matches = 0
-    return nothing
-end
-
-function countFragMatches(c::Counter{I,C,T}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
-    frag_counts = 0
-    for i in 1:(getSize(c) - 1)
-        id = c.ids[i]
-        frag_count = getCount(c, id)
-        frag_counts += frag_count
-        if frag_count >= min_count
-            if getMatchedRatio(c, prosit_totals, id)>=0.8
-                    c.ids[c.matches + 1] = c.ids[i]
-                    c.matches += 1
-            end
-        end
-    end
-    return frag_counts
-end
-
-#for prec in prosit_detailed
-
-#=
-big_list = [rand([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) for x in 1:9000000]
-@btime sort(big_list, alg=PartialQuickSort(1:6), rev = true)
-
-
-@btime sort(big_list[1:10000], alg=PartialQuickSort(1:6), rev = true)
-
-
-@btime sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20]
-@btime sort(filter(x->x>0,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20]
-@btime sort(filter(x->x>13,big_list[1:100000]), alg=PartialQuickSort(1:20), rev = true)[1:20]
-@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)[1:20])#fastest
-@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), alg=QuickSort, rev = true)[1:20])
-
-@benchmark sort(filter(x->x>13,@view(big_list[1:100000])), alg=PartialQuickSort(1:20), rev = true)#fastest
-
-@benchmark @view(sort(filter(x->x>13,@view(big_list[1:100000])), rev = true)[1:20])#fastest
-
-sort([5, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 4, 1, 4, 4, 5, 5], alg=PartialQuickSort(1:6), rev = true)
-
-x = rand(100);
-k = 50:100;
-
-@time sort!(x[1:10]; alg=PartialQuickSort(1:10), rev = true);
-=#

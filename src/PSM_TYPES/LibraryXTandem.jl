@@ -78,7 +78,7 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
 end
 
 function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, spectrum_peaks::Int, spectrum_intensity::T, expected_matches::Float64,
-    scribe_score::Vector{Float32}, city_block::Vector{Float32}, matched_ratio::Vector{Float32}, spectral_contrast_matched::Vector{Float32}, spectral_contrast_all::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt32}; scan_idx::Int64 = 0) where {T<:Real}
+    scribe_score::Vector{Float32}, city_block::Vector{Float32}, matched_ratio::Vector{Float32}, spectral_contrast_matched::Vector{Float32}, spectral_contrast_all::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt32}; scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6) where {T<:Real}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)
@@ -133,8 +133,11 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
     end
 
     for key in keys(unscored_PSMs)
-
         index = IDtoROW[unscored_PSMs[key].precursor_idx]
+        if spectral_contrast_all[index]<min_spectral_contrast
+            continue
+        end
+        #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
         append!(PSMs_dict[:y_ladder], getLongestSet(unscored_PSMs[key].y_ions))
         append!(PSMs_dict[:b_ladder], getLongestSet(unscored_PSMs[key].b_ions))

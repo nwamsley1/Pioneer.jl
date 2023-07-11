@@ -139,8 +139,8 @@ function getDistanceMetrics(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::
     return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all
 end
 
-function test(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::SparseMatrix{Int64, T}) where {T<:AbstractFloat}
+#=function test(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::SparseMatrix{Int64, T}) where {T<:AbstractFloat}
     for i in 1:1000
         getDistanceMetrics(H, X, UNMATCHED)
     end
-end
+end=#

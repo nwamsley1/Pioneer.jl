@@ -8,6 +8,7 @@ include("src/Routines/LibrarySearch/buildDesignMatrix.jl")
 include("src/Routines/LibrarySearch/spectralDistanceMetrics.jl")
 include("src/Routines/LibrarySearch/spectralContrast.jl")
 include("src/Routines/LibrarySearch/searchRAW.jl")
+include("src/Routines/LibrarySearch/counter.jl")
 #include("src/Routines/LibrarySearch/queryFragmentIndex.jl")
 #include("src/Routines/LibrarySearch/queryFragmentInc.jl")
 include("src/Routines/LibrarySearch/queryFragmentArr.jl")
@@ -25,6 +26,18 @@ for prec in ProgressBar(prosit_detailed)
     prosit_totals[i] = sum([getIntensity(frag) for frag in prec]./norm([getIntensity(frag) for frag in prec]))
     i += 1
 end
+@time PSMs = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
+                        min_frag_count = 4, 
+                        topN = 20, 
+                        fragment_tolerance = 15.6, 
+                        lambda = 1e5, 
+                        max_peaks = 1000, 
+                        scan_range = (101357, 101357), 
+                        precursor_tolerance = 20.0,
+                        min_spectral_contrast =  Float32(0.0)
+                        )
+
+
 function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)

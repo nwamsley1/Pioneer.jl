@@ -130,14 +130,14 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS
     return frag_bin - 1
 end
 
-function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIndex{T}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, frag_ppm::AbstractFloat, prec_ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3) where {T,U<:AbstractFloat}
+function searchScan!(precs::Counter{UInt32, UInt8, Float32}, prec_norms::Vector{Float32}, f_index::FragmentIndex{T}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, frag_ppm::AbstractFloat, prec_ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {T,U<:AbstractFloat}
     
     getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
 
-    function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, topN::Int, min_frag_count::Int)
-        match_count = countFragMatches(precs, min_frag_count)
+    function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, prec_norms::Vector{Float32}, topN::Int, min_frag_count::Int, min_ratio::Float32)
+        match_count = countFragMatches(precs, prec_norms, min_frag_count, min_ratio)
         prec_count = getSize(precs) - 1
-        sort!(precs, topN);
+        sort!(precs, prec_norms, topN);
         return match_count, prec_count
     end
     #println("TEST")
@@ -164,6 +164,6 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIn
         min_frag_bin = queryFragment!(precs, ms1_idx, MS1, prec_ppm, intensity, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
     end 
 
-    return filterPrecursorMatches!(precs, topN, min_frag_count)
+    return filterPrecursorMatches!(precs, prec_norms, topN, min_frag_count, min_ratio)
 end
 
