@@ -28,13 +28,13 @@ for prec in ProgressBar(prosit_detailed)
 end
 @time PSMs = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
                         min_frag_count = 4, 
-                        topN = 20, 
+                        topN = 200, 
                         fragment_tolerance = 15.6, 
                         lambda = 1e5, 
                         max_peaks = 1000, 
-                        scan_range = (101357, 101357), 
+                        scan_range = (0, 300000), 
                         precursor_tolerance = 20.0,
-                        min_spectral_contrast =  Float32(0.0)
+                        min_spectral_contrast =  Float32(0.65)
                         )
 
 
@@ -116,10 +116,10 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
     transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precursor_idx]])) => :charge)
 
 end
-function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
+function rankPSMs!(PSMs::DataFrame; n_folds::Int = 3, n_trees::Int = 500, features::Int = 10, max_depth::Int = 10, fraction::AbstractFloat = 0.1)
    
     #X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio,:intensity,:count]])
-    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio]])
+    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio]])
     X_labels = PSMs[:, :decoy]
     permutation = randperm(size(PSMs)[1])
     fold_size = length(permutation)÷n_folds
@@ -134,13 +134,11 @@ function rankPSMs!(PSMs::DataFrame, n_folds::Int = 3)
         #println("train_fold_idxs ", train_fold_idxs)
         train_features = X[train_fold_idxs,:]
         train_classes = X_labels[train_fold_idxs,1]
-        fraction = min(30000/length(X_labels), 0.15)
-        println(fraction)
-        fraction = 0.5
-        model = build_forest(train_classes, train_features, 10, 1000, fraction, 10)
+        #fraction = min(30000/length(X_labels), 0.15)
+        model = build_forest(train_classes, train_features, features, n_trees, fraction, max_depth)
         probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
         PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio][sortperm(split_importance(model))])
+        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio][sortperm(split_importance(model))])
     end
     #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
     #probs = apply_forest_proba(model, X',[true, false])
@@ -163,12 +161,99 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Boo
     end
     PSMs[:,:q_values] = q_values;
 end
+
+
+refinePSMs!(PSMs, prosit_precs)
+
+for i in [0.001, 0.002, 0.0005]
+    @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = 10, features = 10, fraction = i)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("TEST ", length(unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+end
+
+for i in [5, 10, 15, 20]
+    @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = i, features = 10, fraction = 0.001)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("TEST ", length(unique(PSMs[(PSMs[:,:q_values].<=0.1) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+end
+
+
+for i in [3, 5, 7, 10]
+    @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = 10, features = i, fraction = 0.001)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("TEST ", length(unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+end
+
+PSMs_RF = PSMs
+length(unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :precursor_idx]))
+@sk_import discriminant_analysis: (LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis)
+@sk_import svm: SVC
+PSMs = filter(row -> row.total_ions >=4, PSMs)
+X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:RT,:diff_hyper,:diff_scribe,:city_block,:matched_ratio]])
+X_labels = PSMs[:, :decoy]
+replace!(X, NaN=>Inf)
+replace!(X, -Inf=>0.0)
+replace!(X, Inf=>0.0)
+permutation = randperm(size(X)[1])
+testnb = ScikitLearn.fit!(SVC(gamma=2, C=1), X[permutation[1:10000],:], X_labels[permutation[1:10000]])
+
+@time model, coeffs = build_adaboost_stumps(X_labels, X, 10);
+PSMs[:,:prob] = apply_adaboost_stumps_proba(model, coeffs, X, [true, false])[:,2]
+@time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+length(unique(PSMs[(PSMs[:,:q_values].<=0.1) .& (PSMs[:,:decoy].==false), :precursor_idx]))
+
+train_features = X[train_fold_idxs,:]
+train_classes = X_labels[train_fold_idxs,1]
+fraction = min(30000/length(X_labels), 0.15)
+model = build_forest(train_classes, train_features, 10, 1000, fraction, 10)
+probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
+
+@time PSMs[:,:gnb] = ScikitLearn.predict_proba(testnb, X)[:,1]
+@time PSMs[:,:gnb] = ScikitLearn.decision_function(testnb, X)
+#@time getQvalues!(PSMs, PSMs[:,:gnb], PSMs[:,:decoy]);
+
+stephist(PSMs[(PSMs[:,:decoy].==false), :prob], normalize = :pdf, alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:decoy].==true), :prob], normalize = :pdf, alpha = 0.5)
+
+size(PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:prob].<0.2),:])
+size(PSMs[(PSMs[:,:decoy].==true) .& (PSMs[:,:prob].<0.2),:])
+
+size(PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:gnb].<0.05),:])
+size(PSMs[(PSMs[:,:decoy].==true) .& (PSMs[:,:gnb].<0.05),:])
+
+stephist(log2.(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :matched_ratio]), normalize = :pdf, alpha = 0.5)
+stephist!(log2.(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :matched_ratio]),  normalize = :pdf, alpha = 0.5)
+
+
+histogram(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :total_ions], normalize = :pdf, alpha = 0.5)
+histogram!(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :total_ions],  normalize = :pdf, alpha = 0.5)
+
+
+stephist(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :poisson], normalize = :pdf, alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :poisson],  normalize = :pdf, alpha = 0.5)
+
+
+stephist(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :scribe_score], normalize = :pdf, alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :scribe_score],  normalize = :pdf, alpha = 0.5)
+
+
+stephist(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :city_block], normalize = :pdf, alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :city_block],  normalize = :pdf, alpha = 0.5)
+
+stephist(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :RT_error], normalize = :pdf, alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:q_values].>0.1) .& (PSMs[:,:decoy].==true), :RT_error],  normalize = :pdf, alpha = 0.5)
+
+stephist(PSMs[(PSMs[:,:decoy].==false), :gnb], alpha = 0.5)
+stephist!(PSMs[(PSMs[:,:decoy].==true), :gnb], alpha = 0.5)
+#[:b_ladder, :charge, :y_ladder, :total_ions, :median_ions, :n_obs, :spectral_contrast_matched, :city_block, :diff_hyper, :spectral_contrast_all, :error, :diff_scribe, :hyperscore, :RT, :poisson, :intensity_explained, :matched_ratio, :scribe_score, :RT_error]
 PSMs = 0
 refinePSMs!(PSMs, prosit_precs)
 X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio]])
 replace!(X, NaN=>0.0)
 replace!(X, -Inf=>0.0)
 replace!(X, Inf=>0.0)
+
+
 lda = fit(MulticlassLDA, X', X_labels; outdim=1)
 X_labels = PSMs[:, :decoy]
 Ylda = MultivariateStats.predict(lda, X')

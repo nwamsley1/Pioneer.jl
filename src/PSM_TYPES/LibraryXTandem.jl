@@ -137,6 +137,9 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
         if spectral_contrast_all[index]<min_spectral_contrast
             continue
         end
+        if (unscored_PSMs[key].y_count + unscored_PSMs[key].b_count) < 4
+            continue
+        end
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
         append!(PSMs_dict[:y_ladder], getLongestSet(unscored_PSMs[key].y_ions))
