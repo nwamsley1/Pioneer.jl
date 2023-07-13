@@ -36,6 +36,16 @@ end
                         precursor_tolerance = 20.0,
                         min_spectral_contrast =  Float32(0.65)
                         )
+X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
+                        min_frag_count = 4, 
+                        topN = 200, 
+                        fragment_tolerance = 15.6, 
+                        lambda = 1e5, 
+                        max_peaks = 1000, 
+                        scan_range = (101357, 101357), 
+                        precursor_tolerance = 20.0,
+                        min_spectral_contrast =  Float32(0.65)
+                        )
 
 
 function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
@@ -164,6 +174,10 @@ end
 
 
 refinePSMs!(PSMs, prosit_precs)
+
+
+rt_index = buildRTIndex(best_psms)
+
 
 for i in [0.001, 0.002, 0.0005]
     @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = 10, features = 10, fraction = i)

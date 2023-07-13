@@ -88,7 +88,7 @@ function SearchRAW(
         #times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
         X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
        
-        #return X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses
+        return X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
         W = reshape([Float32(1000) for x in range(1,H.m)], (1, H.m))
@@ -132,3 +132,13 @@ function SearchRAW(
     return DataFrame(scored_PSMs)
 end
 
+X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
+min_frag_count = 4, 
+topN = 200, 
+fragment_tolerance = 15.6, 
+lambda = 1e5, 
+max_peaks = 1000, 
+scan_range = (101357, 101357), 
+precursor_tolerance = 20.0,
+min_spectral_contrast =  Float32(0.65)
+)

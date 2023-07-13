@@ -1,110 +1,111 @@
-mutable struct Counter{I,C<:Unsigned,T<:AbstractFloat}
-    ids::Vector{I}
-    counts::Vector{Tuple{C, T}}
-    size::Int64
-    matches::Int64
-    function Counter(I::DataType, C::DataType, T::DataType, size::Int) #where {I,C<:Unsigned}
-        new{I, C, T}(zeros(I, size), [(zero(C), zero(T)) for x in 1:size], 1, 0)
-    end
-end
-
-getCount(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = first(c.counts[id])
-getSums(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = last(c.sums[id])
-function getMatchedRatio(c::Counter{I,C,T}, totals::Vector{Float32}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    #matched_intensity = getSums(c, id)
-    return first(c.counts[id])/(totals[id] - first(c.counts[id]))
-end
-
-getSize(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size
-incSize!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size += 1
-getID(c::Counter{I,C,T}, idx::Int) where {I,C<:Unsigned,T<:AbstractFloat} = c.ids[idx]
-
-function update!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {C,I<:Unsigned,T<:AbstractFloat}
-    #count = c.counts[id]
-    #c.counts[id] = (first(count) + one(C), last(count) + pred_intensity);
-    c.counts[id] = (first(c.counts[id]) + one(C), last(c.counts[id]) + pred_intensity);
-    return nothing
-end
-
-function reset!(c::Counter{I,C,T}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    c.counts[id] = (zero(C), zero(T));
-    return nothing
-end
-#getObs(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getObs(c.dotp[id])
-#getPred(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getPred(c.dotp[id])
-#getObsPred(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getObsPred(c.dotp[id])
-#getCount(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getCount(c.dotp[id])
-#getDP(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = getDP(c.[id])
-
-import DataStructures.inc!
-function inc!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {I,C<:Unsigned,T<:AbstractFloat} 
-    if iszero(first(c.counts[id]))#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
-        c.ids[getSize(c)] = id;
-        update!(c,id,pred_intensity);
-        incSize!(c);
-    else
-        update!(c,id,pred_intensity);
-    end
-    return nothing
-end
-
-import Base.sort!
-function sort!(counter::Counter{I,C,T}, prosit_totals::Vector{Float32}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
-    sort!(
-                @view(counter.ids[1:counter.matches]), 
-                by = id -> getMatchedRatio(counter, prosit_totals, id),
-                rev = true,
-                alg=PartialQuickSort(1:topN)
-             )
-    return nothing
-end
-
-function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    #@inbounds @simd for i in 1:(getSize(c) - 1)
-    for i in 1:(getSize(c) - 1)
-        c.counts[c.ids[i]] = (zero(UInt8), zero(Float32));
-    end
-    c.size = 1
-    c.matches = 0
-    return nothing
-end
-
-function countFragMatches(c::Counter{I,C,T}, prosit_totals::Vector{Float32}, min_count::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
-    frag_counts = 0
-    for i in 1:(getSize(c) - 1)
-        id = c.ids[i]
-        frag_count = getCount(c, id)
-        frag_counts += frag_count
-        if frag_count >= min_count
-            if getMatchedRatio(c, prosit_totals, id)>=-1000.0#0.8
-                    c.ids[c.matches + 1] = c.ids[i]
-                    c.matches += 1
+function factorSpectrum(Wnew::Vector{Float32}, Wold::Vector{Float32}, HHt_diag::Vector{Float32}, WxHHt_VHt::Matrix{Float32}, HHt::SparseMatrixCSC{Float32, Int64}, λ::Float32 = zero(Float32))
+    a = Inf
+    i = 1
+    #println("TEST")
+    while (abs(a) > 100.0) & (i < 1000)
+        a = 0
+        for r in 1:length(Wnew)
+            Wnew[r] = max(zero(Float32), Wold[r] - (WxHHt_VHt[r] + λ)/HHt_diag[r])
+            #WxHHt_VHt = (Wnew*HHt - VHt)
+           @turbo for i in HHt.colptr[r]:(HHt.colptr[r+1] -1)
+                WxHHt_VHt[HHt.rowval[i]] += ((HHt.nzval[i]*Wnew[r]) - (HHt.nzval[i]*Wold[r]))
             end
+            a += abs(Wnew[r] - Wold[r])
+            Wold[r] = Wnew[r]
         end
+        i += 1
     end
-    return frag_counts
 end
 
-precs = Counter(UInt32, UInt8, Float32, 9387261) #Prec counter
-
-prec_ids = [UInt32(x) for x in rand(1:1000, 1000000)]
-prec_intensity = [Float32(x) for x in randn(Float32, 1000000)]
-frag_matches = [(id, int) for (id, int) in zip(prec_ids, prec_intensity)]
-prosit_totals = [randn(Float32) for x in 1:9387261]
-function benchmark(precs::Counter{I,C,T}, frag_matches::Vector{Tuple{UInt32, Float32}}, prosit_totals::Vector{Float32}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    for match in frag_matches
-        inc!(precs, first(match), last(match));
-    end
-    counts = countFragMatches(precs, prosit_totals, 1);
-    sort!(precs,  prosit_totals, 20);
-    reset!(precs);
-    return counts
-    #return 0
+function sparseNMF(H::SparseMatrixCSC{Float32, Int64}, X::Vector{T}; λ::T = zero(T)) where {T<:AbstractFloat}
+    W = [abs(x) for x in randn(Float32, (1, H.m))] 
+    Wnew, Wold = copy(W[:]), copy(W[:])
+    #Initialize
+    HHt = H*H'
+    HHt_diag = collect(diag(HHt))
+    VHt = X'*Hs'
+    WxHHt_VHt = collect(W*HHt - VHt)
+    factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λ);
+    return Wnew
 end
 
-function benchmark(precs::Counter{I,C,T}, frag_matches::Vector{Tuple{UInt32, Float32}}, prosit_totals::Vector{Float32}, rep::Int) where {I,C<:Unsigned,T<:AbstractFloat} 
-    for i in 1:rep
-        benchmark(precs, frag_matches, prosit_totals)
+function factorSpectrum(Wnew::Vector{Float32}, Wold::Vector{Float32}, HHt_diag::SparseVector{Float32, Int64}, WxHHt_VHt::Vector{Float32}, HHt::SparseMatrixCSC{Float32, Int64})
+    a = Inf
+    i = 1
+    N = length(HHt.nzval)
+
+    while (abs(a) > 100.0) & (i < 32)
+        for r in 1:length(Wnew)
+            Wnew[r] = max(zero(Float32), Wold[r] - (WxHHt_VHt[r] + λ)/HHt_diag[r])
+            #WxHHt_VHt = (Wnew*HHt - VHt) #This is inefficient and is 99% of the computation. I don't need to rework the entire thing. 
+            update!(WxHHt_VHt, HHt, Wold[r], Wnew[r], r)
+            Wold[r] = Wnew[r]
+        end
+        #a = sum(Wnew .- W)
+        #W = copy(Wnew)
+        i += 1
     end
-    return nothing
+end
+
+function update!(WxHHt::Vector{Float32}, HHt::SparseMatrixCSC{Float32, Int64}, Wold::Float32, Wnew::Float32, col::Int)
+    for i in HHt.colptr[col]:min(HHt.colptr[col+1], length(HHt.nzval))
+        WxHHt[HHt.rowval[i]] += ((HHt.nzval[i]*Wnew) - (HHt.nzval[i]*Wold))
+        #Wnew[H.rowval[i]] = (HHt.nzval[i]*Wnew[col] - VHt[col]) - (HHt.nzval[i]*Wold[col] - VHt[col])
+    end
+end
+Hs = sparse(H.rowval[sortperm(H.rowval)],H.colptr[sortperm(H.rowval)], H.nzval[sortperm(H.rowval)])
+#=H_peak_pep = sparse(Hs')
+norm_facs = zeros(Float32, 200)
+for r in 1:(length(H_peak_pep.colptr)-1)
+    n = 1
+    for i in H_peak_pep.colptr[r]:(H_peak_pep.colptr[r+1] -1)
+        norm_facs[r] += X[H_peak_pep.rowval[i]]
+        n += 1
+    end
+    norm_facs[r]/n
+end
+for i in 1:length(Hs.rowval)
+    Hs.nzval[i] = Hs.nzval[i]./norm_facs[Hs.rowval[i]]
+end=#
+test = [X, H, W, Hs, H]
+@save "/Users/n.t.wamsley/Desktop/test.jld2" test
+W = [abs(x) for x in 100*randn(Float32, (1, 200))] #1x200
+
+
+Wnew = copy(W[:])
+Wold = copy(W[:])
+#Hs = Hs' #200x453
+HHt = Hs*Hs'
+HHt_diag = collect(diag(HHt))
+VHt = X*Hs'
+HHt = Hs*Hs'
+WxHHt_VHt = collect(W*HHt - VHt)
+@time factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, Float32(1e-3));
+#@profview factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt)
+#sum(weights .- Wnew[:])
+
+MHs =  Matrix(Hs)
+weights = (NMF.solve!(NMF.CoordinateDescent{Float32}(maxiter=1000, verbose = false, 
+    tol = 1, #Need a reasonable way to choose lambda?
+    update_H = false, #Important to keep H constant. 
+    regularization=:both,
+    l₁ratio = 1.0,
+    α = 1e5
+    ), X, W, Matrix(Hs)).W[1,:])
+
+weights[1:5]'
+Wnew[1:5]'
+
+
+W, H = NMF.randinit(X, 3)
+
+X = Float32[1 2 3; 2 4 6; 4 8 12]
+W, H = NMF.randinit(X, 3)
+
+struct SparseMatrix{Ti<:Integer, Tv<:AbstractFloat}
+    m::Int                  # Number of rows
+    n::Int                  # Number of columns
+    colptr::Vector{Ti}      # Column indices of stored values
+    rowval::Vector{Ti}      # Row indices of stored values
+    nzval::Vector{Tv}       # Stored values, typically nonzeros
 end

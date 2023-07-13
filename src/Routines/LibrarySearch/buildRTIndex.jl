@@ -44,3 +44,5 @@ function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{UInt
     end
     return rt_index
 end
+
+buildRTIndex(PSMs::DataFrame, bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)

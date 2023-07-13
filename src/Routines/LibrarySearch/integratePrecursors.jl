@@ -130,8 +130,8 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     if isplot == false
         return (integrate(rt, intensity, TrapezoidalFast()), (stop - start + 1))
     end
-    plot!(rt, chrom[:,:weight], seriestype=:scatter, show = true)
-    plot!(rt[max(1, start - 1):min(stop + 1, end)], intensity, show = true)
+    #plot!(rt, chrom[:,:weight], seriestype=:scatter, show = true)
+    #plot!(rt[max(1, start - 1):min(stop + 1, end)], intensity, show = true)
     return (integrate(rt, intensity, TrapezoidalFast()), (stop - start + 1))
 end
 
