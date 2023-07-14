@@ -11,8 +11,10 @@ function integrateRAW(
                     ms_file_idx::UInt32;
                     fragment_tolerance::Float64 = 40.0,
                     quadrupole_isolation_width::Float64 = 8.5,
-                    lambda::Float64 = 1e5,
-                    max_peak_width::Float64 = 2.0
+                    max_peak_width::Float64 = 2.0,
+                    λ::Float32 = Float32(2e12),
+                    max_iter::Int = 1000,
+                    nmf_tol::Float32(100.0)
                     ) where {T,U<:Real}
     
     ms2 = 0
@@ -25,8 +27,10 @@ function integrateRAW(
             ms2 += 1
         end
 
+        #Get peptides that could be in the spectra
         transitions = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
 
+        #Match fragments to peaks
         fragmentMatches = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
@@ -41,18 +45,12 @@ function integrateRAW(
             continue
         end
 
-        X, H, IDtoROW = buildDesignMatrix(fragmentMatches)
+        #Build templates for regrssion
+        X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches)
         
-        #Initialize weights for each precursor template. 
-        #Should find a more sophisticated way of doing this. 
-        W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
-        weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
-                                                    lambda_w = lambda, 
-                                                    tol = 100, #Need a reasonable way to choose lambda?
-                                                    update_H = false #Important to keep H constant. 
-                                                    ), X, W, H).W[1,:])
+        #Fit non-negative adaptive LASSO
+        weights = sparseNMF(Hs, Hst, X; λ=λ, max_iter=max_iter, tol=nmf_tol)
 
-        #For progress and debugging. 
         for key in keys(IDtoROW)
             push!(nmf[:precursor_idx], key)
             push!(nmf[:weight], weights[IDtoROW[key]])

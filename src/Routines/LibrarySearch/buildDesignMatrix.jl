@@ -132,7 +132,53 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
     return X, SparseMatrix(nrow, H_ncol, H_COLS, H_ROWS, H_VALS), SparseMatrix(nrow, U_ncol, U_COLS, U_ROWS, U_VALS), precID_to_row
 end
 
-function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}) #where {T<:AbstractFloat}
+function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}, seed_size::Int) #where {T<:AbstractFloat}
+
+    #Number of unique matched peaks.
+    #Should be getPeakInd(matches[end])???
+    #Number of rows equals the number of unique matched peaks
+    M = length(unique([getPeakInd(x) for x in matches]))
+    #Design matrix. One row for every precursor template. One column for every matched peak. 
+    H_COLS = zeros(Int64, length(matches))
+    H_ROWS = zeros(Int64, length(matches))
+    H_VALS = zeros(Float32, length(matches))
+
+
+    #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
+    X = zeros(Float32, M)
+
+    #Maps a precursor id to a row of H. 
+    precID_to_row = UnorderedDictionary{UInt32, UInt32}()
+
+    #Current highest row encountered
+    prec_row = zero(UInt32)
+    col = 0
+    #Number of unique peaks encountered. 
+    last_peak_ind = 0
+    for (i, match) in enumerate(matches)
+        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
+        if !haskey(precID_to_row,  getPrecID(match))
+            prec_row += one(UInt32)
+            insert!(precID_to_row, getPrecID(match), prec_row)
+        end
+
+        #If this peak has not been encountered yet, then start filling a new column
+        if getPeakInd(match) != last_peak_ind
+            col += 1
+            last_peak_ind = getPeakInd(match)
+            X[col] = getIntensity(match)
+        end
+        row = precID_to_row[getPrecID(match)]
+        H_COLS[i] = col
+        H_ROWS[i] = row
+        H_VALS[i] = getPredictedIntenisty(match)
+    end
+    H_ncol = col
+    nrow = length(keys(precID_to_row))
+    return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row
+end
+
+#=function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}) #where {T<:AbstractFloat}
 
     #Number of unique matched peaks.
     #Should be getPeakInd(matches[end])???
@@ -174,5 +220,5 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}) #where {T<:A
     end
 
     return X, H, precID_to_row
-end
+end=#
 

@@ -54,6 +54,7 @@ function update!(WxHHt::Vector{Float32}, HHt::SparseMatrixCSC{Float32, Int64}, W
     end
 end
 Hs = sparse(H.rowval[sortperm(H.rowval)],H.colptr[sortperm(H.rowval)], H.nzval[sortperm(H.rowval)])
+Hst = 
 #=H_peak_pep = sparse(Hs')
 norm_facs = zeros(Float32, 200)
 for r in 1:(length(H_peak_pep.colptr)-1)
