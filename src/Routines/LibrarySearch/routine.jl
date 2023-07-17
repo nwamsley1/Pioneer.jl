@@ -178,6 +178,8 @@ refinePSMs!(PSMs, prosit_precs)
 
 rt_index = buildRTIndex(best_psms)
 
+@time rankPSMs!(PSMs, n_folds = 2, n_trees = 200, max_depth = 10, features = 10, fraction = 0.001)
+@time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 
 for i in [0.001, 0.002, 0.0005]
     @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = 10, features = 10, fraction = i)

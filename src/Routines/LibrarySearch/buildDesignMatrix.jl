@@ -132,7 +132,7 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vec
     return X, SparseMatrix(nrow, H_ncol, H_COLS, H_ROWS, H_VALS), SparseMatrix(nrow, U_ncol, U_COLS, U_ROWS, U_VALS), precID_to_row
 end
 
-function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}, seed_size::Int) #where {T<:AbstractFloat}
+function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}) #where {T<:AbstractFloat}
 
     #Number of unique matched peaks.
     #Should be getPeakInd(matches[end])???

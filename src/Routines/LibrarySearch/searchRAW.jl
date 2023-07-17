@@ -88,7 +88,7 @@ function SearchRAW(
         #times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
         X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
        
-        return X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses
+        #return X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
         W = reshape([Float32(1000) for x in range(1,H.m)], (1, H.m))

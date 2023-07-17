@@ -7,9 +7,10 @@ function factorSpectrum(Wnew::Matrix{T}, Wold::Matrix{T}, HHt_diag::Vector{T}, W
     while (abs(a) > tol) & (i < max_iter)
         a = 0
         for r in 1:length(Wnew)
-            if iszero(Wnew[r]) #Is this legitimate? Several X speed boost from ignoring weights after they are set to zero. 
-                continue
-            end
+            
+            #if iszero(Wnew[r]) #Is this legitimate? Several X speed boost from ignoring weights after they are set to zero. 
+            #    continue
+            #end
             Wnew[r] = max(zero(T), Wold[r] - (WxHHt_VHt[r] + (λs[r]))/HHt_diag[r])
             for i in HHt.colptr[r]:(HHt.colptr[r+1] -1)
                 WxHHt_VHt[HHt.rowval[i]] += HHt.nzval[i]*(Wnew[r] - Wold[r])
@@ -21,7 +22,7 @@ function factorSpectrum(Wnew::Matrix{T}, Wold::Matrix{T}, HHt_diag::Vector{T}, W
     end
 end
 
-function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
+function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), γ::T = zero(T)/2, max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
 
     Wnew = 100*ones(T, (1, H.m))
     Wold = copy(Wnew)
@@ -34,11 +35,11 @@ function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, 
     VHt = X'*Ht
     WxHHt_VHt = collect(Wnew*HHt - VHt)
 
-    ##OLS estimate since penalties are zero 
+    ##OLS estimate with non-negative constraint since penalties are zero 
     factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λs, max_iter, tol);
 
-    #Adaptive weights 
-    setLambdas!(λs, λ, Wnew)
+    #Set adaptive weights 
+    setLambdas!(λs, Float32(λ*sqrt(H.m)), γ, Wnew)
 
     #Addaptive LASSO estimation 
     factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λs, max_iter, tol);
@@ -46,10 +47,16 @@ function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, 
 
 end
 
-function setLambdas!(λs::Vector{T},λ::T, W::Matrix{T}) where {T<:AbstractFloat}
-    for i in 1:length(λs)
-        if !isinf(λ/W[i])
-            λs[i] = λ/W[i]
+function setLambdas!(λs::Vector{T}, λ::T, γ::T, W::Matrix{T}, adaptive::Bool = true) where {T<:AbstractFloat}
+    if adaptive
+        for i in 1:length(λs)
+            if !isinf(λ/(W[i]))
+                λs[i] = λ/(W[i]^γ)
+            end
+        end
+    else
+        for i in 1:length(λs)
+                λs[i] = λ
         end
     end
 end
