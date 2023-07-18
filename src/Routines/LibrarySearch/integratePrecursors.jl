@@ -1,26 +1,4 @@
-CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_071423.csv", PSMs)
-best_psms = combine(sdf -> sdf[argmax(sdf.hyperscore),:], groupby(PSMs[PSMs[:,:q_values].<=0.1,:], :precursor_idx))
-transform!(best_psms, AsTable(:) => ByRow(psm -> prec_mzs[psm[:precursor_idx]]) => :prec_mz)
-sort!(best_psms, :RT)
-CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_071423.csv", best_psms)
-rt_index = buildRTIndex(best_psms[:,:RT],best_psms[:,:prec_mz], best_psms[:,:precursor_idx], 0.1)
-@save "/Users/n.t.wamsley/Projects/TEST_DATA/rt_index.jld2" rt_index
 
-chroms = integrateRAW(MS_TABLE, rt_index, prosit_detailed, one(UInt32), fragment_tolerance=15.6, λ=Float32(5e3) , γ=Float32(0), max_peak_width = 2.0, scan_range = (0, 300000));
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, psm[:precursor_idx], isplot = false)) => [:intensity, :count, :SN]);
-non_zero = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>5),:];
-println("Signal to Noise ", mean(non_zero[:,:SN]))
-@time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
-println("TARGETS at 10%FDR Intensity", sum(non_zero[non_zero[:,:decoy].==false,:intensity])*mean(non_zero[:,:SN]))
-println("TARGETS at 10%FDR ", sum(non_zero[:,:q_values].<=0.1))
-println("TARGETS at 1%FDR ", sum(non_zero[:,:q_values].<=0.01))
-println("TARGETS at 1%FDR intensity ", sum(non_zero[:,:q_values].<=0.01)*mean(non_zero[:,:SN]))
-println("TARGET/DECOY intensity ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:intensity])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:intensity]))
-println("TARGET/DECOY count ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:count])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:count]))
-
-#targets = sum(best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>5),[:precursor_idx, :matched_ratio,:scribe_score,:spectral_contrast_all,:total_ions,:decoy,:intensity,:count]][:,:decoy].!=true)
-#decoys = sum(best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>5),[:precursor_idx, :matched_ratio,:scribe_score,:spectral_contrast_all,:total_ions,:decoy,:intensity,:count]][:,:decoy].!=false)
-4171604, RT = 132.67, mz = 848.77686
 function integrateRAW(
                     spectra::Arrow.Table, 
                     rt_index::retentionTimeIndex{T, U},
@@ -146,6 +124,20 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     return (Float64(integrate(rt, intensity, TrapezoidalFast())), (stop - start + 1), Float64(sum(chrom[start:stop,:weight])/sum(chrom[:,:weight])))
 end
 
+#=
+chroms = integrateRAW(MS_TABLE, rt_index, prosit_detailed, one(UInt32), fragment_tolerance=15.6, λ=Float32(5e3) , γ=Float32(0), max_peak_width = 2.0, scan_range = (0, 300000));
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, psm[:precursor_idx], isplot = false)) => [:intensity, :count, :SN]);
+non_zero = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>5),:];
+println("Signal to Noise ", mean(non_zero[:,:SN]))
+@time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
+println("TARGETS at 10%FDR Intensity", sum(non_zero[non_zero[:,:decoy].==false,:intensity])*mean(non_zero[:,:SN]))
+println("TARGETS at 10%FDR ", sum(non_zero[:,:q_values].<=0.1))
+println("TARGETS at 1%FDR ", sum(non_zero[:,:q_values].<=0.01))
+println("TARGETS at 1%FDR intensity ", sum(non_zero[:,:q_values].<=0.01)*mean(non_zero[:,:SN]))
+println("TARGET/DECOY intensity ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:intensity])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:intensity]))
+println("TARGET/DECOY count ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:count])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:count]))
+
+
 integratePrecursor(chroms, UInt32(4171604), isplot = true)
 integratePrecursor(chroms, UInt32(1648748), isplot = true)
 integratePrecursor(chroms, UInt32(801239), isplot = true)
@@ -157,39 +149,10 @@ integratePrecursor(chroms, UInt32( 1367150 ), isplot = true)
 integratePrecursor(chroms, UInt32(  4259798 ), isplot = true)
 
 integratePrecursor(chroms, UInt32(   3574807 ), isplot = true)
-
+integratePrecursor(chroms, UInt32(  2642152), isplot = true)
 
 integratePrecursor(chroms, UInt32(   508178 ), isplot = true)
+=#
 
-plotChromatogram(test_integrate_gb, UInt32(801239))
-plotChromatogram(test_integrate_gb, UInt32(1648748)) #potential interference at tail. 
-plotChromatogram(test_integrate_gb, UInt32(2537365))
 
-integratePrecursor(test_integrate_gb, UInt32( 527551))
 
-integratePrecursor(test_integrate_gb, UInt32(3012890))
-test_integrate_gb[(precursor_idx=0x008f3a26,)]
-
-for i in [20]
-    @time rankPSMs!(non_zero, n_folds = 2, n_trees = 500, max_depth = i, features = 10, fraction = 0.5)
-    @time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
-    println("10% ", length(unique(non_zero[(non_zero[:,:q_values].<=0.1) .& (non_zero[:,:decoy].==false), :precursor_idx])))
-    println("1% ", length(unique(non_zero[(non_zero[:,:q_values].<=0.01) .& (non_zero[:,:decoy].==false), :precursor_idx])))
-
-end
-
-#=prec_mzs = zeros(Float32, length(prosit_precs))
-for prec_bin in ProgressBar(prosit_index_intensities.precursor_bins)
-    for prec in prec_bin.precs
-        prec_mzs[getPrecID(prec)] = getPrecMZ(prec)
-    end
-end=#
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, psm[:precursor_idx])) => [:intensity, :count])
-    
-sort(best_psms[best_psms[:,:intensity].>0.0,[:decoy,:precursor_idx,:RT,:intensity,:count,:matched_ratio,:spectral_contrast_all]], :matched_ratio)
-best_psms
-
-histogram(log2.(best_psms[best_psms[:,:decoy],:intensity] .+ 1), normalize=:pdf, alpha = 0.5)
-histogram!(log2.(max.(best_psms[best_psms[:,:decoy].==false,:intensity], 0.0) .+ 1), normalize=:pdf, alpha = 0.5)
-
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_integrate_gb, psm[:precursor_idx])) => [:intensity, :count])
