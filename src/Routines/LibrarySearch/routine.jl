@@ -129,7 +129,7 @@ end
 function rankPSMs!(PSMs::DataFrame; n_folds::Int = 3, n_trees::Int = 500, features::Int = 10, max_depth::Int = 10, fraction::AbstractFloat = 0.1)
    
     #X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:chebyshev,:city_block,:matched_ratio,:intensity,:count]])
-    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio]])
+    X = Matrix(PSMs[:,[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN]])
     X_labels = PSMs[:, :decoy]
     permutation = randperm(size(PSMs)[1])
     fold_size = length(permutation)÷n_folds
@@ -148,7 +148,7 @@ function rankPSMs!(PSMs::DataFrame; n_folds::Int = 3, n_trees::Int = 500, featur
         model = build_forest(train_classes, train_features, features, n_trees, fraction, max_depth)
         probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
         PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio][sortperm(split_importance(model))])
+        println([:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN][sortperm(split_importance(model))])
     end
     #model = build_forest(X_labels, X', 4, 2000, 0.5, 3)
     #probs = apply_forest_proba(model, X',[true, false])
@@ -190,7 +190,25 @@ end
 for i in [5, 10, 15, 20]
     @time rankPSMs!(PSMs, n_folds = 2, n_trees = 100, max_depth = i, features = 10, fraction = 0.001)
     @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
-    println("TEST ", length(unique(PSMs[(PSMs[:,:q_values].<=0.1) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+    println("10% ", length(unique(PSMs[(PSMs[:,:q_values].<=0.1) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+    println("1% ", length(unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+
+end
+
+for i in [5, 10, 15, 20]
+    @time rankPSMs!(non_zero, n_folds = 2, n_trees = 100, max_depth = i, features = 10, fraction = 0.5)
+    @time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
+    println("10% ", length(unique(non_zero[(non_zero[:,:q_values].<=0.1) .& (non_zero[:,:decoy].==false), :precursor_idx])))
+    println("1% ", length(unique(non_zero[(non_zero[:,:q_values].<=0.01) .& (non_zero[:,:decoy].==false), :precursor_idx])))
+
+end
+
+for i in [10]
+    @time rankPSMs!(PSMs, n_folds = 2, n_trees = 1000, max_depth = i, features = 10, fraction = 0.001)
+    @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
+    println("10% ", length(unique(PSMs[(PSMs[:,:q_values].<=0.1) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+    println("1% ", length(unique(PSMs[(PSMs[:,:q_values].<=0.01) .& (PSMs[:,:decoy].==false), :precursor_idx])))
+
 end
 
 

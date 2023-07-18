@@ -12,9 +12,13 @@ function SearchRAW(
                     min_frag_count::Int64 = 4,
                     min_matched_ratio::Float32 = Float32(0.8),
                     min_spectral_contrast::Float32 = Float32(0.65),
-                    lambda::Float64 = 1e3,
+                    λ::Float32 = Float32(1e3),
+                    γ::Float32 = zero(Float32),
                     scan_range::Tuple{Int64, Int64} = (0, 0), 
                     max_peaks::Int = 200, 
+                    max_iter::Int = 1000,
+                    nmf_tol::Float32 = Float32(100.0),
+
                     #fragment_match_ppm::U,
                     data_type::Type{T} = Float64
                     ) where {T<:Real}
@@ -86,15 +90,16 @@ function SearchRAW(
         end
 
         #times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
-        X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
-       
+        X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
+        #eturn Hst
+        #println(typeof(Hs))
         #return X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses
         #Initialize weights for each precursor template. 
         #Should find a more sophisticated way of doing this. 
-        W = reshape([Float32(1000) for x in range(1,H.m)], (1, H.m))
+        #W = reshape([Float32(1000) for x in range(1,H.m)], (1, H.m))
         #W = reshape([Float32(1000) for x in range(1,size(H)[1])], (1, size(H)[1]))
         
-        weights = W[1,:]
+        times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
         #=times[:nmf] += @elapsed weights = (NMF.solve!(NMF.MultUpdate{Float32}(maxiter=50, verbose = false, 
                                                     lambda_w = lambda, 
                                                     tol = 100, #Need a reasonable way to choos lambda?
@@ -102,7 +107,7 @@ function SearchRAW(
                                                     ), X, W, H).W[1,:])=#
 
         #times[:metrics] += @elapsed scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(H, X, UNMATCHED)
-        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(H, X, UNMATCHED)
+        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(Hst, X, matched_cols)
         
         #For progress and debugging. 
 
@@ -132,13 +137,15 @@ function SearchRAW(
     return DataFrame(scored_PSMs)
 end
 
-X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
-min_frag_count = 4, 
-topN = 200, 
-fragment_tolerance = 15.6, 
-lambda = 1e5, 
-max_peaks = 1000, 
-scan_range = (101357, 101357), 
-precursor_tolerance = 20.0,
-min_spectral_contrast =  Float32(0.65)
-)
+X, H, UNMATCHED, IDtoROW, fragmentMatches, fragmentMisses = 
+test_psms = SearchRAW(MS_TABLE, prosit_totals, prosit_index_intensities, prosit_detailed, UInt32(1), 
+       min_frag_count = 4, 
+       topN = 200, 
+       fragment_tolerance = 15.6, 
+       λ = Float32(1e4), 
+       γ =Float32(1),
+       max_peaks = 1000, 
+       scan_range = (101357, 101357), 
+       precursor_tolerance = 20.0,
+       min_spectral_contrast =  Float32(0.65)
+       )

@@ -196,4 +196,6 @@ weights = (NMF.solve!(NMF.CoordinateDescent{Float32}(maxiter=1000, verbose = fal
            shuffle=true
            ), X_, W, Hs_mat).W[1,:])
            =#
+
+
 =#
