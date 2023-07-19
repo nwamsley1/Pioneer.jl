@@ -32,10 +32,23 @@ end
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_list.jld2" frag_list
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2" frag_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/precursor_list.jld2" precursor_list
-for i in 1:length(frag_list)
 
+prosit_index_5ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_5irt.jld2" prosit_index_5ppm_5irt
+prosit_index_5ppm_5irt = nothing
+
+prosit_index_5ppm_10irt = buildFragmentIndex!(frag_list, Float32(5.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_10irt.jld2" prosit_index_5ppm_10irt
+prosit_index_5ppm_10irt = nothing
+
+prosit_index_3ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_3ppm_10irt.jld2" prosit_index_3ppm_10irt
+prosit_index_3ppm_5irt = nothing
+
+
+for i in 1:length(prosit_index_5ppm_5irt.precursor_bins)
+    sort!(prosit_index_5ppm_5irt.precursor_bins[i], by = x->getPrecMZ(x))
 end
-
 
 #h = ecdf(rand(100))
 #h()

@@ -246,6 +246,8 @@ struct RTBin{T<:AbstractFloat}
     prec_bin::UInt32
 end
 RTBin() = RTBin(0.0, 0.0, UInt32(0))
+getLow(rt::RTBin{T}) where {T<:AbstractFloat} = rt.lb
+getHigh(rt::RTBin{T}) where {T<:AbstractFloat} = rt.ub
 
 struct OuterFragmentIndex{T<:AbstractFloat}
     rt_bins::Vector{RTBin{T}}
