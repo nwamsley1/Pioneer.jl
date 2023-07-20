@@ -1,10 +1,11 @@
+prec_id = 1
 target_frag_list, target_frag_detailed, target_precursor_list, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_targets.csv",
                                                                                         precision = Float32,
                                                                                         isDecoys = false)
 
 decoy_frag_list, decoy_frag_detailed, decoy_precursor_list, prec_id = readPrositLib("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_decoys.csv",
                                                                                         precision = Float32,
-                                                                                        isDecoys = false,
+                                                                                        isDecoys = true,
                                                                                         first_prec_id = prec_id)
 #Merge target and decoy lists
 frag_list = append!(target_frag_list, decoy_frag_list)
@@ -18,11 +19,12 @@ target_precursor_list = nothing
 decoy_precursor_list = nothing
 #Normalize
 function NormalizeIntensities!(frag_list::Vector{FragmentIon{T}}, prec_list::Vector{LibraryPrecursor}) where {T<:AbstractFloat}
-    for i in 1:length(frag_list)
+    for i in ProgressBar(1:length(frag_list))
         prec_id = frag_list[i].prec_id
         frag_list[i].prec_intensity[] = frag_list[i].prec_intensity[]/prec_list[prec_id].total_intensity[]
     end
 end
+NormalizeIntensities!(frag_list, precursor_list)
 #Save to Disc
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_list.jld2" frag_list
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2" frag_detailed
@@ -33,22 +35,56 @@ end
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2" frag_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/precursor_list.jld2" precursor_list
 
-prosit_index_5ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0))
+prosit_index_5ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0), Float32(5.0))
+for i in 1:length(prosit_index_5ppm_5irt.precursor_bins)
+    sort!(prosit_index_5ppm_5irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+end
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_5irt.jld2" prosit_index_5ppm_5irt
 prosit_index_5ppm_5irt = nothing
 
+prosit_index_5ppm_10irt = buildFragmentIndex!(frag_list, Float32(5.0), Float32(10.0))
+for i in 1:length(prosit_index_5ppm_10irt.precursor_bins)
+    sort!(prosit_index_5ppm_10irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+end
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_10irt.jld2" prosit_index_5ppm_10irt
+prosit_index_5ppm_10irt = nothing
+
+prosit_index_5ppm_15irt = buildFragmentIndex!(frag_list, Float32(5.0), Float32(15.0))
+for i in 1:length(prosit_index_5ppm_15irt.precursor_bins)
+    sort!(prosit_index_5ppm_15irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+end
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
+prosit_index_5ppm_15irt = nothing
+
+prosit_index_5ppm_20irt = buildFragmentIndex!(frag_list, Float32(5.0), Float32(20.0))
+for i in 1:length(prosit_index_5ppm_20irt.precursor_bins)
+    sort!(prosit_index_5ppm_20irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+end
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_20irt.jld2" prosit_index_5ppm_20irt
+prosit_index_5ppm_20irt = nothing
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_20irt.jld2" prosit_index_5ppm_15irt
+
 prosit_index_5ppm_10irt = buildFragmentIndex!(frag_list, Float32(5.0))
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_10irt.jld2" prosit_index_5ppm_10irt
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_10irt.jld2" prosit_index_5ppm_10irt
+for i in 1:length(prosit_index_5ppm_5irt.precursor_bins)
+    sort!(prosit_index_5ppm_5irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+end
 prosit_index_5ppm_10irt = nothing
 
 prosit_index_3ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0))
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_3ppm_10irt.jld2" prosit_index_3ppm_10irt
 prosit_index_3ppm_5irt = nothing
 
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_5irt.jld2" prosit_index_5ppm_5irt
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2" frag_detailed
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/precursor_list.jld2" precursor_list
 
 for i in 1:length(prosit_index_5ppm_5irt.precursor_bins)
     sort!(prosit_index_5ppm_5irt.precursor_bins[i], by = x->getPrecMZ(x))
 end
+
 
 #h = ecdf(rand(100))
 #h()
@@ -56,7 +92,12 @@ using Combinatorics, StatsBase, Distributions
 struct KendallTau{T<:AbstractFloat}
     ecdfs::Vector{ECDF{Vector{T}, Weights{Float64, Float64, Vector{Float64}}}}
 end
-KendallTau(dt::DataType) = KendallTau(Vector{ECDF{Vector{dt}, Weights{Float64, Float64, Vector{Float64}}}}(undef, 10))
+
+function KendallTau(dt::DataType)
+    kt = KendallTau(Vector{ECDF{Vector{dt}, Weights{Float64, Float64, Vector{Float64}}}}(undef, 10))
+    setECDFs!(kt)
+    return kt
+end
 
 function setECDFs!(kt::KendallTau{T}) where {T<:AbstractFloat}
     function setECDF!(kt::KendallTau{T}, N::Int)

@@ -1,4 +1,4 @@
-function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::AbstractFloat, frag_max::AbstractFloat) where {T<:AbstractFloat}
+function findFirstFragmentBin(frag_index::Vector{FragBin{Float32}}, frag_min::Float32, frag_max::Float32) #where {T<:AbstractFloat}
     #Binary Search
     lo, hi = 1, length(frag_index)
     potential_match = nothing
@@ -23,7 +23,7 @@ function findFirstFragmentBin(frag_index::Vector{FragBin{T}}, frag_min::Abstract
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function findFirstRTBin(rt_bins::Vector{RTBin{T}}, rt_min::AbstractFloat, rt_max::AbstractFloat) where {T<:AbstractFloat}
+function findFirstRTBin(rt_bins::Vector{RTBin{Float32}}, rt_min::Float32, rt_max::Float32)# where {T<:AbstractFloat}
     #Binary Search
     lo, hi = 1, length(rt_bins)
     potential_match = nothing
@@ -31,7 +31,7 @@ function findFirstRTBin(rt_bins::Vector{RTBin{T}}, rt_min::AbstractFloat, rt_max
 
         mid = (lo + hi) ÷ 2
 
-        if (rt_min) <= getLow(rt_bins[mid])
+        if (rt_min) <= getHigh(rt_bins[mid])
             if (rt_max) >= getHigh(rt_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
                 potential_match = mid
             end
@@ -48,9 +48,9 @@ function findFirstRTBin(rt_bins::Vector{RTBin{T}}, rt_min::AbstractFloat, rt_max
     return potential_match#, Int64(getPrecBinID(frag_index[potential_match]))
 end
 
-function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS1::Vector{Union{Missing, U}}, prec_ppm::AbstractFloat, intensity::Float32, precursor_bin::PrecursorBin{T}, window_min::Float64, window_max::Float64) where {T,U<:AbstractFloat}
-   
-    N = getLength(precursor_bin)
+function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, window_min::Float32, window_max::Float32)
+
+   N = getLength(precursor_bin)
     lo, hi = 1, N
 
     while lo <= hi
@@ -81,7 +81,8 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
 
     window_stop = hi
 
-    function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS1::Vector{Union{Missing, U}}, prec_ppm::AbstractFloat, intensity::Float32, precursor_bin::PrecursorBin{T}, start::Int, stop::Int) where {T,U<:AbstractFloat}
+
+    function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, start::Int, stop::Int)# where {T,U<:AbstractFloat}
         #initialize
         #=precursor_idx = start
         ms1 = MzFeature(MS1[ms1_idx], ppm = Float32(prec_ppm))
@@ -111,14 +112,16 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::In
             inc!(precs, getPrecID(prec), getIntensity(prec))
         end
     end
-
-    addFragmentMatches!(precs, ms1_idx, MS1, prec_ppm, intensity, precursor_bin, window_start, window_stop)
+    
+    #window_start= searchsortedfirst(precursor_bin.precs, window_min, lt=(r,x)->r.prec_mz<x)
+    #window_stop =  searchsortedlast(precursor_bin.precs, window_max, lt=(x, r)->r.prec_mz>x)
+    addFragmentMatches!(precs, precursor_bin, window_start, window_stop)
 
     return 
 
 end
 
-function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS1::Vector{Union{Missing, U}}, prec_ppm::AbstractFloat, intensity::Float32, frag_index::FragmentIndex{T}, min_frag_bin::Int64, frag_min::Float64, frag_max::Float64, prec_mz::Float32, prec_tol::Float64) where {T,U<:AbstractFloat}
+function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, iRT_low::Float32, iRT_high::Float32, frag_index::FragmentIndex{Float32}, min_frag_bin::Int64, frag_min::Float32, frag_max::Float32, prec_mz::Float32, prec_tol::Float32)# where {T,U<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
@@ -145,9 +148,29 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS
         if (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
             return frag_bin
         else
+
             #RT Information Goes Here
-            #rt_bin = findFirstRTBin(frag_index.rt_bins[rt_bin], r)
-            searchPrecursorBin!(precs, ms1_idx, MS1, prec_ppm, intensity, getPrecursorBin(frag_index, UInt32(frag_bin)), prec_min, prec_max)
+            rt_bin_idx = frag_index.fragment_bins[frag_bin].sub_bin
+            rt_sub_bin = findFirstRTBin(frag_index.rt_bins[rt_bin_idx], iRT_low, iRT_high)
+            #rt_sub_bin = searchsortedfirst(frag_index.rt_bins[rt_bin_idx], iRT_low, lt=(r, x)->r.ub<x)
+            #println("rt_sub_bin $rt_sub_bin")
+            if rt_sub_bin === nothing
+                frag_bin += 1
+                continue
+            end
+            i = 1
+            while (getLow(frag_index.rt_bins[rt_bin_idx][rt_sub_bin]) < iRT_high)
+                prec_bin = frag_index.rt_bins[rt_bin_idx][rt_sub_bin].sub_bin
+                searchPrecursorBin!(precs, getPrecursorBin(frag_index, prec_bin), prec_min, prec_max)
+                rt_sub_bin += one(UInt32)
+                i += 1
+                if rt_sub_bin > length(frag_index.rt_bins[rt_bin_idx])
+                    break
+                end
+            end
+            #println("i $i")
+            #println("rt_sub_bin last $rt_sub_bin")
+            #println("length(frag_index.rt_bins[rt_bin_idx]) ", length(frag_index.rt_bins[rt_bin_idx]))
             frag_bin += 1
         end
 
@@ -157,14 +180,14 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, ms1_idx::Int, MS
     return frag_bin - 1
 end
 
-function searchScan!(precs::Counter{UInt32, UInt8, Float32}, prec_norms::Vector{Float32}, f_index::FragmentIndex{T}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::AbstractFloat, frag_ppm::AbstractFloat, prec_ppm::AbstractFloat, width::AbstractFloat; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {T,U<:AbstractFloat}
+function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIndex{Float32}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::Float32, iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, prec_ppm::Float32, width::Float32; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {U<:AbstractFloat}
     
-    getFragTol(mass::U, ppm::AbstractFloat) = mass*(1 - ppm/1e6), mass*(1 + ppm/1e6)
+    getFragTol(mass::Float32, ppm::Float32) = mass*(1 - ppm/Float32(1e6)), mass*(1 + ppm/Float32(1e6))
 
-    function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, prec_norms::Vector{Float32}, topN::Int, min_frag_count::Int, min_ratio::Float32)
-        match_count = countFragMatches(precs, prec_norms, min_frag_count, min_ratio)
+    function filterPrecursorMatches!(precs::Counter{UInt32, UInt8, Float32}, topN::Int, min_frag_count::Int, min_ratio::Float32)
+        match_count = countFragMatches(precs, min_frag_count, min_ratio)
         prec_count = getSize(precs) - 1
-        sort!(precs, prec_norms, topN);
+        sort!(precs, topN);
         return match_count, prec_count
     end
     #println("TEST")
@@ -186,11 +209,12 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, prec_norms::Vector{
             continue
         end
 
-        FRAGMIN, FRAGMAX = getFragTol(mass, frag_ppm) 
-
-        min_frag_bin = queryFragment!(precs, ms1_idx, MS1, prec_ppm, intensity, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
+        FRAGMIN, FRAGMAX = getFragTol(mass, frag_ppm)
+        #println(typeof(width))
+        #println("TEST")
+        min_frag_bin = queryFragment!(precs, iRT_low, iRT_high, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
     end 
 
-    return filterPrecursorMatches!(precs, prec_norms, topN, min_frag_count, min_ratio)
+    return filterPrecursorMatches!(precs, topN, min_frag_count, min_ratio)
 end
 

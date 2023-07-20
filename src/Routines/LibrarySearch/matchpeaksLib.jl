@@ -96,7 +96,7 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(masses::Vector{Union{Missing, T}}, frag_mz::U, mz_high::U, peak::Int; δ::U = 0.0) where {T,U<:AbstractFloat}
+function getNearest(masses::Vector{Union{Missing, T}}, frag_mz::U, mz_high::AbstractFloat, peak::Int; δ::AbstractFloat = 0.0) where {T,U<:AbstractFloat}
     smallest_diff = abs(masses[peak]+ δ - frag_mz)
     best_peak = peak
     i = 0
@@ -151,7 +151,7 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, transition::LibraryFragment{Float64}, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat}
+function setFragmentMatch!(matches::Vector{FragmentMatch{T}}, transition::LibraryFragment{Float32}, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat}
     #function updateFragmentMatch!(match::FragmentMatch{T}, mass::T, intensity::T, peak_ind::Int64) where {T<:AbstractFloat}
     #    match.intensity += intensity
     #    match.match_mz = mass
@@ -219,7 +219,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{FragmentMatch{T}}, Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat}
+function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{FragmentMatch{T}}, Transitions::Vector{LibraryFragment{Float32}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat}
 
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
@@ -227,7 +227,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, unmatched::Vector{Fragme
     peak, transition, match = 1, 1, 1
     unmatched_idx = 1
 
-    function getPPM(transition::LibraryFragment{Float64}, ppm::Float64)
+    function getPPM(transition::LibraryFragment{Float32}, ppm::Float64)
         mz = getFragMZ(transition)
         tol = ppm*mz/1e6
         return mz - tol, mz + tol
@@ -369,7 +369,7 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Transitions::Vector{LibraryFragment{Float64}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat}
+function matchPeaks(Transitions::Vector{LibraryFragment{Float32}}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat}
     if count_unmatched
         matches = Vector{FragmentMatch{T}}()
         unmatched = Vector{FragmentMatch{T}}()

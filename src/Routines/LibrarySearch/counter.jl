@@ -44,10 +44,10 @@ function inc!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {I,C<:Unsigned,
 end
 
 import Base.sort!
-function sort!(counter::Counter{I,C,T}, prec_norms::Vector{Float32}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
+function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
     sort!(
                 @view(counter.ids[1:counter.matches]), 
-                by = id -> getMatchedRatio(counter, prec_norms, id),
+                by = id -> last(counter.counts[id]),#getMatchedRatio(counter, prec_norms, id),
                 rev = true,
                 alg=PartialQuickSort(1:topN)
              )
@@ -64,14 +64,14 @@ function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat}
     return nothing
 end
 
-function countFragMatches(c::Counter{I,C,T}, prec_norms::Vector{Float32}, min_count::Int, min_ratio::T) where {I,C<:Unsigned,T<:AbstractFloat} 
+function countFragMatches(c::Counter{I,C,T}, min_count::Int, min_ratio::T) where {I,C<:Unsigned,T<:AbstractFloat} 
     frag_counts = 0
     for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(c, id)
         frag_counts += frag_count
         if frag_count >= min_count
-            if getMatchedRatio(c, prec_norms, id)>=min_ratio
+            if last(c.counts[id])>=0.45
                     c.ids[c.matches + 1] = c.ids[i]
                     c.matches += 1
             end

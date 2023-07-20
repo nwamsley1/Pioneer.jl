@@ -48,11 +48,14 @@ end
                         min_spectral_contrast =  Float32(0.65)
                         )
 
-refinePSMs!(PSMs, prosit_precs)
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN]
-@time rankPSMs!(PSMs, features, n_folds = 2, n_trees = 100, max_depth = 15, features = 10, fraction = 0.001)
+refinePSMs!(PSMs, precursor_list)
+
+PSMs[:,:iRT_pred] = [linear_spline(x) for x in PSMs[:,:RT]]
+PSMs[:,:RT_error] = abs.(PSMs[:,:iRT] .- PSMs[:,:iRT_pred])
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
+@time rankPSMs!(PSMs, features, n_folds = 2, n_trees = 100, max_depth = 15, n_features = 10, fraction = 0.001)
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
-#########
+#########PS
 #save psms
 #########
 #CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_071423.csv", PSMs)

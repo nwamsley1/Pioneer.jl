@@ -200,7 +200,7 @@ function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where
     push!(getPrecBins(fi), prec_bin)
 end
 
-function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
+function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat, rt_size::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
     println("sorting...")
     sort!(frag_ions, by = x->x.frag_mz)
     println("sorted")
@@ -265,7 +265,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
             start_rt = frag_ions[start].prec_rt
             start_rt_idx = start
             for i in start:last_frag_in_bin
-                if (frag_ions[i].prec_rt - frag_ions[start_rt_idx].prec_rt) > 5
+                if (frag_ions[i].prec_rt - frag_ions[start_rt_idx].prec_rt) > rt_size
 
                     push!(frag_index.rt_bins[bin] , RTBin(frag_ions[start_rt_idx].prec_rt,
                                                             frag_ions[i].prec_rt,

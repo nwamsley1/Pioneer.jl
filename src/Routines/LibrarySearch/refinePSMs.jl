@@ -1,30 +1,15 @@
 
-function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss::AbstractEstimator = TauEstimator{TukeyLoss}(), maxiter = 200, min_spectral_contrast::AbstractFloat = 0.8)
+function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; maxiter = 200, min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50)
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] < 10.0) => :nmf)
-    function predictRTs!(PSMs::DataFrame; maxiter = 200, min_spectral_contrast::AbstractFloat = 0.95)
-        best_PSMs = combine(sdf -> sdf[argmax(sdf.spectral_contrast_all), :], groupby(PSMs, [:scan_idx]))
-        targets = best_PSMs[:,:decoy].==false
-        
-        spectral_contrast = best_PSMs[:,:spectral_contrast_all].>=min_spectral_contrast
-        
-        best_matches = targets .& spectral_contrast
-    
-        #Predicted iRTs
-        iRTs = best_PSMs[:,:iRT][best_matches]#,# ones(Float32, sum(best_matches)))
-        #Emperical retention times
-        RTs = best_PSMs[:,:RT][best_matches]
-        ns1 = Splines2.ns_(collect(range(-25.0, length=50, stop=160.0)),df=4,intercept=true);
-        X = ns1(iRTs);
-        fit1 = lm(X,RTs);
-        PSMs[:,:RT_pred] =  GLM.predict(fit1, ns1(PSMs[:,:iRT]))
-        PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])#abs.(PSMs[:,:RT] .- GLM.predict(fit1, ns1(PSMs[:,:iRT])))
-        return # RTs, iRTs
-    end
 
-    predictRTs!(PSMs, loss = loss, maxiter = maxiter, min_spectral_contrast = min_spectral_contrast)
+    best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast_all].>min_spectral_contrast) .& (PSMs[:,:decoy].==false),:], [:scan_idx]))
+    linear_spline = rtSpline(best_psms[:,:iRT], best_psms[:,:RT], n_bins = n_bins, granularity = granularity)
+    PSMs[:,:RT_pred] = linear_spline(PSMs[:,:iRT])
+    PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])
+
     sort!(PSMs, [:scan_idx, :total_ions]);
 
     # Group DataFrame by "day" column
@@ -68,6 +53,29 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; loss
         #next_scores = lead(sub_df.total_ions, default = missing)
         #coalesce(next_scores, 0)
     end)[:,:x1]
-    transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(prosit_precs[psm[:precursor_idx]])) => :charge)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
 
+end
+
+function rtSpline(x::Vector{T}, y::Vector{T}; n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+    sort_order = sortperm(x)
+    #Estimate 
+    est_bins = [Int(bin÷1) for bin in range(1, length = n_bins, stop = length(sort_order))]
+
+    xs = Vector{T}(undef, length(bins) - 1)
+    ys = Vector{T}(undef, length(bins) - 1)
+    for i in 1:(length(est_bins) - 1)
+        obs = y[sort_order[bins[i]:bins[i + 1]]]
+        println(length(obs))
+        x = Vector(LinRange(minimum(obs), maximum(obs), granularity))
+        println("X ", length(x))
+        kde = KDEUniv(ContinuousDim(), 3.0, obs, MultiKDE.gaussian)
+        y = [MultiKDE.pdf(kde, _x, keep_all=false) for _x in x]
+        xs[i] = x[argmax(y)]
+        println("A")
+        ys[i] = mean(x[sort_order[bins[i]:bins[i + 1]]])
+        println("B")
+    end
+
+    return LinearInterpolation(xs, ys, extrapolation_bc = Line() )
 end
