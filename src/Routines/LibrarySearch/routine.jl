@@ -126,7 +126,7 @@ merge_pdfs(["/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_a.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_b.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_c.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_d.pdf"], "/Users/n.t.wamsley/Projects/TEST_DATA/chromatograms.pdf")
-CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_01.csv", best_psms)
+CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_02.csv", best_psms)
 
 p = plot(title="Log10 of Peak Areas for Quantified Precursors");
 histogram(p, log10.(non_zero[:,:intensity]))

@@ -8,24 +8,29 @@ function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, co
     return sort!(transitions, by = x->getFragMZ(x))
 end
 
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{U}}}, rt_index::retentionTimeIndex{T, U}, rt::T, rt_tol::T, prec_mz::U, prec_tol::U) where {T,U<:AbstractFloat}
-    transitions = Vector{LibraryFragment{U}}()
+
+#Version for integration
+function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{V}}}, rt_index::retentionTimeIndex{T, U}, rt::T, rt_tol::T, prec_mz::U, prec_tol::U) where {T,U,V<:AbstractFloat}
+    transitions = Vector{LibraryFragment{V}}() #Initialize list of transitions/fragment Ions
+
     i = 1
-    rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-    rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins))
-    function addTransitions!(transitions::Vector{LibraryFragment{U}}, fragment_list::Vector{Vector{LibraryFragment{U}}}, precs::Vector{Tuple{UInt32, U}}, prec_mz::U, prec_tol::U) where {U<:AbstractFloat}
-        start = searchsortedfirst(precs, by = x->last(x), prec_mz - prec_tol)
-        stop = searchsortedlast(precs, by = x->last(x), prec_mz + prec_tol)
-        for i in start:stop
+    rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
+    rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
+
+    #Get matching precursors within an RT bin 
+    function addTransitions!(transitions::Vector{LibraryFragment{V}}, fragment_list::Vector{Vector{LibraryFragment{V}}}, precs::Vector{Tuple{UInt32, U}}, prec_mz::U, prec_tol::U)
+        start = searchsortedfirst(precs, by = x->last(x), prec_mz - prec_tol) #First precursor in the isolation window
+        stop = searchsortedlast(precs, by = x->last(x), prec_mz + prec_tol) #Last precursor in the isolation window
+        for i in start:stop #Get transitions for each precursor
             append!(transitions, fragment_list[first(precs[i])])
         end
     end
 
     for i in rt_start:rt_stop
-        addTransitions!(transitions, fragment_list, rt_index.rt_bins[i].prec, prec_mz, prec_tol)
+        addTransitions!(transitions, fragment_list, rt_index.rt_bins[i].prec, prec_mz, prec_tol) #Get precursors within the 
     end
 
-    return sort!(transitions, by = x->getFragMZ(x))
+    return sort!(transitions, by = x->getFragMZ(x)) #Sort transitions by their fragment m/z. 
 end
 #=function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, pep_ids::Base.Generator, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat}
     transitions = Vector{LibraryFragment{T}}()

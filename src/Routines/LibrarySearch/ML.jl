@@ -1,30 +1,3 @@
-function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, n_trees::Int = 500, n_features::Int = 10, max_depth::Int = 10, fraction::AbstractFloat = 0.1, print_importance::Bool = false)
-   
-    #[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN]
-    X = Matrix(PSMs[:,features])
-    X_labels = PSMs[:, :decoy]
-
-    permutation = randperm(size(PSMs)[1])
-    fold_size = length(permutation)÷n_folds
-
-    folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
-
-    PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
-    model = ""
-    for test_fold_idx in range(1, n_folds)
-        train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
-        train_features = X[train_fold_idxs,:]
-        train_classes = X_labels[train_fold_idxs,1]
-        model = build_forest(train_classes, train_features, n_features, n_trees, fraction, max_depth)
-        probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
-        PSMs[folds[test_fold_idx],:prob] = probs[:,2]
-        if print_importance
-            println(features[sortperm(split_importance(model))])
-        end
-    end
-    return model
-end
-
 function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, labels::Vector{Union{Missing, Bool}})
     #Could bootstratp to get more reliable values. 
     q_values = zeros(Float64, (length(probs),))
@@ -42,14 +15,6 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, la
     PSMs[:,:q_value] = q_values;
 end
 
-CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_072023_05.csv", PSMs)
-
-
-PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_072023_04.csv"))
-
-PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
-PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= 416119.4
-
 #Try XGBoost
 function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, colsample_bytree::Float64 = 0.5, num_round::Int = 25, eta::Float64 = 0.15, min_child_weight::Int = 1, subsample::Float64 = 0.5, gamma::Int = 0, max_depth::Int = 10, print_importance::Bool = false)
    
@@ -63,7 +28,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
     folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
 
     PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
-    model = ""
+    bst = ""
     for test_fold_idx in range(1, n_folds)
         train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
         train_features = X[train_fold_idxs,:]
@@ -83,6 +48,15 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
     return bst
 end
 
+#=
+CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_072023_05.csv", PSMs)
+
+
+PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_072023_04.csv"))
+
+PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
+PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= 416119.4
+
 features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:kendall,:rank_hyper,:rank_poisson, :rank_scribe,:rank_total,:len]
 @time bst = rankPSMs!(PSMs, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, n_folds = 3, num_round = 50, eta = 0.15)
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
@@ -98,7 +72,7 @@ length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==f
 #length(unique(best_psms[(best_psms[:,:q_value].<=0.1).&(PSMs[:,:best_psms].==false),:precursor_idx]))
 
 
-best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_01.csv"))
+best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_02.csv"))
 #["Targets ≤ 0.1% FDR",""
 function plotStepHist(PSMs::DataFrame, group_a::BitVector, group_b::BitVector, column::Symbol, b_range::Any = nothing; normalize::Bool = true, transform::Any = x->x, title::String = "TITLE", label_a::String="Y1", label_b::String="Y2", f_out::String = "test.pdf")
     theme(:wong)
@@ -128,33 +102,34 @@ plotStepHist(PSMs, targets_01fdr, decoys, :RT_error, range(0, 40, length=100), t
 plotStepHist(PSMs, targets_01fdr, decoys, :city_block,  range(-5, 0, length=1000), title = "City Block Distance", label_a = "Targets ≤ 0.1% FDR", label_b = "Decoys", f_out = "/Users/n.t.wamsley/Projects/TEST_DATA/figs/city_block.pdf")
 plotStepHist(PSMs, targets_01fdr, decoys, :total_ions,   range(1, 40, length=40), title = "Total Ions", label_a = "Targets ≤ 0.1% FDR", label_b = "Decoys", f_out = "/Users/n.t.wamsley/Projects/TEST_DATA/figs/total_ions.pdf")
 merge_pdfs(readdir("/Users/n.t.wamsley/Projects/TEST_DATA/figs/"; join=true), "/Users/n.t.wamsley/Projects/TEST_DATA/figs/discriminant_scores.pdf")
+=#
 
-b_range = range(1, 50, length=50)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:rank_hyper]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:rank_hyper]), bins = b_range, alpha = 0.5, normalize=true)
-#stephist!((PSMs[(PSMs[:,:decoy].==false),:rank_hyper]), bins = b_range,alpha = 0.5, normalize=true)
+#=
+random forests version. 
+function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, n_trees::Int = 500, n_features::Int = 10, max_depth::Int = 10, fraction::AbstractFloat = 0.1, print_importance::Bool = false)
+   
+    #[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN]
+    X = Matrix(PSMs[:,features])
+    X_labels = PSMs[:, :decoy]
 
-b_range = range(1, 50, length=50)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:rank_scribe]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:rank_scribe]), bins = b_range, alpha = 0.5, normalize=true)
-#stephist!((PSMs[(PSMs[:,:decoy].==false),:rank_scribe]), bins = b_range,alpha = 0.5, normalize=true)
+    permutation = randperm(size(PSMs)[1])
+    fold_size = length(permutation)÷n_folds
 
-b_range = range(-50, 0, length=100)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:poisson]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:poisson]), bins = b_range, alpha = 0.5, normalize=true)
-#stephist!((PSMs[(PSMs[:,:decoy].==false),:poisson]), bins = b_range,alpha = 0.5, normalize=true)
+    folds = [((n-1)*fold_size + 1):(n*fold_size) for n in range(1, n_folds)]
 
-b_range = range(0, 40, length=100)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:RT_error]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:RT_error]), bins = b_range, alpha = 0.5, normalize=true)
-#stephist!((PSMs[(PSMs[:,:decoy].==false),:RT_error]), bins = b_range,alpha = 0.5, normalize=true)
-
-b_range = range(-5, 0, length=1000)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:city_block]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:city_block]), bins = b_range, alpha = 0.5, normalize=true)
-#stephist!((PSMs[(PSMs[:,:decoy].==false),:city_block]), bins = b_range,alpha = 0.5, normalize=true)
-
-
-b_range = range(1, 40, length=40)
-stephist((PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<0.01),:total_ions]), bins = b_range,alpha = 0.5, normalize=true)
-stephist!((PSMs[(PSMs[:,:decoy].==true),:total_ions]), bins = b_range, alpha = 0.5, normalize=true)
+    PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
+    model = ""
+    for test_fold_idx in range(1, n_folds)
+        train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
+        train_features = X[train_fold_idxs,:]
+        train_classes = X_labels[train_fold_idxs,1]
+        model = build_forest(train_classes, train_features, n_features, n_trees, fraction, max_depth)
+        probs = apply_forest_proba(model, X[folds[test_fold_idx],:],[true, false])
+        PSMs[folds[test_fold_idx],:prob] = probs[:,2]
+        if print_importance
+            println(features[sortperm(split_importance(model))])
+        end
+    end
+    return model
+end
+=#
