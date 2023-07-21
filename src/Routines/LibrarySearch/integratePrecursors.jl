@@ -2,7 +2,7 @@
 function integrateRAW(
                     spectra::Arrow.Table, 
                     rt_index::retentionTimeIndex{T, U},
-                    fragment_list::Vector{Vector{LibraryFragment{Float64}}},
+                    fragment_list::Vector{Vector{LibraryFragment{Float32}}},
                     ms_file_idx::UInt32;
                     fragment_tolerance::Float64 = 40.0,
                     quadrupole_isolation_width::Float64 = 8.5,
@@ -66,7 +66,7 @@ function integrateRAW(
     sort!(nmf, [:precursor_idx,:rt]);
     return groupby(nmf, :precursor_idx)
 end
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; isplot::Bool = false)
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::Int64; isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms))
         return (0.0, 0, 0.0)
     end
@@ -150,7 +150,6 @@ integratePrecursor(chroms, UInt32(  4259798 ), isplot = true)
 
 integratePrecursor(chroms, UInt32(   3574807 ), isplot = true)
 integratePrecursor(chroms, UInt32(  2642152), isplot = true)
-
 integratePrecursor(chroms, UInt32(   508178 ), isplot = true)
 =#
 

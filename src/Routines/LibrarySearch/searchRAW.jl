@@ -97,9 +97,8 @@ function SearchRAW(
         
         times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
 
-        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all = getDistanceMetrics(Hst, X, matched_cols)
+        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, matched_cols)
         
-       
         #For progress and debugging. 
 
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
@@ -110,9 +109,10 @@ function SearchRAW(
         Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                match_count/prec_count, scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, weights, IDtoROW,
+                match_count/prec_count, scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval, weights, IDtoROW,
                 scan_idx = Int64(i),
-                min_spectral_contrast = min_spectral_contrast
+                min_spectral_contrast = min_spectral_contrast,
+                min_frag_count = min_frag_count
                 )
         n += 1
     end
@@ -129,6 +129,8 @@ function SearchRAW(
 end
 
 #=
+CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/psms_071923.csv",PSMs)
+
 test_psms = SearchRAW(MS_TABLE, prosit_index_5ppm_15irt, frag_detailed, UInt32(1), linear_spline,
        min_frag_count = 4, 
        topN = 200, 
@@ -136,7 +138,7 @@ test_psms = SearchRAW(MS_TABLE, prosit_index_5ppm_15irt, frag_detailed, UInt32(1
        λ = Float32(1e4), 
        γ =Float32(1),
        max_peaks = 1000, 
-       scan_range = (101357, 101357), 
+       scan_range = (0, 300000), #101357 
        precursor_tolerance = 20.0,
        min_spectral_contrast =  Float32(0.65),
        rt_tol = Float32(15.0)

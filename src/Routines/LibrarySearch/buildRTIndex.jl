@@ -18,7 +18,8 @@ function retentionTimeIndex(T::DataType, U::DataType)
     return retentionTimeIndex(Vector{rtBin{T, U}}())
 end
 
-function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{UInt32}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat}
+function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{Int64}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat}
+    
     start_idx = 1
     start_RT =  RTs[start_idx]
     bin = one(UInt32)
@@ -26,8 +27,8 @@ function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{UInt
     for (i, RT) in enumerate(RTs)
         if (RT - start_RT) > bin_rt_size
             push!(rt_index.rt_bins, 
-                    rtBin(RT, 
-                                     RTs[i - 1], 
+                    rtBin(RTs[i - 1], 
+                                     RT, 
                                      [(zero(UInt32), zero(Float32)) for _ in 1:(i - start_idx)])
                 )
             n = 1

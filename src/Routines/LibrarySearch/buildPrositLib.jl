@@ -77,7 +77,7 @@ prosit_index_3ppm_5irt = buildFragmentIndex!(frag_list, Float32(5.0))
 @save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_3ppm_10irt.jld2" prosit_index_3ppm_10irt
 prosit_index_3ppm_5irt = nothing
 
-@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_5irt.jld2" prosit_index_5ppm_5irt
+@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2" frag_detailed
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/precursor_list.jld2" precursor_list
 
@@ -118,7 +118,11 @@ function getPValue(kt::KendallTau{T}, x::Vector{T}, y::Vector{T}) where {T<:Abst
     N = length(x)
     τ = corkendall(x, y)
     if N <= 10 #Use exact distribution
-        return 1 - kt.ecdfs[N](τ)
+        if N > 2
+            return 1 - (kt.ecdfs[N](τ) - 1/factorial(N))
+        else
+            return one(T)
+        end
     else #Use approximate distribution
         σ = sqrt(2*(2*N + 5)/(9*N*(N - 1)))
         return 1 - cdf(Normal(), τ/σ)

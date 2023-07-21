@@ -73,12 +73,17 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
         rowsums_sqrt_X = zeros(T, (A.m,))
         row_counts = zeros(Int64, (A.m,))
         row_dot = zeros(T, (A.m,))
-
+        kt_pval = zeros(T, (A.m,))
+        ktx = [Vector{T}() for x in range(1,A.m)]
+        kty = [Vector{T}() for x in range(1,A.m)]
+        #ktx = zeros(T, A.colptr[col+1]-1 - A.colptr[col])
+        #kty = zeros(T, A.colptr[col+1]-1 - A.colptr[col])
         for col in 1:(unmatched_col)
             #colptr = A.colptr[col]
             #println("TEST")
             #println(A.colptr[col])
             #println(A.colptr[col 1]-1)
+
             for i in range(A.colptr[col], (A.colptr[col+1]-1))
             #    println("B")
                 rownorms_A[A.rowval[i]] += A.nzval[i]^2
@@ -88,6 +93,8 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
                 rowsums_A[A.rowval[i]] += A.nzval[i]
                 rowsums_sqrt_X[A.rowval[i]] += sqrt(X[col])
                 row_dot[A.rowval[i]] +=  A.nzval[i]*X[col]
+                push!(ktx[A.rowval[i]], A.nzval[i])
+                push!(kty[A.rowval[i]], X[col])
             end
         end
 
@@ -100,12 +107,15 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
             end
         end
 
-        return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C
+        for i in 1:A.m 
+            kt_pval[i] = log(getPValue(kt, ktx[i], kty[i]))
+        end
+        return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C, kt_pval
     end
 
-    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED = rowNormsAndSums(H, X, unmatched_col)
-    #println(rowsums_MATCHED[2])
+    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED, kt_pval = rowNormsAndSums(H, X, unmatched_col)
     #println(rowsums_UNMATCHED[2])
+    #println(kt_pval)
     function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
         #-1*log(mean(((a/a_sum) .- (b/b_sum)).^2))
         ((a/a_sum) - (b/b_sum))^2
@@ -154,7 +164,7 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
     end
 
     matched_ratio = rowsums_MATCHED
-    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all
+    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval
 end
 
 #=function test(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::SparseMatrix{Int64, T}) where {T<:AbstractFloat}
