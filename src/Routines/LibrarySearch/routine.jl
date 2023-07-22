@@ -110,7 +110,7 @@ chroms = integrateRAW(MS_TABLE, rt_index, frag_detailed,
                         scan_range = (0, 300000)
                         );
 
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, psm[:precursor_idx], isplot = false)) => [:intensity, :count, :SN]);
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :error,:apex]);
 non_zero = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
 
 @time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
