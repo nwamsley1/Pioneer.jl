@@ -69,7 +69,7 @@ end
 
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms))
-        return (0.0, 0, 0.0, missing, missing)
+        return (0.0, 0, 0.0, 0.0, missing, missing)
     end
 
     chrom = chroms[(precursor_idx=precursor_idx,)]
@@ -86,6 +86,9 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
 
     chrom = chrom[non_zero,:]
 
+    if size(chrom)[1] < 3
+        return (0.0, 0, 0.0, 0.0, missing, missing)
+    end
 
     window_size = min(15, max(size(chrom)[1]÷3, 3))
     if isodd(window_size) == false
@@ -105,42 +108,42 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
 
     #start, stop = find_longest_streak_indices(chrom[:,:weight].>(maximum(chrom[:,:weight])*0.01))
     #best, start, stop =  getIntegrationBounds(chrom, 9, 3, 1.0/6.0, 5)
-    best, start, stop =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
+    best_peak_slope, start, stop =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
     #plot(rt, chrom[:,:weight], seriestype=:scatter, show = true)
     if (stop - start) < 2
-        return (0.0, 0, Float64(0.0), missing, missing)
+        return (0.0, 0, Float64(0.0), 0.0, missing, missing)
     end
-
-    if isplot == false
-        return (Float64(integrate(rt, intensity, TrapezoidalFast())), (stop - start + 1), Float64(sum(chrom[start:stop,:weight])/sum(chrom[:,:weight])), missing, missing)
-    end
-
-    plot(rt, intensity, show = true, seriestype=:scatter);
 
     #intensity = savitzky_golay(chrom[:,:weight][start:stop], 9, 3).y
+
+    window_size = min(15, max((stop - start)÷3, 3))
+    if isodd(window_size) == false
+        window_size += -1
+    end
+    order = min(5, window_size - 2)
+
+
+    #println("start - stop ", start - stop)
+    #println("start $start")
+    #println("stop $stop")
+    #println(intensity[start:stop])
+    #println("window_size $window_size")
+    #println("order $order")
     intensity_smooth = savitzky_golay(intensity[start:stop], window_size, order).y
+
     intensity_smooth[intensity_smooth .< 0.0] .= zero(eltype(typeof(intensity_smooth)))
-    plot!(rt[start:stop], intensity_smooth, fillrange = [0.0 for x in 1:length(intensity_smooth)], alpha = 0.25, color = :grey, show = true);
-    #plot(x, y1, fillrange = y2, fillalpha = 0.35, c = 1, label = "Confidence band", legend = :topleft)
-    vline!([rt[start]], color = :red);
-    vline!([rt[stop]], color = :red);
+
+    if isplot
+        plot(rt, intensity, show = true, seriestype=:scatter)
+        plot!(rt[start:stop], intensity_smooth, fillrange = [0.0 for x in 1:length(intensity_smooth)], alpha = 0.25, color = :grey, show = true);
+        vline!([rt[start]], color = :red);
+        vline!([rt[stop]], color = :red);
+    end
     peak_area = integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
     #plot(rt, chrom[:,:weight], seriestype=:scatter, show = true);
     #plot!(rt[max(1, start - 1):min(stop + 1, end)], intensity, show = true)
     #sum(abs.(intensity_smooth .- intensity))/(length(intensity_smooth)*maximum(intensity))
-    return peak_area, (stop - start + 1), Float64(sum(intensity[start:stop])/sum(intensity)), sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity)), rt[start:stop][argmax(intensity_smooth)]
-end
-
-
-savitzky_golay(chrom[:,:weight][max(1, start - 1):min(stop + 1, end)], window_size, order).y
-
-first_d = diff(test[:,:weight])./diff(test[:,:rt])
-first_d_smooth = savitzky_golay(first_d, window_size, order).y
-#plot(test[:,:rt][2:end], diff(test[:,:weight])./diff(test[:,:rt]), seriestype=:scatter)
-plot(test[:,:rt][1:end-1], first_d_smooth, seriestype=:scatter)
-plot!(test[:,:rt], test[:,:weight]*5, seriestype=:scatter)
-
-function getSmooth()
+    return peak_area, (stop - start + 1), Float64(sum(intensity[start:stop])/sum(intensity)), best_peak_slope, sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity)), rt[start:stop][argmax(intensity_smooth)]
 end
 
 function getIntegrationBounds(RTs::Vector{T}, intensities::Vector{U}, window::Int, order::Int, min_width_t::Float64, min_width::Int) where {T,U<:AbstractFloat}
@@ -156,21 +159,22 @@ end
 
 function getZeroCrossings(series_y::Vector{T}, series_x::Vector{U}) where {T,U<:AbstractFloat}
     zero_crossings_idx = Vector{Int64}()
-    zero_crossings_sign = Vector{T}()
+    zero_crossings_slope = Vector{T}()
     for i in 1:(length(series_y) - 1)
         if (sign(series_y[i + 1])*sign(series_y[i])) < 0
             push!(zero_crossings_idx, i)
             slope = (series_y[i + 1] - series_y[i])/(series_x[i + 1] - series_x[i])
-            push!(zero_crossings_sign, sign(slope))
+            push!(zero_crossings_slope, slope)
         end
     end
-    return zero_crossings_idx, zero_crossings_sign
+    return zero_crossings_idx, zero_crossings_slope
 end
 
-function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_sign::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
+function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
 
     best_peak_intensity = 0
     best_peak = 0
+    best_peak_slope = 0
     best_left = 0
     best_right = 0
     N = length(series_y) 
@@ -180,7 +184,7 @@ function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_
         return 0, 1, length(series_y)
     end
     for i in 1:length(zero_crossings_1d)
-        if zero_crossings_sign[i] < 0
+        if zero_crossings_slope[i] < 0
             if series_y[zero_crossings_1d[i]] > best_peak_intensity
 
                 left_bound = i > 1 ? max(1, zero_crossings_1d[i - 1]) : 1
@@ -193,6 +197,7 @@ function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_
                     if (right_bound - left_bound) >=min_width
                         best_peak_intensity = series_y[zero_crossings_1d[i]]
                         best_peak = zero_crossings_1d[i]
+                        best_peak_slope = abs(zero_crossings_slope[i])
                         best_left = left_bound
                         best_right = right_bound
                     end
@@ -200,10 +205,10 @@ function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_
             end
         end
     end
-    return best_peak, best_left, best_right
+    return best_peak_slope, best_left, best_right
 end
 
-
+#=-
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms))
         return (0.0, 0, 0.0)
@@ -267,6 +272,7 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
 end
 
 integratePrecursor(chroms, UInt32(   3310087 ), isplot = false)
+=#
 #=
 chroms = integrateRAW(MS_TABLE, rt_index, prosit_detailed, one(UInt32), fragment_tolerance=15.6, λ=Float32(5e3) , γ=Float32(0), max_peak_width = 2.0, scan_range = (0, 300000));
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, psm[:precursor_idx], isplot = false)) => [:intensity, :count, :SN]);
@@ -296,7 +302,8 @@ integratePrecursor(chroms, UInt32(  4259798 ), isplot = true)
 integratePrecursor(chroms, UInt32(   3574807 ), isplot = true)
 integratePrecursor(chroms, UInt32(  2642152), isplot = true)
 integratePrecursor(chroms, UInt32(   508178 ), isplot = true)
-=#
+
+
 #4847815 
 integratePrecursor(chroms, UInt32(4847815), isplot = true) #decoy
 integratePrecursor(chroms, UInt32(7632773), isplot = true) #decoy
@@ -310,5 +317,8 @@ integratePrecursor(chroms, UInt32(  1807561 ), isplot = true)
 integratePrecursor(chroms, UInt32(4097143  ), isplot = true)
 
 integratePrecursor(chroms, UInt32(3191213), isplot = false)
+
+=#
+
 
 

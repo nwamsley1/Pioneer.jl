@@ -110,7 +110,7 @@ chroms = integrateRAW(MS_TABLE, rt_index, frag_detailed,
                         scan_range = (0, 300000)
                         );
 
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :error,:apex]);
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex]);
 non_zero = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
 
 @time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
@@ -126,7 +126,7 @@ merge_pdfs(["/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_a.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_b.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_c.pdf",
 "/Users/n.t.wamsley/Projects/TEST_DATA/chromatogram_d.pdf"], "/Users/n.t.wamsley/Projects/TEST_DATA/chromatograms.pdf")
-CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_02.csv", best_psms)
+CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072223_03.csv", best_psms)
 
 p = plot(title="Log10 of Peak Areas for Quantified Precursors");
 histogram(p, log10.(non_zero[:,:intensity]))

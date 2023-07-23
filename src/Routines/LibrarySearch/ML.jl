@@ -64,15 +64,18 @@ length(unique(PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false),:precurso
 length(unique(PSMs[(PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false),:precursor_idx]))
 
 
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:kendall,:rank_hyper,:rank_poisson, :rank_scribe,:rank_total,:len,:intensity,:count,:SN]
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:kendall,:rank_hyper,:rank_poisson, :rank_scribe,:rank_total,:len,:intensity,:count,:SN,:slope,:peak_error,:apex_error]
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:RT_error,:scribe_score,:y_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:kendall,:rank_hyper,:len,:intensity,:count,:SN,:slope,:peak_error,:apex_error]
+
+
 best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:]
-@time bst = rankPSMs!(best_psms, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.075)
+@time bst = rankPSMs!(best_psms, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
 @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx]))
 #length(unique(best_psms[(best_psms[:,:q_value].<=0.1).&(PSMs[:,:best_psms].==false),:precursor_idx]))
 
 
-best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072123_02.csv"))
+best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/Projects/TEST_DATA/best_psms_072223_03.csv"))
 #["Targets ≤ 0.1% FDR",""
 function plotStepHist(PSMs::DataFrame, group_a::BitVector, group_b::BitVector, column::Symbol, b_range::Any = nothing; normalize::Bool = true, transform::Any = x->x, title::String = "TITLE", label_a::String="Y1", label_b::String="Y2", f_out::String = "test.pdf")
     theme(:wong)
