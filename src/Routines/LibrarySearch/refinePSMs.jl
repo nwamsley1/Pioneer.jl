@@ -1,5 +1,5 @@
 
-function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; maxiter = 200, min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50)
+function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50)
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
@@ -17,77 +17,60 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor}; maxi
     #PSMs[:,:next_best] = Vector{Union{Missing, UInt32}}(undef, size(PSMs)[1])
     PSMs[:,:next_best] = (combine(grouped_df) do sub_df
         pushfirst!(diff(sub_df.total_ions), zero(UInt32))
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:diff_hyper] = (combine(grouped_df) do sub_df
         sort!(sub_df, :hyperscore)
         pushfirst!(diff(sub_df.hyperscore), zero(Float64))
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:rank_hyper] = (combine(grouped_df) do sub_df
         StatsBase.ordinalrank(sub_df.hyperscore)
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:rank_scribe] = (combine(grouped_df) do sub_df
         StatsBase.ordinalrank(sub_df.scribe_score)
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:rank_poisson] = (combine(grouped_df) do sub_df
         StatsBase.ordinalrank(sub_df.poisson)
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:rank_total] = (combine(grouped_df) do sub_df
         StatsBase.ordinalrank(sub_df.total_ions)
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:diff_scribe] = (combine(grouped_df) do sub_df
         sort!(sub_df, :scribe_score)
         pushfirst!(diff(sub_df.scribe_score), zero(Float64))
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     PSMs[:,:median_ions] = (combine(grouped_df) do sub_df
-        #sort!(sub_df, :hyperscore)
-        #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
         repeat([median(sub_df.total_ions)], size(sub_df)[1])
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
 
     grouped_df = groupby(PSMs, :precursor_idx);
 
     PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
-        #sort!(sub_df, :hyperscore)
-        #pushfirst!(diff(sub_df.hyperscore), zero(Float64))
         repeat([size(sub_df)[1]], size(sub_df)[1])
-        #next_scores = lead(sub_df.total_ions, default = missing)
-        #coalesce(next_scores, 0)
     end)[:,:x1]
+
     transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
 
 end
 
 function rtSpline(X::Vector{T}, Y::Vector{T}; n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     sort_order = sortperm(X)
-    #Estimate 
+
+    #Divide RT space into estimation bins
     est_bins = [Int(bin÷1) for bin in range(1, length = n_bins, stop = length(sort_order))]
 
+    #x and y values for each RT estimation bin
     xs = Vector{T}(undef, length(est_bins) - 1)
     ys = Vector{T}(undef, length(est_bins) - 1)
     for i in 1:(length(est_bins) - 1)
+
+        #RTs for the i'th estimation bin
         obs = X[sort_order[est_bins[i]:est_bins[i + 1]]]
         x = Vector(LinRange(minimum(obs), maximum(obs), granularity))
         kde = KDEUniv(ContinuousDim(), 3.0, obs, MultiKDE.gaussian)

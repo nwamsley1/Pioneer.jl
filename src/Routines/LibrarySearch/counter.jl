@@ -10,18 +10,11 @@ end
 
 getCount(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = first(c.counts[id])
 getSums(c::Counter{I,C,T}, id::I) where {I,C<:Unsigned,T<:AbstractFloat} = last(c.sums[id])
-function getMatchedRatio(c::Counter{I,C,T}, totals::Vector{Float32}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    #matched_intensity = getSums(c, id)
-    return last(c.counts[id])/(totals[id] - last(c.counts[id]))
-end
-
 getSize(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size
 incSize!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size += 1
 getID(c::Counter{I,C,T}, idx::Int) where {I,C<:Unsigned,T<:AbstractFloat} = c.ids[idx]
 
 function update!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {C,I<:Unsigned,T<:AbstractFloat}
-    #count = c.counts[id]
-    #c.counts[id] = (first(count) + one(C), last(count) + pred_intensity);
     c.counts[id] = (first(c.counts[id]) + one(C), last(c.counts[id]) + pred_intensity);
     return nothing
 end
@@ -47,35 +40,33 @@ import Base.sort!
 function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
     sort!(
                 @view(counter.ids[1:counter.matches]), 
-                by = id -> last(counter.counts[id]),#getMatchedRatio(counter, prec_norms, id),
+                by = id -> last(counter.counts[id]),
                 rev = true,
                 alg=PartialQuickSort(1:topN)
-             )
+        )
     return nothing
 end
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    #@inbounds @simd for i in 1:(getSize(c) - 1)
     for i in 1:(getSize(c) - 1)
         c.counts[c.ids[i]] = (zero(UInt8), zero(Float32));
     end
-    c.size = 1
-    c.matches = 0
+    c.size, c.matches = 1, 0
     return nothing
 end
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int, min_ratio::T) where {I,C<:Unsigned,T<:AbstractFloat} 
-    frag_counts = 0
+    matched_frags = 0
     for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(c, id)
-        frag_counts += frag_count
+        matched_frags += frag_count
         if frag_count >= min_count
-            if last(c.counts[id])>=0.45
+            if last(c.counts[id])>=min_ratio
                     c.ids[c.matches + 1] = c.ids[i]
                     c.matches += 1
             end
         end
     end
-    return frag_counts
+    return matched_frags
 end

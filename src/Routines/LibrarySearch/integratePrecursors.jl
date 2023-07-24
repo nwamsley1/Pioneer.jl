@@ -42,18 +42,14 @@ function integrateRAW(
                                     ppm = fragment_tolerance
                                     )
 
+
         if iszero(length(fragmentMatches))
             continue
         end
 
-        #Build templates for regrssion
+        #Build templates for regrssion. 
+        #Do we need to remove precursors with less than N matched fragments?
         X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses)
-        #println(size(X))
-        #println(Hs.n)
-        #println(Hs.m)
-        #Fit non-negative adaptive LASSO
-        #λ = mean(X)*(Hs.n^2)
-        #println(λ)
         weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
 
         for key in keys(IDtoROW)
@@ -67,70 +63,59 @@ function integrateRAW(
     return groupby(nmf, :precursor_idx)
 end
 
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; isplot::Bool = false)
-    if !((precursor_idx=precursor_idx,) in keys(chroms))
+"""
+https://terpconnect.umd.edu/~toh/spectrum/Differentiation.html#PeakDetection
+Another common use of differentiation is in the detection of peaks in a signal. It's clear from the basic properties described in the previous section 
+that the first derivative of a peak has a downward-going zero-crossing at the peak maximum, which can be used to locate the x-value of the peak, 
+as shown on the right (script). If there is no noise in the signal, then any data point that has lower values on both sides of it will be a peak maximum. 
+But there is always at least a little noise in real experimental signals, and that will cause many false zero-crossings simply due to the noise. 
+To avoid this problem, one popular technique smooths the first derivative of the signal first, before looking for downward-going zero-crossings, 
+and then takes only those zero crossings whose slope exceeds a certain predetermined minimum (called the "slope threshold") at a point where the original 
+signal amplitude exceeds a certain minimum (called the "amplitude threshold"). By carefully adjusting the smooth width, slope threshold, and amplitude 
+threshold, it is possible to detect only the desired peaks over a wide range of peak widths and ignore peaks that are too small, too wide, or too narrow. 
+Moreover, because smoothing can distort peak signals, reducing peak heights, and increasing peak widths, this technique can be extended to measure the
+ position, height, and width of each peak by least-squares curve-fitting of a segment of original unsmoothed signal near the top of the peak 
+ (where the signal-to-noise ratio is usually the best). Thus, even if heavy smoothing is necessary to provide reliable discrimination against noise peaks, 
+ the peak parameters extracted by curve fitting are not distorted and the effect of random noise in the signal is reduced by curve fitting over multiple
+  data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
+"""
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
+
+    if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
         return (0.0, 0, 0.0, 0.0, missing, missing)
     end
 
+    #Chromatogram for the precursor. 
+    #Has columns "weight" and "rt". 
     chrom = chroms[(precursor_idx=precursor_idx,)]
 
+    #Remove empty rows 
     non_zero = BitVector(undef, size(chrom)[1])
-
-    for i in 1:(size(chrom)[1] - 1)
-        if iszero(chrom[:,:weight][i])&(iszero(chrom[:,:weight][i+1]).==false)
-            non_zero[i] = false
-        else
-            non_zero[i] = true
-        end
-    end
-
+    fillNonZero!(non_zero, chrom[:,:weight])
     chrom = chrom[non_zero,:]
-
+    #Too few points to attempt integration
     if size(chrom)[1] < 3
         return (0.0, 0, 0.0, 0.0, missing, missing)
     end
 
-    window_size = min(15, max(size(chrom)[1]÷3, 3))
-    if isodd(window_size) == false
-        window_size += -1
-    end
-    order = min(5, window_size - 2)
+    #Smoothing parameters for first derivative
+    window_size, order = getSmoothingParams(size(chrom)[1], max_smoothing_window, min_smoothing_order)
 
-    #Pad ends
+    #Add zero intensity points to both ends of the chromatogram
+    rt = pad(chrom[:,:rt], chrom[1,:rt] - (chrom[2,:rt] - chrom[1,:rt]), chrom[end,:rt] + (chrom[end,:rt] - chrom[end - 1,:rt]))
+    intensity = pad(chrom[:,:weight], zero(eltype(typeof(chrom[:,:weight]))), zero(eltype(typeof(chrom[:,:weight]))))
 
-
-    rt = chrom[:,:rt]
-    intensity = chrom[:,:weight]
-    push!(intensity, zero(eltype(typeof(intensity))))
-    pushfirst!(intensity, zero(eltype(typeof(intensity))))
-    push!(rt, rt[end] + (rt[end]-rt[end - 1]))
-    pushfirst!(rt, rt[1] - (rt[2] - rt[1]))
-
-    #start, stop = find_longest_streak_indices(chrom[:,:weight].>(maximum(chrom[:,:weight])*0.01))
-    #best, start, stop =  getIntegrationBounds(chrom, 9, 3, 1.0/6.0, 5)
+    #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
     best_peak_slope, start, stop =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
-    #plot(rt, chrom[:,:weight], seriestype=:scatter, show = true)
+
+    #No sufficiently wide peak detected. 
     if (stop - start) < 2
         return (0.0, 0, Float64(0.0), 0.0, missing, missing)
     end
 
-    #intensity = savitzky_golay(chrom[:,:weight][start:stop], 9, 3).y
-
-    window_size = min(15, max((stop - start)÷3, 3))
-    if isodd(window_size) == false
-        window_size += -1
-    end
-    order = min(5, window_size - 2)
-
-
-    #println("start - stop ", start - stop)
-    #println("start $start")
-    #println("stop $stop")
-    #println(intensity[start:stop])
-    #println("window_size $window_size")
-    #println("order $order")
+    #Smoothing parameters for chromatogram
+    window_size, order = getSmoothingParams(stop - start, max_smoothing_window, min_smoothing_order)
     intensity_smooth = savitzky_golay(intensity[start:stop], window_size, order).y
-
     intensity_smooth[intensity_smooth .< 0.0] .= zero(eltype(typeof(intensity_smooth)))
 
     if isplot
@@ -139,63 +124,93 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
         vline!([rt[start]], color = :red);
         vline!([rt[stop]], color = :red);
     end
+
     peak_area = integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
-    #plot(rt, chrom[:,:weight], seriestype=:scatter, show = true);
-    #plot!(rt[max(1, start - 1):min(stop + 1, end)], intensity, show = true)
-    #sum(abs.(intensity_smooth .- intensity))/(length(intensity_smooth)*maximum(intensity))
-    return peak_area, (stop - start + 1), Float64(sum(intensity[start:stop])/sum(intensity)), best_peak_slope, sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity)), rt[start:stop][argmax(intensity_smooth)]
+    count = (stop - start + 1)
+    SN = Float64(sum(intensity[start:stop])/sum(intensity))
+    error = sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity))
+
+    return peak_area, count, SN, best_peak_slope, error, rt[start:stop][argmax(intensity_smooth)]
+end
+
+function pad(x::Vector{T}, head::T, tail::T) where {T<:AbstractFloat}
+    push!(x, tail)
+    pushfirst!(x, head)
+    return x
+end
+
+function getSmoothingParams(n_data_points::Int, max_window::Int, min_order::Int)
+    window_size = min(max_window, max((n_data_points)÷3, 3))
+    if isodd(window_size) == false
+        window_size += -1
+    end
+    order = min(min_order, window_size - 2)
+    return window_size, order
+end
+
+function fillNonZero!(non_zero::BitVector, intensity::Vector{T}) where {T<:AbstractFloat}
+    for i in 1:(length(intensity) - 1)
+        if iszero(intensity[i])&(intensity[i+1].==false)
+            non_zero[i] = false
+        else
+            non_zero[i] = true
+        end
+    end
 end
 
 function getIntegrationBounds(RTs::Vector{T}, intensities::Vector{U}, window::Int, order::Int, min_width_t::Float64, min_width::Int) where {T,U<:AbstractFloat}
+    #Get indices of first derivative zero crossings and the slope of the first derivative at each crossing
     zero_idx, zero_sign = getZeroCrossings(getSmoothDerivative(RTs, intensities, window, order), RTs[1:end - 1])
+
     return getPeakBounds(intensities, RTs, zero_idx, zero_sign, min_width_t, min_width)
 end
 
 function getSmoothDerivative(x::Vector{T}, y::Vector{U}, window::Int, order::Int) where {T,U<:AbstractFloat}
-    #println(diff(y)./diff(x))
-    #println(savitzky_golay(diff(y)./diff(x), 3, 1).y)
+    #Smooth the first derivative 
     return savitzky_golay(diff(y)./diff(x), window, order).y
 end
 
 function getZeroCrossings(series_y::Vector{T}, series_x::Vector{U}) where {T,U<:AbstractFloat}
-    zero_crossings_idx = Vector{Int64}()
-    zero_crossings_slope = Vector{T}()
+    zero_crossings_idx = Vector{Int64}() #Indices of zero-crossings of first derivative
+    zero_crossings_slope = Vector{T}() #Slopes of first derivative at the zero crossings
     for i in 1:(length(series_y) - 1)
-        if (sign(series_y[i + 1])*sign(series_y[i])) < 0
-            push!(zero_crossings_idx, i)
-            slope = (series_y[i + 1] - series_y[i])/(series_x[i + 1] - series_x[i])
+        if (sign(series_y[i + 1])*sign(series_y[i])) < 0 #First derivative crossed zero
+            push!(zero_crossings_idx, i) #Add zero crossing
+            slope = (series_y[i + 1] - series_y[i])/(series_x[i + 1] - series_x[i]) #slope at zero crossing
             push!(zero_crossings_slope, slope)
         end
     end
     return zero_crossings_idx, zero_crossings_slope
 end
 
-function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
+function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
 
     best_peak_intensity = 0
     best_peak = 0
     best_peak_slope = 0
     best_left = 0
     best_right = 0
-    N = length(series_y) 
-    #println("zero_crossings_sign $zero_crossings_sign")
-    #println("zero_crossings_sign $zero_crossings_1d")
-    if iszero(length(zero_crossings_1d))
-        return 0, 1, length(series_y)
+    N = length(intensity) 
+    if iszero(length(zero_crossings_1d)) #If the first derivative does not cross zero, there is no peak
+        return 0, 1, length(intensity)
     end
     for i in 1:length(zero_crossings_1d)
-        if zero_crossings_slope[i] < 0
-            if series_y[zero_crossings_1d[i]] > best_peak_intensity
+        if zero_crossings_slope[i] < 0 #Peaks will always occur at first derivative crossings where the slope is negative 
+            if intensity[zero_crossings_1d[i]] > best_peak_intensity #Select the peak where the raw intensity is greatest. 
 
+                #Left peak boundary is the previous first derivative crossing or the leftmost datapoint
                 left_bound = i > 1 ? max(1, zero_crossings_1d[i - 1]) : 1
+
+                #Right peak boundary is the next first derivative crossing or the rightmost datapoint
                 if i+1<length(zero_crossings_1d)
                     right_bound = i < N ? min(N, zero_crossings_1d[i + 1]) : N
                 else
                     right_bound = N
                 end
-                if (series_x[right_bound] - series_x[left_bound]) >= min_width_t
-                    if (right_bound - left_bound) >=min_width
-                        best_peak_intensity = series_y[zero_crossings_1d[i]]
+
+                if (right_bound - left_bound) >=min_width #If peak width (in data points) exceeds minimum
+                    if (rt[right_bound] - rt[left_bound]) >= min_width_t #If peak width (in minutes) exceeds minimum
+                        best_peak_intensity = intensity[zero_crossings_1d[i]]
                         best_peak = zero_crossings_1d[i]
                         best_peak_slope = abs(zero_crossings_slope[i])
                         best_left = left_bound
@@ -205,6 +220,7 @@ function getPeakBounds(series_y::Vector{T}, series_x::Vector{T}, zero_crossings_
             end
         end
     end
+
     return best_peak_slope, best_left, best_right
 end
 

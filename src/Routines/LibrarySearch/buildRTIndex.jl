@@ -1,23 +1,23 @@
-struct rtBin{T,U<:AbstractFloat}
+struct rtIndexBin{T,U<:AbstractFloat}
     lb::T
     ub::T
     prec::Vector{Tuple{UInt32, U}}
 end
 
-function compare_lb(rb::rtBin{T,U}) where {T,U<:AbstractFloat}
+function compare_lb(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat}
     return rb.lb
 end
 
-getLB(rb::rtBin{T,U}) where {T,U<:AbstractFloat} = rb.lb
-getMZ(rb::rtBin{T, U}) where {T,U<:AbstractFloat} = last(rb.prec)
-getPrecID(rb::rtBin{T, U}) where {T,U<:AbstractFloat} = first(rb.prec)
+getLB(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat} = rb.lb
+getMZ(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = last(rb.prec)
+getPrecID(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = first(rb.prec)
 
 struct retentionTimeIndex{T,U<:AbstractFloat}
-    rt_bins::Vector{rtBin{T, U}}
+    rt_bins::Vector{rtIndexBin{T, U}}
 end
 
 function retentionTimeIndex(T::DataType, U::DataType) 
-    return retentionTimeIndex(Vector{rtBin{T, U}}())
+    return retentionTimeIndex(Vector{rtIndexBin{T, U}}())
 end
 
 function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat,I<:Integer}
@@ -29,7 +29,7 @@ function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, 
     for (i, RT) in enumerate(RTs)
         if (RT - start_RT) > bin_rt_size
             push!(rt_index.rt_bins, 
-                    rtBin(RTs[start_idx], #Retention time for first precursor in the bin
+                    rtIndexBin(RTs[start_idx], #Retention time for first precursor in the bin
                           RTs[i - 1],     #Retention time for last precursor in the bin
                         [(zero(UInt32), zero(Float32)) for _ in 1:(i - start_idx)] #Pre-allocate precursors 
                         )

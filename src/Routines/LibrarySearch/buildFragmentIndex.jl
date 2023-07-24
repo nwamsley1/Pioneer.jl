@@ -16,17 +16,6 @@ what the precursor ID is.
 - getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 - getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
 """
-#=struct PrecursorBinItem{T<:AbstractFloat}
-    prec_id::UInt32
-    prec_mz::T
-    charge::UInt8
-end
-
-getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
-getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
-getPrecCharge(pbi::PrecursorBinItem) = pbi.charge
-getIntensity(pbi::PrecursorBinItem) = pbi.intensity=#
-
 struct PrecursorBinItem{T<:AbstractFloat}
     prec_id::UInt32
     prec_mz::T

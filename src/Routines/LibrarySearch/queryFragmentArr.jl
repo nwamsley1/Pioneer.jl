@@ -107,6 +107,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
                 (precursor_idx <= stop) ? prec = getPrecursor(precursor_bin, precursor_idx) : return
             end
         end=#
+
         for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
             inc!(precs, getPrecID(prec), getIntensity(prec))
@@ -152,8 +153,7 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, iRT_low::Float32
             #RT Information Goes Here
             rt_bin_idx = frag_index.fragment_bins[frag_bin].sub_bin
             rt_sub_bin = findFirstRTBin(frag_index.rt_bins[rt_bin_idx], iRT_low, iRT_high)
-            #rt_sub_bin = searchsortedfirst(frag_index.rt_bins[rt_bin_idx], iRT_low, lt=(r, x)->r.ub<x)
-            #println("rt_sub_bin $rt_sub_bin")
+
             if rt_sub_bin === nothing
                 frag_bin += 1
                 continue
@@ -168,9 +168,7 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, iRT_low::Float32
                     break
                 end
             end
-            #println("i $i")
-            #println("rt_sub_bin last $rt_sub_bin")
-            #println("length(frag_index.rt_bins[rt_bin_idx]) ", length(frag_index.rt_bins[rt_bin_idx]))
+
             frag_bin += 1
         end
 

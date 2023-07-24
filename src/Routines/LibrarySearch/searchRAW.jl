@@ -28,6 +28,7 @@ function SearchRAW(
     precs = Counter(UInt32, UInt8, Float32, 9387261) #Prec counter
     times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0, :match_peaks => 0.0, :build => 0.0, :score => 0.0)
     n = 0
+    kt = KendallTau(Float32)
     for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -69,12 +70,13 @@ function SearchRAW(
         end
         transitions = selectTransitions(fragment_list, precs, topN)
         
+        #times[:reset] += @elapsed reset!(precs)
         reset!(precs)
+        
         if length(transitions) == 0
             continue
         end
         
-        #times[:reset] += @elapsed reset!(precs)
        
 
         #times[:match_peaks] += @elapsed fragmentMatches, fragmentMisses = matchPeaks(transitions, 
@@ -97,7 +99,7 @@ function SearchRAW(
         
         times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
 
-        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, matched_cols)
+        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, matched_cols, kt)
         
         #For progress and debugging. 
 

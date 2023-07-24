@@ -17,7 +17,7 @@ struct FragmentIon{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
     prec_id::UInt32
     prec_mz::T
-    prec_intensity::Base.RefValue{T}
+    prec_intensity::Base.RefValue{T} #Needs to be updated
     prec_rt::T
     prec_charge::UInt8
 end
@@ -59,6 +59,7 @@ getTotalIntensity(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.total_int
 addIntensity!(p::LibraryPrecursor{T}, intensity::T) where {T<:AbstractFloat} = p.total_intensity[] += intensity
 
 function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
+    
     frag_list = Vector{FragmentIon{precision}}()
     frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
     precursor_list = Vector{LibraryPrecursor}()
