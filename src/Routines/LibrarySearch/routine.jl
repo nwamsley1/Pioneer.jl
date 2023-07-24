@@ -84,6 +84,7 @@ chroms = integrateRAW(MS_TABLE, rt_index, frag_detailed,
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex]);
 best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
 append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex])
 @time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
 @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);

@@ -1,22 +1,21 @@
-function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vector{FragmentMatch{Float32}}) #where {T<:AbstractFloat}
+function buildDesignMatrix(matches::Vector{FragmentMatch{T}},  misses::Vector{FragmentMatch{T}}) where {T<:AbstractFloat}
 
     
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
     M = length(unique([getPeakInd(x) for x in matches]))
-
     #Design matrix. One row for every precursor template. One column for every matched peak. 
     H_COLS = zeros(Int64, length(matches))
     H_ROWS = zeros(Int64, length(matches))
-    H_VALS = zeros(Float32, length(matches))
+    H_VALS = zeros(T, length(matches))
 
     #Design matrix. One row for every precursor template. One column for every unmatched peak. 
     U_COLS = zeros(Int64, length(misses))
     U_ROWS = zeros(Int64, length(misses))
-    U_VALS = zeros(Float32, length(misses))
+    U_VALS = zeros(T, length(misses))
 
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
-    X = zeros(Float32, M)
+    X = zeros(T, M)
 
     #Maps a precursor id to a row of H. 
     precID_to_row = UnorderedDictionary{UInt32, UInt32}()

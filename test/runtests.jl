@@ -1,6 +1,11 @@
 using DataFrames
+using Test
+#include("../src/parseFASTA.jl")
+include("../src/Routines/LibrarySearch/parsePrositLib.jl")
+include("../src/Routines/LibrarySearch/matchpeaksLib.jl")
+include("../src/Routines/LibrarySearch/buildDesignMatrix.jl")
+include("Routines/LibrarySearch/buildDesignMatrix.jl")
 
-include("../src/parseFASTA.jl")
 #=
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
