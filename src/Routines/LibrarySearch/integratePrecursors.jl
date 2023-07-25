@@ -80,7 +80,6 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
   data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
 """
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
-
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
         return (0.0, 0, 0.0, 0.0, missing, missing)
     end
@@ -88,6 +87,11 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     #Chromatogram for the precursor. 
     #Has columns "weight" and "rt". 
     chrom = chroms[(precursor_idx=precursor_idx,)]
+    return integratePrecursor(chrom, max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, isplot = isplot)
+end
+
+function integratePrecursor(chrom::DataFrame; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
+
 
     #Remove empty rows 
     non_zero = BitVector(undef, size(chrom)[1])
@@ -95,7 +99,7 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     chrom = chrom[non_zero,:]
     #Too few points to attempt integration
     if size(chrom)[1] < 3
-        return (0.0, 0, 0.0, 0.0, missing, missing)
+        return (0.0, 0, 0.0, 0.0, missing, missing, missing)
     end
 
     #Smoothing parameters for first derivative
@@ -106,11 +110,14 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     intensity = pad(chrom[:,:weight], zero(eltype(typeof(chrom[:,:weight]))), zero(eltype(typeof(chrom[:,:weight]))))
 
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
-    best_peak_slope, start, stop =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
+    best_peak_slope, start, stop, mid =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
+    fwhm = getFWHM(X, Y, start, mid, stop)
 
+    println("start $start")
+    println("stop $stop")
     #No sufficiently wide peak detected. 
     if (stop - start) < 2
-        return (0.0, 0, Float64(0.0), 0.0, missing, missing)
+        return (0.0, 0, Float64(0.0), 0.0, missing, missing, missing)
     end
 
     #Smoothing parameters for chromatogram
@@ -125,12 +132,12 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
         vline!([rt[stop]], color = :red);
     end
 
-    peak_area = integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
+    peak_area = NumericalIntegration.integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
     count = (stop - start + 1)
     SN = Float64(sum(intensity[start:stop])/sum(intensity))
     error = sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity))
 
-    return peak_area, count, SN, best_peak_slope, error, rt[start:stop][argmax(intensity_smooth)]
+    return peak_area, count, SN, best_peak_slope, error, rt[start:stop][argmax(intensity_smooth)], fwhm
 end
 
 function pad(x::Vector{T}, head::T, tail::T) where {T<:AbstractFloat}
@@ -199,7 +206,7 @@ function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::V
             if intensity[zero_crossings_1d[i]] > best_peak_intensity #Select the peak where the raw intensity is greatest. 
 
                 #Left peak boundary is the previous first derivative crossing or the leftmost datapoint
-                left_bound = i > 1 ? max(1, zero_crossings_1d[i]) : 1
+                left_bound = i > 1 ? max(1, zero_crossings_1d[i-1] + 1) : 1
 
                 #Right peak boundary is the next first derivative crossing or the rightmost datapoint
                 if i+1<length(zero_crossings_1d)
@@ -221,9 +228,35 @@ function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::V
         end
     end
 
-    return best_peak_slope, best_left, best_right
+    return best_peak_slope, best_left, best_right, best_peak
 end
 
+function getFWHM(X::Vector{T}, Y::Vector{U}, start::Int, mid::Int, stop::Int) where {T,U<:AbstractFloat}
+    function getMid(y, x_start, x_stop, y_start, y_stop)
+        slope = (x_start - x_stop)/(y_start - y_stop)
+        return (y - y_start)*slope + x_start
+    end
+
+    left_x, right_x = zero(T), zero(T)
+    if (mid == start) | (mid == stop)
+        return zero(T)
+    end
+    halfmax = Y[mid]/2
+    for i in start:(mid - 1)
+        if (Y[i + 1]>halfmax) & (Y[i]<halfmax)
+            left_x = getMid(halfmax, X[i], X[i + 1], Y[i], Y[i + 1])
+        end
+    end
+
+    for i in stop:-1:(mid + 1)
+        if (Y[i - 1]>halfmax) & (Y[i]<halfmax)
+            right_x = getMid(halfmax, X[i-1], X[i], Y[i-1], Y[i])
+        end
+    end
+
+    return right_x - left_x
+
+end
 #=-
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms))

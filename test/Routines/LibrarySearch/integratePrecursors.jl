@@ -68,17 +68,21 @@
     window, order = getSmoothingParams(length(Y), 15, 3)
     Y′ = getSmoothDerivative(X, Y, window, order)
     cross_idx, cross_slope = getZeroCrossings(Y′, X[1:end - 1])
-    slope, left, right = getPeakBounds(Y, X, cross_idx, cross_slope, 1.0, 3)
+    slope, left, right, mid = getPeakBounds(Y, X, cross_idx, cross_slope, 1.0, 3)
     #plot(X, Y)
     #plot!(X[1:end - 1],Y′)
     #vline!([10])
     #vline!([23])
-    @test left == 16
+    @test left == 10
     @test right == 23
 
-    slope, left, right = getIntegrationBounds(X, Y, window, order, 1.0, 3)
+    slope, left, right, mid = getIntegrationBounds(X, Y, window, order, 1.0, 3)
 
-    @test left == 16
+    @test left == 10
     @test right == 23
 
+    chrom = DataFrame([X, Y],:auto)
+    rename!(chrom, Symbol.(["rt","weight"]))
+
+    integratePrecursor(chrom, isplot = true)
 end
