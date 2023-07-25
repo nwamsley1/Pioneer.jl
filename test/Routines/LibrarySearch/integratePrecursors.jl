@@ -84,5 +84,9 @@
     chrom = DataFrame([X, Y],:auto)
     rename!(chrom, Symbol.(["rt","weight"]))
 
-    integratePrecursor(chrom, isplot = true)
+    area, count, SN, slope, error, base_with, FWHM = integratePrecursor(chrom, isplot = true)
+
+    @test Tol(FWHM, 7)
+    @test Tol(area, 49)
+    @test count == 14
 end
