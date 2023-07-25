@@ -19,7 +19,7 @@ what the precursor ID is.
 struct PrecursorBinItem{T<:AbstractFloat}
     prec_id::UInt32
     prec_mz::T
-    intensity::Float32
+    intensity::T
     charge::UInt8
 end
 
@@ -189,6 +189,9 @@ function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where
     push!(getPrecBins(fi), prec_bin)
 end
 
+getPPM(frag_mz::T, ppm::T) where {T<:AbstractFloat} = ppm*frag_mz/1e6
+
+
 function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat, rt_size::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
     println("sorting...")
     sort!(frag_ions, by = x->x.frag_mz)
@@ -200,7 +203,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
     function fillPrecursorBin!(frag_index::FragmentIndex{<:AbstractFloat}, frag_ions::Vector{FragmentIon{T}}, frag_bin_idx::UInt32, start::Int, stop::Int, low_prec_mz::AbstractFloat, high_prec_mz::AbstractFloat)
         for ion_index in range(start, stop)
             pep_id = getPrecID(frag_ions[ion_index])
-                prec_mz = getPrecMZ(frag_ions[ion_index])#(getPrecMZ(frag_ions[ion_index]) + PROTON*(charge-1))/charge #m/z of the precursor
+                prec_mz = getPrecMZ(frag_ions[ion_index])
 
                 if (prec_mz < low_prec_mz) | (prec_mz > high_prec_mz) #Precursor m/z outside the bounds
                     continue
@@ -213,16 +216,15 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
         end
     end
 
-    bin = UInt32(1) #Current fragment bin index
+    rt_bin_idx = UInt32(1) #Current fragment bin index
     prec_bin_idx = one(UInt32)
     start = 1 #Fragment index of the first fragment in the current bin
-
-    getPPM(frag_mz::T, ppm::T) = ppm*frag_mz/1e6
+    stop = 2
 
     diff = getPPM(getFragMZ(frag_ions[start]), bin_ppm) #ppm tolerance of the current fragment bin
-
+    println(frag_ions)
     #Build bins 
-    for stop in 2:length(frag_ions)
+    while stop < (length(frag_ions)) + 1
 
         if (stop % 1_000_000) == 0
             println(stop/1_000_000)
@@ -230,62 +232,76 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
         #Haven't reached minimum fragment m/z yet
         if getFragMZ(frag_ions[stop]) < low_frag_mz
             start += 1
+            stop += 1
             continue
         end
 
-        #Doex the difference between the highest and lowest m/z in the bin 
+        #Does the difference between the highest and lowest m/z in the bin 
         #enought exceed 10 ppm of the lowest m/z?
-        if (getFragMZ(frag_ions[stop]) - getFragMZ(frag_ions[start])) > diff
-
-            #Nedds to be stop - 1 to gaurantee the smallest and largest fragment
-            #in the bin differ by less than diff 
-            last_frag_in_bin = stop - 1
-
+        if ((getFragMZ(frag_ions[min(stop + 1, length(frag_ions))]) - getFragMZ(frag_ions[start])) > diff) | ((stop + 1) >= length(frag_ions))
+            
             #Add a new fragment bin
             addFragmentBin!(frag_index, 
                             FragBin(getFragMZ(frag_ions[start]),
-                                    getFragMZ(frag_ions[last_frag_in_bin]),
-                                    bin
+                                    getFragMZ(frag_ions[stop]),
+                                    rt_bin_idx
                                     )
                             )
-            addRTBin!(frag_index)
-            #Sort fragments in the frag_bin by retention time
-            frag_ions[start:last_frag_in_bin] = sort(frag_ions[start:last_frag_in_bin], by = frag -> frag.prec_rt)
-            start_rt = frag_ions[start].prec_rt
-            start_rt_idx = start
-            for i in start:last_frag_in_bin
-                if (frag_ions[i].prec_rt - frag_ions[start_rt_idx].prec_rt) > rt_size
 
-                    push!(frag_index.rt_bins[bin] , RTBin(frag_ions[start_rt_idx].prec_rt,
-                                                            frag_ions[i].prec_rt,
+            #Holds the RT bins for these fragments. 
+            addRTBin!(frag_index)
+            
+            #Sort fragments in the frag_bin by retention time
+            frag_ions[start:stop] = sort(frag_ions[start:stop], by = frag -> frag.prec_rt)
+            start_rt_idx = start
+            #Make new precursor and retention time bins. 
+            for i in start:stop
+                #The first and last fragment differ in retention time by a threshold
+                if ((frag_ions[i].prec_rt + (-1)*frag_ions[start_rt_idx].prec_rt) > rt_size) | (i == stop)
+
+                    #Create a retention time bin to hold the start_idx:i-1 fragments 
+                    push!(frag_index.rt_bins[rt_bin_idx] , RTBin(frag_ions[start_rt_idx].prec_rt,
+                                                            frag_ions[max(i-1, start_rt_idx)].prec_rt,
                                                             prec_bin_idx)
                             )
 
+                    #Create a precursor bin to hold the start_idx:i-1fragments. 
                     addPrecursorBin!(frag_index, 
                                         #Preallocate an empty precursor bin of the correct length 
                                         PrecursorBin(Vector{PrecursorBinItem{T}}())#undef, (last_frag_in_bin - start + 1)*length(charges)))
                                         )
-                
-                    fillPrecursorBin!(frag_index, frag_ions, prec_bin_idx, start_rt_idx, i, low_prec_mz, high_prec_mz)
+                    if i == stop
+                        fillPrecursorBin!(frag_index, frag_ions, prec_bin_idx, start_rt_idx, i, low_prec_mz, high_prec_mz)
+                    else
+                        fillPrecursorBin!(frag_index, frag_ions, prec_bin_idx, start_rt_idx, i-1, low_prec_mz, high_prec_mz)
+                    end
 
-                    #Sort the precursor bin by precursor m/z
-                    #sort!(getPrecursors(getPrecursorBin(frag_index, prec_bin_idx)), by = x->getPrecMZ(x));
-                    #sort!(frag_index.precursor_bins[prec_bin_idx].precs, by = x->getPrecMZ(x));
-                    start_rt_idx = i+1
+                    start_rt_idx = i
                     prec_bin_idx += one(UInt32)
                 end
             end
             #Update counters and ppm tolerance 
-            bin += UInt32(1)
-            start = stop
-            diff = getPPM(getFragMZ(frag_ions[start]), bin_ppm)
-
-            #Maximum fragment m/z reached. Stop adding bins. 
-            if getFragMZ(frag_ions[stop]) > high_frag_mz
+            rt_bin_idx += UInt32(1)
+            start = stop + 1
+            diff = getPPM(getFragMZ(frag_ions[min(start, length(frag_ions))]), bin_ppm)
+            stop = start
+            #Maximum fragment m/z reached. Stop adding bins.
+            if getFragMZ(frag_ions[min(start, length(frag_ions))]) > high_frag_mz
                 break
             end
+            
+        else
+            stop += 1
         end
     end
+
+    function sortPrecursorBins!(frag_index::FragmentIndex{<:AbstractFloat})
+        for i in 1:length(frag_index.precursor_bins)
+            sort!(frag_index.precursor_bins[i].precs, by = x->getPrecMZ(x));
+        end
+        return nothing
+    end
+    sortPrecursorBins!(frag_index)
     return frag_index
 end
 
