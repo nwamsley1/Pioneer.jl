@@ -230,7 +230,7 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
             println(stop/1_000_000)
         end
         #Haven't reached minimum fragment m/z yet
-        if getFragMZ(frag_ions[stop]) < low_frag_mz
+        if getFragMZ(frag_ions[start]) < low_frag_mz
             start += 1
             stop += 1
             continue

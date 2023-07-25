@@ -51,4 +51,17 @@ f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec
 
 @test all([issorted(prec_bin.precs, by = x->getPrecMZ(x)) for prec_bin in f_index.precursor_bins])
 
+#Test low and high frag mz 
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 150.0, low_prec_mz = 50.0)
+@test length(f_index.precursor_bins) == 3
+@test Tol(f_index.precursor_bins[1].precs[1].prec_mz, 207.0)
+
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, high_frag_mz = 150.0, low_prec_mz = 50.0)
+@test length(f_index.precursor_bins) == 3
+@test Tol(f_index.precursor_bins[1].precs[1].prec_mz, 200.0)
+@test Tol(f_index.precursor_bins[3].precs[1].prec_mz, 206.0)
+
+
+
+
 end
