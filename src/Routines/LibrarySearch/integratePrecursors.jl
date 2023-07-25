@@ -142,15 +142,15 @@ end
 function getSmoothingParams(n_data_points::Int, max_window::Int, min_order::Int)
     window_size = min(max_window, max((n_data_points)÷3, 3))
     if isodd(window_size) == false
-        window_size += -1
+        window_size += 1
     end
     order = min(min_order, window_size - 2)
     return window_size, order
 end
 
 function fillNonZero!(non_zero::BitVector, intensity::Vector{T}) where {T<:AbstractFloat}
-    for i in 1:(length(intensity) - 1)
-        if iszero(intensity[i])&(intensity[i+1].==false)
+    for i in 1:(length(intensity))
+        if iszero(intensity[i])&(iszero(intensity[min(i+1, end)]) == false)
             non_zero[i] = false
         else
             non_zero[i] = true
@@ -170,13 +170,13 @@ function getSmoothDerivative(x::Vector{T}, y::Vector{U}, window::Int, order::Int
     return savitzky_golay(diff(y)./diff(x), window, order).y
 end
 
-function getZeroCrossings(series_y::Vector{T}, series_x::Vector{U}) where {T,U<:AbstractFloat}
+function getZeroCrossings(Y::Vector{T}, X::Vector{U}) where {T,U<:AbstractFloat}
     zero_crossings_idx = Vector{Int64}() #Indices of zero-crossings of first derivative
     zero_crossings_slope = Vector{T}() #Slopes of first derivative at the zero crossings
-    for i in 1:(length(series_y) - 1)
-        if (sign(series_y[i + 1])*sign(series_y[i])) < 0 #First derivative crossed zero
+    for i in 1:(length(Y) - 1)
+        if (sign(Y[i + 1])*sign(Y[i])) < 0 #First derivative crossed zero
             push!(zero_crossings_idx, i) #Add zero crossing
-            slope = (series_y[i + 1] - series_y[i])/(series_x[i + 1] - series_x[i]) #slope at zero crossing
+            slope = (Y[i + 1] - Y[i])/( X[i + 1] - X[i]) #slope at zero crossing
             push!(zero_crossings_slope, slope)
         end
     end
@@ -199,7 +199,7 @@ function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::V
             if intensity[zero_crossings_1d[i]] > best_peak_intensity #Select the peak where the raw intensity is greatest. 
 
                 #Left peak boundary is the previous first derivative crossing or the leftmost datapoint
-                left_bound = i > 1 ? max(1, zero_crossings_1d[i - 1]) : 1
+                left_bound = i > 1 ? max(1, zero_crossings_1d[i]) : 1
 
                 #Right peak boundary is the next first derivative crossing or the rightmost datapoint
                 if i+1<length(zero_crossings_1d)
