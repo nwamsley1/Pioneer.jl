@@ -222,7 +222,6 @@ function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::Abstrac
     stop = 2
 
     diff = getPPM(getFragMZ(frag_ions[start]), bin_ppm) #ppm tolerance of the current fragment bin
-    println(frag_ions)
     #Build bins 
     while stop < (length(frag_ions)) + 1
 

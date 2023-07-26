@@ -24,7 +24,7 @@ frag_ions = [
 
 ]
 #Build a toy framgnent index. 
-f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec_mz = 50.0)
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec_mz = 50.0);
 
 @test length(f_index.fragment_bins) == 4
 @test [length(x) for x in f_index.rt_bins] ==[2, 1, 2, 1]
@@ -39,7 +39,7 @@ f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec
 #Reverse frag ions and try against
 frag_ions = frag_ions[[x for x in length(frag_ions):-1:1]]
 
-f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec_mz = 50.0)
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec_mz = 50.0);
 
 @test length(f_index.fragment_bins) == 4
 @test [length(x) for x in f_index.rt_bins] ==[2, 1, 2, 1]
@@ -52,11 +52,11 @@ f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, low_prec
 @test all([issorted(prec_bin.precs, by = x->getPrecMZ(x)) for prec_bin in f_index.precursor_bins])
 
 #Test low and high frag mz 
-f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 150.0, low_prec_mz = 50.0)
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 150.0, low_prec_mz = 50.0);
 @test length(f_index.precursor_bins) == 3
 @test Tol(f_index.precursor_bins[1].precs[1].prec_mz, 207.0)
 
-f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, high_frag_mz = 150.0, low_prec_mz = 50.0)
+f_index = buildFragmentIndex!(frag_ions, 20.0, 5.0, low_frag_mz = 50.0, high_frag_mz = 150.0, low_prec_mz = 50.0);
 @test length(f_index.precursor_bins) == 3
 @test Tol(f_index.precursor_bins[1].precs[1].prec_mz, 200.0)
 @test Tol(f_index.precursor_bins[3].precs[1].prec_mz, 206.0)

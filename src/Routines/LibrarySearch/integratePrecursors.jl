@@ -111,10 +111,8 @@ function integratePrecursor(chrom::DataFrame; max_smoothing_window::Int = 15, mi
 
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
     best_peak_slope, start, stop, mid =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
-    fwhm = getFWHM(X, Y, start, mid, stop)
+    fwhm = getFWHM(rt, intensity, start, mid, stop)
 
-    println("start $start")
-    println("stop $stop")
     #No sufficiently wide peak detected. 
     if (stop - start) < 2
         return (0.0, 0, Float64(0.0), 0.0, missing, missing, missing)
