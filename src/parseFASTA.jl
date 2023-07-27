@@ -168,3 +168,6 @@ function digestFasta(fasta::Vector{FastaEntry}; regex::Regex = r"[KR][^P|$]", ma
     #Sort the peptides
     return sort!(peptides_fasta, by = x -> getSeq(x))
 end
+
+#digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"))
+

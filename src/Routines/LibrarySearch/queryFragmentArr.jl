@@ -50,37 +50,38 @@ end
 
 function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, window_min::Float32, window_max::Float32)
 
-   N = getLength(precursor_bin)
-    lo, hi = 1, N
+    @inbounds begin 
+        N = getLength(precursor_bin)
+        lo, hi = 1, N
 
-    while lo <= hi
-        mid = (lo + hi) ÷ 2
-        if getPrecMZ(getPrecursor(precursor_bin, mid)) < window_min
-            lo = mid + 1
-        else
-            hi = mid - 1
+        while lo <= hi
+            mid = (lo + hi) ÷ 2
+            if getPrecMZ(getPrecursor(precursor_bin, mid)) < window_min
+                lo = mid + 1
+            else
+                hi = mid - 1
+            end
         end
-    end
 
-    window_start = (lo <= N ? lo : return)
+        window_start = (lo <= N ? lo : return)
 
-    if getPrecMZ(getPrecursor(precursor_bin, window_start)) > window_max
-        return 
-    end
-
-    lo, hi = window_start, N
-
-    while lo <= hi
-        mid = (lo + hi) ÷ 2
-        if getPrecMZ(getPrecursor(precursor_bin, mid)) > window_max
-            hi = mid - 1
-        else
-            lo = mid + 1
+        if getPrecMZ(getPrecursor(precursor_bin, window_start)) > window_max
+            return 
         end
+
+        lo, hi = window_start, N
+
+        while lo <= hi
+            mid = (lo + hi) ÷ 2
+            if getPrecMZ(getPrecursor(precursor_bin, mid)) > window_max
+                hi = mid - 1
+            else
+                lo = mid + 1
+            end
+        end
+
+        window_stop = hi
     end
-
-    window_stop = hi
-
 
     function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, start::Int, stop::Int)# where {T,U<:AbstractFloat}
         #initialize
@@ -108,7 +109,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
             end
         end=#
 
-        for precursor_idx in start:stop
+        @inbounds for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
             inc!(precs, getPrecID(prec), getIntensity(prec))
         end

@@ -222,7 +222,7 @@ addPrecToPep!(pt::PrecursorTable, pep_id::UInt32, prec_id::UInt32) = addPrecID!(
 getPrec(pt::PrecursorTable, prec_id::UInt32) = pt.id_to_prec[prec_id]
 addPrec!(pt::PrecursorTable, prec_id::UInt32, pep_id::UInt32, charge::UInt8, isotope::UInt8) = insert!(pt.id_to_prec, prec_id, SimplePrecursor(charge, isotope, pep_id))
 
-function getProtFromPepID(pt::PrecursorTable, pep_id::Int)
+function getProtFromPepID(pt::PrecursorTable, pep_id::UInt32)
     getProtIDs(pt.id_to_pepGroup[getPepGroupID(pt.id_to_pep[pep_id])])
 end
 """
@@ -259,6 +259,10 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
     previous_peptide = ""
     for peptide in peptides_fasta
         sequence = getSeq(peptide)
+        protein_name = getID(peptide)
+        if protein_name == "YYYQRGILAK"
+            println(peptide)
+        end
         #Current peptide differs from previous
         if sequence != previous_peptide
             decoy = isDecoy(peptide)
@@ -272,11 +276,11 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
             addPepGroup!(ptable, pepGroup_id, peptide_sequence_fixed_mods, decoy)
 
             max_prot_id, prot_id = getProtID!(ptable, 
-                                            getID(peptide), 
+                                              protein_name, 
                                             max_prot_id)
+            addPepGroupToProtein!(ptable, prot_id, pepGroup_id)
+            addProtToPepGroup!(ptable, pepGroup_id, prot_id)
             if !decoy
-                addPepGroupToProtein!(ptable, prot_id, pepGroup_id)
-                addProtToPepGroup!(ptable, pepGroup_id, prot_id)
                 previous_peptide = sequence
             end
 
@@ -295,9 +299,20 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
             #Apply fixed modifications
             peptide_sequence_fixed_mods = fixedMods(getSeq(peptide), fixed_mods)
 
-            max_prot_id, prot_id = getProtID!(ptable, peptide_sequence_fixed_mods, max_prot_id)
+            max_prot_id, prot_id = getProtID!(ptable, protein_name, max_prot_id)
             addPepGroupToProtein!(ptable, prot_id, pepGroup_id)
             addProtToPepGroup!(ptable, pepGroup_id, prot_id)
         end
     end
+end
+
+function buildPrecursorTable!(test_table::PrecursorTable, fasta_path::String; min_length::Int = 8, max_length::Int = 30,
+    fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+    var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+    n_var_mods::Int = 2)
+peptides_fasta = digestFasta(parseFasta(fasta_path), max_length = max_length, min_length = min_length)
+
+buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, n_var_mods);
+
+return nothing
 end
