@@ -61,6 +61,8 @@ function SearchRAW(
                     min_ratio = Float32(min_matched_ratio),
                     topN = topN
                     )
+        #println("prec_count $prec_count")
+        #println("match_count $match_count")
         #return precs
         #return precs
         if getSize(precs) <= 1
@@ -69,7 +71,8 @@ function SearchRAW(
             continue
         end
         transitions = selectTransitions(fragment_list, precs, topN)
-        
+        #println("length(transitions) ", length(transitions))
+        #return transitions
         #times[:reset] += @elapsed reset!(precs)
         reset!(precs)
         

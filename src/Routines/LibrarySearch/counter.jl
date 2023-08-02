@@ -41,6 +41,7 @@ function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:Abstr
     sort!(
                 @view(counter.ids[1:counter.matches]), 
                 by = id -> last(counter.counts[id]),
+                #by = id -> first(counter.counts[id]),
                 rev = true,
                 alg=PartialQuickSort(1:topN)
         )
@@ -48,7 +49,7 @@ function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:Abstr
 end
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    @inbounds for i in 1:(getSize(c) - 1)
+    for i in 1:(getSize(c) - 1)
         c.counts[c.ids[i]] = (zero(UInt8), zero(Float32));
     end
     c.size, c.matches = 1, 0
@@ -57,7 +58,7 @@ end
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int, min_ratio::T) where {I,C<:Unsigned,T<:AbstractFloat} 
     matched_frags = 0
-    @inbounds for i in 1:(getSize(c) - 1)
+    for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(c, id)
         matched_frags += frag_count

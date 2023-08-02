@@ -13,7 +13,7 @@ include("src/PrecursorDatabase.jl")
 include("src/applyMods.jl")
 
 
-peptides_fasta = digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"), max_length = 30, min_length = 8)
+peptides_fasta = digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"), max_length = 30, min_length = 7)
 #peptides_fasta = digestFasta(parseFasta(file_path))
 test_table = PrecursorTable()
 fixed_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
@@ -31,7 +31,8 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
                         var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = [(p=r"(M)", r="[MOx]")],
                         n_var_mods::Int = 2,
                         nce::Float64 = 30.0,
-                        default_charge::Int = 3)
+                        default_charge::Int = 3,
+                        dynamic_nce::Bool = true)
 
     test_table = PrecursorTable()
     buildPrecursorTable!(test_table, fasta, min_length = min_length, max_length = max_length,
@@ -42,6 +43,7 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
         for (id, pep) in ProgressBar(pairs(test_table.id_to_pep))
             sequence = replace(getSeq(pep), r"M\[MOx\]"=>"M(ox)")
             sequence = replace(sequence, r"C\[Carb\]"=>"C")
+            unmod_sequence = replace(sequence, r"M(ox)"=>"M")
             prot_id = join([prot_id for prot_id in collect(getProtFromPepID(test_table, id))],";")
             accession = join([getName(getProtein(test_table, prot_id)) for prot_id in collect(getProtFromPepID(test_table, id))],";")
             #Check for illegal amino acid characters
@@ -49,14 +51,20 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
                 continue
             end
             #Enforce length constraints
-            if (length(sequence) > 30) | (length(sequence) < 8)
+            #There is a bug here because the sequence length includes "M(ox)". 
+            #So the maximum length of a methionine oxidized peptide is actually 30 - 4. 
+            if (length(unmod_sequence) > 30) | (length(unmod_sequence) < 7)
                 continue
             end 
             decoy = isDecoy(pep)
             #if (decoy == false)
             for charge in range(min_charge, max_charge)
-                NCE = adjustNCE(nce, default_charge, charge)
-                write(file, "$accession,$sequence,$NCE,$charge,$prot_id,$id,$decoy\n")
+                if dynamic_nce
+                    NCE = adjustNCE(nce, default_charge, charge)
+                    write(file, "$accession,$sequence,$NCE,$charge,$prot_id,$id,$decoy\n")
+                else
+                    write(file, "$accession,$sequence,$nce,$charge,$prot_id,$id,$decoy\n")
+                end
             end
             #end
         end

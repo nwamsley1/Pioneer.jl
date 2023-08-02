@@ -90,7 +90,7 @@ function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::
     return integratePrecursor(chrom, max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, isplot = isplot)
 end
 
-function integratePrecursor(chrom::DataFrame; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
+function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
 
 
     #Remove empty rows 
@@ -111,6 +111,9 @@ function integratePrecursor(chrom::DataFrame; max_smoothing_window::Int = 15, mi
 
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
     best_peak_slope, start, stop, mid =  getIntegrationBounds(rt, intensity, window_size, order, 1.0/6.0, 5)
+    if mid == 0
+        return (0.0, 0, Float64(0.0), 0.0, missing, missing, missing)
+    end 
     fwhm = getFWHM(rt, intensity, start, mid, stop)
 
     #No sufficiently wide peak detected. 
@@ -197,7 +200,7 @@ function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::V
     best_right = 0
     N = length(intensity) 
     if iszero(length(zero_crossings_1d)) #If the first derivative does not cross zero, there is no peak
-        return 0, 1, length(intensity)
+        return 0, 1, length(intensity), 0
     end
     for i in 1:length(zero_crossings_1d)
         if zero_crossings_slope[i] < 0 #Peaks will always occur at first derivative crossings where the slope is negative 
@@ -333,6 +336,15 @@ println("TARGETS at 1%FDR intensity ", sum(non_zero[:,:q_values].<=0.01)*mean(no
 println("TARGET/DECOY intensity ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:intensity])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:intensity]))
 println("TARGET/DECOY count ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:count])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:count]))
 
+integratePrecursor(chroms, UInt32(1284418), isplot = true)
+integratePrecursor(chroms, UInt32(7479714), isplot = true)
+integratePrecursor(chroms, UInt32(4343373), isplot = true)
+integratePrecursor(chroms, UInt32(232427), isplot = true)
+integratePrecursor(chroms, UInt32(4034269), isplot = true)
+
+
+integratePrecursor(chroms, UInt32( 8316025), isplot = true)
+integratePrecursor(chroms, UInt32( 8316019), isplot = true)
 
 integratePrecursor(chroms, UInt32(4171604), isplot = true)
 integratePrecursor(chroms, UInt32(1648748), isplot = true)

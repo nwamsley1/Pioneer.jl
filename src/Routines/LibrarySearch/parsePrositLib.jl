@@ -52,6 +52,7 @@ struct LibraryPrecursor{T<:AbstractFloat}
     pep_id::UInt32
     prot_ids::Vector{UInt32}
     accession_numbers::String
+    sequence::String
     missed_cleavages::UInt8
     variable_mods::UInt8
     length::UInt8
@@ -68,7 +69,7 @@ ArrowTypes.arrowname(::Type{LibraryFragment{Float32}}) = :LibraryFragment
 ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
 fixed_mods = [(p=r"C", r="C[Carb]")]
 mods_dict = Dict("Carb" => Float64(57.021464),
-                 "Ox" => Float64(10.0)
+                 "Ox" => Float64(15.994915)
                  )
 
 function parseSequence(seq::String, charge::UInt8, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}) where {T<:AbstractFloat}
@@ -98,12 +99,30 @@ function parseSequence(seq::String, charge::UInt8, fixed_mods::Vector{NamedTuple
     return Float32(mz), UInt8(length(seq)), UInt8(countMissedCleavages(seq))
 end
 
-function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}) where {T<:AbstractFloat}
+function split_array_into_chunks(arr::Vector, num_chunks::Int)
+    len = length(arr)
+    chunk_size = div(len, num_chunks)
+    
+    # Create a list of tuples for each chunk
+    chunks = [[start_idx, min(start_idx + chunk_size - 1, len)] for start_idx in 1:chunk_size:len]
+    
+    # Adjust the last chunk's stopping index to the end of the array
+    last_chunk = last(chunks)
+    if last_chunk[2] < len
+        last_chunk = [last_chunk[1], len]
+        chunks[end] = last_chunk
+    end
+    
+    return chunks
+end
+#CSV.write("outputfile.csv",test_prosit[1000000:1000036,:],delim=',')
+
+function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3) where {T<:AbstractFloat}
 
     #"/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/examples/peptidelist.msms"
     prosit_library = CSV.File(prosit_csv_path)
-    pattern = r"\((\w+)\+\)"
-
+    charge_pattern = r"\((\w+)\+\)"
+    index_pattern = r"[yb]([0-9]{1,2})[\(]*"
     ###########
     #Initialize Containers
     #List of lists. The n'th element of the outer list is indexed by the precursor id.
@@ -116,11 +135,12 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #Used to fuild the framgment index for MSFragger-like searching. 
     frags_simple = [Vector{FragmentIon{Float32}}() for _ in 1:Threads.nthreads()];
     #Loop through rows of prosit library (1-1 correspondence between rows and precursors)
-    n = 0
-    lk = ReentrantLock()
+    #lk = ReentrantLock()
+    N = split_array_into_chunks(frags_detailed, Threads.nthreads())
     Threads.@threads for precursor in ProgressBar(collect(prosit_library))
-        lock(lk) do
-            n += 1
+        if N[Threads.threadid()][1]>N[Threads.threadid()][2]
+            #sleep(rand())
+            continue
         end
         #############
         #Parse Column/Precursor
@@ -131,63 +151,244 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         intensities = intensities./sum(intensities)
         charge = UInt8(precursor[:Charge])
         pep_id =  UInt32(precursor[:pep_id])
-        decoy =  precursor[:decoy]=="TRUE" ? true : false
+        decoy =  precursor[:decoy]
         iRT = Float32(precursor[:iRT])
         sequence = precursor[:modified_sequence]
+
         accession_numbers = precursor[:accession_numbers]
         mz, len_AA, missed_cleavages = parseSequence(String(sequence), charge, fixed_mods, mods_dict)
 
         #pre-allocate library fragments for the n'th precursor
-        nth_precursor_frags = Vector{LibraryFragment{Float32}}(undef, length(matches))
-
+        nth_precursor_frags = Vector{LibraryFragment{Float32}}()#undef, length(matches))
+        total_intensity = zero(Float32)
         #########
         #Parse each fragment ion 
+        for (i, _match) in enumerate(matches)
+            if parse(UInt8, match(index_pattern, _match).captures[1]) < start_ion
+                continue
+            end
+            total_intensity += intensities[i]
+        end
+
         for i in eachindex(matches)
             fragment_name = matches[i]
-            ion_type = match(pattern, fragment_name)
-            frag_charge = ion_type === nothing ? one(UInt8) : parse(UInt8, ion_type.captures[1])
-
+            #ion_type = match(pattern, fragment_name)
+            ion_index = parse(UInt8, match(index_pattern, fragment_name).captures[1]) #for y1 or b12 this is "1" and "12 respectively
+            ion_charge = match(charge_pattern, fragment_name)
+            frag_charge = ion_charge === nothing ? one(UInt8) : parse(UInt8, ion_charge.captures[1])
+            if ion_index < start_ion
+                continue
+            end
             #Add the n'th fragment 
-            nth_precursor_frags[i] = LibraryFragment(
+            push!(nth_precursor_frags,  LibraryFragment(
                                                 masses[i], #frag_mz
                                                 frag_charge, #frag_charge
                                                 fragment_name[1] == 'y' ? true : false, #is_y_ion
-                                                parse(UInt8, fragment_name[2]), #ion_position
+                                                ion_index, #ion_position
                                                 UInt8(i), #ion_index
-                                                intensities[i], #intensity
+                                                intensities[i]/total_intensity, #intensity
                                                 charge, #prec_charge
-                                                UInt32(1) #prec_id
-            )
+                                                UInt32(N[Threads.threadid()][1]) #prec_id
+            ))
+
             push!(frags_simple[Threads.threadid()],
                     FragmentIon(
                         masses[i], #frag_mz
-                        UInt32(n), #prec_id
+                        UInt32(N[Threads.threadid()][1]), #prec_id
                         mz, #prec_mz 
-                        intensities[i], #prec_intensity
+                        intensities[i]/total_intensity, #prec_intensity
                         iRT, #prec_rt
                         charge, #prec_charge
                     )
             )
-        end
 
-        precursors[n] = LibraryPrecursor(
+        end
+        precursors[N[Threads.threadid()][1]] = LibraryPrecursor(
                                             iRT, #iRT
                                             mz, #mz
-                                            sum(intensities), #total_intensity
+                                            total_intensity, #total_intensity
                                             decoy, #isDecoy
                                             charge, #charge
                                             pep_id, #pep_id
                                             UInt32[1], #prot_ids
                                             String(accession_numbers), #accession_numbers
+                                            String(sequence),
                                             missed_cleavages, #missed_cleavages
                                             UInt8(1), #variable_mods
                                             len_AA, #length
                                         )
 
-        frags_detailed[n] = nth_precursor_frags
+        frags_detailed[N[Threads.threadid()][1]] = nth_precursor_frags
+
+        N[Threads.threadid()][1] += 1
+
     end
     return vcat(frags_simple...), frags_detailed, precursors
+    #return frags_simple, frags_detailed, precursors
 end
+@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict);
+frags_mouse_simple_33NCEdynamic = frags_simple
+frags_mouse_detailed_33NCEdynamic = frags_detailed
+precursors_mouse_detailed_33NCEdynamic = precursors
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEdynamic.jld2" frags_mouse_simple_33NCEdynamic
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEdynamic.jld2" frags_mouse_detailed_33NCEdynamic
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEdynamic.jld2" precursors_mouse_detailed_33NCEdynamic
+prosit_mouse_33NCEdynamic_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEdynamic, Float32(5.0), Float32(15.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEdynamic_5ppm_15irt.jld2" prosit_mouse_33NCEdynamic_5ppm_15irt
+
+
+
+@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_fixedNCE_073123.csv", fixed_mods, mods_dict);
+frags_mouse_simple_33NCEfixed = frags_simple
+frags_mouse_detailed_33NCEfixed = frags_detailed
+precursors_mouse_detailed_33NCEfixed = precursors
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEfixed.jld2" frags_mouse_simple_33NCEfixed
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEfixed.jld2" frags_mouse_detailed_33NCEfixed
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEfixed.jld2" precursors_mouse_detailed_33NCEfixed
+prosit_mouse_33NCEfixed_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEfixed, Float32(5.0), Float32(15.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEfixed_5ppm_15irt.jld2" prosit_mouse_33NCEfixed_5ppm_15irt
+
+
+
+
+@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_fixedNCE_073123.csv", fixed_mods, mods_dict);
+frags_mouse_simple_33NCEfixed = frags_simple
+frags_mouse_detailed_33NCEfixed = frags_detailed
+precursors_mouse_detailed_33NCEfixed = precursors
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEfixed.jld2" frags_mouse_simple_33NCEfixed
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEfixed.jld2" frags_mouse_detailed_33NCEfixed
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEfixed.jld2" precursors_mouse_detailed_33NCEfixed
+prosit_mouse_33NCEfixed_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEfixed, Float32(5.0), Float32(15.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEfixed_5ppm_15irt.jld2" prosit_mouse_33NCEfixed_5ppm_15irt
+
+
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_simple_33NCEfixed.jld2" frags_simple_33NCEfixed
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_detailed_33NCEfixed.jld2" frags_detailed_33NCEfixed
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/precursors_33NCEfixed.jld2" precursors_33NCEfixed
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/prosit_33NCEfixed_5ppm_15irt.jld2" prosit_33NCEfixed_5ppm_15irt 
+
+function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
+    
+    frag_list = Vector{FragmentIon{precision}}()
+    frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
+    precursor_list = Vector{LibraryPrecursor}()
+
+    rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :iRT, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
+    current_peptide = ""
+    current_charge = ""
+    prec_id = UInt32(first_prec_id)
+    id = UInt32(0)
+    ion_position = UInt8(1)
+    rows = []
+    println("TEST")
+    for (i, row) in enumerate(rows)
+        println(i)
+        if (i % 1_000_000) == 0
+            println(i/1_000_000)
+        end
+        #if i < 13000000
+        #    continue
+        #end
+        if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
+            println("current_peptide $current_peptide")
+            println(row)
+            rows += [row]
+        end
+        if (row.ModifiedPeptide::PosLenString != current_peptide) | (row.PrecursorCharge::PosLenString != current_charge)
+            current_peptide = row.ModifiedPeptide::PosLenString
+            current_charge = row.PrecursorCharge::PosLenString
+            prec_id += UInt32(1)
+            #if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
+            #    println("current_peptide $current_peptide")
+            #    println(row)
+            #end
+            id += UInt32(1)
+            ion_position = UInt8(1)
+            push!(frag_detailed, Vector{LibraryFragment{precision}}())
+            #=push!(precursor_list, LibraryPrecursor(
+                                                    parse(precision, row.iRT::PosLenString),
+                                                    parse(precision, row.PrecursorMz::PosLenString),
+                                                    Ref(zero(precision)),
+                                                    isDecoys,
+                                                    parse(UInt8, row.PrecursorCharge::PosLenString)
+                                                ))=#
+        end
+
+        #Track progress
+        if (i % 1_000_000) == 0
+            println(i/1_000_000)
+        end
+
+        #Exclude y1, y2, b1, and b2 ions. 
+        if parse(Int, row.FragmentNumber::PosLenString) < 3
+            continue
+        end
+
+        #=addIntensity!(precursor_list[id], parse(precision, row.RelativeIntensity))
+
+        push!(frag_list, FragmentIon(parse(precision, row.FragmentMz::PosLenString), 
+                                    prec_id, 
+                                    parse(precision, row.PrecursorMz::PosLenString), 
+                                    Ref(parse(precision, row.RelativeIntensity::PosLenString)),
+                                    parse(precision, row.iRT::PosLenString),
+                                    parse(UInt8, row.PrecursorCharge::PosLenString)
+                                    ))
+
+        push!(frag_detailed[id], LibraryFragment(parse(precision, row.FragmentMz::PosLenString), 
+                                                      parse(UInt8, row.FragmentCharge::PosLenString),
+                                                      occursin("y", row.FragmentType::PosLenString),
+                                                      parse(UInt8, row.FragmentNumber::PosLenString),
+                                                      ion_position,
+                                                      parse(precision, row.RelativeIntensity::PosLenString),
+                                                      parse(UInt8, row.PrecursorCharge::PosLenString),
+                                                      prec_id,
+                                                    )
+                                 )=#
+        ion_position += UInt8(1)
+    end
+    sort!(frag_list, by = x->getFragMZ(x))
+    return frag_list, frag_detailed, precursor_list, prec_id
+end
+
+rows = []
+current_peptide = ""
+current_charge = ""
+for (i, row) in enumerate(CSV.Rows("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_targets.csv"))
+    if (i % 1_000_000) == 0
+        println(i/1_000_000)
+    end
+    if i < 13000000
+        continue
+    end
+    current_peptide = row.ModifiedPeptide::PosLenString
+    current_charge = row.PrecursorCharge::PosLenString
+    if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
+        if current_charge == "3"
+            #println("current_peptide $current_peptide")
+            println(row.ModifiedPeptide,",",row.RelativeIntensity,",",row.FragmentMz,",",row.FragmentType,",",",",row.FragmentNumber,",",row.FragmentCharge)
+        end
+        #rows += [row]
+    end
+end
+#=
+
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_simple.jld2" frags_simple
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_detailed.jld2" frags_detailed
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/precursors.jld2" precursors
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
+
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_simple.jld2" frags_simple
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_detailed.jld2" frags_detailed
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/precursors.jld2" precursors
+
+
+prosit_index_5ppm_15irt = buildFragmentIndex!(frags_simple, Float32(5.0), Float32(15.0))
+#for i in 1:length(prosit_index_5ppm_10irt.precursor_bins)
+#    sort!(prosit_index_5ppm_10irt.precursor_bins[i].precs, by = x->getPrecMZ(x))
+#end
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
 
 frags2 = DetailedPrecursor(append!(frags, frags))
 table = (col1=frags)
@@ -195,6 +396,7 @@ io = IOBuffer()
 Arrow.write(io, table)
 seekstart(io)
 table2 = Arrow.Table(io)
+=#
 #=
 function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
     

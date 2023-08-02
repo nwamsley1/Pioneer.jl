@@ -50,7 +50,7 @@ end
 
 function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, window_min::Float32, window_max::Float32)
 
-    @inbounds begin 
+    
         N = getLength(precursor_bin)
         lo, hi = 1, N
 
@@ -81,7 +81,6 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
         end
 
         window_stop = hi
-    end
 
     function addFragmentMatches!(precs::Counter{UInt32, UInt8, Float32}, precursor_bin::PrecursorBin{Float32}, start::Int, stop::Int)# where {T,U<:AbstractFloat}
         #initialize
@@ -109,7 +108,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
             end
         end=#
 
-        @inbounds for precursor_idx in start:stop
+        for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
             inc!(precs, getPrecID(prec), getIntensity(prec))
         end
@@ -139,8 +138,8 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, iRT_low::Float32
     end
 
     i = 1
-    prec_min = prec_mz - prec_tol
-    prec_max = prec_mz + prec_tol
+    prec_min = prec_mz - prec_tol - Float32(1.51)
+    prec_max = prec_mz + prec_tol + Float32(.51)
 
     while (frag_bin < length(getFragBins(frag_index))) #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
     
