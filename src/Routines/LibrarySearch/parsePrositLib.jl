@@ -1,6 +1,8 @@
+abstract type IonType end
 
-abstract type FragmentIndexType end
 
+abstract type FragmentIndexType <: IonType end
+getMZ(f::FragmentIndexType) = f.frag_mz
 getFragMZ(f::FragmentIndexType) = f.frag_mz
 getPrecID(f::FragmentIndexType) = f.prec_id
 getPrecCharge(f::FragmentIndexType) = f.prec_charge

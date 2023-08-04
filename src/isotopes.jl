@@ -60,7 +60,7 @@ import Base.+
 
 Composition() = Composition(zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32))
 
-struct Isotope{T<:AbstractFloat}
+struct Isotope{T<:AbstractFloat} <: IonType
     mass::T
     intensity::T
     prec_idx::UInt32
@@ -68,7 +68,7 @@ end
 
 getMZ(i::Isotope{T}) where {T<:AbstractFloat} = i.mass
 getIntensity(i::Isotope{T}) where {T<:AbstractFloat} = i.intensity
-getPrecId(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
+getPrecID(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
 
 function getMonoMass(comp::Composition,charge::I) where {I<:Integer}
     return (comp.C*12.000000 + 
@@ -80,7 +80,7 @@ end
 
 
 
-function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::Integer, prec_id::UInt32; precision::DataType = Float32)
+function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::I, prec_id::J; precision::DataType = Float32) where {I,J<:Integer}
     npeaks = min(npeaks, roots.npeaks)
     Ψ = zeros(ComplexF64, npeaks - 1)
     for n in range(1, npeaks - 1)
@@ -99,9 +99,9 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::Inte
     end
 
     mass = Float32(getMonoMass(comp, charge))
-    #isotopes = Vector{Isotope{precision}}(undef, npeaks)
+    isotopes = Vector{Isotope{precision}}(undef, npeaks)
     for i in eachindex(isotopes)
-        isotopes[i] = Isotope(mass, q[i], prec_id)
+        isotopes[i] = Isotope(mass, q[i], UInt32(prec_id))
         mass += Float32((NEUTRON/charge))
     end
     return isotopes
@@ -164,17 +164,10 @@ function getElementalComposition(seq::String)
     return comp +  Composition(zero(UInt32), UInt32(2), zero(UInt32), UInt32(1), zero(UInt32))
 end
 
-function getIsotopes(seqs::Vector{String}, ids::Vector{UInt32}, charges::Vector{UInt8}, roots::QRoots, npeaks::Int; precision::DataType = Float32)
+function getIsotopes(seqs::Vector{String31}, ids::Vector{I}, charges::Vector{J}, roots::QRoots, npeaks::Int; precision::DataType = Float32) where {I,J<:Integer}
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{precision}}}()
     for i in eachindex(seqs)
-        #for isotopic_envelope in getIsotopes(getElementalComposition(seqs[i]), roots, npeaks, charge, ids[i], precision = precision)
-           # if !haskey(isotopes, ids[i])
-                insert!(isotopes, ids[i], getIsotopes(getElementalComposition(seqs[i]), roots, npeaks, charges[i], ids[i], precision = precision))
-           #     isotopic_envelope
-           # else
-           #     append!(isotopes[ids[i]], isotopic_envelope)
-           # end
-        #end
+        insert!(isotopes, ids[i], getIsotopes(getElementalComposition(String(seqs[i])), roots, npeaks, charges[i], ids[i], precision = precision))
     end
     isotopes
 end
