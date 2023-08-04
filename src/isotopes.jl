@@ -10,24 +10,292 @@
 #N(14):14.0030740052    99.6337
 #N(15):15.0001088984    0.3663
 
-#20 carbons 
-#=d = Binomial(20, 0.011078)
-C[1]*
+struct QRoots
+    S::Vector{Vector{ComplexF64}}
+    C::Vector{Vector{ComplexF64}}
+    H::Vector{Vector{ComplexF64}}
+    O::Vector{Vector{ComplexF64}}
+    N::Vector{Vector{ComplexF64}}
+    npeaks::UInt32
+    function QRoots(npeaks::Integer)
+        #=
+        
+        =#
 
-struct Composition
+        ###Get values from 
+        #Sroots = roots(Polynomial([0.9499, 0.0075, 0.0425, 0.0, 0.0001]))
+        Sroots = [ -0.09928332843567012 - 4.863784343504499im
+                    -0.09928332843567012 + 4.863784343504499im
+                    0.09928332843567106 - 20.03405391373626im
+                    0.09928332843567106 + 20.03405391373626im]
+        Sroots = [Complex.(Sroots.^n) for n in range(1, npeaks)]
+        #Croots = roots(Polynomial([0.9893, 0.0107]))
+        Croots = [-92.45794392523365]
+        Croots = [Complex.(Croots.^n) for n in range(1, npeaks)]
+        #Hroots = roots(Polynomial([0.999885, 0.000115]))
+        Hroots = [-8694.652173913044]
+        Hroots = [Complex.(Hroots.^n) for n in range(1, npeaks)]
+        #Oroots = roots(Polynomial([0.99757, 0.00038, 0.00205]))
+        Oroots = [ -0.09268292682926828 - 22.05925932732548im
+                -0.09268292682926828 + 22.05925932732548im]
+        Oroots = [Complex.(Oroots.^n) for n in range(1, npeaks)]
+        #Nroots = roots(Polynomial([0.99636, 0.00364]))
+        Nroots = [-273.72527472527474]
+        Nroots = [Complex.(Nroots.^n) for n in range(1, npeaks)]
+        new(Sroots, Croots, Hroots, Oroots, Nroots, UInt32(npeaks))
+    end
+end
+
+mutable struct Composition
+    C::Int32
+    H::Int32
+    N::Int32
+    O::Int32
+    S::Int32
+end
+
+import Base.+
+
++(y::Composition, x::Composition) = Composition(x.C + y.C, x.H + y.H, x.N + y.N, x.O + y.O, x.S + y.S)
+
+Composition() = Composition(zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32))
+
+struct Isotope{T<:AbstractFloat}
+    mass::T
+    intensity::T
+    prec_idx::UInt32
+end
+
+getMZ(i::Isotope{T}) where {T<:AbstractFloat} = i.mass
+getIntensity(i::Isotope{T}) where {T<:AbstractFloat} = i.intensity
+getPrecId(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
+
+function getMonoMass(comp::Composition,charge::I) where {I<:Integer}
+    return (comp.C*12.000000 + 
+           comp.H*1.007825 +
+           comp.N*14.0030740052 +
+           comp.O*15.99491462219 + 
+           comp.S*31.97207069 + PROTON*charge)/charge
+end
+
+
+
+function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::Integer, prec_id::UInt32; precision::DataType = Float32)
+    npeaks = min(npeaks, roots.npeaks)
+    Ψ = zeros(ComplexF64, npeaks - 1)
+    for n in range(1, npeaks - 1)
+        Ψ[n] = sum(comp.C./(roots.C[n])) + sum(comp.H./(roots.H[n])) + sum(comp.N./(roots.N[n])) + sum(comp.O./(roots.O[n])) + sum(comp.S./(roots.S[n]))
+    end
+    q = zeros(Float32, npeaks)
+    #C, 
+    q[1] = prod([0.9893, 0.999885, 0.99757, 0.99636, 0.9499].^[comp.C, comp.H, comp.N, comp.O, comp.S])
+
+    for i in range(2, npeaks)
+        qΨ = 0.0
+        for k in range(1, i-1)
+            qΨ += q[i - k]Ψ[k]
+        end
+        q[i] = -(1/(i - 1))*qΨ
+    end
+
+    mass = Float32(getMonoMass(comp, charge))
+    #isotopes = Vector{Isotope{precision}}(undef, npeaks)
+    for i in eachindex(isotopes)
+        isotopes[i] = Isotope(mass, q[i], prec_id)
+        mass += Float32((NEUTRON/charge))
+    end
+    return isotopes
+end
+
+sequence = "M(ox)QVDQEEPHTEEQQQQPQTPAENK"
+for match in findall(r"[A-Z](\(.*?\))+", sequence)
+    println(match)
+end
+
+const aa_to_composition::Dict{Char, Composition} = Dict{Char, Composition}(
+        'A' => Composition(3, 5, 1, 1, 0),
+        'R' => Composition(6, 12, 4, 1, 0),
+        'N' => Composition(4, 6, 2, 2, 0),
+        'D' => Composition(4, 5, 1, 3, 0),
+        'C' => Composition(3, 5, 1, 1, 1),
+        'E' => Composition(5, 7, 1, 3, 0),
+        'Q' => Composition(5, 8, 2, 2, 0),
+        'G' => Composition(2, 3, 1, 1, 0),
+        'H' => Composition(6, 7, 3, 1, 0),
+        'I' => Composition(6, 11, 1, 1, 0),
+        'L' => Composition(6, 11, 1, 1, 0),
+        'K' => Composition(6, 12, 2, 1, 0),
+        'M' => Composition(5, 9, 1, 1, 1),
+        'F' => Composition(9, 9, 1, 1, 0),
+        'P' => Composition(5, 7, 1, 1, 0),
+        'S' => Composition(3, 5, 1, 2, 0),
+        'T' => Composition(4, 7, 1, 2, 0),
+        'W' => Composition(11, 10, 2, 1, 0),
+        'Y' => Composition(9, 9, 1, 2, 0),
+        'V' => Composition(5, 9, 1, 1, 0),
+        'U' => Composition(3, 5, 1, 1, 0),
+        'O' => Composition(12, 19, 3, 2, 0)
+        )
+const mod_to_composition::Dict{String, Composition} = Dict{String, Composition}(
+    "ox" => Composition(0, -1, 0, 1, 0)
+)
+function getElementalComposition(seq::String)
+    comp = Composition()
+    in_mod = false
+    #for AA in eachindex(seq)
+    AA = 1
+    while AA <= length(seq)
+        if seq[AA] == '('
+            mod = ""
+            i = AA + 1
+            while seq[i] != ')'
+                mod *= seq[i]
+                i += 1
+            end
+            comp += mod_to_composition[mod]
+            AA = i + 1
+            continue
+        else
+            comp += aa_to_composition[seq[AA]]
+        end 
+        AA += 1
+    end
+    #Comp + water/H2O
+    return comp +  Composition(zero(UInt32), UInt32(2), zero(UInt32), UInt32(1), zero(UInt32))
+end
+
+function getIsotopes(seqs::Vector{String}, ids::Vector{UInt32}, charges::Vector{UInt8}, roots::QRoots, npeaks::Int; precision::DataType = Float32)
+    isotopes = UnorderedDictionary{UInt32, Vector{Isotope{precision}}}()
+    for i in eachindex(seqs)
+        #for isotopic_envelope in getIsotopes(getElementalComposition(seqs[i]), roots, npeaks, charge, ids[i], precision = precision)
+           # if !haskey(isotopes, ids[i])
+                insert!(isotopes, ids[i], getIsotopes(getElementalComposition(seqs[i]), roots, npeaks, charges[i], ids[i], precision = precision))
+           #     isotopic_envelope
+           # else
+           #     append!(isotopes[ids[i]], isotopic_envelope)
+           # end
+        #end
+    end
+    isotopes
+end
+#=
+#=
+        Sroots = roots(Polynomial([0.9499, 0.0075, 0.0425, 0.0, 0.0001]))
+        Croots = roots(Polynomial([0.9893, 0.0107]))
+        Hroots = roots(Polynomial([0.999885, 0.000115]))
+        Oroots = roots(Polynomial([0.99757, 0.00038, 0.00205]))
+        Nroots = roots(Polynomial([0.99636, 0.00364]))
+Ψ1 = Complex(sum(115 ./Croots)) + sum(4 ./Sroots) + sum(47 ./ Oroots) + Complex(sum(35 ./ Nroots)) + Complex(sum(2 ./Hroots))
+Ψ2 = Complex(sum(115 ./(Croots.^2))) + sum(4 ./(Sroots.^2)) + sum(47 ./(Oroots.^2)) + Complex(sum(35 ./ (Nroots.^2))) + Complex(sum(2 ./Hroots.^2))
+Ψ3 = Complex(sum(115 ./Croots.^3)) + sum(4 ./Sroots.^3) + sum(47 ./ Oroots.^3) + Complex(sum(35 ./ Nroots.^3)) + Complex(sum(2 ./Hroots.^3))
+Ψ4 = Complex(sum(115 ./Croots.^4)) + sum(4 ./Sroots.^4) + sum(47 ./ Oroots.^4) + Complex(sum(35 ./ Nroots.^4)) + Complex(sum(2 ./Hroots.^4))
+Ψ5 = Complex(sum(115 ./Croots.^5)) + sum(4 ./Sroots.^5) + sum(47 ./ Oroots.^5) + Complex(sum(35 ./ Nroots.^5)) + Complex(sum(2 ./Hroots.^5))
+q = zeros(6)
+q0 = prod([0.9499,  0.9893, 0.99757, 0.99636, 0.999885].^[4, 115, 47, 35, 0])
+q1 = -(1/1)*q0*Ψ1
+q2 = -(1/2)*(q1*Ψ1 + q0*Ψ2)
+q3 = -(1/3)*(q2*Ψ3 + q1*Ψ2 + q0*Ψ1)
+q4 = -(1/4)*(q3*Ψ4 + q2*Ψ3 + q1*Ψ2 + q0*Ψ1)
+q5 = -(1/5)*(q4*Ψ5 + q3*Ψ4 + q2*Ψ3 + q1*Ψ2 + q0*Ψ1)
+
+q = zeros(6) 
+q[1] = prod([0.9499,  0.9893, 0.99757, 0.99636].^[4, 115, 47, 35])
+q[2] = -(1/1)*q[1]*Ψ1
+q[3] = -(1/2)*(q[2]*Ψ1 + q[1]*Ψ2)
+q[4] = -(1/3)*(q[3]*Ψ1 + q[2]*Ψ2 + q[1]*Ψ3)
+q[5] = -(1/4)*(q[4]*Ψ1 + q[3]*Ψ2 + q[2]*Ψ3 + q[1]*Ψ4)
+q[6] = -(1/5)*(q[5]*Ψ1 + q[4]*Ψ2 + q[3]*Ψ3 + q[2]*Ψ4 + q[1]*Ψ5)
+const AA_to_composition::Dict{Char, Composition} = Dict{Char, Composition}(
+        'A' => Composition(2, 3, 1, 1, 0),
+        'R' => Composition(6, 12, 4, 1, 0),
+        'N' => Composition(4, 6, 2, 2, 0),
+        'D' => Composition(4, 5, 1, 3, 0),
+        'C' => Composition(3, 5, 1, 1, 1),
+        'E' => Composition(5, 7, 1, 3, 0),
+        'Q' => Composition(5, 8, 2, 2, 0),
+        'G' => Composition(2, 3, 1, 0, 0),
+        'H' => Composition(6, 7, 3, 1, 0),
+        'I' => Composition(6, 11, 1, 1, 0),
+        'L' => Composition(6, 11, 1, 1, 0),
+        'K' => Composition(6, 12, 2, 1, 0),
+        'M' => Composition(5, 9, 1, 1, 1),
+        'F' => Composition(6, 9, 1, 1, 0),
+        'P' => Composition(5, 7, 1, 1, 0),
+        'S' => Composition(3, 5, 1, 2, 0),
+        'T' => Composition(4, 7, 1, 2, 0),
+        'W' => Composition(11, 10, 2, 1, 0),
+        'Y' => Composition(6, 9, 1, 2, 0),
+        'V' => Composition(5, 9, 1, 1, 0),
+        'U' => Composition(3, 5, 1, 1, 0),
+        'O' => Composition(12, 19, 3, 2, 0),
+        )
+import Base.+
++(y::Composition, x::Composition) = Composition(x.C + y.C, x.H + y.H, x.N + y.N, x.O + y.O, x.S + y.S)
+mutable struct Composition
     C::UInt32
+    H::UInt32
     N::UInt32
     O::UInt32
     S::UInt32
 end
+Composition() = Composition(zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32))
+function getAAComposition(seq::String)
+    comp = Composition()
+    for AA in eachindex(seq)
+        comp += AA_to_composition[seq[AA]]
+    end
+    return comp +  Composition(zero(UInt32), UInt32(2), zero(UInt32), UInt32(1), zero(UInt32))
+end
+C34H51N7O14
+Int64(A.C)
+Int64(A.H)
+Int64(A.N)
+Int64(A.O)
+Int64(A.S)
+isotopic_distribution("C115H179N35O47S1", 0.90)
 
-struct IsotopeProbs
+[0.263097, 0.20978, 0.163548]./[0.225466, 0.179775,  0.140155]
+
+DataFrame(a[2:end,:], a[1,:])
+struct IsotopeProbsGenerator
     C::Binomal{Float64}
-    N::Binomal{Float64}
-    O::Binomal{Float64}
     S::Binomal{Float64}
 end
-(
+
+struct Isotope{T<:AbstractFloat}
+    mass::T
+    prob::T
+end
+
+struct IsotopeProbs
+    C::Tuple{Isotope{T},Isotope{T},Isotope{T}}
+    S::Tuple{Isotope{T},Isotope{T},Isotope{T}}
+end
+
+function getIsotopes
+    (
+        C[1]*S[1],
+        C[2]*S[1] + C[1]*S[2],
+        C[3]*S[1] + C[1]*S[3] + C[2]*S[2],
+
+    )
+end
+
+
+function getIsotopes
+    (
+        C[1]*S[1],
+        C[2]*S[1],
+        C[1]*S[2],
+        C[3]*S[1],
+        C[1]*S[3],
+        C[2]*S[2],
+        C[4]
+
+    )
+end
+
+#=(
 C[1]*N[1]*O[1]*S[1],
 
 C[2]*N[1]*O[1]*S[1] + C[1]*N[2]*O[1]*S[1] + C[1]*N[2]*O[1]*S[1] + C[1]*N[2]*O[1]*S[1],
@@ -46,6 +314,7 @@ N[3]*(N[2]*O[1]*S[1] + N[1]*O[2]*S[1] + N[1]*O[1]*S[2]) +
 O[3]*(N[2]*O[1]*S[1] + N[1]*O[2]*S[1] + N[1]*O[1]*S[2])
 
 )=#
+
 """
 Isotopic distributions. 
 """
@@ -690,3 +959,5 @@ function isospec(formula::Dict{String,Int}, c_formula::Array{Pair{String,Int},1}
 end
 
 
+=#
+=#
