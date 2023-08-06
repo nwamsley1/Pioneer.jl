@@ -29,11 +29,12 @@ function integrateRAW(
         end
         #Get peptides that could be in the spectra
         transitions = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
-
+        #println(typeof(transitions))
         #Match fragments to peaks
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
+                                    FragmentMatch{Float32},
                                     count_unmatched =true,
                                     δs = zeros(T, (1,)),
                                     scan_idx = UInt32(i),
@@ -81,7 +82,7 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
 """
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
-        return (0.0, 0, 0.0, 0.0, missing, missing)
+        return (0.0, 0, 0.0, 0.0, missing, missing, missing)
     end
 
     #Chromatogram for the precursor. 

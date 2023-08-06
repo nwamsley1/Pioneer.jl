@@ -7,13 +7,13 @@ using Random
 using Arrow
 using Tables
 
-include("src/precursor.jl")
-include("src/parseFASTA.jl")
-include("src/PrecursorDatabase.jl")
-include("src/applyMods.jl")
+#include("src/precursor.jl")
+#include("src/parseFASTA.jl")
+#include("src/PrecursorDatabase.jl")
+#include("src/applyMods.jl")
 
 
-peptides_fasta = digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"), max_length = 30, min_length = 7)
+#=peptides_fasta = digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"), max_length = 30, min_length = 7)
 #peptides_fasta = digestFasta(parseFasta(file_path))
 test_table = PrecursorTable()
 fixed_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
@@ -24,7 +24,10 @@ const charge_facs = Float32[1, 0.9, 0.85, 0.8, 0.75]
 function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer) where {T<:AbstractFloat}
     return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
 end
+=#
 
+#buildPrositCSV("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz", 
+#"/Users/n.t.wamsley/Desktop/prosit_mouse_NCE35_correctedNCE_073123.csv", min_length = 7, max_length = 30, nce = 35.0, dynamic_nce = true)
 function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_length::Int = 30,
                         min_charge::Int = 2, max_charge::Int = 4,
                         fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(), 
@@ -40,7 +43,7 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
     
     open(f_out, "w") do file
         write(file, "accession_number,modified_sequence,collision_energy,precursor_charge,prot_ids,pep_id,decoy\n")
-        for (id, pep) in ProgressBar(pairs(test_table.id_to_pep))
+        for (id, pep) in ProgressBar(Base.pairs(test_table.id_to_pep))
             sequence = replace(getSeq(pep), r"M\[MOx\]"=>"M(ox)")
             sequence = replace(sequence, r"C\[Carb\]"=>"C")
             unmod_sequence = replace(sequence, r"M(ox)"=>"M")

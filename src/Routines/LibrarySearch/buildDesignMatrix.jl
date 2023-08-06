@@ -1,6 +1,5 @@
-function buildDesignMatrix(matches::Vector{FragmentMatch{T}},  misses::Vector{FragmentMatch{T}}) where {T<:AbstractFloat}
-
-    
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}) where {m<:Match}
+    T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
     M = length(unique([getPeakInd(x) for x in matches]))

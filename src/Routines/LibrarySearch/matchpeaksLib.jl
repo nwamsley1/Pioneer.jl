@@ -72,10 +72,10 @@ struct PrecursorMatch{T<:AbstractFloat} <: Match
     prec_id::UInt32
 end
 
-getPrecID(pm::PrecursorMatch) = pm.prec_id
-getIntensity(pm::PrecursorMatch) = pm.intensity
-getPeakInd(pm::PrecursorMatch) = pm.peak_ind
-getPredictedIntensity(pm::PrecursorMatch) = pm.predicted_intensity
+getPrecID(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.prec_id
+getIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.intensity
+getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
+getPredictedIntenisty(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
 
 
 """
@@ -188,7 +188,7 @@ function setMatch!(matches::Vector{PrecursorMatch{T}}, ion::I, mass::T, intensit
                     getPrecID(ion)
     )::PrecursorMatch{T})
 end
-export setFragmentMatch!
+#export setFragmentMatch!
 
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
@@ -231,7 +231,6 @@ each fragment ion is only assigned to 0 or 1 peaks.
 
 """
 function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
-
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
@@ -285,7 +284,7 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
     end
 
     while ion <= length(Ions)
-        setFragmentMatch!(unmatched, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
+        setMatch!(unmatched, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
         unmatched_idx += 1
         ion += 1
     end
@@ -321,7 +320,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{T}}, Transitions::Vector{Libr
             if (masses[peak]+ δ <= high)
                 #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
                 best_peak = getNearest(masses, getFragMZ(Transitions[transition]), high, peak, δ=δ)
-                setFragmentMatch!(matches, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+                setMatch!(matches, Transitions[transition], masses[best_peak], intensities[best_peak], best_peak, scan_idx, ms_file_idx);
                 transition += 1
                 if transition > length(Transitions)
                     return
@@ -386,6 +385,7 @@ function matchPeaks(Ions::Vector{I}, masses::Vector{Union{Missing, T}}, intensit
         unmatched = Vector{match_type}()
         #unmatched = Vector{FragmentMatch{T}}()
         for δ in δs
+            #println(typeof(matches))
             matchPeaks!(matches, unmatched, Ions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
         end
         return sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
