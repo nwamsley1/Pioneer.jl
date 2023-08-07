@@ -247,6 +247,8 @@ diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.pr_matrix.ts
 diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/reportlib.tsv"))
 histogram(diannreport[:,"Tr_recalibrated"])
 
+diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
+
 transform!(best_psms, AsTable(:) => ByRow(psm -> replace(psm[:,:sequence], "(ox)" => "")) => :stripped_sequence);
 
 best_psms[:,:stripped_sequence] .= replace.(best_psms[:,:sequence], "(ox)" => "")
@@ -255,15 +257,89 @@ PSMs[:,:stripped_sequence] .= replace.(PSMs[:,:sequence], "(ox)" => "")
 diann = Set(diannreport[:,"Stripped.Sequence"]) #∩ Set(best_psms[:,:stripped_sequence])
 Set(best_psms[:,:stripped_sequence])
 all_sequences = String[]
-for i in eachindex(precursors_mouse_detailed_33NCEfixed)
-    if isassigned(precursors_mouse_detailed_33NCEfixed, i)
-        push!(all_sequences, replace(precursors_mouse_detailed_33NCEfixed[i].sequence, "(ox)"=>""))
+for i in eachindex(precursors_mouse_detailed_33NCEcorrected_start1)
+    if isassigned(precursors_mouse_detailed_33NCEcorrected_start1, i)
+        push!(all_sequences, replace(precursors_mouse_detailed_33NCEcorrected_start1[i].sequence, "(ox)"=>""))
     end
 end
 all_sequenes = Set(all_sequences)
 targets_best = Set(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:stripped_sequence])
 targets_all = Set(PSMs[:,:stripped_sequence])
-length(diann ∩ all_sequences) - length(diann ∩ targets_all)
+
+targets_all_big = Set(PSMs[:,:stripped_sequence])
+
+#setdiff(diann ∩ all_sequences, diann ∩ targets_all)
+
+
+missing_peptides = setdiff(diann ∩ all_sequences, diann ∩ targets_all_big)
+
+diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],:]
+
+histogram(log2.(diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],"Precursor.Quantity"]), alpha = 0.5, normalize = :pdf)
+histogram!(log2.(diannreport[[(x ∉ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],"Precursor.Quantity"]), alpha = 0.5, normalize = :pdf)
+
+
+histogram(diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],"RT"], alpha = 0.5, normalize = :pdf)
+histogram!(diannreport[[(x ∉ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],"RT"], alpha = 0.5, normalize = :pdf)
+
+missing_report = diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],:]
+
+nonmissing_report = diannreport[[(x ∉ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],:]
+histogram(abs.(missing_report[:,"Predicted.RT"].-missing_report[:,"RT"]), alpha = 0.5, normalize = :pdf)
+histogram!(abs.(nonmissing_report[:,"Predicted.RT"].-nonmissing_report[:,"RT"]), alpha = 0.5, normalize = :pdf)
+
+
+histogram(abs.(nonmissing_report[:,"Predicted.RT"].-nonmissing_report[:,"RT"]), alpha = 0.5, normalize = :pdf)
+histogram!(abs.(combine(sdf -> sdf[argmin(sdf.RT_error),:], groupby(PSMs[PSMs[:,:q_value].<=0.01,:], :precursor_idx))[:,:RT_error]), alpha = 0.5, normalize = :pdf)
+
+prec_to_rt = UnorderedDictionary{String, Float64}()
+for i in ProgressBar(eachindex(precursors_mouse_detailed_33NCEcorrected_start1))
+    if isassigned(precursors_mouse_detailed_33NCEcorrected_start1, i)
+        seq = precursors_mouse_detailed_33NCEcorrected_start1[i].sequence
+        irt = precursors_mouse_detailed_33NCEcorrected_start1[i].iRT
+        seq = replace(seq, "(ox)" => "")
+        if !haskey(prec_to_rt, seq)
+            insert!(prec_to_rt, seq, iRT_to_RT[irt])
+        end
+    end
+end
+
+my_non_missing_rts = Union{Float64, Missing}[]
+for i in eachindex(nonmissing_report[:,"Stripped.Sequence"])
+    seq = nonmissing_report[:,"Stripped.Sequence"][i]
+    if haskey(prec_to_rt, seq)
+        push!(my_non_missing_rts, prec_to_rt[seq])
+    else
+        push!(my_non_missing_rts, missing)
+    end
+end
+nonmissing_report[:,"my.RT"] = my_non_missing_rts
+
+my_missing_rts = Union{Float64, Missing}[]
+for i in eachindex(missing_report[:,"Stripped.Sequence"])
+    seq = missing_report[:,"Stripped.Sequence"][i]
+    if haskey(prec_to_rt, seq)
+        push!(my_missing_rts, prec_to_rt[seq])
+    else
+        push!(my_missing_rts, missing)
+    end
+end
+missing_report[:,"my.RT"] = my_missing_rts
+
+histogram(abs.(nonmissing_report[:,:"my.RT"].-nonmissing_report[:,:"RT"]), alpha = 0.5, normalize = :pdf)
+histogram!(abs.(missing_report[:,:"my.RT"].-missing_report[:,:"RT"]), alpha = 0.5, normalize = :pdf)
+
+histogram(abs.(nonmissing_report[:,:"my.RT"].-nonmissing_report[:,:"RT"]), alpha = 0.5)
+histogram!(abs.(missing_report[:,:"my.RT"].-missing_report[:,:"RT"]), alpha = 0.5)
+histogram!(abs.(best_psms[:,:RT_error]), alpha = 0.5)
+#histogram!(abs.(PSMs[:,:RT_error]), alpha = 0.5)
+
+
+
+
+[prec_to_rt[seq] for seq in nonmissing_report[:,"Stripped.Sequence"] if haskey(prec_to_rt, seq)]
+setdiff(diann ∩ all_sequences, targets_all)
+setdiff(setdiff(diann, setdiff(diann, targets_all) ∪ setdiff(diann, all_sequences)), targets_all) = 0
 length(diann ∩ targets_best)
 length(diann) - length(diann ∩ all_sequences)
 setdiff(diann, all_sequences)

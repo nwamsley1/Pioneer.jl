@@ -49,8 +49,15 @@ function sort!(counter::Counter{I,C,T}, topN::Int) where {I,C<:Unsigned,T<:Abstr
 end
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
-    for i in 1:(getSize(c) - 1)
+    #for i in 1:(getSize(c) - 1)
+    for i in 1:(getSize(c)-1)
+    #for i in 1:length(c.ids)
+    #for i in 1:(getSize(c))
+        #if iszero(c.ids[i])
+        #    continue
+        #end
         c.counts[c.ids[i]] = (zero(UInt8), zero(Float32));
+        c.ids[i] = zero(UInt32)
     end
     c.size, c.matches = 1, 0
     return nothing

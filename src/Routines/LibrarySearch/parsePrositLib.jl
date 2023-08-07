@@ -119,7 +119,7 @@ function split_array_into_chunks(arr::Vector, num_chunks::Int)
 end
 #CSV.write("outputfile.csv",test_prosit[1000000:1000036,:],delim=',')
 
-function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3) where {T<:AbstractFloat}
+function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3, low_frag_mz::AbstractFloat = 299.0, high_frag_mz::AbstractFloat = 1351.0) where {T<:AbstractFloat}
 
     #"/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/examples/peptidelist.msms"
     prosit_library = CSV.File(prosit_csv_path)
@@ -169,6 +169,9 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
             if parse(UInt8, match(index_pattern, _match).captures[1]) < start_ion
                 continue
             end
+            if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
+                continue
+            end
             total_intensity += intensities[i]
         end
 
@@ -179,6 +182,9 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
             ion_charge = match(charge_pattern, fragment_name)
             frag_charge = ion_charge === nothing ? one(UInt8) : parse(UInt8, ion_charge.captures[1])
             if ion_index < start_ion
+                continue
+            end
+            if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
                 continue
             end
             #Add the n'th fragment 
@@ -228,15 +234,20 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     return vcat(frags_simple...), frags_detailed, precursors
     #return frags_simple, frags_detailed, precursors
 end
-@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict);
-frags_mouse_simple_33NCEdynamic = frags_simple
-frags_mouse_detailed_33NCEdynamic = frags_detailed
-precursors_mouse_detailed_33NCEdynamic = precursors
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEdynamic.jld2" frags_mouse_simple_33NCEdynamic
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEdynamic.jld2" frags_mouse_detailed_33NCEdynamic
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEdynamic.jld2" precursors_mouse_detailed_33NCEdynamic
-prosit_mouse_33NCEdynamic_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEdynamic, Float32(5.0), Float32(15.0))
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEdynamic_5ppm_15irt.jld2" prosit_mouse_33NCEdynamic_5ppm_15irt
+
+@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict, start_ion = 1);
+frags_mouse_simple_33NCEcorrected_start1 = frags_simple
+frags_mouse_detailed_33NCEcorrected_start1 = frags_detailed
+precursors_mouse_detailed_33NCEcorrected_start1 = precursors
+#=
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_start1.jld2" frags_mouse_simple_33NCEcorrected_start1
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_start1.jld2" frags_mouse_detailed_33NCEcorrected_start1
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_start1.jld2" frags_mouse_simple_33NCEcorrected_start1
+prosit_mouse_33NCEcorrected_start1_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEcorrected_start1, Float32(5.0), Float32(15.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt
+=#
 
 
 

@@ -194,10 +194,10 @@ function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIn
     lower_bound = precursor_window - width
     lower_bound += -prec_ppm*lower_bound/(1e6)
 
-    ms1_idx = searchsortedfirst(MS1, lower_bound) #Find the first MS1 peak with m/z greater than the lower_bound of the quadrupole isolation window
-    if ms1_idx > length(MS1) #This occurs if every entry in MS1 is below the lower_bound of the quadrupole isolation window
-        return 0, 0 #0 fragments mathing to 0 precursors 
-    end
+    #ms1_idx = searchsortedfirst(MS1, lower_bound) #Find the first MS1 peak with m/z greater than the lower_bound of the quadrupole isolation window
+    #if ms1_idx > length(MS1) #This occurs if every entry in MS1 is below the lower_bound of the quadrupole isolation window
+    #    return 0, 0 #0 fragments mathing to 0 precursors 
+    #end
 
     for (mass, intensity) in zip(masses, intensities)
 
