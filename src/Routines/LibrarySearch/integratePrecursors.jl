@@ -11,12 +11,13 @@ function integrateRAW(
                     γ::Float32 = Float32(1/2),
                     max_iter::Int = 1000,
                     nmf_tol::Float32 = Float32(100.0),
-                    scan_range::Tuple{Int64, Int64} = (0, 0), 
+                    scan_range::Tuple{Int64, Int64} = (0, 0)
                     ) where {T,U<:Real}
     
     ms2 = 0
-    nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[])
+    nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[], :frag_count => Int64[])
     for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             continue
@@ -27,10 +28,27 @@ function integrateRAW(
             i < first(scan_range) ? continue : nothing
             i > last(scan_range) ? continue : nothing
         end
+        #if (spectrum[:precursorMZ] <707) | (spectrum[:precursorMZ] > 709)
+        #   continue
+        #end
+        #=if (spectrum[:precursorMZ] < 612) | (spectrum[:precursorMZ] > 613)
+            continue
+        end
+
+        if (spectrum[:retentionTime] < 64.0) | (spectrum[:retentionTime] > 66.0)
+            continue
+        end
+        println("RT ", spectrum[:retentionTime])
+        println("TEST")
         #Get peptides that could be in the spectra
-        transitions = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+        transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+        #println(prec_ids)
+        println("in prec_ids? ", UInt32(1780792) ∈ prec_ids)
+        =#
         #println(typeof(transitions))
         #Match fragments to peaks
+        transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+  
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
@@ -43,20 +61,43 @@ function integrateRAW(
                                     ppm = fragment_tolerance
                                     )
 
+        frag_counts = counter(UInt32)
 
-        if iszero(length(fragmentMatches))
-            continue
+        for match in fragmentMatches
+            DataStructures.inc!(frag_counts, match.prec_id)
         end
 
-        #Build templates for regrssion. 
-        #Do we need to remove precursors with less than N matched fragments?
-        X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses)
-        weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
+        filter!(x->(frag_counts[x.prec_id].>2), fragmentMatches)
+        filter!(x->(frag_counts[x.prec_id].>2), fragmentMisses)
+        filter!(x->x.frag_index.>2, fragmentMatches)
+        filter!(x->x.frag_index.>2, fragmentMisses)
+        if !iszero(length(fragmentMatches))
+            X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses)
+            weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
+        else
+            IDtoROW = UnorderedDictionary{UInt32, UInt32}()
+        end
+        for key in prec_ids
+            if haskey(frag_counts, key)
 
-        for key in keys(IDtoROW)
-            push!(nmf[:precursor_idx], key)
-            push!(nmf[:weight], weights[IDtoROW[key]])
-            push!(nmf[:rt], spectrum[:retentionTime])
+                if haskey(IDtoROW, key)
+            #for key in keys(IDtoROW)
+                    push!(nmf[:precursor_idx], key)
+                    push!(nmf[:weight], weights[IDtoROW[key]])
+                    push!(nmf[:rt], spectrum[:retentionTime])
+                    push!(nmf[:frag_count], frag_counts[key])
+                else
+                    push!(nmf[:precursor_idx], key)
+                    push!(nmf[:weight], Float32(0.0))
+                    push!(nmf[:rt], spectrum[:retentionTime])
+                    push!(nmf[:frag_count], frag_counts[key])
+                end
+            else
+                push!(nmf[:precursor_idx], key)
+                push!(nmf[:weight], Float32(0.0))
+                push!(nmf[:rt], spectrum[:retentionTime])
+                push!(nmf[:frag_count], 0)
+            end
         end
     end
     nmf = DataFrame(nmf)
@@ -80,7 +121,7 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
  the peak parameters extracted by curve fitting are not distorted and the effect of random noise in the signal is reduced by curve fitting over multiple
   data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
 """
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 7, min_smoothing_order::Int = 3, isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
         return (0.0, 0, 0.0, 0.0, missing, missing, missing)
     end

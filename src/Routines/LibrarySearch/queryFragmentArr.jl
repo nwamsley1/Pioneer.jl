@@ -178,7 +178,7 @@ function queryFragment!(precs::Counter{UInt32, UInt8, Float32}, iRT_low::Float32
     return frag_bin - 1
 end
 
-function searchScan!(precs::Counter{UInt32, UInt8, Float32}, f_index::FragmentIndex{Float32}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::Float32, iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, prec_ppm::Float32, width::Float32; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {U<:AbstractFloat}
+function searchScan!(precs::Counter{UInt32,UInt8, Float32}, f_index::FragmentIndex{Float32}, min_intensity::U, masses::Vector{Union{Missing, U}}, intensities::Vector{Union{Missing, U}}, MS1::Vector{Union{Missing, U}}, precursor_window::Float32, iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, prec_ppm::Float32, width::Float32; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {U<:AbstractFloat}
     
     getFragTol(mass::Float32, ppm::Float32) = mass*(1 - ppm/Float32(1e6)), mass*(1 + ppm/Float32(1e6))
 

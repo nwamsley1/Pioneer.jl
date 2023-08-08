@@ -164,7 +164,7 @@ function getElementalComposition(seq::String)
     return comp +  Composition(zero(UInt32), UInt32(2), zero(UInt32), UInt32(1), zero(UInt32))
 end
 
-function getIsotopes(seqs::Vector{String31}, ids::Vector{I}, charges::Vector{J}, roots::QRoots, npeaks::Int; precision::DataType = Float32) where {I,J<:Integer}
+function getIsotopes(seqs::Vector{String}, ids::Vector{I}, charges::Vector{J}, roots::QRoots, npeaks::Int; precision::DataType = Float32) where {I,J<:Integer}
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{precision}}}()
     for i in eachindex(seqs)
         insert!(isotopes, ids[i], getIsotopes(getElementalComposition(String(seqs[i])), roots, npeaks, charges[i], ids[i], precision = precision))

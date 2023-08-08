@@ -145,7 +145,7 @@ PSMs = newPSMs
 @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
 
 
-iRT_to_RT = refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
+#iRT_to_RT = refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
 features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox]
 
 PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
@@ -172,46 +172,153 @@ describe(value_counts(PSMs, :scan_idx)[:,:nrow])
 #Get best scoring psm for each precursor at 10% FDR
 ###########
 best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
-transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEfixed[psm[:precursor_idx]].mz) => :prec_mz)
+transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz) => :prec_mz)
 sort!(best_psms,:RT, rev = false)
 rt_index = buildRTIndex(best_psms)
+size(best_psms)
 ##########
 #Integrate precursors
 ##########
-chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEfixed, 
+#[5e2*(1.25^n) for n in range(1, 15)]
+λs = Float32[1e3*(1.5^n) for n in range(1, 40)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[1/2 for n in range(1, 40)]
+
+
+λs = Float32[1e1*(1.5^n) for n in range(1, 40)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[0 for n in range(1, 40)]
+
+
+λs = Float32[1e5*(1.5^n) for n in range(1, 40)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[1 for n in range(1, 40)]
+
+
+λs = Float32[1e9*(1.5^n) for n in range(1, 40)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[2 for n in range(1, 40)]
+
+λs = Float32[1e12*(1.5^n) for n in range(1, 40)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[3 for n in range(1, 40)]
+
+
+targets = []
+decoys = []
+targets_SN = []
+decoys_SN = []
+for i in eachindex(λs)
+    println(i)
+    chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                         one(UInt32), 
                         fragment_tolerance=15.6, 
-                        λ=Float32(5e2), 
-                        γ=Float32(0), 
+                        λ=λs[i], 
+                        γ=γs[i], 
                         max_peak_width = 2.0, 
                         scan_range = (0, 300000)
                         );
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+    #println("lambda ", λs[i])
+    #println("gamma ", γs[i])
+    #println("TARGETS")
+    #push!(targets, sum((best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:intensity].>0.0)))
+    push!(targets, sum((best_psms[(best_psms[:,:decoy].==false),:intensity].>0.0)))
+    push!(targets_SN, mean((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:intensity].>0.0),:SN])))
+    push!(decoys, sum((best_psms[(best_psms[:,:decoy].==true),:intensity].>0.0)))
+    push!(decoys_SN, mean((best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:intensity].>0.0),:SN])))
+    #println(mean(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:SN]))
+    #println(sum((best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:intensity].>0.0)))
+    #println("DECOYS")
+    #println(mean(best_psms[best_psms[:,:decoy].==true,:SN]))
+    #println(sum((best_psms[(best_psms[:,:decoy].==true),:intensity].>0.0)))
+end
+
+plot(log2.(λs) ,targets.*targets_SN)
+plot!(log2.(λs),targets.*savitzky_golay(targets_SN, 7, 3).y)
+vline!([log2.(λs[20])])
+hline!([targets[1]*targets_SN[1]*0.95])
+
+plot(log2.(λs) ,targets)
+plot!(log2.(λs),targets.*savitzky_golay(targets_SN, 7, 3).y)
+
+chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+                one(UInt32), 
+                fragment_tolerance=15.6, 
+                λ=λs[20], 
+                γ=one(Float32),#γs[20], 
+                max_peak_width = 2.0, 
+                scan_range = (0, 300000)
+                );
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
-best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
-append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm,:cross_cor,:offset])
-@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
-@time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
-length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #37778
 
+sum((best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5))
+best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
+best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
 features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
+#append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm,:cross_cor,:offset])
 append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm])
-features = [:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:RT_error,:scribe_score,:RT,:diff_hyper,:Mox,:city_block,:matched_ratio,:weight,:intensity,:intensity_ms1,:peak_error,:fwhm,:count,:offset,:cross_cor,:missed_cleavage]
+
+
+features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio, :missed_cleavage,:Mox]
+append!(features, [:intensity, :count, :SN, :peak_error,:fwhm,:offset, :cross_cor])
+#append!(features, [:intensity, :offset, :cross_cor])
+#append!(features, [:intensity, :count, :SN, :peak_error,:fwhm])
 @time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
 @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
-length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #36782
+length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #42348, 43224
+
+histogram(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:count])
+histogram(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:peak_error])
+histogram(log2.(abs.(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:fwhm])))
+#features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
+#append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm])
+#features = [:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:RT_error,:scribe_score,:RT,:diff_hyper,:Mox,:city_block,:matched_ratio,:weight,:intensity,:intensity_ms1,:peak_error,:fwhm,:count,:offset,:cross_cor,:missed_cleavage]
+#@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
+#@time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
+#length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #36782
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> test_table.id_to_pepGroup[test_table.id_to_pep[psm[:pep_id]].pepGroup_id].prot_ids) => :prot_ids)
-#transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEdynamic[psm[:precursor_idx]].pep_id) => :pep_id)
+#transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEdynamic[psm[:precursor_idx]].p#ep_id) => :pep_id)
 
 transform!(best_psms, AsTable(:) => ByRow(psm -> test_table.id_to_pepGroup[psm[:pep_id]]) => :prot_ids)
 length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:sequence]))
 prot_groups = best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:prot_ids]
 
 
-best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false).&(best_psms[:,:decoy].==),[:sequence,:q_value,:intensity,:count,:SN,:peak_error,:fwhm,:precursor_idx,:scan_idx,:prot_ids]]
+best_psms[:,[:sequence,:q_value,:intensity,:count,:SN,:peak_error,:fwhm,:precursor_idx,:scan_idx,:prot_ids]]
+best_psms[(best_psms[:,:intensity].>0.0) .& (best_psms[:,:q_value].<=0.01),[:precursor_idx,:q_value,:decoy,:intensity,:peak_error,:fwhm,:SN,:RT,:count,:slope,:apex]][30000:40000,:]
+pid = UInt32(4294810)
+integratePrecursor(chroms, pid, isplot = true)
+chroms[(precursor_idx=pid,)]
+pid = UInt32(  3470831 )
+integratePrecursor(chroms, pid, isplot = true)
+chroms[(precursor_idx=pid,)]
+pid = UInt32(3531828)
+integratePrecursor(chroms, pid, isplot = true)
+chroms[(precursor_idx=pid,)]
+pid = UInt32( 935412 )
+integratePrecursor(chroms, pid, isplot = true)
+pid = UInt32(1780792) #Check again
+integratePrecursor(chroms, pid, isplot = true)
+plot!(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+chroms[(precursor_idx=pid,)]
+pid = UInt32(445492) #Check again
+integratePrecursor(chroms, pid, isplot = true)
+pid = UInt32( 5385393) #Check again
+integratePrecursor(chroms, pid, isplot = true)
+pid = UInt32(4585201  ) #Check again
+integratePrecursor(chroms, pid, isplot = true)
 
+pid = UInt32(1370088) #Check again
+integratePrecursor(chroms, pid, isplot = true)
+
+
+
+
+chroms[(precursor_idx=pid,)]
+integratePrecursor(test_df, pid, isplot = true)
 #=
 @time getQvalues!(non_zero, non_zero[:,:prob], non_zero[:,:decoy]);
 integratePrecursor(chroms, UInt32(4171604), isplot = true)
@@ -264,3 +371,24 @@ target_seqs = Set(target_seqs)
 @time decoy_seqs  = [x[1] for x in  decoy_seqs ]
 @time decoy_seqs = Set( decoy_seqs )
 =#
+
+test = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+one(UInt32), 
+fragment_tolerance=15.6, 
+λ=λs[11], 
+γ=γs[11], 
+max_peak_width = 2.0, 
+scan_range = (0, 300000)
+);
+
+testdict = Accumulator{UInt32, Int64}()
+a = counter(UInt32)
+for match in fragmentMatches
+    DataStructures.inc!(a, match.prec_id)
+end
+filter(x->(a[x.prec_id].>=4), fragmentMatches)
+filter(x->(a[x.prec_id].>=4), fragmentMisses)
+keys(filter(((k,v),) -> v >= 4, a))
+
+countmap([x.prec_id for x in fragmentMatches])
+filter(((k,v),) -> k == 1 || v == "c", dict)

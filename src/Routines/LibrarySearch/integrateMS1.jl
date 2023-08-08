@@ -25,7 +25,7 @@ function selectIsotopes(prec_list::Vector{Tuple{Float64, UInt32}}, isotope_dict:
     return sort(isotopes, by = x->getMZ(x))
 end
 
-test_df = integrateRAW(MS_TABLE, prec_rt_table, isotopes, one(UInt32), precursor_tolerance = 6.5, scan_range = (0, 300000), λ = Float32(1e6), γ = Float32(1/2))
+test_df = integrateRAW(MS_TABLE, prec_rt_table, isotopes, one(UInt32), precursor_tolerance = 6.5, scan_range = (0, 300000), λ = Float32(0), γ = Float32(0))
 
 function integrateRAW(
                     spectra::Arrow.Table, 
@@ -110,7 +110,57 @@ function integrateRAW(
     #matches, misses
 end
 
+getCrossCorr(test_df, chroms, pid)
+function getCrossCorr(MS1::GroupedDataFrame{DataFrame}, MS2::GroupedDataFrame{DataFrame}, precursor_idx::I; lag::Int = 10) where {I<:Integer}
+    function missingID(gdf::GroupedDataFrame{DataFrame}, precursor_idx::I)
+        if !((precursor_idx=precursor_idx,) in keys(gdf)) #If the precursor is not found
+            return true
+        end
+        return false
+    end
+    if missingID(MS1, precursor_idx) | missingID(MS2, precursor_idx)
+        return (missing, missing)
+    end
+    return getCrossCorr(MS1[(precursor_idx =precursor_idx,)], MS2[(precursor_idx = precursor_idx, )], lag)
+end
+function getCrossCorr(MS1::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, MS2::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, lag::Int64 = 10)
+    scan_pairs = getScanPairs(MS1[:,:rt], MS2[:,:rt])
+    lag = min(lag, length(scan_pairs[1]) - 1)
+    if lag < 3
+        return (missing, missing)
+    end
+    lag = collect(range(-lag, lag))
+    cross_cor = crosscor(MS1[scan_pairs[1],:weight], MS2[scan_pairs[2],:weight], lag)
+    if all(isnan.(cross_cor))
+        return (missing, missing)
+    end
+    return lag[argmax(cross_cor)], maximum(cross_cor)
+end
 
+transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
+
+
+
+targets_bad = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false) .& (best_psms[:,:intensity_ms1].>0.0).& (best_psms[:,:q_value].>0.01))
+targets_good = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false) .& (best_psms[:,:intensity_ms1].>0.0).& (best_psms[:,:q_value].<=0.01))
+decoys = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true) .& (best_psms[:,:intensity_ms1].>0.0) )
+plot(log10.(best_psms[targets_good,:intensity]), log10.(best_psms[targets_good,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+plot!(log10.(best_psms[targets_bad,:intensity]), log10.(best_psms[targets_bad,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+plot!([0, 10], ([0.978564, 10*0.931423 + 0.978564]))
+function getModel(X::Matrix{T}, y::Vector{T}, loss::AbstractEstimator) where T <: AbstractFloat
+    rlm(X./mean(y),y./mean(y), loss, initial_scale=:mad, maxiter = 200)
+end
+A = hcat(log10.(best_psms[targets_good,:intensity]), ones(Float64, sum(targets_good)))
+getModel(A, Float64.(log10.(best_psms[targets_good,:intensity_ms1])),  TauEstimator{TukeyLoss}())
+
+best_psms[:,:ms1_ms2_diff] = abs.((log10.(best_psms[:,:intensity]).*0.931423 .+ 0.978564) .- log10.(best_psms[:,:intensity_ms1]))
+histogram((best_psms[targets_good,:ms1_ms2_diff]), normalize = :probability, alpha = 0.5, bins = 40)
+histogram!((best_psms[targets_bad,:ms1_ms2_diff]), normalize = :probability, alpha = 0.5, bins = 40)
+A\log2.(best_psms[targets_good,:intensity_ms1])
+#plot!(log2.(best_psms[decoys,:intensity]), log2.(best_psms[decoys,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+
+histogram2d(abs.(best_psms[targets_good,:offset]), log2.(best_psms[targets_good,:intensity]))
 1928598
 integratePrecursor(test_df, UInt32(1928598), isplot = true)
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
@@ -135,6 +185,8 @@ best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true)),[:pre
 histogram(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true)),:offset], normalize = :pdf, alpha = 0.5)
 histogram!(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false)),:offset], normalize = :pdf, alpha = 0.5)
 
+histogram(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true)),:cross_cor], normalize = :pdf, alpha = 0.5)
+histogram!(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false)),:cross_cor], normalize = :pdf, alpha = 0.5)
 
 histogram2d(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false)),:cross_cor], log2.(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false)),:intensity]), normalize = :pdf, alpha = 0.5)
 testlow = (best_psms[:,:intensity].>0.0) .& (best_psms[:,:decoy].==true) .& (best_psms[:,:offset] .== -10)
@@ -185,10 +237,30 @@ pid = UInt32(6937987)
 argmax(crosscor(test_df[(precursor_idx=pid,)][:,:weight], chroms[(precursor_idx=pid,)][:,:weight][2:end - 1]))
 sum(crosscor(test_df[(precursor_idx=pid,)][:,:weight], chroms[(precursor_idx=pid,)][:,:weight][2:end - 1]))
 
-pid = UInt32(  1438385)
+pid = UInt32(2085573) #Decoy
 plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
 plot!(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
 
+pid = UInt32(8138974) #Decoy
+plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+plot!(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
+
+pid = UInt32(471284) #Target
+#plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+plot(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
+
+
+pid = UInt32( 4217135) #Target
+pid = UInt32(789607)
+
+pid = UInt32( 4217135)
+#plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+plot(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
+chroms[(precursor_idx=pid,)]
+
+pid = UInt32( 2869113) #Target
+plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+plot!(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
 
 plot(range(1, 33), crosscor(test_df[(precursor_idx=pid,)][:,:weight], chroms[(precursor_idx=pid,)][:,:weight][2:end - 1]), seriestype = :scatter)
 
@@ -199,31 +271,55 @@ plot(range(1, 33), crosscor(test_df[(precursor_idx=pid,)][pairs[1],:weight], chr
 collect(range(-5, 5))[argmax(crosscor(test_df[(precursor_idx=pid,)][pairs[1],:weight], chroms[(precursor_idx=pid,)][pairs[2],:weight], collect(range(-5, 5))))]
 
 getCrossCorr(test_df[(precursor_idx=pid,)], chroms[(precursor_idx=pid,)])
+
 transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
 
-function getCrossCorr(MS1::GroupedDataFrame{DataFrame}, MS2::GroupedDataFrame{DataFrame}, precursor_idx::I; lag::Int = 10) where {I<:Integer}
-    function missingID(gdf::GroupedDataFrame{DataFrame}, precursor_idx::I)
-        if !((precursor_idx=precursor_idx,) in keys(gdf)) #If the precursor is not found
-            return true
-        end
-        return false
-    end
-    if missingID(MS1, precursor_idx) | missingID(MS2, precursor_idx)
-        return (missing, missing)
-    end
-    return getCrossCorr(MS1[(precursor_idx =precursor_idx,)], MS2[(precursor_idx = precursor_idx, )], lag)
-end
-function getCrossCorr(MS1::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, MS2::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, lag::Int64 = 10)
-    scan_pairs = getScanPairs(MS1[:,:rt], MS2[:,:rt])
-    lag = min(lag, length(scan_pairs[1]) - 1)
-    if lag < 3
-        return (missing, missing)
-    end
-    lag = collect(range(-lag, lag))
-    cross_cor = crosscor(MS1[scan_pairs[1],:weight], MS2[scan_pairs[2],:weight], lag)
-    return lag[argmax(cross_cor)], maximum(cross_cor)
-end
 
+
+stephist(best_psms[targets_good,:offset], normalize = :pdf, alpha = 0.5)
+stephist!(best_psms[targets_bad,:offset], normalize = :pdf, alpha = 0.5)
+stephist!(best_psms[decoys,:offset], normalize = :pdf, alpha = 0.5)
+
+
+stephist(abs.(best_psms[targets_good,:offset]), normalize = :probability, alpha = 0.5)
+stephist!(abs.(best_psms[targets_bad,:offset]), normalize = :probability, alpha = 0.5)
+stephist!(abs.(best_psms[decoys,:offset]), normalize = :probability, alpha = 0.5)
+
+ecdfplot([abs(x) for x in best_psms[targets_good,:offset] if ismissing(x)==false])
+ecdfplot!([abs(x) for x in best_psms[decoys,:offset] if ismissing(x)==false])
+
+stephist!(best_psms[targets_good,:offset], normalize = :probability, alpha = 0.5)
+
+histogram(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true)),:cross_cor], normalize = :pdf, alpha = 0.5)
+histogram!(best_psms[(best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false)),:cross_cor], normalize = :pdf, alpha = 0.5)
+
+targets_bad = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false) .& (best_psms[:,:intensity_ms1].>0.0).& (best_psms[:,:q_value].>0.01))
+targets_good = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==false) .& (best_psms[:,:intensity_ms1].>0.0).& (best_psms[:,:q_value].<=0.01))
+decoys = (best_psms[:,:intensity].>0.0) .& ((best_psms[:,:decoy].==true) .& (best_psms[:,:intensity_ms1].>0.0) )
+plot(log10.(best_psms[targets_good,:intensity]), log10.(best_psms[targets_good,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+plot!(log10.(best_psms[targets_bad,:intensity]), log10.(best_psms[targets_bad,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+plot!(log2.(best_psms[decoys,:intensity]), log2.(best_psms[decoys,:intensity_ms1]), seriestype=:scatter, alpha = 0.1)
+
+
+
+#=function xcorr(x::Vector{T}, y::Vector{T}) where {T<:AbstractFloat}
+    ny = length(y)
+    nx = length(x)
+    yvar = var(y)
+    diff = ny - nx
+    if nx < ny
+        return missing
+    end
+    xcorrs = Vector{T}(undef, ny)
+    for i in range(1, ny)
+        x_i = @view(x[(end - ny - i + 2):(end - i  + 1)])
+        xcorrs[i] = dot(x_i, y)
+        println(var(x_i))
+        xcorrs[i] = xcorrs[i]/(LinearAlgebra.norm(x_i)*LinearAlgebra.norm(y))
+    end
+    return xcorrs
+end=#
 Y1 = fft(test_df[(precursor_idx=pid,)][:,:weight])
 Y2 = fft(chroms[(precursor_idx=pid,)][:,:weight][2:end - 1])
 
@@ -242,6 +338,8 @@ histogram(log2.(best_psms[(best_psms[:,:decoy].==false),:intensity]), alpha = 0.
 #histogram!(best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].>0.01),:SN], alpha = 0.5, normalize = :pdf)
 histogram!(log2.(best_psms[best_psms[:,:decoy].==true,:intensity]), alpha = 0.5, normalize = :pdf, bins = 40)
 
+histogram(best_psms[(best_psms[:,:decoy].==false),:offset], normalize = :pdf, alpha = 0.5)
+histogram!(best_psms[(best_psms[:,:decoy].==true),:offset], normalize = :pdf, alpha = 0.5)
 diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.pr_matrix.tsv"))
 
 diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/reportlib.tsv"))
@@ -263,7 +361,7 @@ for i in eachindex(precursors_mouse_detailed_33NCEcorrected_start1)
     end
 end
 all_sequenes = Set(all_sequences)
-targets_best = Set(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:stripped_sequence])
+targets_best = Set(best_psms[best_psms[:,:decoy].==false,:stripped_sequence])
 targets_all = Set(PSMs[:,:stripped_sequence])
 
 targets_all_big = Set(PSMs[:,:stripped_sequence])
@@ -272,7 +370,7 @@ targets_all_big = Set(PSMs[:,:stripped_sequence])
 
 
 missing_peptides = setdiff(diann ∩ all_sequences, diann ∩ targets_all_big)
-
+setdiff(diann ∩ all_sequences, diann ∩ targets_best)
 diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],:]
 
 histogram(log2.(diannreport[[(x ∈ missing_peptides) for x in diannreport[:,"Stripped.Sequence"]],"Precursor.Quantity"]), alpha = 0.5, normalize = :pdf)

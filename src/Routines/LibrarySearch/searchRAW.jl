@@ -29,8 +29,8 @@ function SearchRAW(
     times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0, :match_peaks => 0.0, :build => 0.0, :score => 0.0)
     n = 0
     kt = KendallTau(Float32)
-    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             MS1 = spectrum[:masses]
@@ -52,14 +52,7 @@ function SearchRAW(
         iRT_low = Float32(iRT - rt_tol)
         iRT_high = Float32(iRT + rt_tol)
         #reset!(precs)
-        if i == 20189
-            println("make new prec_counter")
-            println("size ", precs.size)
-            println("matches ", precs.matches)
-            println("sum ids ", sum(precs.ids))
-            println("sum counts ", sum(precs.counts))
-            precs = Counter(UInt32, UInt8, Float32, length(fragment_list))
-        end
+
         times[:counter] += @elapsed  prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], iRT_low, iRT_high,
@@ -80,18 +73,9 @@ function SearchRAW(
         #    reset!(precs)
         #    continue
         #end
-        if i == 20189
-            println("HELP!")
-            println(prec_count)
-            println(match_count)
-            println(min_intensity)
-        end
+
         transitions = selectTransitions(fragment_list, precs, topN)
-        if i == 20189
-            println("SET ", Set([getPrecID(x) for x in transitions]))
-            println("length(transitions) ", length(transitions))
-            println("getSize(precs) ", getSize(precs))
-        end
+
         #println("length(transitions) ", length(transitions))
         #return transitions
         #times[:reset] += @elapsed reset!(precs)
@@ -115,9 +99,7 @@ function SearchRAW(
                                     min_intensity = min_intensity,
                                     ppm = fragment_tolerance
                                     )
-        if i == 20189
-            println("length(fragmentMatches) ", length(fragmentMatches))
-        end
+
         if iszero(length(fragmentMatches))
             continue
         end

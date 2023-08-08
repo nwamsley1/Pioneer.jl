@@ -238,3 +238,10 @@ testPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  f
                         testPSMs[testPSMs[:,:precursor_idx].==  UInt32(865045),:]
 
                         testPSMs[testPSMs[:,:scan_idx].==  20189,:]
+
+A = Int64[]
+for i in eachindex(test_precs.counts)
+    if iszero(first(test_precs.counts[i])) == false
+        push!(A, i)
+    end
+end

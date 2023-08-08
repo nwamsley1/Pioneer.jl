@@ -57,8 +57,8 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor{T}}; m
         repeat([size(sub_df)[1]], size(sub_df)[1])
     end)[:,:x1]
 
-    #transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
-    return linear_spline
+    transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
+    #return linear_spline
 end
 
 function rtSpline(X::Vector{T}, Y::Vector{T}; n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
