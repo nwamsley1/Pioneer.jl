@@ -1,6 +1,8 @@
 include("PSM.jl");
 
 mutable struct XTandem{T<:Real} <: PSM
+    best_rank::UInt8 #Highest ranking predicted framgent that was observed
+    topn::UInt8 #How many of the topN predicted fragments were observed. 
     b_count::Int64
     b_int::T
     b_ions::Set{UInt8}
@@ -17,8 +19,8 @@ end
 #results = UnorderedDictionary{UInt32, FastXTandem}()
 #Base.zero(::Type{FragmentMatch}) = FragmentMatch()
 
-XTandem(::Type{Float32}) = XTandem(0, Float32(0), Set(UInt8[]), 0, Float32(0), Set(UInt8[]), Float32[], Float32(0), UInt32(0), UInt32(0))
-XTandem(::Type{Float64}) = XTandem(0, Float64(0), Set(UInt8[]), 0, Float64(0), Set(UInt8[]), Float64[], Float64(0), UInt32(0), UInt32(0))
+XTandem(::Type{Float32}) = XTandem(UInt8(255), zero(UInt8),0, Float32(0), Set(UInt8[]), 0, Float32(0), Set(UInt8[]), Float32[], Float32(0), UInt32(0), UInt32(0))
+XTandem(::Type{Float64}) = XTandem(UInt8(255),zero(UInt8),0, Float64(0), Set(UInt8[]), 0, Float64(0), Set(UInt8[]), Float64[], Float64(0), UInt32(0), UInt32(0))
 XTandem() = XTandem(Float64)
 
 function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}}, matches::Vector{FragmentMatch{T}}) where {T,U<:Real}
@@ -46,6 +48,12 @@ function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union
     score.error += abs(mass - getFragMZ(match))
     score.precursor_idx = getPrecID(match)
     push!(score.intensities, intensity)
+    if match.predicted_rank < score.best_rank
+        score.best_rank = match.predicted_rank
+    end
+    if match.predicted_rank < 4
+        score.topn += one(UInt8)
+    end
     #push!(results[prec_id].test, getIonType(Transitions[transition]))
 end
 
@@ -63,6 +71,8 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
         :entropy => T[],
         :spectrum_peaks => UInt32[],
         :intensity_explained => T[],
+        :best_rank => UInt8[],
+        :topn => UInt8[],
 
         :spectral_contrast_matched => Float32[],
         :spectral_contrast_all => Float32[],
@@ -151,6 +161,8 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
         append!(PSMs_dict[:spectrum_peaks], spectrum_peaks)
         append!(PSMs_dict[:intensity_explained], (sum(unscored_PSMs[key].b_int) + sum(unscored_PSMs[key].y_int))/spectrum_intensity)
         append!(PSMs_dict[:entropy], StatsBase.entropy(unscored_PSMs[key].intensities))
+        append!(PSMs_dict[:best_rank], unscored_PSMs[key].best_rank)
+        append!(PSMs_dict[:topn], unscored_PSMs[key].topn)
 
         append!(PSMs_dict[:spectral_contrast_matched], spectral_contrast_matched[index])
         append!(PSMs_dict[:spectral_contrast_all], spectral_contrast_all[index])

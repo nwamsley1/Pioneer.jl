@@ -375,7 +375,8 @@ julia> median(titus_decoys[:,:intensity])
 julia> median(titus_targets[:,:intensity])
 9.0
 """
-#=###############################################################################################
+#=
+###############################################################################################
 #Is it possible that our RT predictions for the diann-specific peptides were particularly weak 
 #and that DIA-NN had better predictions?
 #1) get DIA-NN RT errors for titus_targets
@@ -383,11 +384,39 @@ julia> median(titus_targets[:,:intensity])
 #3) Compare these errors to the prosit errors
 #Hypothesis is that the DIA-NN RT errors are greater for the missing peptides than for teh titus_targets
 #even though the prosit errors are the same for both groups
-###############################################################################################=#
+###############################################################################################
+=#
+titus_targets_set = Set(titus_targets[:,:stripped_sequence])
+missing_peptides_set = Set(missing_peptides[:,:stripped_sequence])
+diann_titus_targets = diannreport[[x∈titus_targets_set for x in diannreport[:,"Stripped.Sequence"]],:]
+diann_missing_peptides  = diannreport[[x∈missing_peptides_set for x in diannreport[:,"Stripped.Sequence"]],:]
+
+############
+histogram(abs.(diann_titus_targets[:,"RT"] .- diann_titus_targets[:,"Predicted.RT"]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!(abs.(diann_missing_peptides[:,"RT"] .- diann_missing_peptides[:,"Predicted.RT"]), normalize = :probability, alpha = 0.5,bins = 100)
+"""
+RT error distributions are the same, but about half the prosit errors
+
+julia> median(abs.(diann_titus_targets[:,"RT"] .- diann_titus_targets[:,"Predicted.RT"]))
+2.5766999999999953
+
+julia> median(abs.(diann_missing_peptides[:,"RT"] .- diann_missing_peptides[:,"Predicted.RT"]))
+2.4657999999999944
+"""
+
+##########
+#Are there other features in DIA-NN we could use to discriminate?
+histogram(log2.(diann_titus_targets[:,"Precursor.Normalised"]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!(log2.(diann_missing_peptides[:,"Precursor.Normalised"]), normalize = :probability, alpha = 0.5,bins = 100)
 
 
 
+histogram([mean([parse(Float32, f) for f in n]) for n in [x[1:(end - 1)] for x in [split(x,';') for x in diann_titus_targets[:,"Fragment.Correlations"]]]], normalize = :probability, alpha = 0.5,bins = 100)
+histogram!([mean([parse(Float32, f) for f in n]) for n in [x[1:(end - 1)] for x in [split(x,';') for x in diann_missing_peptides[:,"Fragment.Correlations"]]]], normalize = :probability, alpha = 0.5,bins = 100)
 
 
 
+histogram(PSMs[PSMs[:,:decoy],:scribe_score], normalize = :probability, alpha = 0.5,bins = 100)
+histogram!(PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<=0.01),:scribe_score], normalize = :probability, alpha = 0.5,bins = 100)
 
+histogram!(log2.(diann_missing_peptides[:,"Precursor.Normalised"]), normalize = :probability, alpha = 0.5,bins = 100)

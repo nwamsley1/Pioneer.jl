@@ -110,6 +110,7 @@ function SearchRAW(
         times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
 
         scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, matched_cols, kt)
+        #return getDistanceMetrics(Hst, X, matched_cols, kt)
         
         #For progress and debugging. 
 

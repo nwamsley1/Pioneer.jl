@@ -37,6 +37,7 @@ struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     intensity::Float32
     prec_charge::UInt8
     prec_id::UInt32
+    rank::UInt8
 end
 
 getIntensity(f::LibraryFragment) = f.intensity
@@ -44,6 +45,7 @@ isyIon(f::LibraryFragment) = f.is_y_ion
 getIonIndex(f::LibraryFragment) = f.ion_index
 getIonPosition(f::LibraryFragment) = f.ion_position
 getFragCharge(f::LibraryFragment) = f.frag_charge
+getRank(f::LibraryFragment) = f.rank
 
 struct LibraryPrecursor{T<:AbstractFloat}
     iRT::T
@@ -167,14 +169,20 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         #Parse each fragment ion 
         for (i, _match) in enumerate(matches)
             if parse(UInt8, match(index_pattern, _match).captures[1]) < start_ion
+                intensities[i] = zero(Float32)
                 continue
             end
             if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
+                intensities[i] = zero(Float32)
                 continue
             end
             total_intensity += intensities[i]
+            
         end
 
+        #Should probably change to denserank. 1223 vs. 1234. 
+        #different way of dealing with ties, although probably ties are very rare if they ever occur
+        ranks = ordinalrank(intensities, rev = true)
         for i in eachindex(matches)
             fragment_name = matches[i]
             #ion_type = match(pattern, fragment_name)
@@ -196,7 +204,8 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
                                                 UInt8(i), #ion_index
                                                 intensities[i]/total_intensity, #intensity
                                                 charge, #prec_charge
-                                                UInt32(N[Threads.threadid()][1]) #prec_id
+                                                UInt32(N[Threads.threadid()][1]), #prec_id
+                                                UInt8(ranks[i]) #rank
             ))
 
             push!(frags_simple[Threads.threadid()],
@@ -248,6 +257,9 @@ precursors_mouse_detailed_33NCEcorrected_start1 = precursors
 prosit_mouse_33NCEcorrected_start1_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEcorrected_start1, Float32(5.0), Float32(15.0))
 @save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt
 =#
+
+#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_start1.jld2" frags_mouse_simple_33NCEcorrected_start1
+
 
 
 

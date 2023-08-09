@@ -161,7 +161,14 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
     #println(kt_pval)
     function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
         #-1*log(mean(((a/a_sum) .- (b/b_sum)).^2))
-        ((a/a_sum) - (b/b_sum))^2
+        return ((a/a_sum) - (b/b_sum))^2
+        #=δ = 0.1
+        diff = (a/a_sum) - (b/b_sum)
+        if abs(diff) <= δ
+            return (1/2)*diff^2
+        else
+            return δ*(abs(diff) - δ/2)
+        end=#
      end
 
     function cityBlockDist(a::T, a_norm::T, b::T, b_norm::T) where {T<:AbstractFloat}
@@ -176,12 +183,15 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
     matched_ratio = zeros(T, (N,))
     spectral_contrast_matched = zeros(T, (N,))
     spectral_contrast_all = zeros(T, (N,))
+    #scribe_scores = Vector{Vector{Float32}}()
     for col in 1:(unmatched_col - 1)
+        #push!(scribe_scores, Vector{Float32}())
         #colptr = H.colptr[col]
         #println("A")
         #println(H.colptr[col+1]-1)
         for i in range(H.colptr[col], H.colptr[col+1]-1)
             #println("B")
+                    #push!(scribe_scores[col], sqrt(H.nzval[i])/rowsums_sqrt_A[H.rowval[i]] - sqrt(X[col])/rowsums_sqrt_X[H.rowval[i]])
                     scribe_squared_errors[H.rowval[i]] += scribeScore(sqrt(H.nzval[i]), 
                                                           rowsums_sqrt_A[H.rowval[i]], 
                                                           sqrt(X[col]),
@@ -207,6 +217,7 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
     end
 
     matched_ratio = rowsums_MATCHED
+    #return scribe_scores
     return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval
 end
 

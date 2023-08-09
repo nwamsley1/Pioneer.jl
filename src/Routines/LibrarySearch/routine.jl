@@ -140,6 +140,22 @@ CSV.Row2{Any, PosLenString}:
  :FragmentType       "y"
  :FragmentCharge     "1"
 =#
+CSV.write("/Users/n.t.wamsley/Desktop/PSMs_080923.csv", PSMs)
+PSMs_old = PSMs
+
+newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_start1, UInt32(1), linear_spline,
+                        min_frag_count = 4, 
+                        topN = 1000, 
+                        fragment_tolerance = 15.6, 
+                        λ = Float32(1e3), 
+                        γ =Float32(1),
+                        max_peaks = 10000, 
+                        scan_range = (0, 300000), #101357 #22894
+                        precursor_tolerance = 20.0,
+                        min_spectral_contrast =  Float32(0.5),
+                        min_matched_ratio = Float32(0.45),
+                        rt_tol = Float32(20.0)
+                        )
 
 PSMs = newPSMs
 @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
@@ -158,6 +174,8 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[
 @time rankPSMs!(PSMs, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 2, num_round = 200, eta = 0.0375)
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 
+
+best_psms[:,:old] = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs_old[PSMs_old[:,:q_value].<=0.01,:], :precursor_idx))
 best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.01,:], :precursor_idx))
 best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
 

@@ -46,6 +46,7 @@ mutable struct FragmentMatch{T<:AbstractFloat} <: Match
     count::UInt8
     scan_idx::UInt32
     ms_file_idx::UInt32
+    predicted_rank::UInt8
 end
 
 FragmentMatch() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', UInt32(0), UInt8(0), UInt32(0), UInt32(0))
@@ -64,6 +65,7 @@ getPrecID(f::FragmentMatch) = f.prec_id
 getCount(f::FragmentMatch) = f.count
 getScanID(f::FragmentMatch) = f.scan_idx
 getMSFileID(f::FragmentMatch) = f.ms_file_idx
+getRank(f::FragmentMatch) = f.predicted_rank
 
 struct PrecursorMatch{T<:AbstractFloat} <: Match
     predicted_intensity::T
@@ -176,7 +178,8 @@ function setMatch!(matches::Vector{FragmentMatch{T}}, transition::LibraryFragmen
                                  getPrecID(transition),
                                  UInt8(1), 
                                  scan_idx,
-                                 ms_file_idx)::FragmentMatch{Float32}
+                                 ms_file_idx,
+                                 getRank(transition))::FragmentMatch{Float32}
         )
 end
 

@@ -348,7 +348,7 @@ using Combinatorics
 using Random
 using Arrow
 using Tables
-
+using StatsBase
 include("src/precursor.jl")
 include("src/parseFASTA.jl")
 include("src/PrecursorDatabase.jl")
