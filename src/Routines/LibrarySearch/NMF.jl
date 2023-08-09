@@ -39,8 +39,8 @@ function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, 
     factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λs, max_iter, tol);
 
     #Set adaptive weights 
-    #setLambdas!(λs, Float32(λ*sqrt(H.m)), γ, Wnew)
-    setLambdas!(λs, Float32(λ), γ, Wnew)
+    setLambdas!(λs, Float32(λ*sqrt(H.m)), γ, Wnew)
+    #setLambdas!(λs, Float32(λ), γ, Wnew)
 
     #Addaptive LASSO estimation 
     factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λs, max_iter, tol);

@@ -168,14 +168,7 @@ describe(value_counts(PSMs, :scan_idx)[:,:nrow])
 #save psms
 #########
 #CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_071423.csv", PSMs)
-###########
-#Get best scoring psm for each precursor at 10% FDR
-###########
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
-transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz) => :prec_mz)
-sort!(best_psms,:RT, rev = false)
-rt_index = buildRTIndex(best_psms)
-size(best_psms)
+
 ##########
 #Integrate precursors
 ##########
@@ -203,64 +196,81 @@ size(best_psms)
 #Float32[1e3*(1.5^n) for n in range(1, 30)]
 γs = Float32[3 for n in range(1, 40)]
 
-
-targets = []
-decoys = []
-targets_SN = []
-decoys_SN = []
-for i in eachindex(λs)
-    println(i)
-    chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
-                        one(UInt32), 
-                        fragment_tolerance=15.6, 
-                        λ=λs[i], 
-                        γ=γs[i], 
-                        max_peak_width = 2.0, 
-                        scan_range = (0, 300000)
-                        );
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
-    #println("lambda ", λs[i])
-    #println("gamma ", γs[i])
-    #println("TARGETS")
-    #push!(targets, sum((best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:intensity].>0.0)))
-    push!(targets, sum((best_psms[(best_psms[:,:decoy].==false),:intensity].>0.0)))
-    push!(targets_SN, mean((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:intensity].>0.0),:SN])))
-    push!(decoys, sum((best_psms[(best_psms[:,:decoy].==true),:intensity].>0.0)))
-    push!(decoys_SN, mean((best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:intensity].>0.0),:SN])))
-    #println(mean(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:SN]))
-    #println(sum((best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:intensity].>0.0)))
-    #println("DECOYS")
-    #println(mean(best_psms[best_psms[:,:decoy].==true,:SN]))
-    #println(sum((best_psms[(best_psms[:,:decoy].==true),:intensity].>0.0)))
+#Float32[1e5*(1.7^n) for n in range(1, 50)]
+λs = Float32[1e9*(1.5^n) for n in range(0, 35)]
+#Float32[1e3*(1.5^n) for n in range(1, 30)]
+γs = Float32[2 for n in range(0, 35)]
+function optimizePenalty(λs, γs)
+    targets = []
+    decoys = []
+    targets_SN = []
+    decoys_SN = []
+    for i in ProgressBar(eachindex(λs))
+        chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+                            one(UInt32), 
+                            fragment_tolerance=15.6, 
+                            λ=λs[i], 
+                            γ=γs[i], 
+                            max_peak_width = 2.0, 
+                            scan_range = (0, 300000),
+                            mz_range = (706.0, 709.0));
+        transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+        #push!(targets, sum((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:intensity].>0.0)))
+        #push!(targets_SN, mean((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:intensity].>0.0).&(best_psms[:,:q_value].<=0.01),:SN])))
+        push!(targets, sum((best_psms[(best_psms[:,:decoy].==false),:intensity].>0.0)))
+        push!(targets_SN, mean((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:intensity].>0.0),:SN])))
+      
+        #push!(decoys, sum((best_psms[(best_psms[:,:decoy].==true),:intensity].>0.0)))
+        #push!(decoys_SN, mean((best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:intensity].>0.0),:SN])))
+    end
+    tsn = targets.*targets_SN
+    p = plot(log2.(λs) ,tsn, seriestype =:scatter)
+    plot!(p, log2.(λs) ,tsn)
+    plot!(p, log2.(λs) ,targets, seriestype =:scatter)
+    plot!(p, log2.(λs) ,targets)
+    vline!(p, [log2.(λs)[argmax(tsn)]], show = true)
+    hline!([maximum(tsn)*0.98])
+    println(maximum(tsn))
+    λs[argmax(tsn)], γs[argmax(tsn)]
 end
 
-plot(log2.(λs) ,targets.*targets_SN)
-plot!(log2.(λs),targets.*savitzky_golay(targets_SN, 7, 3).y)
-vline!([log2.(λs[20])])
-hline!([targets[1]*targets_SN[1]*0.95])
-
-plot(log2.(λs) ,targets)
-plot!(log2.(λs),targets.*savitzky_golay(targets_SN, 7, 3).y)
-
-chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+@time chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                 one(UInt32), 
                 fragment_tolerance=15.6, 
-                λ=λs[20], 
-                γ=one(Float32),#γs[20], 
+                λ=zero(Float32), 
+                γ=zero(Float32), 
                 max_peak_width = 2.0, 
                 scan_range = (0, 300000)
                 );
+#Remove peaks with zero intensity after no penalty
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
 
+
+###########
+#Get best scoring psm for each precursor at 10% FDR
+###########
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
+transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz) => :prec_mz)
+sort!(best_psms,:RT, rev = false)
+rt_index = buildRTIndex(best_psms)
+size(best_psms)
+λ, γ = optimizePenalty(λs, γs) #Get optinal penalty
+@time chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+                one(UInt32), 
+                fragment_tolerance=15.6, 
+                λ=zero(Float32), #λs[11], 
+                γ=zero(Float32), #γs[11], 
+                max_peak_width = 2.0, 
+                scan_range = (0, 300000)
+                );
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
 
 sum((best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5))
 best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
 best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight]
-#append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm,:cross_cor,:offset])
-append!(features, [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm])
-
-
+transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
 features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio, :missed_cleavage,:Mox]
 append!(features, [:intensity, :count, :SN, :peak_error,:fwhm,:offset, :cross_cor])
 #append!(features, [:intensity, :offset, :cross_cor])
@@ -295,7 +305,7 @@ chroms[(precursor_idx=pid,)]
 pid = UInt32(  3470831 )
 integratePrecursor(chroms, pid, isplot = true)
 chroms[(precursor_idx=pid,)]
-pid = UInt32(3531828)
+pid = UInt32(3531828) ####
 integratePrecursor(chroms, pid, isplot = true)
 chroms[(precursor_idx=pid,)]
 pid = UInt32( 935412 )
@@ -313,6 +323,8 @@ integratePrecursor(chroms, pid, isplot = true)
 
 pid = UInt32(1370088) #Check again
 integratePrecursor(chroms, pid, isplot = true)
+plot(test_df[(precursor_idx=pid,)][:,:rt], test_df[(precursor_idx=pid,)][:,:weight], seriestype=:scatter)
+plot!(chroms[(precursor_idx=pid,)][:,:rt], chroms[(precursor_idx=pid,)][:,:weight]*10, seriestype=:scatter)
 
 
 

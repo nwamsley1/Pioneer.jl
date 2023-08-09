@@ -11,13 +11,14 @@ function integrateRAW(
                     γ::Float32 = Float32(1/2),
                     max_iter::Int = 1000,
                     nmf_tol::Float32 = Float32(100.0),
-                    scan_range::Tuple{Int64, Int64} = (0, 0)
+                    scan_range::Tuple{Int64, Int64} = (0, 0),
+                    mz_range::Tuple{AbstractFloat, AbstractFloat} = (0.0, 2000.0)
                     ) where {T,U<:Real}
     
     ms2 = 0
     nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[], :frag_count => Int64[])
-    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             continue
@@ -28,25 +29,10 @@ function integrateRAW(
             i < first(scan_range) ? continue : nothing
             i > last(scan_range) ? continue : nothing
         end
-        #if (spectrum[:precursorMZ] <707) | (spectrum[:precursorMZ] > 709)
-        #   continue
-        #end
-        #=if (spectrum[:precursorMZ] < 612) | (spectrum[:precursorMZ] > 613)
-            continue
+        if (spectrum[:precursorMZ] < first(mz_range)) | (spectrum[:precursorMZ] > last(mz_range))
+           continue
         end
-
-        if (spectrum[:retentionTime] < 64.0) | (spectrum[:retentionTime] > 66.0)
-            continue
-        end
-        println("RT ", spectrum[:retentionTime])
-        println("TEST")
-        #Get peptides that could be in the spectra
-        transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
-        #println(prec_ids)
-        println("in prec_ids? ", UInt32(1780792) ∈ prec_ids)
-        =#
-        #println(typeof(transitions))
-        #Match fragments to peaks
+    
         transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
   
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
@@ -67,10 +53,10 @@ function integrateRAW(
             DataStructures.inc!(frag_counts, match.prec_id)
         end
 
-        filter!(x->(frag_counts[x.prec_id].>2), fragmentMatches)
-        filter!(x->(frag_counts[x.prec_id].>2), fragmentMisses)
-        filter!(x->x.frag_index.>2, fragmentMatches)
-        filter!(x->x.frag_index.>2, fragmentMisses)
+        #filter!(x->(frag_counts[x.prec_id].>2), fragmentMatches)
+        #filter!(x->(frag_counts[x.prec_id].>2), fragmentMisses)
+        #filter!(x->x.frag_index.>2, fragmentMatches)
+        #filter!(x->x.frag_index.>2, fragmentMisses)
         if !iszero(length(fragmentMatches))
             X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses)
             weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
@@ -105,6 +91,7 @@ function integrateRAW(
     return groupby(nmf, :precursor_idx)
 end
 
+
 """
 https://terpconnect.umd.edu/~toh/spectrum/Differentiation.html#PeakDetection
 Another common use of differentiation is in the detection of peaks in a signal. It's clear from the basic properties described in the previous section 
@@ -121,7 +108,7 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
  the peak parameters extracted by curve fitting are not distorted and the effect of random noise in the signal is reduced by curve fitting over multiple
   data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
 """
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 7, min_smoothing_order::Int = 3, isplot::Bool = false)
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
         return (0.0, 0, 0.0, 0.0, missing, missing, missing)
     end
@@ -164,7 +151,8 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     end
 
     #Smoothing parameters for chromatogram
-    window_size, order = getSmoothingParams(stop - start, max_smoothing_window, min_smoothing_order)
+    #window_size, order = getSmoothingParams(stop - start, max_smoothing_window, min_smoothing_order)
+    window_size, order = getSmoothingParams(stop - start, 5, min_smoothing_order)
     intensity_smooth = savitzky_golay(intensity[start:stop], window_size, order).y
     intensity_smooth[intensity_smooth .< 0.0] .= zero(eltype(typeof(intensity_smooth)))
 

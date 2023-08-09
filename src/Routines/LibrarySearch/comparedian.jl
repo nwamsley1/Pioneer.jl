@@ -245,3 +245,149 @@ for i in eachindex(test_precs.counts)
         push!(A, i)
     end
 end
+
+
+#########
+#Compare diann seqs at 1% fdr
+#########
+diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
+
+#Unique (unmodified) sequences 
+diann_passed = Set(diannreport[:,"Stripped.Sequence"])
+titus_passed = Set(best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:stripped_sequence])
+titus_seed = Set(PSMs[(PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false),:stripped_sequence])
+
+
+######
+length(setdiff(diann_passed, titus_passed)) #14480
+
+length(setdiff(diann_passed, titus_seed)) #7011
+
+length(setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))) #7469
+
+length(setdiff(titus_passed, diann_passed)) #4131
+
+"""
+    There are ~7000 sequences that didn't pass the initial 10% fdr threshold at the psm level
+    There are another ~7000 sequences that pass the initial 10% but that don't achieve 1% fdr
+    after peak integration.
+
+    There are also some sequences that diann does not detect at 1% fdr but that titus does. Are 
+    these good id's or false positives?
+"""
+
+missing_seqs = setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))
+
+missing_peptides = best_psms[[x∈missing_seqs for x in best_psms[:,:stripped_sequence]],:]
+titus_targets = best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:]
+titus_decoys = best_psms[(best_psms[:,:q_value].>0.01).&(best_psms[:,:decoy].==true),:]
+
+###########
+histogram(log2.(missing_peptides[:,:matched_ratio]), normalize =:probability, alpha = 0.5, bins = 100)
+histogram!(log2.(titus_decoys[:,:matched_ratio]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!(log2.(titus_targets[:,:matched_ratio]), normalize = :probability, alpha = 0.5, bins = 100)
+"""
+Missing Peptides have lower matched ratios, similar to the decoys
+
+julia> median(missing_peptides[:,:matched_ratio])
+2.134892f0
+julia> median(titus_decoys[:,:matched_ratio])
+1.7648417f0
+median(titus_targets[:,:matched_ratio])
+8.028733f0
+"""
+
+###########
+histogram((missing_peptides[:,:scribe_score]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!((titus_decoys[:,:scribe_score]), normalize =:probability, alpha = 0.5,bins = 100)
+histogram!((titus_targets[:,:scribe_score]), normalize =:probability, alpha = 0.5,bins = 100)
+"""
+Missing Peptides have lower scribe scores
+
+julia> median(missing_peptides[:,:scribe_score])
+10.916118f0
+julia> median(titus_decoys[:,:scribe_score])
+10.210345f0
+julia> median(titus_targets[:,:scribe_score])
+14.558072f0
+"""
+
+############
+histogram((missing_peptides[:,:spectral_contrast_all]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!((titus_decoys[:,:spectral_contrast_all]), normalize=:probability, alpha = 0.5,bins = 100)
+histogram!((titus_targets[:,:spectral_contrast_all]), normalize =:probability, alpha = 0.5,bins = 100)
+
+"""
+Missing Peptides have lower scribe scores
+
+julia> median(missing_peptides[:,:spectral_contrast_all])
+0.852202f0
+julia> median(titus_decoys[:,:spectral_contrast_all])
+0.81355864f0
+julia> median(titus_targets[:,:spectral_contrast_all])
+0.9612154f0
+"""
+
+############
+histogram((missing_peptides[:,:RT_error]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!((titus_decoys[:,:RT_error]), normalize =:probability, alpha = 0.5,bins = 100)
+histogram!((titus_targets[:,:RT_error]),normalize =:probability, alpha = 0.5,bins = 100)
+"""
+Interesting because here the decoys have the greatest RT errors but the missing peptides
+and passing targets have similair rt errors. 
+
+julia> median(missing_peptides[:,:RT_error])
+4.41528702089964
+julia> median(titus_decoys[:,:RT_error])
+5.4556267604548765
+julia> median(titus_targets[:,:RT_error])
+4.376064849485516
+"""
+
+############
+histogram((missing_peptides[:,:total_ions]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!((titus_decoys[:,:total_ions]), normalize =:probability, alpha = 0.5,bins = 100)
+histogram!((titus_targets[:,:total_ions]), normalize =:probability, alpha = 0.5,bins = 100)
+"""
+julia> median(missing_peptides[:,:total_ions])
+5.0
+
+julia> median(titus_decoys[:,:total_ions])
+5.0
+
+julia> median(titus_targets[:,:total_ions])
+9.0
+"""
+
+############
+histogram(log10.(missing_peptides[:,:intensity]), normalize = :probability, alpha = 0.5,bins = 100)
+histogram!(log10.(titus_decoys[:,:intensity]), normalize =:probability, alpha = 0.5,bins = 100)
+histogram!(log10.(titus_targets[:,:intensity]), normalize =:probability, alpha = 0.5,bins = 100)
+"""
+Missing peptides actually have lower intensities than the decoys
+
+julia> median(missing_peptides[:,:intensity])
+5.0
+
+julia> median(titus_decoys[:,:intensity])
+5.0
+
+julia> median(titus_targets[:,:intensity])
+9.0
+"""
+#=###############################################################################################
+#Is it possible that our RT predictions for the diann-specific peptides were particularly weak 
+#and that DIA-NN had better predictions?
+#1) get DIA-NN RT errors for titus_targets
+#2) get DIA-NN RT errors for missing_peptides
+#3) Compare these errors to the prosit errors
+#Hypothesis is that the DIA-NN RT errors are greater for the missing peptides than for teh titus_targets
+#even though the prosit errors are the same for both groups
+###############################################################################################=#
+
+
+
+
+
+
+
