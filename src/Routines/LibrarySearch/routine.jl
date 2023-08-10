@@ -52,6 +52,13 @@ include("src/PSM_TYPES/LibraryXTandem.jl")
 @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt
 @load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/linear_spline.jld2" linear_spline
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
+
+#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_chronologer.jld2" frags_mouse_detailed_33NCEcorrected_chronologer
+#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_chronologer.jld2" precursors_mouse_detailed_33NCEcorrected_chronologer
+#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt
+#@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/rt_to_hi_spline.jld2" rt_to_hi_spline
+#MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
+
 #@load  "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
 #@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2"  frag_detailed
 ###########
@@ -98,7 +105,7 @@ newPSMs = SearchRAW(MS_TABLE, prosit_mouse_35NCEcorrected_start3_5ppm_15irt,  fr
                         rt_tol = Float32(20.0)
                         )
 
-newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_start1, UInt32(1), linear_spline,
+newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_chronologer, UInt32(1), rt_to_hi_spline,
                         min_frag_count = 4, 
                         topN = 1000, 
                         fragment_tolerance = 15.6, 
@@ -162,8 +169,8 @@ PSMs = newPSMs
 
 
 #iRT_to_RT = refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox]
-
+#features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
 PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
 PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio])
 replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]))
@@ -171,16 +178,16 @@ replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,
 #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
 
-@time rankPSMs!(PSMs, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 2, num_round = 200, eta = 0.0375)
+@time rankPSMs!(PSMs, features, colsample_bytree = 0.5, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 2, num_round = 200, eta = 0.0375)
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 
 
-best_psms[:,:old] = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs_old[PSMs_old[:,:q_value].<=0.01,:], :precursor_idx))
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.01,:], :precursor_idx))
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
+#best_psms[:,:old] = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs_old[PSMs_old[:,:q_value].<=0.01,:], :precursor_idx))
+#best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.01,:], :precursor_idx)) #53917
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx)) #119107
 
-value_counts(df, col) = combine(groupby(df, col), nrow)
-histogram(value_counts(PSMs, :scan_idx)[:,:nrow])
+#value_counts(df, col) = combine(groupby(df, col), nrow)
+#histogram(value_counts(PSMs, :scan_idx)[:,:nrow])
 describe(value_counts(PSMs, :scan_idx)[:,:nrow])
 #########
 #save psms
@@ -268,12 +275,14 @@ best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:]
 ###########
 #Get best scoring psm for each precursor at 10% FDR
 ###########
+#precursors_mouse_detailed_33NCEcorrected_chronologer
 best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
 transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz) => :prec_mz)
 sort!(best_psms,:RT, rev = false)
 rt_index = buildRTIndex(best_psms)
 size(best_psms)
 λ, γ = optimizePenalty(λs, γs) #Get optinal penalty
+using DataStructures
 @time chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                 one(UInt32), 
                 fragment_tolerance=15.6, 
@@ -289,11 +298,12 @@ best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:]
 best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
 transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
-features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio, :missed_cleavage,:Mox]
+features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio, :missed_cleavage,:Mox,:best_rank,:topn]
 append!(features, [:intensity, :count, :SN, :peak_error,:fwhm,:offset, :cross_cor])
 #append!(features, [:intensity, :offset, :cross_cor])
 #append!(features, [:intensity, :count, :SN, :peak_error,:fwhm])
-@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 5, num_round = 200, eta = 0.0375)
+@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 200, eta = 0.0375)
+#@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 300, eta = 0.025)
 @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #42348, 43224
 

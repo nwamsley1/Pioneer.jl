@@ -260,18 +260,33 @@ prosit_mouse_33NCEcorrected_start1_5ppm_15irt = buildFragmentIndex!(frags_mouse_
 
 #@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_start1.jld2" frags_mouse_simple_33NCEcorrected_start1
 
+#=
+prosit_library = CSV.File("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_fixedNCE_073123.csv")
 
+seqs = String[]
+for precursor in ProgressBar(collect(prosit_library))
+    seq = precursor[:modified_sequence]
+    seq = replace(seq, "(ox)" =>"[+15.99491]")
+    seq = replace(seq, "C" => "C[+57.021464]")
+    push!(seqs, seq)
+end
 
+seqs = unique(seqs)
+pushfirst!(seqs, "PeptideModSeq")
+CSV.write("/Users/n.t.wamsley/Projects/chronologer/seqs_to_predict.tsv",  Tables.table(seqs), writeheader=false)
+=#
 
-@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_fixedNCE_073123.csv", fixed_mods, mods_dict);
-frags_mouse_simple_33NCEfixed = frags_simple
-frags_mouse_detailed_33NCEfixed = frags_detailed
-precursors_mouse_detailed_33NCEfixed = precursors
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEfixed.jld2" frags_mouse_simple_33NCEfixed
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEfixed.jld2" frags_mouse_detailed_33NCEfixed
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEfixed.jld2" precursors_mouse_detailed_33NCEfixed
-prosit_mouse_33NCEfixed_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEfixed, Float32(5.0), Float32(15.0))
-@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEfixed_5ppm_15irt.jld2" prosit_mouse_33NCEfixed_5ppm_15irt
+@time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_correctedNCE_chronologerHI_081023.csv", fixed_mods, mods_dict,start_ion = 1);
+frags_mouse_simple_33NCEcorrected_chronologer = frags_simple
+frags_mouse_detailed_33NCEcorrected_chronologer = frags_detailed
+precursors_mouse_detailed_33NCEcorrected_chronologer = precursors
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_chronologer.jld2" frags_mouse_simple_33NCEcorrected_chronologer
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_chronologer.jld2" frags_mouse_detailed_33NCEcorrected_chronologer
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_chronologer.jld2" precursors_mouse_detailed_33NCEcorrected_chronologer
+
+@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEcorrected_chronologer.jld2" frags_mouse_simple_33NCEcorrected_chronologer
+prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NCEcorrected_chronologer, Float32(5.0), Float32(15.0))
+@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt
 
 
 
@@ -293,109 +308,83 @@ prosit_mouse_33NCEfixed_5ppm_15irt = buildFragmentIndex!(frags_mouse_simple_33NC
 @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/precursors_33NCEfixed.jld2" precursors_33NCEfixed
 @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/prosit_33NCEfixed_5ppm_15irt.jld2" prosit_33NCEfixed_5ppm_15irt 
 
-function readPrositLib(prosit_lib_path::String; precision::DataType = Float64, isDecoys::Bool = false, first_prec_id = UInt32(0))
-    
-    frag_list = Vector{FragmentIon{precision}}()
-    frag_detailed = Vector{Vector{LibraryFragment{precision}}}()
-    precursor_list = Vector{LibraryPrecursor}()
 
-    rows = CSV.Rows(prosit_lib_path, reusebuffer=false, select = [:RelativeIntensity, :FragmentMz, :PrecursorMz, :iRT, :Stripped, :ModifiedPeptide,:FragmentNumber,:FragmentCharge,:PrecursorCharge,:FragmentType])
-    current_peptide = ""
-    current_charge = ""
-    prec_id = UInt32(first_prec_id)
-    id = UInt32(0)
-    ion_position = UInt8(1)
-    rows = []
-    println("TEST")
-    for (i, row) in enumerate(rows)
-        println(i)
-        if (i % 1_000_000) == 0
-            println(i/1_000_000)
-        end
-        #if i < 13000000
-        #    continue
-        #end
-        if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
-            println("current_peptide $current_peptide")
-            println(row)
-            rows += [row]
-        end
-        if (row.ModifiedPeptide::PosLenString != current_peptide) | (row.PrecursorCharge::PosLenString != current_charge)
-            current_peptide = row.ModifiedPeptide::PosLenString
-            current_charge = row.PrecursorCharge::PosLenString
-            prec_id += UInt32(1)
-            #if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
-            #    println("current_peptide $current_peptide")
-            #    println(row)
-            #end
-            id += UInt32(1)
-            ion_position = UInt8(1)
-            push!(frag_detailed, Vector{LibraryFragment{precision}}())
-            #=push!(precursor_list, LibraryPrecursor(
-                                                    parse(precision, row.iRT::PosLenString),
-                                                    parse(precision, row.PrecursorMz::PosLenString),
-                                                    Ref(zero(precision)),
-                                                    isDecoys,
-                                                    parse(UInt8, row.PrecursorCharge::PosLenString)
-                                                ))=#
-        end
 
-        #Track progress
-        if (i % 1_000_000) == 0
-            println(i/1_000_000)
-        end
+#########
+#Spline to convert HI to RT
 
-        #Exclude y1, y2, b1, and b2 ions. 
-        if parse(Int, row.FragmentNumber::PosLenString) < 3
-            continue
-        end
+chronologer_hi = CSV.File("/Users/n.t.wamsley/Projects/chronologer/chronologer_mouse_hi.tsv"; 
+                    header = true,
+                    delim = '\t',
+                    ntasks = 24) |> DataFrame
 
-        #=addIntensity!(precursor_list[id], parse(precision, row.RelativeIntensity))
+chronologer_hi[:,:PeptideModSeq] = replace.(chronologer_hi[:,:PeptideModSeq], "M[+15.99491]" => "M(ox)")
+chronologer_hi[:,:PeptideModSeq] = replace.(chronologer_hi[:,:PeptideModSeq], "C[+57.021464]" => "C")
 
-        push!(frag_list, FragmentIon(parse(precision, row.FragmentMz::PosLenString), 
-                                    prec_id, 
-                                    parse(precision, row.PrecursorMz::PosLenString), 
-                                    Ref(parse(precision, row.RelativeIntensity::PosLenString)),
-                                    parse(precision, row.iRT::PosLenString),
-                                    parse(UInt8, row.PrecursorCharge::PosLenString)
-                                    ))
+ModSeqToHI = Dict(zip(chronologer_hi[:,:PeptideModSeq], chronologer_hi[:,:Pred_HI]))
 
-        push!(frag_detailed[id], LibraryFragment(parse(precision, row.FragmentMz::PosLenString), 
-                                                      parse(UInt8, row.FragmentCharge::PosLenString),
-                                                      occursin("y", row.FragmentType::PosLenString),
-                                                      parse(UInt8, row.FragmentNumber::PosLenString),
-                                                      ion_position,
-                                                      parse(precision, row.RelativeIntensity::PosLenString),
-                                                      parse(UInt8, row.PrecursorCharge::PosLenString),
-                                                      prec_id,
-                                                    )
-                                 )=#
-        ion_position += UInt8(1)
-    end
-    sort!(frag_list, by = x->getFragMZ(x))
-    return frag_list, frag_detailed, precursor_list, prec_id
-end
 
-rows = []
-current_peptide = ""
-current_charge = ""
-for (i, row) in enumerate(CSV.Rows("/Users/n.t.wamsley/Projects/PROSIT/myPrositLib_targets.csv"))
-    if (i % 1_000_000) == 0
-        println(i/1_000_000)
-    end
-    if i < 13000000
-        continue
-    end
-    current_peptide = row.ModifiedPeptide::PosLenString
-    current_charge = row.PrecursorCharge::PosLenString
-    if current_peptide == "_GGPGSAVSPYPSFNVSSDVAALHK_"
-        if current_charge == "3"
-            #println("current_peptide $current_peptide")
-            println(row.ModifiedPeptide,",",row.RelativeIntensity,",",row.FragmentMz,",",row.FragmentType,",",",",row.FragmentNumber,",",row.FragmentCharge)
-        end
-        #rows += [row]
+PSMs = CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080923.csv")
+PSMs = DataFrame(PSMs)
+
+best_psms = combine(sdf -> sdf[argmin(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast_all].>0.95) .& (PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<=0.01) .& (PSMs[:,:matched_ratio].>=3.0),:], [:scan_idx]))
+best_psms[:,:modified_sequence] = replace.(best_psms[:,:sequence], "M" => "M(ox)")
+#chronologer_hi[:,:PeptideModSeq] = replace.(chronologer_hi[:,:PeptideModSeq], "C[+57.021464]" => "C")
+best_psms = best_psms[[haskey(ModSeqToHI, x) for x in best_psms[:,:modified_sequence]],:]
+transform!(best_psms, AsTable(:) => ByRow(prec -> ModSeqToHI[prec[:modified_sequence]]) => [:HI]);
+
+rt_to_hi_spline = rtSpline(best_psms[:,:RT], best_psms[:,:HI], n_bins = 200, granularity = 100)
+plot(best_psms[best_psms[:,:q_value].<0.01,:HI], best_psms[best_psms[:,:q_value].<0.01,:RT], seriestype = :scatter, alpha = 0.1)
+plot!(rt_to_hi_spline.(LinRange(0, 125, 1000)), LinRange(0, 125, 1000))
+
+hi_pred = rt_to_hi_spline.(LinRange(0, 133.1, 1000))
+max_rt = 0
+for i in eachindex(hi_pred)
+    if hi_pred[i]<max_rt
+        hi_pred[i] = max_rt
+    else
+        max_rt = hi_pred[i]
     end
 end
+plot(best_psms[:,:HI], best_psms[:,:RT], seriestype = :scatter, alpha = 0.1)
+plot!(hi_pred, LinRange(0, 133.1, 1000))
+plot!(savitzky_golay(hi_pred, 201, 3).y, LinRange(0, 133.1, 1000))
+
+rt_to_hi_spline = LinearInterpolation(LinRange(0, 133.1, 1000), savitzky_golay(hi_pred, 201, 3).y)
+@save "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/rt_to_hi_spline.jld2" rt_to_hi_spline
+
+best_psms[:,:RT_pred] = rt_to_hi_spline.(best_psms[:,:RT])
+
+best_psms = combine(sdf -> sdf[argmin(abs.(sdf.RT .- sdf.RT_pred)),:], groupby(best_psms, [:precursor_idx]))
+
+
+
+plot(best_psms[:,:HI], best_psms[:,:iRT], seriestype = :scatter, alpha = 0.1)
+
+plot(best_psms[:,:RT_pred], best_psms[:,:RT], seriestype = :scatter, alpha = 0.1)
+#########
+#Read chronologer
+#=
+prosit_lib = CSV.File("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv"; 
+                    header = true,
+                    delim = ',',
+                    ntasks = 24) |> DataFrame
+
+chronologer_hi = CSV.File("/Users/n.t.wamsley/Projects/chronologer/chronologer_mouse_hi.tsv"; 
+                    header = true,
+                    delim = '\t',
+                    ntasks = 24) |> DataFrame
+
+chronologer_hi[:,:PeptideModSeq] = replace.(chronologer_hi[:,:PeptideModSeq], "M[+15.99491]" => "M(ox)")
+chronologer_hi[:,:PeptideModSeq] = replace.(chronologer_hi[:,:PeptideModSeq], "C[+57.021464]" => "C")
+
+ModSeqToHI = Dict(zip(chronologer_hi[:,:PeptideModSeq], chronologer_hi[:,:Pred_HI]))
+
+transform!(prosit_lib, AsTable(:) => ByRow(prec -> ModSeqToHI[prec[:modified_sequence]]) => [:iRT]);
+
+CSV.write("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_correctedNCE_chronologerHI_081023.csv", prosit_lib)
+=#
+
 #=
 
 @save "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_simple.jld2" frags_simple

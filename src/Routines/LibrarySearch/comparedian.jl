@@ -259,13 +259,13 @@ titus_seed = Set(PSMs[(PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false),:stripp
 
 
 ######
-length(setdiff(diann_passed, titus_passed)) #14480
+length(setdiff(diann_passed, titus_passed)) #14027
 
-length(setdiff(diann_passed, titus_seed)) #7011
+length(setdiff(diann_passed, titus_seed)) #6922
 
-length(setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))) #7469
+length(setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))) #7105
 
-length(setdiff(titus_passed, diann_passed)) #4131
+length(setdiff(titus_passed, diann_passed)) #4236
 
 """
     There are ~7000 sequences that didn't pass the initial 10% fdr threshold at the psm level
@@ -359,6 +359,20 @@ julia> median(titus_targets[:,:total_ions])
 9.0
 """
 
+bar(countmap(missing_peptides[:,:topn])./sum(countmap(missing_peptides[:,:topn])), normalize =:probability, alpha = 0.5)
+bar!(countmap(titus_decoys[:,:topn])./sum(countmap(titus_decoys[:,:topn])), normalize = :probability, alpha = 0.5)
+bar!(countmap(titus_targets[:,:topn])./sum(countmap(titus_targets[:,:topn])), normalize = :probability, alpha = 0.5)
+"""
+Missing Peptides have lower matched ratios, similar to the decoys
+
+julia> median(missing_peptides[:,:matched_ratio])
+2.134892f0
+julia> median(titus_decoys[:,:matched_ratio])
+1.7648417f0
+median(titus_targets[:,:matched_ratio])
+8.028733f0
+"""
+
 ############
 histogram(log10.(missing_peptides[:,:intensity]), normalize = :probability, alpha = 0.5,bins = 100)
 histogram!(log10.(titus_decoys[:,:intensity]), normalize =:probability, alpha = 0.5,bins = 100)
@@ -420,3 +434,7 @@ histogram(PSMs[PSMs[:,:decoy],:scribe_score], normalize = :probability, alpha = 
 histogram!(PSMs[(PSMs[:,:decoy].==false) .& (PSMs[:,:q_value].<=0.01),:scribe_score], normalize = :probability, alpha = 0.5,bins = 100)
 
 histogram!(log2.(diann_missing_peptides[:,"Precursor.Normalised"]), normalize = :probability, alpha = 0.5,bins = 100)
+
+plot(best_psms[best_psms[:,:q_value].<0.01,:RT_pred], best_psms[best_psms[:,:q_value].<0.01,:RT], seriestype = :scatter, alpha = 0.1)
+plot(best_psms[best_psms[:,:q_value].<0.01,:iRT], best_psms[best_psms[:,:q_value].<0.01,:RT], seriestype = :scatter, alpha = 0.1)
+plot!(best_psms[best_psms[:,:decoy],:iRT], best_psms[best_psms[:,:decoy],:RT], seriestype = :scatter, alpha = 0.1)

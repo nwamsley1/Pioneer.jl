@@ -4,7 +4,7 @@ function SearchRAW(
                     frag_index::FragmentIndex{Float32},
                     fragment_list::Vector{Vector{LibraryFragment{Float32}}},
                     ms_file_idx::UInt32,
-                    interpolation::Interpolations.Extrapolation{Float64, 1, Interpolations.GriddedInterpolation{Float64, 1, Float64, Gridded{Linear{Throw{OnGrid}}}, Tuple{Vector{Float64}}}, Gridded{Linear{Throw{OnGrid}}}, Line{Nothing}};
+                    interpolation::Any;
                     isolation_width::Float64 = 4.25,
                     precursor_tolerance::Float64 = 5.0,
                     fragment_tolerance::Float64 = 20.0,
@@ -48,7 +48,7 @@ function SearchRAW(
 
         min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
 
-        iRT = interpolation(spectrum[:retentionTime])
+        iRT = interpolation(min(spectrum[:retentionTime], 133.0))::Float64
         iRT_low = Float32(iRT - rt_tol)
         iRT_high = Float32(iRT + rt_tol)
         #reset!(precs)
