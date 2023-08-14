@@ -251,22 +251,60 @@ end
 #Compare diann seqs at 1% fdr
 #########
 diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
-
+diannreport[:,"Unique.Sequence"] .= replace.(diannreport[:,"Modified.Sequence"], "C(UniMod:4)" => "C")
+diannreport[:,"Unique.Sequence"] .= replace.(diannreport[:,"Unique.Sequence"], "M(UniMod:35)" => "M(ox)")
+#best_psms[:,:stripped_sequence] .= replace.(best_psms[:,:sequence], "(ox)" => "")
+#PSMs[:,:stripped_sequence] .= replace.(PSMs[:,:sequence], "(ox)" => "")
 #Unique (unmodified) sequences 
-diann_passed = Set(diannreport[:,"Stripped.Sequence"])
-titus_passed = Set(best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:stripped_sequence])
-titus_seed = Set(PSMs[(PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false),:stripped_sequence])
+diann_passed = Set(diannreport[:,"Unique.Sequence"].*"_".*string.(diannreport[:,"Precursor.Charge"]))
+titus_passed = (best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false)
+titus_passed = Set(best_psms[titus_passed,:sequence].*"_".*string.(best_psms[titus_passed,:charge]))
+#titus_seed= (PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false)
+titus_seed= (PSMs[:,:decoy].==false)
+titus_seed = Set(PSMs[titus_seed,:sequence].*"_".*string.(PSMs[titus_seed,:charge]))
+
+CSV.write("/Users/n.t.wamsley/Desktop/diann_passed_precursor.tsv",  Tables.table(collect(diann_passed)), writeheader=false)
+CSV.write("/Users/n.t.wamsley/Desktop/titus_passed_precursor.tsv",  Tables.table(collect(titus_passed)), writeheader=false)
+CSV.write("/Users/n.t.wamsley/Desktop/titus_passed_precursor.tsv",  Tables.table(collect(titus_seed)), writeheader=false)
 
 
+Plots.histogram(best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:cross_cor], normalize = :probability, alpha = 0.5,bins = 100)
+Plots.histogram!(best_psms[(best_psms[:,:decoy].==true),:cross_cor], normalize = :probability, alpha = 0.5,bins = 100)
+
+Plots.histogram(best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:offset], normalize = :probability, alpha = 0.5,bins = 100)
+Plots.histogram!(best_psms[(best_psms[:,:decoy].==true),:offset], normalize = :probability, alpha = 0.5,bins = 100)
+
+####Pep level
+diann_passed = Set(diannreport[:,"Unique.Sequence"])
+titus_passed = (best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false)
+titus_passed = Set(best_psms[titus_passed,:sequence])
+#titus_seed= (PSMs[:,:q_value].<=0.1).&(PSMs[:,:decoy].==false)
+titus_seed= (PSMs[:,:decoy].==false)
+titus_seed = Set(PSMs[titus_seed,:sequence])
+
+
+setdiff(diann_passed, titus_seed)
+diann_passed ∩ titus_passed
+pep = "GGGALVENTTTGLSR"
+diannreport[diannreport[:,:"Unique.Sequence"] .== pep,["RT.Start","RT","RT.Stop"]]
+AVMNSQQGIEYILSNQGYVR
+"YNPGYVLAGR" ∈ setdiff(diann_passed, titus_passed)
 ######
-length(setdiff(diann_passed, titus_passed)) #14027
+length(setdiff(diann_passed, titus_passed)) #21455
 
-length(setdiff(diann_passed, titus_seed)) #6922
+length(setdiff(diann_passed, titus_seed)) #16752
 
-length(setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))) #7105
+length(setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))) #4703
 
 length(setdiff(titus_passed, diann_passed)) #4236
 
+length(titus_passed ∩ diann_passed)
+
+######
+diann_passed = diann_passed ∩ titus_seed
+length(setdiff(diann_passed, titus_passed))
+length(diann_passed ∩ titus_passed)
+length(setdiff(titus_passed, diann_passed))
 """
     There are ~7000 sequences that didn't pass the initial 10% fdr threshold at the psm level
     There are another ~7000 sequences that pass the initial 10% but that don't achieve 1% fdr
@@ -278,14 +316,14 @@ length(setdiff(titus_passed, diann_passed)) #4236
 
 missing_seqs = setdiff(setdiff(diann_passed, titus_passed), setdiff(diann_passed, titus_seed))
 
-missing_peptides = best_psms[[x∈missing_seqs for x in best_psms[:,:stripped_sequence]],:]
+missing_peptides = best_psms[[x∈missing_seqs for x in best_psms[:,:sequence]],:]
 titus_targets = best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:]
 titus_decoys = best_psms[(best_psms[:,:q_value].>0.01).&(best_psms[:,:decoy].==true),:]
 
 ###########
-histogram(log2.(missing_peptides[:,:matched_ratio]), normalize =:probability, alpha = 0.5, bins = 100)
-histogram!(log2.(titus_decoys[:,:matched_ratio]), normalize = :probability, alpha = 0.5,bins = 100)
-histogram!(log2.(titus_targets[:,:matched_ratio]), normalize = :probability, alpha = 0.5, bins = 100)
+histogram(log2.(missing_peptides[:,:matched_ratio]), normalise =:pdf, alpha = 0.5, bins = 100)
+histogram!(log2.(titus_decoys[:,:matched_ratio]), normalise = :pdf, alpha = 0.5,bins = 100)
+histogram!(log2.(titus_targets[:,:matched_ratio]), normalise = :pdf, alpha = 0.5, bins = 100)
 """
 Missing Peptides have lower matched ratios, similar to the decoys
 
@@ -298,9 +336,9 @@ median(titus_targets[:,:matched_ratio])
 """
 
 ###########
-histogram((missing_peptides[:,:scribe_score]), normalize = :probability, alpha = 0.5,bins = 100)
-histogram!((titus_decoys[:,:scribe_score]), normalize =:probability, alpha = 0.5,bins = 100)
-histogram!((titus_targets[:,:scribe_score]), normalize =:probability, alpha = 0.5,bins = 100)
+histogram((missing_peptides[:,:scribe_score]), normalise = :probability, alpha = 0.5,bins = 100)
+histogram!((titus_decoys[:,:scribe_score]), normalise =:probability, alpha = 0.5,bins = 100)
+histogram!((titus_targets[:,:scribe_score]), normalise =:probability, alpha = 0.5,bins = 100)
 """
 Missing Peptides have lower scribe scores
 
@@ -374,9 +412,23 @@ median(titus_targets[:,:matched_ratio])
 """
 
 ############
-histogram(log10.(missing_peptides[:,:intensity]), normalize = :probability, alpha = 0.5,bins = 100)
-histogram!(log10.(titus_decoys[:,:intensity]), normalize =:probability, alpha = 0.5,bins = 100)
-histogram!(log10.(titus_targets[:,:intensity]), normalize =:probability, alpha = 0.5,bins = 100)
+b_range = range(-1, 12, length=100)
+Plots.histogram(log2.(missing_peptides[:,:matched_ratio]), bins = b_range, normalize = :probability, alpha = 0.5, label = "DIA-NN Only")
+Plots.histogram!(log2.(titus_decoys[:,:matched_ratio]), bins = b_range, normalize = :probability, alpha = 0.25,  label = "TITUS Decoys")
+Plots.histogram!(log2.(titus_targets[:,:matched_ratio]), bins = b_range, normalize = :probability, alpha = 0.5,label = "TITUS <=1% FDR")
+
+Plots.histogram(log2.(missing_peptides[:,:matched_ratio]), normalize = :probability, alpha = 0.5,bins = 100, label = "DIA-NN Only")
+Plots.histogram!(log10.(titus_decoys[:,:intensity]), normalize =:probability, alpha = 0.5, bins = 100, label = "TITUS Decoys")
+Plots.histogram!(log10.(titus_targets[:,:intensity]), normalize =:probability, alpha = 0.5, bins = 100, label = "TITUS <=1% FDR")
+
+Plots.histogram(log10.(missing_peptides[:,:intensity]), alpha = 0.5,bins = 100, label = "DIA-NN Only")
+#Plots.histogram!(log10.(titus_decoys[:,:intensity]), alpha = 0.25, bins = 100, label = "TITUS Decoys")
+Plots.histogram!(log10.(titus_targets[:,:intensity]), alpha = 0.5, bins = 100, label = "TITUS <=1% FDR")
+
+b_range = range(0, 25, length=100)
+Plots.histogram((missing_peptides[:,:scribe_score]), bins = b_range, normalize = :probability, alpha = 0.5, label = "DIA-NN Only")
+Plots.histogram!((titus_decoys[:,:scribe_score]), bins = b_range, normalize = :probability, alpha = 0.25,  label = "TITUS Decoys")
+Plots.histogram!((titus_targets[:,:scribe_score]), bins = b_range, normalize = :probability, alpha = 0.5,label = "TITUS <=1% FDR")
 """
 Missing peptides actually have lower intensities than the decoys
 

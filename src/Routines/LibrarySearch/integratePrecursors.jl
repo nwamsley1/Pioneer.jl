@@ -164,7 +164,8 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     end
 
     peak_area = NumericalIntegration.integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
-    count = (stop - start + 1)
+    count = sum(intensity[start:stop].>0.0)#(stop - start + 1)
+
     SN = Float64(sum(intensity[start:stop])/sum(intensity))
     error = sum(abs.(intensity_smooth .- intensity[start:stop]))/(length(intensity_smooth)*maximum(intensity))
 

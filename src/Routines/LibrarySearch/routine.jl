@@ -154,8 +154,8 @@ newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  fr
                         min_frag_count = 4, 
                         topN = 1000, 
                         fragment_tolerance = 15.6, 
-                        λ = Float32(1e3), 
-                        γ =Float32(1),
+                        λ = Float32(0), 
+                        γ =Float32(0),
                         max_peaks = 10000, 
                         scan_range = (0, 300000), #101357 #22894
                         precursor_tolerance = 20.0,
@@ -165,6 +165,7 @@ newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  fr
                         )
 
 PSMs = newPSMs
+PSMs = PSMs[PSMs[:,:weight].>100.0,:]
 @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
 
 
@@ -178,7 +179,10 @@ replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,
 #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
 transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
 
-@time rankPSMs!(PSMs, features, colsample_bytree = 0.5, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 2, num_round = 200, eta = 0.0375)
+#@time rankPSMs!(PSMs, features, colsample_bytree = 0.5, min_child_weight = 10, gamma = 10, subsample = 1.0, n_folds = 2, num_round = 200, eta = 0.0375)
+#features = [:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:spectral_contrast_matched,:RT_error,:scribe_score,:RT,:city_block,:matched_ratio,:weight]
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
+@time rankPSMs!(PSMs, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.25, n_folds = 2, num_round = 200, eta = 0.0375, max_depth = 5)
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 
 
@@ -281,8 +285,9 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCE
 sort!(best_psms,:RT, rev = false)
 rt_index = buildRTIndex(best_psms)
 size(best_psms)
-λ, γ = optimizePenalty(λs, γs) #Get optinal penalty
+#λ, γ = optimizePenalty(λs, γs) #Get optinal penalty
 using DataStructures
+include("src/Routines/LibrarySearch/integratePrecursors.jl")
 @time chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                 one(UInt32), 
                 fragment_tolerance=15.6, 
@@ -293,8 +298,8 @@ using DataStructures
                 );
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
 
-sum((best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5))
-best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=5),:];
+sum((best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6))
+best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6),:];
 best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
 transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
@@ -302,7 +307,7 @@ features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spect
 append!(features, [:intensity, :count, :SN, :peak_error,:fwhm,:offset, :cross_cor])
 #append!(features, [:intensity, :offset, :cross_cor])
 #append!(features, [:intensity, :count, :SN, :peak_error,:fwhm])
-@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 200, eta = 0.0375)
+@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 200, max_depth = 10, eta = 0.0375)
 #@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 300, eta = 0.025)
 @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #42348, 43224
