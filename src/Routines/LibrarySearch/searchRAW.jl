@@ -8,6 +8,7 @@ function SearchRAW(
                     isolation_width::Float64 = 4.25,
                     precursor_tolerance::Float64 = 5.0,
                     fragment_tolerance::Float64 = 20.0,
+                    frag_ppm_err::Float64 = 0.0,
                     topN::Int64 = 20,
                     min_frag_count::Int64 = 4,
                     min_matched_ratio::Float32 = Float32(0.8),
@@ -20,7 +21,8 @@ function SearchRAW(
                     nmf_tol::Float32 = Float32(100.0),
                     rt_tol::Float32 = Float32(30.0),
                     #fragment_match_ppm::U,
-                    data_type::Type{T} = Float64
+                    data_type::Type{T} = Float64,
+                    sample_rate::Float64 = 1.0
                     ) where {T<:Real}
     
     scored_PSMs = makePSMsDict(XTandem(data_type))
@@ -29,6 +31,7 @@ function SearchRAW(
     times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0, :match_peaks => 0.0, :build => 0.0, :score => 0.0)
     n = 0
     kt = KendallTau(Float32)
+    all_matches = Vector{FragmentMatch{Float32}}()
     for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -45,6 +48,9 @@ function SearchRAW(
             i > last(scan_range) ? continue : nothing
         end
 
+        if first(rand(1)) > sample_rate
+            continue
+        end
 
         min_intensity = spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
 
@@ -93,7 +99,8 @@ function SearchRAW(
                                     spectrum[:intensities], 
                                     FragmentMatch{Float32},
                                     count_unmatched=true,
-                                    δs = zeros(T, (1,)),
+                                    #δs = zeros(T, (1,)),
+                                    δs = [frag_ppm_err],
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity,
@@ -103,7 +110,7 @@ function SearchRAW(
         if iszero(length(fragmentMatches))
             continue
         end
-
+        append!(all_matches, fragmentMatches)
         #times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
         X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
         
@@ -138,7 +145,7 @@ function SearchRAW(
     println("build : ", times[:build]/n)
     println("score : ", times[:score]/n)
     println("match_peaks : ", times[:match_peaks]/n)
-    return DataFrame(scored_PSMs)
+    return DataFrame(scored_PSMs), all_matches
 end
 
 #=

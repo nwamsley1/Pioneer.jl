@@ -157,34 +157,33 @@ end
 using MultiKDE
 using Distributions, Random, Plots
 
-function KDEmapping(x::Vector{T}, y::Vector{T}, n::Int, bandwidth::AbstractFloat) where {T<:AbstractFloat}
-    x_grid = LinRange(minimum(x), maximum(x), n)
-    y_grid = LinRange(minimum(y), maximum(y), n)
-    y_transformed = zeros(T, n)
+using KernelDensity
+function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::AbstractFloat = 1.0, w = 11) where {T<:AbstractFloat}
+    x_grid = LinRange(minimum(X), maximum(X), n)
+    y_grid = LinRange(minimum(Y), maximum(Y), n)
+    ys = zeros(T, n)
     z = zeros(T, (n, n))
-    B = kde((x, y), bandwidth = (bandwidth, bandwidth)) #Uses Silverman's rule by default
-    #B = kde((x, y)) #Uses Silverman's rule by default
+    B = kde((X, Y), bandwidth = (bandwidth, bandwidth)) #Uses Silverman's rule by default
     ik = InterpKDE(B)
+    #Get KDE
     for i in eachindex(x_grid), j in eachindex(y_grid)
             z[i, j] = Distributions.pdf(ik, x_grid[i], y_grid[j])
     end
 
-    #Walk along ridge
+    #Monotonic increasing walk along ridge
     max_j = 1
     for i in eachindex(x_grid)
         j = argmax(@view(z[i,:]))
         if y_grid[j] > y_grid[max_j]
-            #y_transformed[i] = y_grid[j]
             max_j = j
         end
-        y_transformed[i] = y_grid[max_j]
+        ys[i] = y_grid[max_j]
     end
-    #return x_grid, y_transformed, z#x_grid, y_grid, z
-    w = isodd(n÷5) ? n÷5 : n÷5 + 1
-    return x_grid, savitzky_golay(y_transformed, w, 3).y
+    #w = isodd(n÷5) ? n÷5 : n÷5 + 1
+    return LinearInterpolation(x_grid, savitzky_golay(ys, w, 3).y, extrapolation_bc = Line())
 end
 
 Plots.plot(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT], seriestype=:scatter)
-test_x, test_y= KDEmapping(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT], 200, 1.0)
+test_x, test_y= KDEmapping(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT])
 Plots.plot!(test_x, test_y)
 

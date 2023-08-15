@@ -233,7 +233,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, δ::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, masses::Vector{Union{Missing, T}}, intensities::Vector{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
@@ -258,11 +258,12 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
             continue
         end
         #Is the peak within the tolerance of the transition m/z?
+        δ = Float32(ppm_err*(masses[peak]/1e6))
         if (masses[peak]+ δ >= low)
             if (masses[peak]+ δ <= high)
                 #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
                 best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
-                setMatch!(matches, Ions[ion], masses[best_peak], intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+                setMatch!(matches, Ions[ion], masses[best_peak] +  δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
                 ion += 1
                 if ion > length(Ions)
                     return

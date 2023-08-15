@@ -150,6 +150,56 @@ CSV.Row2{Any, PosLenString}:
 CSV.write("/Users/n.t.wamsley/Desktop/PSMs_080923.csv", PSMs)
 PSMs_old = PSMs
 
+
+rtPSMs, all_matches = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_start1, UInt32(1), linear_spline,
+                        min_frag_count = 7, 
+                        topN = 5, 
+                        #fragment_tolerance = 15.6, 
+                        fragment_tolerance = 5.0,
+                        λ = Float32(0), 
+                        γ =Float32(0),
+                        max_peaks = 10000, 
+                        scan_range = (0, 300000), #101357 #22894
+                        precursor_tolerance = 20.0,
+                        min_spectral_contrast =  Float32(0.95),
+                        min_matched_ratio = Float32(.6),
+                        rt_tol = Float32(200.0),
+                        sample_rate = 0.01,
+                        frag_ppm_err = -1.35
+                        )
+#
+                        frag_errs = [x.match_mz-x.theoretical_mz for x in all_matches]
+Plots.histogram([x.match_mz-x.theoretical_mz for x in all_matches])
+Plots.vline!([0.0])
+Plots.histogram(frag_errs .- median(frag_errs))
+Plots.vline!([0.0])
+describe(abs.(frag_errs .- median(frag_errs)))
+
+function getPPM(a::T, b::T) where {T<:AbstractFloat}
+    (a-b)/(a/1e6)
+end
+
+frag_ppm_errs = [getPPM(x.theoretical_mz, x.match_mz) for x in all_matches]
+Plots.histogram(frag_ppm_errs)
+describe((frag_ppm_errs))
+Plots.vline!([0.0])
+describe(abs.(frag_ppm_errs .- median(frag_ppm_errs)))
+
+Plots.histogram(abs.(frag_ppm_errs .- median(frag_ppm_errs)))
+
+
+ecdfplot((frag_ppm_errs .- median(frag_ppm_errs)))
+plot!([0, maximum(abs.(frag_ppm_errs .- median(frag_ppm_errs)))], [0, 1])
+
+transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT)
+transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
+Plots.plot(rtPSMs[:,:RT], rtPSMs[:,:iRT], seriestype=:scatter)
+#Plots.plot(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT], seriestype=:scatter)
+rt_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 15)
+Plots.plot!(LinRange(minimum(rtPSMs[:,:RT]), maximum(rtPSMs[:,:RT]), 100), rt_map.(LinRange(minimum(rtPSMs[:,:RT]), maximum(rtPSMs[:,:RT]), 100)))
+
+Plots.histogram(abs.(rt_map.(rtPSMs[:,:RT]).-rtPSMs[:,:iRT]))
+
 newPSMs = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_start1, UInt32(1), linear_spline,
                         min_frag_count = 4, 
                         topN = 1000, 
