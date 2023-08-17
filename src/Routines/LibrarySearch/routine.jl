@@ -67,7 +67,7 @@ end
 
 ###########
 #Load RAW File
-MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
+MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow");
 
 ###########
 #Pre-Search
@@ -103,19 +103,19 @@ init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for ea
 function _getPPM(a::T, b::T) where {T<:AbstractFloat}
     (a-b)/(a/1e6)
 end
-transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT)
-transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
-transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]])) => :decoy)
+transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT);
+transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
+transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]])) => :decoy);
 rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
 
 best_precursors = Set(rtPSMs[:,:precursor_idx]);
 best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
-frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches]
+frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
 #Model fragment errors with a mixture model of a uniform and laplace distribution 
-@time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0)
+@time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0);
 
-RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 1.0)
-plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map)
+RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 5.0);
+plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
 
 ###########
 #Main PSM Search

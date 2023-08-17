@@ -41,7 +41,7 @@ function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any) where {T<:Abstr
     Plots.plot!(p, (LinRange(minimum(RT), maximum(RT), 100)), 
             rt_map.(LinRange(minimum(RT), maximum(RT), 100)),
             lw = 6.0,
-            label = "RT Spline")
+            label = "RT Spline", show = true)
 
 
 end
