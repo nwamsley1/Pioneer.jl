@@ -183,7 +183,140 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     return LinearInterpolation(x_grid, savitzky_golay(ys, w, 3).y, extrapolation_bc = Line())
 end
 
+function unweightedEntropy(X::Vector{Union{Missing, T}}) where {T<:AbstractFloat}
+    p = X./sum(X)
+    StatsBase.entropy(p)
+end
+
+function weightedEntropy(X::Vector{Union{Missing, T}}) where {T<:AbstractFloat}
+    p = X./sum(X)
+    S = StatsBase.entropy(p)
+    if S >=3
+        return p, S
+    else
+        w = 0.25*(1 + S)
+        intensity = p.^w
+        return intensity, StatsBase.entropy(intensity./sum(intensity))
+    end
+end
+
+X, Hs, Hst, IDtoROW, weights = SearchRAW(MS_TABLE, prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  frags_mouse_detailed_33NCEcorrected_start1, UInt32(1), rt_map,
+                            min_frag_count = 4, 
+                            topN = 1000, 
+                            fragment_tolerance = fragment_tolerance, 
+                            λ = Float32(0), 
+                            γ =Float32(0),
+                            max_peaks = 10000, 
+                            scan_range = (101357, 101357), #101357 #22894
+                            precursor_tolerance = 20.0,
+                            min_spectral_contrast =  Float32(0.5),
+                            min_matched_ratio = Float32(0.45),
+                            rt_tol = Float32(20.0),
+                            frag_ppm_err = 3.34930002879957
+                            )
+Hs_mat = Matrix(Hs)
+argmax(sum(Hs_mat[X.!=0.0,:].!=0.0, dims = 1)) #8th column. 
+
+#SA = X[Hs_mat[:,8].!=0.0]
+entropy_sim = []
+for i in range(1, size(Hs_mat)[2])
+    A = X
+    A = A./sum(A)
+    SA = weightedEntropy(allowmissing(A))
+    B = Hs_mat[Hs_mat[:,i].!=0.0,i]
+    B = B./sum(B)
+    SB = weightedEntropy(allowmissing(B))
+    A[Hs_mat[:,i].!=0.0] += B
+    SAB = weightedEntropy(allowmissing(A))
+    push!(entropy_sim, 1 - (2*SAB - SA - SB)/(log(4)))
+end
+
+entropy_sim = []
+for i in range(1, size(Hs_mat)[2])
+    A = X[Hs_mat[:,i].!=0.0]
+    A = A./sum(A)
+    SA = weightedEntropy(allowmissing(A))
+    B = Hs_mat[Hs_mat[:,i].!=0.0,i]
+    B = B./sum(B)
+    SB = weightedEntropy(allowmissing(B))
+    #A[Hs_mat[:,i].!=0.0] += B
+    A += B
+    SAB = weightedEntropy(allowmissing(A))
+    push!(entropy_sim, 1 - (2*SAB - SA - SB)/(log(4)))
+end
+
+
+entropy_sim = []
+for i in range(1, size(Hs_mat)[2])
+    A = X
+    A = A./sum(A)
+    SA = weightedEntropy(allowmissing(A))
+    B = Hs[Hs[:,i].!=0.0,i]
+    B = B./sum(B)
+    SB = weightedEntropy(allowmissing(collect(B)))
+    A[Hs[:,i].!=0.0] += B
+    SAB = weightedEntropy(allowmissing(A))
+    push!(entropy_sim, 1 - (2*SAB - SA - SB)/(log(4)))
+end
+
+SA = X[Hs_mat[:,8].!=0.0]
+SA = X[Hs_mat[:,8].!=0.0]
+SB = Hs_mat[:,8].!=0.0
+SBA = X
+#=
 Plots.plot(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT], seriestype=:scatter)
 test_x, test_y= KDEmapping(best_psms[best_psms[:,:q_value].<=0.01,:RT], best_psms[best_psms[:,:q_value].<=0.01,:iRT])
 Plots.plot!(test_x, test_y)
 
+
+logit_test = Distributions.Logistic(0, 2)
+logit_sample = rand(logit_test, 10000)
+
+logistic_dist(x, p) = sum([log((exp(-(x_i - p[1])/p[2]))/(p[2]*(1 + exp(-(x_i-p[1])/p[2]))^2)) for x_i in x])
+
+
+logistic_dist(x, p) =  Distributions.logpdf.(Distributions.Logistic(p[1], max(p[2], 0.01)), x)
+p = Float64[0, 2]
+prob = OptimizationProblem(logistic_dist, p, logit_sample, lb = [-10.0, 1.0], ub = [10.0, 10.0])
+sol = solve(prob, NelderMead())
+
+using OptimizationBBO
+prob = OptimizationProblem(rosenbrock, x0, p, lb = [-1.0, -1.0], ub = [1.0, 1.0])
+
+
+using ForwardDiff
+logistic_dist(x, p) =  Distributions.logpdf.(Distributions.Logistic(p[1], max(p[2], 0.01)), x)
+p = Float64[0, 2]
+f = OptimizationFunction(logistic_dist, Optimization.AutoForwardDiff())
+prob = OptimizationProblem(f, p, logit_sample, lb = [-10.0, 1.0], ub = [10.0, 10.0])
+sol = solve(prob, BFGS())
+
+
+frag_ppm_errs = [getPPM(x.theoretical_mz, x.match_mz) for x in all_matches]
+
+mix_guess = MixtureModel([Logistic(0, 3), Uniform(-100, 100)], [0.5, 1 - 0.5])
+
+mix_mle = fit_mle(mix_guess, (frag_ppm_errs); display = :iter, atol = 1e0, robust = true, infos = false)
+
+import Distributions.fit_mle
+function fit_mle(a::Logistic{T}, x::Vector{T}, y::Vector{T}; μ::Float64=NaN, θ::Float64=NaN) where T<:Real
+    println("mu $μ")
+    println("theta $θ")
+    println(length(x))
+    println(sum(x))
+    println(sum(y))
+    p = Float64[0, 2]
+    logistic_dist(x, p) =  sum([log(Distributions.pdf(Distributions.Logistic(p[1], max(p[2], 0.01)), x[i])*y[i]) for i in 1:length(x)])
+    f = OptimizationFunction(logistic_dist, Optimization.AutoForwardDiff())
+    prob = OptimizationProblem(f, p, y, lb = [-10.0, 1.0], ub = [10.0, 10.0])
+    sol = solve(prob, BFGS())
+    return Distributions.Logistic(sol[1], sol[2])
+end
+
+
+
+
+
+
+a = Distributions.pdf(Distributions.Logistic(0, 2), 2)
+=#

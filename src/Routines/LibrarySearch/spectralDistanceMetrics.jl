@@ -101,7 +101,7 @@ function getPValue(kt::KendallTau{T}, x::Vector{T}, y::Vector{T}) where {T<:Abst
 end
 
 
-function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatched_col::Int, kt::KendallTau{T}) where {T<:AbstractFloat}
+function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, weights::Vector{T}, unmatched_col::Int, kt::KendallTau{T}) where {T<:AbstractFloat}
     #println(X)
     #println(UNMATCHED)
     #println("H.m ", H.m)
@@ -216,9 +216,59 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
         rowsums_MATCHED[i] = rowsums_MATCHED[i]/rowsums_UNMATCHED[i]
     end
 
+    entropy_sim = zeros(Float32, H.m)
+    X̂ = H'*weights
+    for i in range(1, H.m)
+        A = collect(X[H[i,:].!=0.0])# A = X
+        #A = H[i,:]
+        #B = H[i,X.!=0.0]
+        #A = collect(A./sum(A))
+        A, SA = weightedEntropy(allowmissing(A))
+        B = collect(H[i,H[i,:].!=0.0])
+        #B = collect(X̂[H[i,:].!=0.0])
+        #B = collect(B./sum(B))
+        B, SB = weightedEntropy(allowmissing(B))
+        #A[Hs[:,i].!=0.0] += B
+        #A[X.!=0.0] += B
+        A += B
+        AB, SAB = weightedEntropy(allowmissing(A))
+        entropy_sim[i] =  Float32(1 - (2*SAB - SA - SB)/(log(4)))
+    end
+
+    #X̂ = H'*weights
+    #=for i in range(1, H.m)
+        #A = collect(X[H[i,:].!=0.0])# A = X
+        A = X
+        #A = collect(A./sum(A))
+        A, SA = weightedEntropy(allowmissing(A))
+        B = collect(H[i,H[i,:].!=0.0])
+        #B = collect(B./sum(B))
+        B, SB = weightedEntropy(allowmissing(B))
+        A[H[i,:].!=0.0] += B
+        #A += B
+        AB, SAB = weightedEntropy(allowmissing(collect(A)))
+        entropy_sim[i] =  Float32(1 - (2*SAB - SA - SB)/(log(4)))
+    end=#
+    #=function scribeScore_(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
+        -1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
+    end=#
+    #X̂ = H'*weights
+    #=for i in range(1, H.m)
+        #r = sum((X[H[i,:].!=0.0] .- X̂[H[i,:].!=0.0]).^2)
+        #y = sum(X̂[H[i,:].!=0.0].^2)
+        #entropy_sim[i] = 1 - sum(r)/sum(y)
+        #entropy_sim[i] = scribeScore_(X[H[i,:].!=0.0], X̂[H[i,:].!=0.0])
+        mask = (H[i,:].!=0.0) .& (X.!=0.0)
+        #entropy_sim[i] = scribeScore_(sqrt.(X[mask]), sqrt.(X̂[mask]))
+        entropy_sim[i] = -log(sum(abs.((X[mask]./norm(X[mask])) .- (X̂[mask]./norm(X̂[mask])))))
+        #entropy_sim[i] = sum((X[mask] .- X̂[mask]).^2)
+    end=#
+
     matched_ratio = rowsums_MATCHED
+
+
     #return scribe_scores
-    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval
+    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all, entropy_sim#entropy_sim#kt_pval
 end
 
 

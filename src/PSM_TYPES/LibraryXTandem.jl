@@ -36,6 +36,7 @@ function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}},
 end
 
 function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union{Missing, T}, intensity::Union{Missing, T}) where {U,T<:Real}
+    errdist = Distributions.Normal(0, 3.638279298943919)
     if getIonType(match) == 'b'
         score.b_count += 1
         score.b_int += intensity
@@ -45,7 +46,10 @@ function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union
         score.y_int += intensity
         push!(score.y_ions, getFragInd(match))
     end
-    score.error += abs(mass - getFragMZ(match))
+    score.error += Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))#abs(mass - getFragMZ(match))
+
+    #Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
+
     score.precursor_idx = getPrecID(match)
     push!(score.intensities, intensity)
     if match.predicted_rank < score.best_rank

@@ -22,7 +22,8 @@ function SearchRAW(
                     rt_tol::Float32 = Float32(30.0),
                     #fragment_match_ppm::U,
                     data_type::Type{T} = Float64,
-                    sample_rate::Float64 = 1.0
+                    sample_rate::Float64 = 1.0,
+                    collect_frag_errs = false
                     ) where {T<:Real}
     
     scored_PSMs = makePSMsDict(XTandem(data_type))
@@ -70,30 +71,15 @@ function SearchRAW(
                     topN = topN
                     )
         
-        #println("prec_count $prec_count")
-        #println("match_count $match_count")
-        #return precs
-        #return precs
-        #if getSize(precs) <= 1
-            #times[:reset] += @elapsed reset!(precs)
-        #    reset!(precs)
-        #    continue
-        #end
 
         transitions = selectTransitions(fragment_list, precs, topN)
 
-        #println("length(transitions) ", length(transitions))
-        #return transitions
-        #times[:reset] += @elapsed reset!(precs)
         reset!(precs)
         
         if length(transitions) == 0
             continue
         end
         
-       
-
-        #times[:match_peaks] += @elapsed fragmentMatches, fragmentMisses = matchPeaks(transitions, 
         fragmentMatches, fragmentMisses = matchPeaks(transitions, 
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
@@ -110,14 +96,17 @@ function SearchRAW(
         if iszero(length(fragmentMatches))
             continue
         end
-        append!(all_matches, fragmentMatches)
-        #times[:build] += @elapsed X, H, UNMATCHED, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, topN)
+
+        if collect_frag_errs
+            append!(all_matches, fragmentMatches)
+        end
+ 
         X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
         
         times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
+        #return X, Hs, Hst, IDtoROW, weights
 
-        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, matched_cols, kt)
-        #return getDistanceMetrics(Hst, X, matched_cols, kt)
+        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols, kt)
         
         #For progress and debugging. 
 
@@ -145,7 +134,11 @@ function SearchRAW(
     println("build : ", times[:build]/n)
     println("score : ", times[:score]/n)
     println("match_peaks : ", times[:match_peaks]/n)
-    return DataFrame(scored_PSMs), all_matches
+    if collect_frag_errs
+        return DataFrame(scored_PSMs), all_matches
+    else
+        DataFrame(scored_PSMs)
+    end
 end
 
 #=

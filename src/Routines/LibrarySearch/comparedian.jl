@@ -253,9 +253,26 @@ end
 diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
 diannreport[:,"Unique.Sequence"] .= replace.(diannreport[:,"Modified.Sequence"], "C(UniMod:4)" => "C")
 diannreport[:,"Unique.Sequence"] .= replace.(diannreport[:,"Unique.Sequence"], "M(UniMod:35)" => "M(ox)")
+
+
+#=diannreport[:,"Unique.Sequence"] .= diannreport[:,"Unique.Sequence"].*"_".*string.(diannreport[:,"Precursor.Charge"])
 #best_psms[:,:stripped_sequence] .= replace.(best_psms[:,:sequence], "(ox)" => "")
 #PSMs[:,:stripped_sequence] .= replace.(PSMs[:,:sequence], "(ox)" => "")
 #Unique (unmodified) sequences 
+
+diann_and_titus = diann_passed ∩ titus_passed
+
+diann_int = diannreport[[x ∈ diann_and_titus for x in diannreport[:,"Unique.Sequence"]],"Precursor.Quantity"]
+
+best_psms[:,:unique_seq] = best_psms[:,:sequence]
+best_psms[titus_passed,:unique_seq] = best_psms[titus_passed,:sequence].*"_".*string.(best_psms[titus_passed,:charge])
+
+titus_int = best_psms[[x ∈ diann_and_titus for x in best_psms[:,:unique_seq]], :intensity_ms1]
+
+Plots.plot(log10.(diann_int), log10.(titus_int), seriestype=:scatter)
+
+diannreport[[x ∈ diann_and_titus for x in diannreport[:,"Unique.Sequence"]],"Precursor.Quantity"]=#
+
 diann_passed = Set(diannreport[:,"Unique.Sequence"].*"_".*string.(diannreport[:,"Precursor.Charge"]))
 titus_passed = (best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false)
 titus_passed = Set(best_psms[titus_passed,:sequence].*"_".*string.(best_psms[titus_passed,:charge]))
@@ -265,7 +282,7 @@ titus_seed = Set(PSMs[titus_seed,:sequence].*"_".*string.(PSMs[titus_seed,:charg
 
 CSV.write("/Users/n.t.wamsley/Desktop/diann_passed_precursor.tsv",  Tables.table(collect(diann_passed)), writeheader=false)
 CSV.write("/Users/n.t.wamsley/Desktop/titus_passed_precursor.tsv",  Tables.table(collect(titus_passed)), writeheader=false)
-CSV.write("/Users/n.t.wamsley/Desktop/titus_passed_precursor.tsv",  Tables.table(collect(titus_seed)), writeheader=false)
+CSV.write("/Users/n.t.wamsley/Desktop/titus_seed_precursor.tsv",  Tables.table(collect(titus_seed)), writeheader=false)
 
 
 Plots.histogram(best_psms[(best_psms[:,:q_value].<0.01).&(best_psms[:,:decoy].==false),:cross_cor], normalize = :probability, alpha = 0.5,bins = 100)

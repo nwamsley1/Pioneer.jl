@@ -4,6 +4,7 @@ function integrateRAW(
                     rt_index::retentionTimeIndex{T, U},
                     fragment_list::Vector{Vector{LibraryFragment{Float32}}},
                     ms_file_idx::UInt32;
+                    frag_ppm_err::Float64 = 0.0,
                     fragment_tolerance::Float64 = 40.0,
                     quadrupole_isolation_width::Float64 = 8.5,
                     max_peak_width::Float64 = 2.0,
@@ -40,7 +41,7 @@ function integrateRAW(
                                     spectrum[:intensities], 
                                     FragmentMatch{Float32},
                                     count_unmatched =true,
-                                    δs = zeros(T, (1,)),
+                                    δs = [frag_ppm_err],
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = zero(Float32),
@@ -157,10 +158,10 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     intensity_smooth[intensity_smooth .< 0.0] .= zero(eltype(typeof(intensity_smooth)))
 
     if isplot
-        plot(rt, intensity, show = true, seriestype=:scatter)
-        plot!(rt[start:stop], intensity_smooth, fillrange = [0.0 for x in 1:length(intensity_smooth)], alpha = 0.25, color = :grey, show = true);
-        vline!([rt[start]], color = :red);
-        vline!([rt[stop]], color = :red);
+        Plots.plot(rt, intensity, show = true, seriestype=:scatter)
+        Plots.plot!(rt[start:stop], intensity_smooth, fillrange = [0.0 for x in 1:length(intensity_smooth)], alpha = 0.25, color = :grey, show = true);
+        Plots.vline!([rt[start]], color = :red);
+        Plots.vline!([rt[stop]], color = :red);
     end
 
     peak_area = NumericalIntegration.integrate(rt[start:stop], intensity[start:stop], TrapezoidalFast())
@@ -368,7 +369,7 @@ println("TARGET/DECOY intensity ", sum(non_zero[non_zero[:,:decoy].==false,:][:,
 println("TARGET/DECOY count ", sum(non_zero[non_zero[:,:decoy].==false,:][:,:count])/sum(non_zero[non_zero[:,:decoy].==true,:][:,:count]))
 
 integratePrecursor(chroms, UInt32(1284418), isplot = true)
-integratePrecursor(chroms, UInt32(7479714), isplot = true)
+integratePrecursor(chroms, UInt32(4015450), isplot = true)
 integratePrecursor(chroms, UInt32(4343373), isplot = true)
 integratePrecursor(chroms, UInt32(232427), isplot = true)
 integratePrecursor(chroms, UInt32(4034269), isplot = true)
