@@ -106,9 +106,12 @@ transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_
 
 RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50)
 
-#fragment_tolerance = 15.6
+###########
+#Main PSM Search
+###########
 @time begin
-    newPSMs = SearchRAW(MS_TABLE, 
+    newPSMs = SearchRAW(
+                            MS_TABLE, 
                             prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
                             frags_mouse_detailed_33NCEcorrected_start1, 
                             UInt32(1), #MS_FILE_IDX
@@ -126,55 +129,78 @@ RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50)
                             rt_tol = Float32(20.0),
                             frag_ppm_err = frag_err_dist.μ
                             )
-
     PSMs = newPSMs
     PSMs = PSMs[PSMs[:,:weight].>100.0,:]
     @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
-    features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
-    PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
-    PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio])
-    replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]))
-    replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,:scribe_score]))
-    #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
-    transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
-    features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
 end
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:kendall,:spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
+###########
+#Clean features
+############
+PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
+PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio])
+replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]))
+replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,:scribe_score]))
+#PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
+transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
+
+
+############
+#Target-Decoy discrimination
+############
+features = [:hyperscore,:total_ions,:intensity_explained,:error,
+            :poisson,:spectral_contrast_all,:kendall,:spectral_contrast_matched,
+            :RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,
+            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
 
 
 
-@time rankPSMs!(PSMs, features, colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.25, n_folds = 2, num_round = 200, eta = 0.0375, max_depth = 5)
+@time rankPSMs!(PSMs, features, 
+                colsample_bytree = 1.0, 
+                min_child_weight = 10, 
+                gamma = 10, 
+                subsample = 0.25, 
+                n_folds = 2,
+                num_round = 200, 
+                eta = 0.0375, 
+                max_depth = 5)
+
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
-PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false),:]
-
+println("Target PSMs at 1% FDR: ", sum((PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false)))
 #########
 #save psms
 #########
 #CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/PSMs_071423.csv", PSMs)
-#Get best scoring psm for each precursor at 10% FDR
 ###########
-#precursors_mouse_detailed_33NCEcorrected_chronologe
+#Integrate 
 @time begin
+
     best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[PSMs[:,:q_value].<=0.1,:], :precursor_idx))
-    transform!(best_psms, AsTable(:) => ByRow(psm -> precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz) => :prec_mz)
+
+    transform!(best_psms, AsTable(:) => ByRow(psm -> 
+                precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz
+                ) => :prec_mz
+                )
+    
+    #Need to sort RTs 
     sort!(best_psms,:RT, rev = false)
+
+    #Build RT index of precursors to integrate
     rt_index = buildRTIndex(best_psms)
-    size(best_psms)
-    #λ, γ = optimizePenalty(λs, γs) #Get optinal penalty
     using DataStructures
-    include("src/Routines/LibrarySearch/integratePrecursors.jl")
-    @time chroms = integrateRAW(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+
+
+    @time chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                     one(UInt32), 
-                    fragment_tolerance=fragment_tolerance, 
-                    frag_ppm_err = 3.34930002879957,
+                    fragment_tolerance=quantile(frag_err_dist, 0.975), 
+                    frag_ppm_err = frag_err_dist.μ,
                     λ=zero(Float32), #λs[11], 
                     γ=zero(Float32), #γs[11], 
                     max_peak_width = 2.0, 
                     scan_range = (0, 300000)
                     );
+
     transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
 
-    sum((best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6))
     best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6),:];
     best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
 
@@ -190,92 +216,9 @@ PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false),:]
         return sort(isotopes, by = x->getMZ(x))
     end
 
-    function integrateRAW(
-                        spectra::Arrow.Table, 
-                        #rt_index::retentionTimeIndex{T, U},
-                        prec_list::Vector{Tuple{Float64, UInt32}},
-                        isotopes::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
-                        ms_file_idx::UInt32;
-                        precursor_tolerance::Float64 = 20.0,
-                        quadrupole_isolation_width::Float64 = 8.5,
-                        max_peak_width::Float64 = 2.0,
-                        λ::Float32 = Float32(2e12),
-                        γ::Float32 = Float32(1/2),
-                        max_iter::Int = 1000,
-                        nmf_tol::Float32 = Float32(100.0),
-                        scan_range::Tuple{Int64, Int64} = (0, 0), 
-                        ) where {T,U<:Real}
-        
-        ms1 = 0
-        nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[])
-        matches = ""
-        misses = ""
-        for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-
-            if spectrum[:msOrder] == 2
-                continue
-            else
-                ms1 += 1
-            end
-            if scan_range != (0, 0)
-                i < first(scan_range) ? continue : nothing
-                i > last(scan_range) ? continue : nothing
-            end
-            #Get peptides that could be in the spectra
-            #transitions = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
-            #isotopes[0x0006bbe9]
-            #Match fragments to peaks
-            iso = selectIsotopes(prec_rt_table, isotopes, Float64(spectrum[:retentionTime]), 1.0)
-            matches, misses = matchPeaks(iso,
-                                spectrum[:masses],
-                                spectrum[:intensities],
-                                PrecursorMatch{Float32},
-                                count_unmatched=true,
-                                δs = zeros(Float64, (1,)),
-                                ppm = precursor_tolerance
-                                )
-
-            #=fragmentMatches, fragmentMisses = matchPeaks(transitions, 
-                                        spectrum[:masses], 
-                                        spectrum[:intensities], 
-                                        count_unmatched =true,
-                                        δs = zeros(T, (1,)),
-                                        scan_idx = UInt32(i),
-                                        ms_file_idx = ms_file_idx,
-                                        min_intensity = zero(Float32),
-                                        ppm = fragment_tolerance
-                                        )=#
-
-
-            if iszero(length(matches))
-                continue
-            end
-
-            #Build templates for regrssion. 
-            #Do we need to remove precursors with less than N matched fragments?
-            #if spectrum[:retentionTime] < 49.8483 
-            #    continue
-            #elseif spectrum[:retentionTime] > 49.8992 
-            #end
-            X, Hs, Hst, IDtoROW = buildDesignMatrix(matches, misses)
-            #return X, Hs, Hst, IDtoROW
-            weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
-
-            for key in keys(IDtoROW)
-                push!(nmf[:precursor_idx], key)
-                push!(nmf[:weight], weights[IDtoROW[key]])
-                push!(nmf[:rt], spectrum[:retentionTime])
-            end
-        end
-        nmf = DataFrame(nmf)
-        sort!(nmf, [:precursor_idx,:rt]);
-        return groupby(nmf, :precursor_idx)
-        #matches, misses
-    end
-
     @time isotopes =  getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4)
     prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x))
-    test_df = integrateRAW(MS_TABLE, prec_rt_table, isotopes, one(UInt32), precursor_tolerance = 6.5, scan_range = (0, 300000), λ = Float32(0), γ = Float32(0))
+    test_df = integrateMS1(MS_TABLE, prec_rt_table, isotopes, one(UInt32), precursor_tolerance = 6.5, scan_range = (0, 300000), λ = Float32(0), γ = Float32(0))
 
 
     transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);

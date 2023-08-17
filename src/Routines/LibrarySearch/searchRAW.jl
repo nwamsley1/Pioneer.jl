@@ -29,9 +29,7 @@ function SearchRAW(
     scored_PSMs = makePSMsDict(XTandem(data_type))
     ms2, MS1, MS1_i = 0, 0, 0
     precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
-    times = Dict(:counter => 0.0, :reset => 0.0, :nmf => 0.0, :metrics => 0.0, :match_peaks => 0.0, :build => 0.0, :score => 0.0)
     n = 0
-    kt = KendallTau(Float32)
     all_matches = Vector{FragmentMatch{Float32}}()
     for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
@@ -60,7 +58,7 @@ function SearchRAW(
         iRT_high = Float32(iRT + rt_tol)
         #reset!(precs)
 
-        times[:counter] += @elapsed  prec_count, match_count = searchScan!(precs,
+        prec_count, match_count = searchScan!(precs,
                     frag_index, 
                     min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], iRT_low, iRT_high,
                     Float32(fragment_tolerance), 
@@ -103,7 +101,7 @@ function SearchRAW(
  
         X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
         
-        times[:nmf] += @elapsed weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
+        weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
         #return X, Hs, Hst, IDtoROW, weights
 
         scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols, kt)
@@ -126,14 +124,6 @@ function SearchRAW(
         n += 1
     end
 
-    println("processed $ms2 scans!")
-    println("counter: ", times[:counter]/n)
-    println("reset: ", times[:reset]/n)
-    println("nmf : ", times[:nmf]/n)
-    println("metrics : ", times[:metrics]/n)
-    println("build : ", times[:build]/n)
-    println("score : ", times[:score]/n)
-    println("match_peaks : ", times[:match_peaks]/n)
     if collect_frag_errs
         return DataFrame(scored_PSMs), all_matches
     else
