@@ -56,6 +56,8 @@ using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationM
 #Files needed for PSM scoring
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl"]]
 
+[include(joinpath(pwd(), "src", "Routines", "PRM","IS-PRM",jl_file)) for jl_file in ["getScanPairs.jl"]]
+
 ##########
 #Load Spectral Library
 #Need to find a way to speed this up.  
@@ -67,7 +69,10 @@ end
 
 ###########
 #Load RAW File
-MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow");
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow",
+"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow"]
+
+= Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow");
 
 ###########
 #Pre-Search
@@ -79,10 +84,12 @@ MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToPar
 
 println("Starting Pre Search...")
 init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
-@time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    @time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
                     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
                     frags_mouse_detailed_33NCEcorrected_start1, 
-                    UInt32(1), 
+                    UInt32(ms_file_idx), 
                     x->x, #Mapp RT to iRT
                     min_frag_count = 7, 
                     topN = 5, 
@@ -99,6 +106,7 @@ init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for ea
                     frag_ppm_err = 0.0,
                     collect_frag_errs = true
                     );
+end
 
 function _getPPM(a::T, b::T) where {T<:AbstractFloat}
     (a-b)/(a/1e6)
@@ -140,9 +148,9 @@ plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
                             rt_tol = Float32(20.0),
                             frag_ppm_err = frag_err_dist.μ
                             )
-    PSMs = newPSMs
-    PSMs = PSMs[PSMs[:,:weight].>100.0,:]
-    @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1)
+    PSMs = newPSMs;
+    PSMs = PSMs[PSMs[:,:weight].>100.0,:];
+    @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1);
 end
 ###########
 #Clean features

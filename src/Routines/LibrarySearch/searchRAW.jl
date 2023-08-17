@@ -31,8 +31,8 @@ function SearchRAW(
     precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
     n = 0
     all_matches = Vector{FragmentMatch{Float32}}()
-    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             MS1 = spectrum[:masses]
