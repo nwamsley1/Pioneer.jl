@@ -7,7 +7,7 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor{T}}; m
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] < 10.0) => :nmf)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
-    
+
     best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast_all].>min_spectral_contrast) .& (PSMs[:,:decoy].==false),:], [:scan_idx]))
     @time linear_spline = KDEmapping(best_psms[:,:iRT], best_psms[:,:RT])
     PSMs[:,:RT_pred] = linear_spline(PSMs[:,:iRT])
@@ -61,31 +61,7 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor{T}}; m
     #return linear_spline
 end
 
-using KernelDensity
-function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::AbstractFloat = 1.0) where {T<:AbstractFloat}
-    x_grid = LinRange(minimum(X), maximum(X), n)
-    y_grid = LinRange(minimum(Y), maximum(Y), n)
-    ys = zeros(T, n)
-    z = zeros(T, (n, n))
-    B = kde((x, y), bandwidth = (bandwidth, bandwidth)) #Uses Silverman's rule by default
-    ik = InterpKDE(B)
-    #Get KDE
-    for i in eachindex(x_grid), j in eachindex(y_grid)
-            z[i, j] = Distributions.pdf(ik, x_grid[i], y_grid[j])
-    end
 
-    #Monotonic increasing walk along ridge
-    max_j = 1
-    for i in eachindex(x_grid)
-        j = argmax(@view(z[i,:]))
-        if y_grid[j] > y_grid[max_j]
-            max_j = j
-        end
-        y_transformed[i] = y_grid[max_j]
-    end
-    w = isodd(n÷5) ? n÷5 : n÷5 + 1
-    return LinearInterpolation(x_grid, savitzky_golay(y_transformed, w, 3).y, extrapolation_bc = Line())
-end
 #=
 function rtSpline(X::Vector{T}, Y::Vector{T}; n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     sort_order = sortperm(X)

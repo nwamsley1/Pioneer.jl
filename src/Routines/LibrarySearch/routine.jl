@@ -2,65 +2,73 @@
 ##########
 #Import Libraries
 ##########
-using CSV, Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, DecisionTree, LoopVectorization, Splines2, ProgressBars, GLM, RobustModels, LoopVectorization, SparseArrays, Interpolations, MultiKDE, XGBoost, SavitzkyGolay, NumericalIntegration
+#Data Parsing/Printing
+using ArgParse
+using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
+using Plots
+#DataStructures 
+using Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
+#Algorithms 
+using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization
 ##########
 #Import files
 ##########
-include("src/precursor.jl")
-#include("src/Routines/LibrarySearch/parsePrositLib.jl")
-include("src/Routines/LibrarySearch/buildFragmentIndex.jl")
-include("src/Routines/LibrarySearch/matchpeaksLib.jl")
-include("src/Routines/LibrarySearch/buildDesignMatrix.jl")
-include("src/Routines/LibrarySearch/spectralDistanceMetrics.jl")
-include("src/Routines/LibrarySearch/searchRAW.jl")
-include("src/Routines/LibrarySearch/counter.jl")
-include("src/Routines/LibrarySearch/ML.jl")
-include("src/Routines/LibrarySearch/refinePSMs.jl")
-include("src/Routines/LibrarySearch/buildRTIndex.jl")
-include("src/Routines/LibrarySearch/selectTransitions.jl")
-include("src/Routines/LibrarySearch/NMF.jl")
-include("src/Routines/LibrarySearch/integratePrecursors.jl")
 ##########
-include("src/Routines/LibrarySearch/queryFragmentArr.jl")
-include("src/PSM_TYPES/PSM.jl")
-include("src/PSM_TYPES/LibraryXTandem.jl")
+#Load Dependencies 
+##########
+
+#Fragment Library Parsing
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl"]]
+
+[include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["buildPrositCSV.jl",
+                                                                                    "parsePrositLib.jl"]]  
+
+#Generic files in src directory
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","isotopes.jl"]]
+
+#ML/Math Routines                                                                                    
+[include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in ["sparseNNLS.jl",
+                                                                                            "percolatorSortOf.jl",
+                                                                                            "kdeRTAlignment.jl",
+                                                                                            "entropySimilarity.jl"]]
 
 
-@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2"  frag_detailed
-@load  "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt 
-#@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/precursor_list.jld2" precursor_list
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
-#new_prosit_index =  prosit_index_5ppm_15irt
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/frags_detailed.jld2" frags_detailed
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_072723/precursors.jld2" precursors
-#precursor_list = precursors
+#Utilities
+[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
+                                                                    "massErrorEstimation.jl"]]  
 
-#@save "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_simple_33NCEdynamic.jld2" frags_mouse_simple_33NCEdynamic
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEdynamic.jld2" frags_mouse_detailed_33NCEdynamic
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEdynamic.jld2" precursors_mouse_detailed_33NCEdynamic
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEdynamic_5ppm_15irt.jld2" prosit_mouse_33NCEdynamic_5ppm_15irt
-
-
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEfixed.jld2" frags_mouse_detailed_33NCEfixed
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEfixed.jld2" precursors_mouse_detailed_33NCEfixed
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEfixed_5ppm_15irt.jld2" prosit_mouse_33NCEfixed_5ppm_15irt
-
+#Files needed for PRM routines
+[include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in ["buildFragmentIndex.jl",
+                                                                                    "matchpeaksLib.jl",
+                                                                                    "buildDesignMatrix.jl",
+                                                                                    "spectralDistanceMetrics.jl",
+                                                                                    "searchRAW.jl",
+                                                                                    "refinePSMs.jl",
+                                                                                    "buildRTIndex.jl",
+                                                                                    "selectTransitions.jl",
+                                                                                    "integrateMS1.jl",
+                                                                                    "integrateMS2.jl",
+                                                                                    "queryFragmentIndex.jl",
+                                                                                    ]]
 
 
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_start1.jld2" frags_mouse_detailed_33NCEcorrected_start1
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
-@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt
-@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/linear_spline.jld2" linear_spline
+                                                                                                                                 
+#Files needed for PSM scoring
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl"]]
+
+##########
+#Load Spectral Library
+#Need to find a way to speed this up.  
+@time begin
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_start1.jld2" frags_mouse_detailed_33NCEcorrected_start1
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt
+end
+
+###########
+#Load RAW File
 MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
 
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/frags_mouse_detailed_33NCEcorrected_chronologer.jld2" frags_mouse_detailed_33NCEcorrected_chronologer
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/precursors_mouse_detailed_33NCEcorrected_chronologer.jld2" precursors_mouse_detailed_33NCEcorrected_chronologer
-#@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_080123/prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_chronologer_5ppm_15irt
-#@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/rt_to_hi_spline.jld2" rt_to_hi_spline
-#MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow")
-
-#@load  "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/prosit_index_5ppm_15irt.jld2" prosit_index_5ppm_15irt
-#@load "/Users/n.t.wamsley/Projects/PROSIT/CombinedNormalized_071823/frag_detailed.jld2"  frag_detailed
 ###########
 #Pre-Search
 #Need to Estimate the following from a random sample of high-confidence targets
@@ -68,8 +76,10 @@ MS_TABLE = Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToPar
 #2) Fragment Mass tolerance
 #3) iRT to RT conversion spline
 ###########
+
+println("Starting Pre Search...")
 init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
-rtPSMs, all_matches = SearchRAW(MS_TABLE, 
+@time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
                     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
                     frags_mouse_detailed_33NCEcorrected_start1, 
                     UInt32(1), 
@@ -88,23 +98,24 @@ rtPSMs, all_matches = SearchRAW(MS_TABLE,
                     sample_rate = 0.01, #Sampling rate
                     frag_ppm_err = 0.0,
                     collect_frag_errs = true
-                    )
+                    );
 
-function getPPM(a::T, b::T) where {T<:AbstractFloat}
+function _getPPM(a::T, b::T) where {T<:AbstractFloat}
     (a-b)/(a/1e6)
 end
-rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:]
-best_precursors = Set(rtPSMs[:,:precursor_idx])
-best_matches = [x for x in all_matches if x.prec_id ∈ best_precursors]
-
-#Model fragment errors with a mixture model of a uniform and laplace distribution 
-@time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0)
-
 transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT)
 transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
 transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]])) => :decoy)
+rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
 
-RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50)
+best_precursors = Set(rtPSMs[:,:precursor_idx]);
+best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
+frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches]
+#Model fragment errors with a mixture model of a uniform and laplace distribution 
+@time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0)
+
+RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 1.0)
+plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map)
 
 ###########
 #Main PSM Search
@@ -122,7 +133,7 @@ RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50)
                             λ = Float32(0), 
                             γ =Float32(0),
                             max_peaks = 10000, 
-                            scan_range = (0, 300000), #101357 #22894
+                            scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
                             precursor_tolerance = 20.0,
                             min_spectral_contrast =  Float32(0.5),
                             min_matched_ratio = Float32(0.45),
@@ -189,51 +200,51 @@ println("Target PSMs at 1% FDR: ", sum((PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy
     using DataStructures
 
 
-    @time chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+    @time ms2_chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                     one(UInt32), 
                     fragment_tolerance=quantile(frag_err_dist, 0.975), 
                     frag_ppm_err = frag_err_dist.μ,
-                    λ=zero(Float32), #λs[11], 
-                    γ=zero(Float32), #γs[11], 
+                    λ=zero(Float32),  
+                    γ=zero(Float32), 
                     max_peak_width = 2.0, 
-                    scan_range = (0, 300000)
+                    scan_range = (0, length(MS_TABLE[:scanNumber]))
                     );
 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+    #Integrate MS2 Chromatograms 
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
 
+    #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
     best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6),:];
     best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred])
 
-    function selectIsotopes(prec_list::Vector{Tuple{Float64, UInt32}}, isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{U}}}, rt::T, rt_tol::T) where {T,U<:AbstractFloat}
-        isotopes = Vector{Isotope{U}}()
-        i = 1
-        rt_start = searchsortedfirst(prec_list, rt - rt_tol, lt=(r,x)->first(r)<x) #First RT bin to search
-        rt_stop = searchsortedlast(prec_list, rt + rt_tol, lt=(x, r)->first(r)>x) #Last RT bin to search 
-        #return rt_start, rt_stop
-        for i in range(rt_start, rt_stop)
-            append!(isotopes, isotope_dict[last(prec_list[i])])
-        end
-        return sort(isotopes, by = x->getMZ(x))
-    end
-
+    #Get Predicted Isotope Distributions 
     @time isotopes =  getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4)
     prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x))
-    test_df = integrateMS1(MS_TABLE, prec_rt_table, isotopes, one(UInt32), precursor_tolerance = 6.5, scan_range = (0, 300000), λ = Float32(0), γ = Float32(0))
 
+    @time ms1_chroms = integrateMS1(MS_TABLE, 
+                                prec_rt_table, 
+                                isotopes, 
+                                one(UInt32), 
+                                precursor_tolerance = 6.5, 
+                                scan_range = (0, length(MS_TABLE[:scanNumber])), 
+                                λ = Float32(0), 
+                                γ = Float32(0))
 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(test_df, chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(test_df, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
+    #Get MS1/MS2 Chromatogram Correlations and Offsets 
+    transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(ms1_chroms, ms2_chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 
-    features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:kendall, :missed_cleavage,:Mox,:best_rank,:topn]
+    #Integrate MS1 Chromatograms 
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, 
+    :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
 
-        
+    #Model Features 
     features = [:hyperscore, :total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all,:RT_error,:y_ladder,:b_ladder,:RT,:median_ions,:n_obs,:charge,:city_block,:matched_ratio,:kendall, :scribe_score, :missed_cleavage,:Mox,:best_rank,:topn]
-
     append!(features, [:intensity, :count, :SN, :peak_error,:fwhm,:offset, :cross_cor])
-    #append!(features, [:intensity, :offset, :cross_cor])
-    #append!(features, [:intensity, :count, :SN, :peak_error,:fwhm])
+
+    #Train Model 
     @time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 200, max_depth = 10, eta = 0.0375)
-    #@time bst = rankPSMs!(best_psms, features,colsample_bytree = 1.0, min_child_weight = 10, gamma = 10, subsample = 0.5, n_folds = 5, num_round = 300, eta = 0.025)
     @time getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
-    length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])) #42348, 43224
+
+
+    println("Number of unique Precursors ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
 end

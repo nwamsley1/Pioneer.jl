@@ -182,8 +182,8 @@ for tol in tolerance
     push!(params_est, (params(mix_mle)[1][1][1], params(mix_mle)[1][1][2]))
 end
 
-Plots.plot(tolerance, [first(x) for x in params_est], seriestype=:scatter)
-Plots.plot(tolerance, [last(x) for x in params_est], seriestype=:scatter)
+#Plots.plot(tolerance, [first(x) for x in params_est], seriestype=:scatter)
+#Plots.plot(tolerance, [last(x) for x in params_est], seriestype=:scatter)
 
 
 transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT)

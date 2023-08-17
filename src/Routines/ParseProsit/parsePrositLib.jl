@@ -1,5 +1,3 @@
-abstract type IonType end
-
 
 abstract type FragmentIndexType <: IonType end
 getMZ(f::FragmentIndexType) = f.frag_mz
@@ -244,6 +242,9 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #return frags_simple, frags_detailed, precursors
 end
 
+
+"""
+
 @time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict, start_ion = 1);
 frags_mouse_simple_33NCEcorrected_start1 = frags_simple
 frags_mouse_detailed_33NCEcorrected_start1 = frags_detailed
@@ -362,6 +363,9 @@ best_psms = combine(sdf -> sdf[argmin(abs.(sdf.RT .- sdf.RT_pred)),:], groupby(b
 plot(best_psms[:,:HI], best_psms[:,:iRT], seriestype = :scatter, alpha = 0.1)
 
 plot(best_psms[:,:RT_pred], best_psms[:,:RT], seriestype = :scatter, alpha = 0.1)
+
+
+"""
 #########
 #Read chronologer
 #=

@@ -30,7 +30,7 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
                         legendfontsize = 18,
                         tickfontsize = 24,
                         guidefontsize = 24,
-                        margin = 10mm, legend = :topleft
+                        margin = 10Plots.mm, legend = :topleft
                         )
 
     Plots.histogram!(p, (frag_ppm_errs), normalize = :probability, bins = 100, alpha = 0.5, label = "Observed Mass Errors (ppm)")
