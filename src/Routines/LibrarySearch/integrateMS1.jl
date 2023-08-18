@@ -28,7 +28,9 @@ function integrateMS1(
     nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[])
     matches = ""
     misses = ""
-    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+
 
         if spectrum[:msOrder] == 2
             continue

@@ -1,6 +1,6 @@
 function unweightedEntropy(X::Vector{Union{Missing, T}}) where {T<:AbstractFloat}
     p = X./sum(X)
-    StatsBase.entropy(p)
+    p, StatsBase.entropy(p)
 end
 
 function weightedEntropy(X::Vector{Union{Missing, T}}) where {T<:AbstractFloat}

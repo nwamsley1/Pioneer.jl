@@ -102,7 +102,7 @@ function SearchRAW(
         X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
         
         weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
-        #return X, Hs, Hst, IDtoROW, weights
+        return X, Hs, Hst, IDtoROW, weights
 
         scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols)
         

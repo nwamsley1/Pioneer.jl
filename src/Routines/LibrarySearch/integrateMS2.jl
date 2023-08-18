@@ -18,7 +18,8 @@ function integrateMS2(
     
     ms2 = 0
     nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[], :frag_count => Int64[])
-    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             continue

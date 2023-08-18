@@ -1,111 +1,4 @@
-#=function getDistanceMetrics(H::Matrix{T}, X::Matrix{T}, UNMATCHED::Matrix{T}) where {T<:AbstractFloat}
-
-    function scribeScore(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
-       -1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
-    end
-
-    function cityBlockDist(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
-        #-1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
-        log(sum(abs.(a./norm(a) .- b./norm(b))/length(a)))
-    end
-
-    function chebyshevDist(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
-        #-1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
-        log(maximum(abs.(a./norm(a) .- b./norm(b))))
-        #dot(a, b)/(norm(a)*norm(b))
-    end
-
-    function spectralContrast(a::Vector{T}, b::Vector{T}, c::Vector{T}) where {T<:AbstractFloat}
-        norma_matched = 0.0
-        norma_all = 0.0
-        normb = 0.0
-        dot = 0.0
-        for i in eachindex(a)
-            dot += a[i]*b[i]
-            norma_matched += a[i]*a[i]
-            normb += b[i]*b[i]
-        end
-        norma_all = norma_matched
-        for i in eachindex(c)
-            norma_all += c[i]*c[i]
-        end
-        return dot/(sqrt(norma_matched)*sqrt(normb)), dot/(sqrt(norma_all)*sqrt(normb))
-    end
-
-    N = size(H)[1]
-    scribe_score = zeros(T, N) #Vector{T}(undef, N)
-    city_block_dist = zeros(T, N)
-    chebyshev_dist = zeros(T, N)
-    matched_ratio = zeros(T, N)
-    spectral_contrast_matched = zeros(T, N)
-    spectral_contrast_all = zeros(T, N)
-    for row in range(1, N)#range(1, N))
-        non_zero = (H[row,:].!=0)
-        h = H[row,non_zero]
-        if isempty(h)
-            continue
-        end
-        x = X[1, non_zero]
-        #println("h \n $h")
-        unmatched = UNMATCHED[row,:]
-        scribe_score[row] = scribeScore(sqrt.(h), sqrt.(x))
-        city_block_dist[row] = cityBlockDist(h,x)
-        chebyshev_dist[row] = chebyshevDist(h, x)
-        matched_ratio[row] = sum(h)/sum(unmatched)
-        spectral_contrast_matched[row], spectral_contrast_all[row] = spectralContrast(h, x, unmatched)
-    end
-
-    return scribe_score, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all
-end=#
-
-using Combinatorics, StatsBase, Distributions
-
-struct KendallTau{T<:AbstractFloat}
-    ecdfs::Vector{ECDF{Vector{T}, Weights{Float64, Float64, Vector{Float64}}}}
-end
-
-function KendallTau(dt::DataType)
-    kt = KendallTau(Vector{ECDF{Vector{dt}, Weights{Float64, Float64, Vector{Float64}}}}(undef, 10))
-    setECDFs!(kt)
-    return kt
-end
-
-function setECDFs!(kt::KendallTau{T}) where {T<:AbstractFloat}
-    function setECDF!(kt::KendallTau{T}, N::Int)
-        τs = Vector{T}(undef, factorial(N))
-        cannonical_ordering = [n for n in 1:N]
-        for (i, perm) in enumerate(permutations(cannonical_ordering))
-            τs[i] = corkendall(perm, cannonical_ordering)
-        end
-        kt.ecdfs[N] = ecdf(τs)
-    end
-
-    for N in 3:10
-        setECDF!(kt, N)
-    end
-end 
-
-function getPValue(kt::KendallTau{T}, x::Vector{T}, y::Vector{T}) where {T<:AbstractFloat}
-    N = length(x)
-    τ = corkendall(x, y)
-    if N <= 10 #Use exact distribution
-        if N > 2
-            return 1 - (kt.ecdfs[N](τ) - 1/factorial(N))
-        else
-            return one(T)
-        end
-    else #Use approximate distribution
-        σ = sqrt(2*(2*N + 5)/(9*N*(N - 1)))
-        return 1 - cdf(Normal(), τ/σ)
-    end
-end
-
-
-function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, weights::Vector{T}, unmatched_col::Int) where {T<:AbstractFloat}
-    #println(X)
-    #println(UNMATCHED)
-    #println("H.m ", H.m)
-    #println("H.n ", H)
+function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatched_col::Int) where {T<:AbstractFloat}
     function rowNormsAndSums(A::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatched_col::Int) where {T<:AbstractFloat}
 
         rownorms_A = zeros(T, (A.m,))
@@ -116,19 +9,10 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, weights:
         rowsums_sqrt_X = zeros(T, (A.m,))
         row_counts = zeros(Int64, (A.m,))
         row_dot = zeros(T, (A.m,))
-        kt_pval = zeros(T, (A.m,))
-        ktx = [Vector{T}() for x in range(1,A.m)]
-        kty = [Vector{T}() for x in range(1,A.m)]
-        #ktx = zeros(T, A.colptr[col+1]-1 - A.colptr[col])
-        #kty = zeros(T, A.colptr[col+1]-1 - A.colptr[col])
+
         for col in 1:(unmatched_col)
-            #colptr = A.colptr[col]
-            #println("TEST")
-            #println(A.colptr[col])
-            #println(A.colptr[col 1]-1)
 
             for i in range(A.colptr[col], (A.colptr[col+1]-1))
-            #    println("B")
                 rownorms_A[A.rowval[i]] += A.nzval[i]^2
                 row_counts[A.rowval[i]] += 1
                 rownorms_X[A.rowval[i]] += X[col]^2
@@ -136,59 +20,38 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, weights:
                 rowsums_A[A.rowval[i]] += A.nzval[i]
                 rowsums_sqrt_X[A.rowval[i]] += sqrt(X[col])
                 row_dot[A.rowval[i]] +=  A.nzval[i]*X[col]
-                push!(ktx[A.rowval[i]], A.nzval[i])
-                push!(kty[A.rowval[i]], X[col])
             end
         end
 
         rownorms_ALL = copy(rownorms_A)
         for col in unmatched_col:A.n 
-            #colptr = A.colptr[col]
             for i in A.colptr[col]:(A.colptr[col + 1] -1)
                 rownorms_ALL[A.rowval[i]] +=  A.nzval[i]^2
                 rowsums_C[A.rowval[i]] +=  A.nzval[i]
             end
         end
 
-        return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C, kt_pval
+        return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C
     end
 
-    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED, kt_pval = rowNormsAndSums(H, X, unmatched_col)
-    #println(rowsums_UNMATCHED[2])
-    #println(kt_pval)
+    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED = rowNormsAndSums(H, X, unmatched_col)
+
     function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
-        #-1*log(mean(((a/a_sum) .- (b/b_sum)).^2))
+
         return ((a/a_sum) - (b/b_sum))^2
-        #=δ = 0.1
-        diff = (a/a_sum) - (b/b_sum)
-        if abs(diff) <= δ
-            return (1/2)*diff^2
-        else
-            return δ*(abs(diff) - δ/2)
-        end=#
      end
 
     function cityBlockDist(a::T, a_norm::T, b::T, b_norm::T) where {T<:AbstractFloat}
-        #-1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
-        #log(sum(abs.(a./norm(a) .- b./norm(b))/length(a)))
         abs(a/a_norm - b/b_norm)
     end
 
     N = H.m 
-    scribe_squared_errors = zeros(T, (N,)) #Vector{T}(undef, N)
+    scribe_squared_errors = zeros(T, (N,)) 
     city_block_dist = zeros(T,(N,))
     matched_ratio = zeros(T, (N,))
-    spectral_contrast_matched = zeros(T, (N,))
     spectral_contrast_all = zeros(T, (N,))
-    #scribe_scores = Vector{Vector{Float32}}()
     for col in 1:(unmatched_col - 1)
-        #push!(scribe_scores, Vector{Float32}())
-        #colptr = H.colptr[col]
-        #println("A")
-        #println(H.colptr[col+1]-1)
         for i in range(H.colptr[col], H.colptr[col+1]-1)
-            #println("B")
-                    #push!(scribe_scores[col], sqrt(H.nzval[i])/rowsums_sqrt_A[H.rowval[i]] - sqrt(X[col])/rowsums_sqrt_X[H.rowval[i]])
                     scribe_squared_errors[H.rowval[i]] += scribeScore(sqrt(H.nzval[i]), 
                                                           rowsums_sqrt_A[H.rowval[i]], 
                                                           sqrt(X[col]),
@@ -208,65 +71,117 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, weights:
     end
 
     @turbo for (i, dot) in enumerate(row_dot)
-        spectral_contrast_matched[i] = dot/(rownorms_A[i]*rownorms_X[i])
         spectral_contrast_all[i] = dot/(rownorms_ALL[i]*rownorms_X[i])
-        rowsums_MATCHED[i] = rowsums_MATCHED[i]/rowsums_UNMATCHED[i]
     end
 
-    entropy_sim = zeros(Float32, H.m)
-    X̂ = H'*weights
-    for i in range(1, H.m)
+    entropy_sim = getEntropy(X, Ht)
+    #=for i in range(1, H.m)
         A = collect(X[H[i,:].!=0.0])# A = X
-        #A = H[i,:]
-        #B = H[i,X.!=0.0]
-        #A = collect(A./sum(A))
         A, SA = weightedEntropy(allowmissing(A))
         B = collect(H[i,H[i,:].!=0.0])
-        #B = collect(X̂[H[i,:].!=0.0])
-        #B = collect(B./sum(B))
         B, SB = weightedEntropy(allowmissing(B))
-        #A[Hs[:,i].!=0.0] += B
-        #A[X.!=0.0] += B
         A += B
         AB, SAB = weightedEntropy(allowmissing(A))
         entropy_sim[i] =  Float32(1 - (2*SAB - SA - SB)/(log(4)))
-    end
-
-    #X̂ = H'*weights
-    #=for i in range(1, H.m)
-        #A = collect(X[H[i,:].!=0.0])# A = X
-        A = X
-        #A = collect(A./sum(A))
-        A, SA = weightedEntropy(allowmissing(A))
-        B = collect(H[i,H[i,:].!=0.0])
-        #B = collect(B./sum(B))
-        B, SB = weightedEntropy(allowmissing(B))
-        A[H[i,:].!=0.0] += B
-        #A += B
-        AB, SAB = weightedEntropy(allowmissing(collect(A)))
-        entropy_sim[i] =  Float32(1 - (2*SAB - SA - SB)/(log(4)))
-    end=#
-    #=function scribeScore_(a::Vector{T}, b::Vector{T}) where {T<:AbstractFloat}
-        -1*log(mean(((a/sum(a)) .- (b/sum(b))).^2))
-    end=#
-    #X̂ = H'*weights
-    #=for i in range(1, H.m)
-        #r = sum((X[H[i,:].!=0.0] .- X̂[H[i,:].!=0.0]).^2)
-        #y = sum(X̂[H[i,:].!=0.0].^2)
-        #entropy_sim[i] = 1 - sum(r)/sum(y)
-        #entropy_sim[i] = scribeScore_(X[H[i,:].!=0.0], X̂[H[i,:].!=0.0])
-        mask = (H[i,:].!=0.0) .& (X.!=0.0)
-        #entropy_sim[i] = scribeScore_(sqrt.(X[mask]), sqrt.(X̂[mask]))
-        entropy_sim[i] = -log(sum(abs.((X[mask]./norm(X[mask])) .- (X̂[mask]./norm(X̂[mask])))))
-        #entropy_sim[i] = sum((X[mask] .- X̂[mask]).^2)
     end=#
 
     matched_ratio = rowsums_MATCHED
 
-
-    #return scribe_scores
-    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all, entropy_sim#entropy_sim#kt_pval
+    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_all, entropy_sim
 end
+
+
+#=function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatched_col::Int) where {T<:AbstractFloat}
+    function rowNormsAndSums(A::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatched_col::Int) where {T<:AbstractFloat}
+
+        rownorms_A = zeros(T, (A.m,))
+        rowsums_A = zeros(T, (A.m,))
+        rowsums_C = zeros(T, (A.m,))
+        rowsums_sqrt_A = zeros(T, (A.m,))
+        rownorms_X = zeros(T, (A.m,))
+        rowsums_sqrt_X = zeros(T, (A.m,))
+        row_counts = zeros(Int64, (A.m,))
+        row_dot = zeros(T, (A.m,))
+
+        for col in 1:(unmatched_col)
+
+            for i in range(A.colptr[col], (A.colptr[col+1]-1))
+                rownorms_A[A.rowval[i]] += A.nzval[i]^2
+                row_counts[A.rowval[i]] += 1
+                rownorms_X[A.rowval[i]] += X[col]^2
+                rowsums_sqrt_A[A.rowval[i]] += sqrt(A.nzval[i])
+                rowsums_A[A.rowval[i]] += A.nzval[i]
+                rowsums_sqrt_X[A.rowval[i]] += sqrt(X[col])
+                row_dot[A.rowval[i]] +=  A.nzval[i]*X[col]
+            end
+        end
+
+        rownorms_ALL = copy(rownorms_A)
+        for col in unmatched_col:A.n 
+            for i in A.colptr[col]:(A.colptr[col + 1] -1)
+                rownorms_ALL[A.rowval[i]] +=  A.nzval[i]^2
+                rowsums_C[A.rowval[i]] +=  A.nzval[i]
+            end
+        end
+
+        return sqrt.(rownorms_A), rowsums_sqrt_A, sqrt.(rownorms_X), rowsums_sqrt_X, sqrt.(rownorms_ALL), row_dot, row_counts, rowsums_A, rowsums_C
+    end
+
+    rownorms_A, rowsums_sqrt_A, rownorms_X, rowsums_sqrt_X, rownorms_ALL, row_dot, row_counts, rowsums_MATCHED, rowsums_UNMATCHED = rowNormsAndSums(H, X, unmatched_col)
+
+    function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
+
+        return ((a/a_sum) - (b/b_sum))^2
+     end
+
+    function cityBlockDist(a::T, a_norm::T, b::T, b_norm::T) where {T<:AbstractFloat}
+        abs(a/a_norm - b/b_norm)
+    end
+
+    N = H.m 
+    scribe_squared_errors = zeros(T, (N,)) 
+    city_block_dist = zeros(T,(N,))
+    matched_ratio = zeros(T, (N,))
+    spectral_contrast_all = zeros(T, (N,))
+    for col in 1:(unmatched_col - 1)
+        for i in range(H.colptr[col], H.colptr[col+1]-1)
+                    scribe_squared_errors[H.rowval[i]] += scribeScore(sqrt(H.nzval[i]), 
+                                                          rowsums_sqrt_A[H.rowval[i]], 
+                                                          sqrt(X[col]),
+                                                          rowsums_sqrt_X[H.rowval[i]]
+                                                )
+                    city_block_dist[H.rowval[i]] += cityBlockDist(H.nzval[i], 
+                                            rownorms_A[H.rowval[i]], 
+                                            X[col],
+                                            rownorms_X[H.rowval[i]]
+                                        )
+        end
+    end
+
+    @turbo for (i, count) in enumerate(row_counts)
+        scribe_squared_errors[i] = -1*log((scribe_squared_errors[i]^2)/count)
+        city_block_dist[i] = log(city_block_dist[i]/count)
+    end
+
+    @turbo for (i, dot) in enumerate(row_dot)
+        spectral_contrast_all[i] = dot/(rownorms_ALL[i]*rownorms_X[i])
+    end
+
+    entropy_sim = getEntropy(X, Ht)
+    #=for i in range(1, H.m)
+        A = collect(X[H[i,:].!=0.0])# A = X
+        A, SA = weightedEntropy(allowmissing(A))
+        B = collect(H[i,H[i,:].!=0.0])
+        B, SB = weightedEntropy(allowmissing(B))
+        A += B
+        AB, SAB = weightedEntropy(allowmissing(A))
+        entropy_sim[i] =  Float32(1 - (2*SAB - SA - SB)/(log(4)))
+    end=#
+
+    matched_ratio = rowsums_MATCHED
+
+    return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_all, entropy_sim
+end=#
 
 
 #=function test(H::SparseMatrix{Int64, T}, X::Vector{T}, UNMATCHED::SparseMatrix{Int64, T}) where {T<:AbstractFloat}
