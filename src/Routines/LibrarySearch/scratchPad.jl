@@ -1,28 +1,5 @@
-#=X, Hs, Hst, IDtoROW, weights = SearchRAW(
-    Arrow.Table(MS_TABLE_PATHS[1]), 
-    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-    frags_mouse_detailed_33NCEcorrected_start1, 
-    UInt32(1), #MS_FILE_IDX
-    test, #RT to iRT map
-    min_frag_count = 4, 
-    topN = 1000, 
-    fragment_tolerance = 10.0, 
-    λ = Float32(0), 
-    γ =Float32(0),
-    max_peaks = 10000, 
-    scan_range = (101357, 101357), #101357 #22894
-    precursor_tolerance = 20.0,
-    min_spectral_contrast =  Float32(0.5),
-    min_matched_ratio = Float32(0.45),
-    rt_tol = Float32(200.0),
-    frag_ppm_err = 3.0
-    )=#
 
-function scribeScore(a::T, a_sum::T, b::T, b_sum::T) where {T<:AbstractFloat}
-    return ((a/a_sum) - (b/b_sum))^2
-end
-
-function getScribeScore(X::Vector{T}, H::SparseMatrixCSC{T, Int64}) where {T<:AbstractFloat}
+function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}) where {T<:AbstractFloat}
     scribe_scores = zeros(T, H.n)
     city_block_scores = zeros(T, H.n)
     spectral_contrast_scores = zeros(T, H.n)
@@ -86,8 +63,7 @@ function getScribeScore(X::Vector{T}, H::SparseMatrixCSC{T, Int64}) where {T<:Ab
 
 end
     
-function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})
-    T = Float32
+function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64}) where {T<:AbstractFloat}
     entropy_sim = zeros(T, H.n)
     for col in range(1, H.n)
 

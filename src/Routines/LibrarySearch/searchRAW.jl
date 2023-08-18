@@ -31,8 +31,8 @@ function SearchRAW(
     precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
     n = 0
     all_matches = Vector{FragmentMatch{Float32}}()
-    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
         if spectrum[:msOrder] == 1
             MS1 = spectrum[:masses]
@@ -99,12 +99,13 @@ function SearchRAW(
             append!(all_matches, fragmentMatches)
         end
  
-        X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(fragmentMatches, fragmentMisses)
+        X, Hs, Hst, IDtoROW, last_matched_col = buildDesignMatrix(fragmentMatches, fragmentMisses)
         
         weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
-        return X, Hs, Hst, IDtoROW, weights
+        #return X, Hs, Hst, IDtoROW, weights
 
-        scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols)
+        #scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols)
+        scores = getDistanceMetrics(X, Hs, last_matched_col)
         
         #For progress and debugging. 
 
@@ -116,7 +117,7 @@ function SearchRAW(
         Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
                 Float64(sum(spectrum[:intensities])), 
-                match_count/prec_count, scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval, weights, IDtoROW,
+                match_count/prec_count, scores[:scribe], scores[:city_block], scores[:matched_ratio], scores[:spectral_contrast], scores[:entropy_sim], weights, IDtoROW,
                 scan_idx = Int64(i),
                 min_spectral_contrast = min_spectral_contrast,
                 min_frag_count = min_frag_count

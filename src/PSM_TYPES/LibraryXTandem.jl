@@ -65,8 +65,9 @@ using SpecialFunctions
 
 function makePSMsDict(::XTandem{T}) where {T<:Real}
     Dict(
+
+        #Stanard Metrics 
         :hyperscore => T[],
-        #:Δhyperscore => Float64[]
         :error => T[],
         :y_ladder => Int8[],
         :b_ladder => Int8[],
@@ -78,12 +79,12 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
         :best_rank => UInt8[],
         :topn => UInt8[],
 
-        :spectral_contrast_matched => Float32[],
-        :spectral_contrast_all => Float32[],
+        #Spectral Distrance Metrics
+        :spectral_contrast => Float32[],
         :scribe_score => Float32[],
         :city_block => Float32[],
         :matched_ratio => Float32[],
-        :kendall => Float32[],
+        :entropy_sim => Float32[],
 
         :weight => Float32[],
         :scan_idx => Int64[],
@@ -92,8 +93,20 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
     )
 end
 
-function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, spectrum_peaks::Int, spectrum_intensity::T, expected_matches::Float64,
-    scribe_score::Vector{Float32}, city_block::Vector{Float32}, matched_ratio::Vector{Float32}, spectral_contrast_matched::Vector{Float32}, spectral_contrast_all::Vector{Float32}, kt_pval::Vector{Float32}, weight::Vector{Float32}, IDtoROW::UnorderedDictionary{UInt32, UInt32}; scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T<:Real}
+function Score!(PSMs_dict::Dict, 
+                unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, 
+                spectrum_peaks::Int, 
+                spectrum_intensity::T, 
+                expected_matches::Float64,
+                scribe_score::Vector{Float32}, 
+                city_block::Vector{Float32}, 
+                matched_ratio::Vector{Float32}, 
+                spectral_contrast::Vector{Float32}, 
+                entropy_sim::Vector{Float32}, 
+                weight::Vector{Float32}, 
+                IDtoROW::UnorderedDictionary{UInt32, UInt32}; 
+                scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T<:Real}
+
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)
@@ -149,7 +162,7 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
 
     for key in keys(unscored_PSMs)
         index = IDtoROW[unscored_PSMs[key].precursor_idx]
-        if spectral_contrast_all[index]<min_spectral_contrast
+        if spectral_contrast[index]<min_spectral_contrast
             continue
         end
         if (unscored_PSMs[key].y_count + unscored_PSMs[key].b_count) < min_frag_count
@@ -168,12 +181,11 @@ function Score!(PSMs_dict::Dict, unscored_PSMs::UnorderedDictionary{UInt32, XTan
         append!(PSMs_dict[:best_rank], unscored_PSMs[key].best_rank)
         append!(PSMs_dict[:topn], unscored_PSMs[key].topn)
 
-        append!(PSMs_dict[:spectral_contrast_matched], spectral_contrast_matched[index])
-        append!(PSMs_dict[:spectral_contrast_all], spectral_contrast_all[index])
+        append!(PSMs_dict[:spectral_contrast], spectral_contrast[index])
         append!(PSMs_dict[:scribe_score], scribe_score[index])
         append!(PSMs_dict[:city_block], city_block[index])
         append!(PSMs_dict[:matched_ratio], matched_ratio[index])
-        append!(PSMs_dict[:kendall], kt_pval[index])
+        append!(PSMs_dict[:entropy_sim], entropy_sim[index])
         append!(PSMs_dict[:weight], weight[index])
 
         append!(PSMs_dict[:scan_idx], scan_idx)
