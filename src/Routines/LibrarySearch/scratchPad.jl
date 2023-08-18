@@ -146,3 +146,24 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64}) wher
     end
     return entropy_sim
 end
+
+PSMs = SearchRAW(
+    Arrow.Table(MS_TABLE_PATHS[1]), 
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    UInt32(1), #MS_FILE_IDX
+    RT_to_iRT_map_dict[1], #RT to iRT map
+    min_frag_count = 4, 
+    topN = 1000, 
+    fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
+    λ = Float32(0), 
+    γ =Float32(0),
+    max_peaks = 10000, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+    scan_range = (101357, 102357), #101357 #22894
+    precursor_tolerance = 20.0,
+    min_spectral_contrast =  Float32(0.5),
+    min_matched_ratio = Float32(0.45),
+    rt_tol = Float32(20.0),
+    frag_ppm_err = frag_err_dist_dict[1].μ
+    )
