@@ -13,7 +13,7 @@ end
 function integrateMS1(
                     spectra::Arrow.Table, 
                     #rt_index::retentionTimeIndex{T, U},
-                    prec_list::Vector{Tuple{Float64, UInt32}},
+                    prec_rt_table::Vector{Tuple{Float64, UInt32}},
                     isotopes::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
                     ms_file_idx::UInt32;
                     precursor_tolerance::Float64 = 20.0,
@@ -28,6 +28,8 @@ function integrateMS1(
     nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[])
     matches = ""
     misses = ""
+    fragmentMatches = [Isotope{Float32}() for x in range(1, 10000)]
+    fragmentMisses = [Isotope{Float32}() for x in range(1, 10000)]
     #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -46,7 +48,9 @@ function integrateMS1(
         #isotopes[0x0006bbe9]
         #Match fragments to peaks
         iso = selectIsotopes(prec_rt_table, isotopes, Float64(spectrum[:retentionTime]), 1.0)
-        matches, misses = matchPeaks(iso,
+        nmatches, nmisses = matchPeaks(iso,
+                            fragmentMatches,
+                            fragmentMisses,
                             spectrum[:masses],
                             spectrum[:intensities],
                             PrecursorMatch{Float32},
@@ -77,7 +81,16 @@ function integrateMS1(
         #    continue
         #elseif spectrum[:retentionTime] > 49.8992 
         #end
-        X, Hs, Hst, IDtoROW = buildDesignMatrix(matches, misses)
+        X, Hs, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses)
+
+        for i in range(1, nmatches)
+            fragmentMatches[i] = FragmentMatch{Float32}()
+        end
+
+        for i in range(1, nmisses)
+            fragmentMisses[i] = FragmentMatch{Float32}()
+        end
+        
         #return X, Hs, Hst, IDtoROW
         weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
 

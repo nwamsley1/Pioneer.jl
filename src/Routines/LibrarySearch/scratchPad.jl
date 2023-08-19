@@ -147,7 +147,7 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64}) wher
     return entropy_sim
 end
 
-PSMs = SearchRAW(
+@time PSMs = SearchRAW(
     Arrow.Table(MS_TABLE_PATHS[1]), 
     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
     frags_mouse_detailed_33NCEcorrected_start1, 
@@ -160,10 +160,92 @@ PSMs = SearchRAW(
     γ =Float32(0),
     max_peaks = 10000, 
     #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
-    scan_range = (101357, 102357), #101357 #22894
+    scan_range = (0, 300000), #101357 #22894
     precursor_tolerance = 20.0,
     min_spectral_contrast =  Float32(0.5),
     min_matched_ratio = Float32(0.45),
     rt_tol = Float32(20.0),
     frag_ppm_err = frag_err_dist_dict[1].μ
     )
+
+
+    MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
+    best_psms = ""
+    ms_file_idx = 1
+        best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[1][PSMs[1][:,:q_value].<=0.1,:], :precursor_idx))
+   
+    transform!(best_psms, AsTable(:) => ByRow(psm -> 
+                precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]].mz
+                ) => :prec_mz
+                )
+    
+    #Need to sort RTs 
+    sort!(best_psms,:RT, rev = false)
+
+    #Build RT index of precursors to integrate
+    rt_index = buildRTIndex(best_psms)
+
+    println("Integrating MS2...")
+    @time ms2_chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+                    UInt32(ms_file_idx), 
+                    fragment_tolerance=quantile(frag_err_dist_dict[ms_file_idx], 0.975), 
+                    frag_ppm_err = frag_err_dist_dict[ms_file_idx].μ,
+                    λ=zero(Float32),  
+                    γ=zero(Float32), 
+                    max_peak_width = 2.0, 
+                    scan_range = (0, length(MS_TABLE[:scanNumber]))#(101357, 101357)
+                    #scan_range = (101357, 111357)
+                    );
+
+                    length(unique([getPeakInd(fragmentMatches[i]) for i in range(1, nmatches)]))
+    MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
+    ms_file_idx = 1
+    @time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
+                    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+                    frags_mouse_detailed_33NCEcorrected_start1, 
+                    UInt32(ms_file_idx), 
+                    x->x, #Mapp RT to iRT
+                    min_frag_count = 7, 
+                    topN = 5, 
+                    fragment_tolerance = init_frag_tol,#20.0, 
+                    λ = Float32(0), 
+                    γ =Float32(0),
+                    max_peaks = 10000, 
+                    scan_range = (0, length(MS_TABLE[:scanNumber])), #All Scans
+                    precursor_tolerance = 20.0,
+                    min_spectral_contrast =  Float32(0.95),
+                    min_matched_ratio = Float32(.6),
+                    rt_tol = Float32(1e6), #Set arbitrarily high
+                    sample_rate = 0.01, #Sampling rate
+                    frag_ppm_err = 0.0,
+                    collect_frag_errs = true
+                    );
+                    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT);
+                    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
+                    transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]])) => :decoy);
+                    rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
+                
+                    best_precursors = Set(rtPSMs[:,:precursor_idx]);
+                    best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
+                    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
+                    #Model fragment errors with a mixture model of a uniform and laplace distribution 
+                    @time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0);
+                
+                    RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 5.0);
+                    plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
+                
+
+
+
+@showprogress for i in 1:10
+    sleep(1)
+end
+
+@showprogress pmap(1:10) do i
+    sleep(1)
+end
+
+
+@sync @distributed for i in 1:10
+    sleep(1)
+end

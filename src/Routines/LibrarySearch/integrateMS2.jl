@@ -17,7 +17,20 @@ function integrateMS2(
                     ) where {T,U<:Real}
     
     ms2 = 0
-    nmf = Dict(:precursor_idx => UInt32[], :weight => Float32[], :rt => Float32[], :frag_count => Int64[])
+    N = 120000*50
+    n = 1
+    nmf = Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N))
+    #Pre-allocate memorry for SparseArrays
+    #fragmentMatches
+    #fragmentMisses
+    #X 
+    #Hs
+    #Hst 
+    #weights
+    #transitions 
+
+    fragmentMatches = [FragmentMatch{Float32}() for x in range(1, 10000)]
+    fragmentMisses = [FragmentMatch{Float32}() for x in range(1, 10000)]
     #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -35,8 +48,10 @@ function integrateMS2(
         end
     
         transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
-  
-        fragmentMatches, fragmentMisses = matchPeaks(transitions, 
+        #println(length(transitions))
+        nmatches, nmisses = matchPeaks(transitions, 
+                                    fragmentMatches,
+                                    fragmentMisses,
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
                                     FragmentMatch{Float32},
@@ -50,41 +65,48 @@ function integrateMS2(
 
         frag_counts = counter(UInt32)
 
-        for match in fragmentMatches
-            DataStructures.inc!(frag_counts, match.prec_id)
+        for match_idx in range(1, nmatches) #fragmentMatches
+            DataStructures.inc!(frag_counts, fragmentMatches[match_idx].prec_id)
         end
 
-        #filter!(x->(frag_counts[x.prec_id].>2), fragmentMatches)
-        #filter!(x->(frag_counts[x.prec_id].>2), fragmentMisses)
-        #filter!(x->x.frag_index.>2, fragmentMatches)
-        #filter!(x->x.frag_index.>2, fragmentMisses)
-        if !iszero(length(fragmentMatches))
-            X, Hs, Hst, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses)
-            weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
+        if nmatches > 1
+            X, Hs, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses)
+            weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
+            
         else
             IDtoROW = UnorderedDictionary{UInt32, UInt32}()
         end
+
+        for i in range(1, nmatches)
+            fragmentMatches[i] = FragmentMatch{Float32}()
+        end
+
+        for i in range(1, nmisses)
+            fragmentMisses[i] = FragmentMatch{Float32}()
+        end
+
         for key in prec_ids
             if haskey(frag_counts, key)
 
                 if haskey(IDtoROW, key)
-            #for key in keys(IDtoROW)
-                    push!(nmf[:precursor_idx], key)
-                    push!(nmf[:weight], weights[IDtoROW[key]])
-                    push!(nmf[:rt], spectrum[:retentionTime])
-                    push!(nmf[:frag_count], frag_counts[key])
+                    nmf[:precursor_idx][n] = key
+                    nmf[:weight][n] = weights[IDtoROW[key]]
+                    nmf[:rt][n] = spectrum[:retentionTime]
+                    nmf[:frag_count][n] = frag_counts[key]
+
                 else
-                    push!(nmf[:precursor_idx], key)
-                    push!(nmf[:weight], Float32(0.0))
-                    push!(nmf[:rt], spectrum[:retentionTime])
-                    push!(nmf[:frag_count], frag_counts[key])
+                    nmf[:precursor_idx][n] = key
+                    nmf[:weight][n] = Float32(0.0)
+                    nmf[:rt][n] = spectrum[:retentionTime]
+                    nmf[:frag_count][n] = frag_counts[key]
                 end
             else
-                push!(nmf[:precursor_idx], key)
-                push!(nmf[:weight], Float32(0.0))
-                push!(nmf[:rt], spectrum[:retentionTime])
-                push!(nmf[:frag_count], 0)
+                nmf[:precursor_idx][n] = key
+                nmf[:weight][n] = Float32(0.0)
+                nmf[:rt][n] = spectrum[:retentionTime]
+                nmf[:frag_count][n] = 0
             end
+            n += 1
         end
     end
     nmf = DataFrame(nmf)

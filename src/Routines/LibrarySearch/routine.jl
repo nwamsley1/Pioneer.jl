@@ -69,9 +69,11 @@ end
 
 ###########
 #Load RAW File
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow",
-#"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow"]
-MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow"]
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow",
+"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow",
+"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_2.arrow",
+"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_3.arrow"]
+#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow"]
 #Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow");
 
 ###########
@@ -83,6 +85,7 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetC
 ###########
 
 println("Starting Pre Search...")
+@time begin
 init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
@@ -128,20 +131,21 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumera
     @time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0);
 
     RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 5.0);
-    plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
+    #plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
 
     lock(lk) do 
         RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
         frag_err_dist_dict[ms_file_idx] = frag_err_dist
     end
 end
+end
 ###########
 #Main PSM Search
 ###########
 PSMs_dict = Dict{Int64, DataFrame}()
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+@time Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
-        PSMs = SearchRAW(
+        @time PSMs = SearchRAW(
                                 MS_TABLE, 
                                 prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
                                 frags_mouse_detailed_33NCEcorrected_start1, 
@@ -161,7 +165,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumera
                                 frag_ppm_err = frag_err_dist_dict[ms_file_idx].μ
                                 )
         PSMs = PSMs[PSMs[:,:weight].>100.0,:];
-        @time refinePSMs!(PSMs, precursors_mouse_detailed_33NCEcorrected_start1);
+        @time refinePSMs!(PSMs, MS_TABLE, precursors_mouse_detailed_33NCEcorrected_start1);
         ###########
         #Clean features
         ############
@@ -182,8 +186,8 @@ end
 @time PSMs = vcat(values(PSMs_dict)...)
 
 features = [:hyperscore,:total_ions,:intensity_explained,:error,
-            :poisson,:spectral_contrast_all,:kendall,:spectral_contrast_matched,
-            :RT_error,:scribe_score,:y_ladder,:RT,:median_ions,:n_obs,:charge,
+            :poisson,:spectral_contrast,:entropy_sim,
+            :RT_error,:scribe_score,:y_ladder,:RT,:n_obs,:charge,
             :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
 
 
@@ -192,11 +196,12 @@ features = [:hyperscore,:total_ions,:intensity_explained,:error,
                 colsample_bytree = 1.0, 
                 min_child_weight = 10, 
                 gamma = 10, 
-                subsample = 0.25^length(MS_TABLE_PATHS), 
+                subsample = 0.25, 
                 n_folds = 2,
                 num_round = 200, 
                 eta = 0.0375, 
-                max_depth = 5)
+                max_depth = 5,
+                max_train_size = size(PSMs)[1]÷8)
 
 @time getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 println("Target PSMs at 1% FDR: ", sum((PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false)))
@@ -254,6 +259,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumera
 
     #Get Predicted Isotope Distributions 
     #For some reason this requires a threadlock. Need to investiage further. 
+    isotopes = ""
     lock(lk) do 
         @time isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4)
     end

@@ -23,9 +23,10 @@ XTandem(::Type{Float32}) = XTandem(UInt8(255), zero(UInt8),0, Float32(0), Set(UI
 XTandem(::Type{Float64}) = XTandem(UInt8(255),zero(UInt8),0, Float64(0), Set(UInt8[]), 0, Float64(0), Set(UInt8[]), Float64[], Float64(0), UInt32(0), UInt32(0))
 XTandem() = XTandem(Float64)
 
-function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}}, matches::Vector{FragmentMatch{T}}) where {T,U<:Real}
+function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}}, matches::Vector{FragmentMatch{T}}, nmatches::Int64) where {T,U<:Real}
     #UnorderedDictionary{UInt32, FastXTandem}()
-    for match in matches
+    for i in range(1, nmatches)
+        match = matches[i]
         if !isassigned(results, getPrecID(match))
             insert!(results, getPrecID(match), XTandem(U))
             results[getPrecID(match)].ms_file_idx = getMSFileID(match)

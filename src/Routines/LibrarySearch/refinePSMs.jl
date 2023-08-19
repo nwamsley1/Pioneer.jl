@@ -1,5 +1,5 @@
 
-function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor{T}}; min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     
     ###########################
     #Get Precursor Features
@@ -14,7 +14,7 @@ function refinePSMs!(PSMs::DataFrame, precursors::Vector{LibraryPrecursor{T}}; m
 
     ###########################
     #Estimate RT Prediction Error
-    best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast_all].>min_spectral_contrast) .& (PSMs[:,:decoy].==false),:], [:scan_idx]))
+    best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast].>min_spectral_contrast) .& (PSMs[:,:decoy].==false),:], [:scan_idx]))
     @time linear_spline = KDEmapping(best_psms[:,:iRT], best_psms[:,:RT])
     PSMs[:,:RT_pred] = linear_spline(PSMs[:,:iRT])
     PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])

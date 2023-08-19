@@ -1,18 +1,29 @@
-function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}) where {m<:Match}
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64) where {m<:Match}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
-    M = length(unique([getPeakInd(x) for x in matches]))
+    M = 1
+    for i in range(2, nmatches)
+        if getPeakInd(matches[i])!= getPeakInd(matches[i - 1])
+            M += 1
+        end
+    end
+    #println(M)
+    #M = length(unique([getPeakInd(matches[i]) for i in range(1, nmatches)]))
+    M += nmisses
+    #println("M2 ", M)
+    #M += length(unique([getPeakInd(misses[i]) for i in range(1, nmisses)]))
     #Design matrix. One row for every precursor template. One column for every matched peak. 
-    H_COLS = zeros(Int64, length(matches))
-    H_ROWS = zeros(Int64, length(matches))
-    H_VALS = zeros(T, length(matches))
+    H_COLS = zeros(Int64, nmatches + nmisses)
+    H_ROWS = zeros(Int64, nmatches + nmisses)
+    H_VALS = zeros(T, nmatches + nmisses)
 
     #Design matrix. One row for every precursor template. One column for every unmatched peak. 
-    U_COLS = zeros(Int64, length(misses))
-    U_ROWS = zeros(Int64, length(misses))
-    U_VALS = zeros(T, length(misses))
+    #U_COLS = zeros(Int64, nmisses)
+    #U_ROWS = zeros(Int64, nmisses)
+    #U_VALS = zeros(T, nmisses)
 
+    #println()
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(T, M)
 
@@ -24,7 +35,8 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}) where {m<:Mat
     col = 0
     #Number of unique peaks encountered. 
     last_peak_ind = 0
-    for (i, match) in enumerate(matches)
+    for i in range(1, nmatches)#matches)
+        match = matches[i]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
         if !haskey(precID_to_row,  getPrecID(match))
             prec_row += one(UInt32)
@@ -41,27 +53,33 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}) where {m<:Mat
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(match)
+        #println("i ", i)
     end
     H_ncol = col
     #col = 0
     last_peak_ind = 0
-    for (i, miss) in enumerate(misses)
+    for i in range(nmatches + 1, nmatches + nmisses)
+        miss = misses[i - nmatches]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
         if !haskey(precID_to_row,  getPrecID(miss))
             prec_row  += UInt8(1)
             insert!(precID_to_row, getPrecID(miss), prec_row)
         end
-        if getPeakInd(miss) != last_peak_ind
+       # if getPeakInd(miss) != last_peak_ind
             col += 1
             last_peak_ind = getPeakInd(miss)
-        end
+        #end
         row = precID_to_row[getPrecID(miss)]
-        U_COLS[i] = col
-        U_ROWS[i] = row
-        U_VALS[i] = getPredictedIntenisty(miss)
+        H_COLS[i] = col
+        H_ROWS[i] = row
+        H_VALS[i] = getPredictedIntenisty(miss)
     end
-
-    return append!(X, zeros(Float32, length(U_VALS))), sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
+    #if i >= (nmatches - 1)
+    #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
+    #end
+    #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
+    return X, sparse(H_COLS, H_ROWS, H_VALS), precID_to_row, H_ncol
+    
 end
 #=
 

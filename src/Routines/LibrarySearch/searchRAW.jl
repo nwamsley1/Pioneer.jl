@@ -29,11 +29,20 @@ function SearchRAW(
     scored_PSMs = makePSMsDict(XTandem(data_type))
     ms2, MS1, MS1_i = 0, 0, 0
     precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
-    n = 0
+    n = 1
     all_matches = Vector{FragmentMatch{Float32}}()
-    for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    if collect_frag_errs
+        all_matches = [FragmentMatch{Float32}() for x in range(1, 30000)]
+    end
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    fragmentMatches = [FragmentMatch{Float32}() for x in range(1, 100000)]
+    fragmentMisses = [FragmentMatch{Float32}() for x in range(1, 100000)]
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
+        if (i%10000) == 0
+            println(i)
+        end
         if spectrum[:msOrder] == 1
             MS1 = spectrum[:masses]
             MS1_i = spectrum[:intensities]
@@ -60,7 +69,7 @@ function SearchRAW(
 
         prec_count, match_count = searchScan!(precs,
                     frag_index, 
-                    min_intensity, spectrum[:masses], spectrum[:intensities], MS1, spectrum[:precursorMZ], iRT_low, iRT_high,
+                    min_intensity, spectrum[:masses], spectrum[:intensities], spectrum[:precursorMZ], iRT_low, iRT_high,
                     Float32(fragment_tolerance), 
                     Float32(precursor_tolerance),
                     Float32(isolation_width),
@@ -78,7 +87,9 @@ function SearchRAW(
             continue
         end
         
-        fragmentMatches, fragmentMisses = matchPeaks(transitions, 
+        nmatches, nmisses = matchPeaks(transitions, 
+                                    fragmentMatches,
+                                    fragmentMisses,
                                     spectrum[:masses], 
                                     spectrum[:intensities], 
                                     FragmentMatch{Float32},
@@ -90,18 +101,37 @@ function SearchRAW(
                                     min_intensity = min_intensity,
                                     ppm = fragment_tolerance
                                     )
-
-        if iszero(length(fragmentMatches))
+        #=println("length(spectrum[:masses])", length(spectrum[:masses]))
+        println("nmisses ", nmisses)
+        println("nmatches ", nmatches)
+        println("length(fragmentMatches) ", length(fragmentMatches))
+        println("length(fragmentMisses) ", length(fragmentMisses))=#
+        if nmatches < 2#iszero(length(fragmentMatches))
+            for i in range(1, nmatches)
+                fragmentMatches[i] = FragmentMatch{Float32}()
+            end
+    
+            for i in range(1, nmisses)
+                fragmentMisses[i] = FragmentMatch{Float32}()
+            end
             continue
         end
 
         if collect_frag_errs
-            append!(all_matches, fragmentMatches)
+            for match in range(1, nmatches)
+                if n < length(all_matches)
+                    all_matches[n] = fragmentMatches[match]
+                    n += 1
+                end
+    
+            end
+            #Eappend!(all_matches, fragmentMatches)
         end
  
-        X, Hs, Hst, IDtoROW, last_matched_col = buildDesignMatrix(fragmentMatches, fragmentMisses)
-        
-        weights = sparseNMF(Hst, Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
+        X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses)
+        #println("size(Hs) ", size(Hs))
+        #println("length(keys(IDtoROW))", length(keys(IDtoROW)))
+        weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
         #return X, Hs, Hst, IDtoROW, weights
 
         #scribe_score, city_block, matched_ratio, spectral_contrast_matched, spectral_contrast_all, kt_pval = getDistanceMetrics(Hst, X, weights, matched_cols)
@@ -111,8 +141,14 @@ function SearchRAW(
 
         unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
 
-        ScoreFragmentMatches!(unscored_PSMs, fragmentMatches)
+        ScoreFragmentMatches!(unscored_PSMs, fragmentMatches, nmatches)
+        for i in range(1, nmatches)
+            fragmentMatches[i] = FragmentMatch{Float32}()
+        end
 
+        for i in range(1, nmisses)
+            fragmentMisses[i] = FragmentMatch{Float32}()
+        end
         #times[:score] += @elapsed Score!(scored_PSMs, unscored_PSMs, 
         Score!(scored_PSMs, unscored_PSMs, 
                 length(spectrum[:intensities]), 
@@ -122,7 +158,6 @@ function SearchRAW(
                 min_spectral_contrast = min_spectral_contrast,
                 min_frag_count = min_frag_count
                 )
-        n += 1
     end
 
     if collect_frag_errs

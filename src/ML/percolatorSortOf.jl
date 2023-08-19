@@ -17,7 +17,7 @@ end
 
 getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = getQvalues!(PSMs, allowmissing(probs), allowmissing(labels))
 
-function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, colsample_bytree::Float64 = 0.5, num_round::Int = 25, eta::Float64 = 0.15, min_child_weight::Int = 1, subsample::Float64 = 0.5, gamma::Int = 0, max_depth::Int = 10, print_importance::Bool = false)
+function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, colsample_bytree::Float64 = 0.5, num_round::Int = 25, eta::Float64 = 0.15, min_child_weight::Int = 1, subsample::Float64 = 0.5, gamma::Int = 0, max_depth::Int = 10, max_train_size::Int = 1e6, print_importance::Bool = false)
    
     #[:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast_all, :spectral_contrast_matched,:RT_error,:scribe_score,:y_ladder,:b_ladder,:RT,:diff_hyper,:median_ions,:n_obs,:diff_scribe,:charge,:city_block,:matched_ratio,:weight,:intensity,:count,:SN]
     X = Matrix(PSMs[:,features])
@@ -38,6 +38,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
     bst = ""
     for test_fold_idx in range(1, n_folds)
         train_fold_idxs = vcat([folds[fold] for fold in range(1, length(folds)) if fold != test_fold_idx]...)
+        train_fold_idxs = train_fold_idxs[rand(1:length(train_fold_idxs), min(max_train_size, length(train_fold_idxs)))]
         train_features = X[train_fold_idxs,:]
         train_classes = X_labels[train_fold_idxs,1]
 
