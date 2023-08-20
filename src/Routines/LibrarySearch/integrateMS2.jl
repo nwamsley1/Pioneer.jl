@@ -31,6 +31,8 @@ function integrateMS2(
 
     fragmentMatches = [FragmentMatch{Float32}() for x in range(1, 10000)]
     fragmentMisses = [FragmentMatch{Float32}() for x in range(1, 10000)]
+    transitions = [LibraryFragment{Float32}() for x in range(1, 10000)]
+    prec_ids = [zero(UInt32) for x in range(1, 10000)] #Vector{LibraryFragment{V}}
     #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
 
@@ -47,9 +49,10 @@ function integrateMS2(
            continue
         end
     
-        transitions, prec_ids = selectTransitions(fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+        transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
         #println(length(transitions))
         nmatches, nmisses = matchPeaks(transitions, 
+                                    transition_idx,
                                     fragmentMatches,
                                     fragmentMisses,
                                     spectrum[:masses], 
@@ -63,6 +66,13 @@ function integrateMS2(
                                     ppm = fragment_tolerance
                                     )
 
+        for i in range(1, transition_idx)
+            transitions[i] = LibraryFragment{Float32}()
+        end
+        for i in range(1, prec_idx)
+            prec_idx[i] = zero(UInt32)
+        end
+
         frag_counts = counter(UInt32)
 
         for match_idx in range(1, nmatches) #fragmentMatches
@@ -72,7 +82,7 @@ function integrateMS2(
         if nmatches > 1
             X, Hs, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses)
             weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
-            
+            #println(size(Hs))
         else
             IDtoROW = UnorderedDictionary{UInt32, UInt32}()
         end

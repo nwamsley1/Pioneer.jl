@@ -236,7 +236,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, ion_idx::Int64, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
@@ -249,13 +249,14 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
         return mz - tol, mz + tol
     end
 
-    if length(Ions)<1
+    #if length(Ions)<1
+    if ion_idx<1
         return match, unmatched_idx
     end
 
     low, high = getPPM(Ions[ion], ppm)
     
-    while (peak <= length(masses)) & (ion <= length(Ions))
+    while (peak <= length(masses)) & (ion <= ion_idx)#(ion <= length(Ions))
         if intensities[peak] <  min_intensity
             peak += 1
             continue
@@ -290,7 +291,7 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
         peak+=1
     end
 
-    while ion <= length(Ions)
+    while ion <= ion_idx#length(Ions)
         setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
         unmatched_idx += 1
         ion += 1
@@ -387,14 +388,14 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Ions::Vector{I}, matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{FragmentMatch{Float32}}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, match_type::DataType; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType}
+function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{FragmentMatch{Float32}}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, match_type::DataType; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType}
     if count_unmatched
         #matches = Vector{match_type}()
         #unmatched = Vector{match_type}()
         #unmatched = Vector{FragmentMatch{T}}()
         nmatches, nmisses = 0, 0
         for δ in δs
-            nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+            nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
         end
 
         return nmatches-1, nmisses-1#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))

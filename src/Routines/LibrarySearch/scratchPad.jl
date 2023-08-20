@@ -186,17 +186,21 @@ end
     rt_index = buildRTIndex(best_psms)
 
     println("Integrating MS2...")
-    @time ms2_chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+    Profile.Allocs.@profile sample_rate=0.01 ms2_chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
                     UInt32(ms_file_idx), 
                     fragment_tolerance=quantile(frag_err_dist_dict[ms_file_idx], 0.975), 
                     frag_ppm_err = frag_err_dist_dict[ms_file_idx].μ,
                     λ=zero(Float32),  
                     γ=zero(Float32), 
                     max_peak_width = 2.0, 
-                    scan_range = (0, length(MS_TABLE[:scanNumber]))#(101357, 101357)
-                    #scan_range = (101357, 111357)
+                    #scan_range = (0, length(MS_TABLE[:scanNumber]))#(101357, 101357)
+                    scan_range = (101357, 111367)
                     );
 
+    results = Profile.Allocs.fetch();
+
+    PProf.Allocs.pprof(results; from_c=false)
+    Profile.Allocs.clear()
                     length(unique([getPeakInd(fragmentMatches[i]) for i in range(1, nmatches)]))
     MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
     ms_file_idx = 1
