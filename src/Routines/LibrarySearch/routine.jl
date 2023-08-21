@@ -221,7 +221,7 @@ PSMs = groupby(PSMs,:ms_file_idx)
 best_psms_dict = Dict{Int64, DataFrame}()
 
 @time begin
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:2])))
 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
     best_psms = ""

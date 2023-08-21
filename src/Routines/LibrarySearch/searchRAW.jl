@@ -167,6 +167,19 @@ function SearchRAW(
     end
 end
 
+function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        fms[i] = FragmentMatch{T}()
+    end
+end
+
+function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        lf[i] = LibraryFragment{T}()
+    end
+end
+
+
 #=
 CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/psms_071923.csv",PSMs)
 

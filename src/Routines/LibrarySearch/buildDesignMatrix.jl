@@ -1,4 +1,4 @@
-function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64) where {m<:Match}
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}) where {m<:Match}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -14,9 +14,9 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     #println("M2 ", M)
     #M += length(unique([getPeakInd(misses[i]) for i in range(1, nmisses)]))
     #Design matrix. One row for every precursor template. One column for every matched peak. 
-    H_COLS = zeros(Int64, nmatches + nmisses)
-    H_ROWS = zeros(Int64, nmatches + nmisses)
-    H_VALS = zeros(T, nmatches + nmisses)
+    #H_COLS = zeros(Int64, nmatches + nmisses)
+    #H_ROWS = zeros(Int64, nmatches + nmisses)
+    #H_VALS = zeros(T, nmatches + nmisses)
 
     #Design matrix. One row for every precursor template. One column for every unmatched peak. 
     #U_COLS = zeros(Int64, nmisses)
@@ -78,7 +78,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
     #end
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
-    return X, sparse(H_COLS, H_ROWS, H_VALS), precID_to_row, H_ncol
+    return X, sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_VALS[1:(nmatches + nmisses)])), precID_to_row, H_ncol
     
 end
 #=

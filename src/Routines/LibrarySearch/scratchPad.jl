@@ -181,7 +181,16 @@ end
     
     #Need to sort RTs 
     sort!(best_psms,:RT, rev = false)
-
+    @time ms2_chroms = integrateMS2(MS_TABLE, rt_index, frags_mouse_detailed_33NCEcorrected_start1, 
+    UInt32(ms_file_idx), 
+    fragment_tolerance=quantile(frag_err_dist_dict[ms_file_idx], 0.975), 
+    frag_ppm_err = frag_err_dist_dict[ms_file_idx].μ,
+    λ=zero(Float32),  
+    γ=zero(Float32), 
+    max_peak_width = 2.0, 
+    scan_range = (0, length(MS_TABLE[:scanNumber]))#(101357, 101357)
+    #scan_range = (101357, 111367)
+    );
     #Build RT index of precursors to integrate
     rt_index = buildRTIndex(best_psms)
 
@@ -253,3 +262,14 @@ end
 @sync @distributed for i in 1:10
     sleep(1)
 end
+
+for i in 1:length(test)
+    test[i] = PrecursorBinItem(one(UInt32), 0.0, 0.0, one(UInt8))
+end
+
+
+@turbo for i in 1:length(test)
+    test[i] = PrecursorBinItem(one(UInt32), 0.0, 0.0, one(UInt8))
+end
+
+ArrayInterface.parent_type(Vector{PrecursorBinItem{Float64}})

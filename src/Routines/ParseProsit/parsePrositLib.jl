@@ -44,6 +44,7 @@ getIonIndex(f::LibraryFragment) = f.ion_index
 getIonPosition(f::LibraryFragment) = f.ion_position
 getFragCharge(f::LibraryFragment) = f.frag_charge
 getRank(f::LibraryFragment) = f.rank
+LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8))
 
 struct LibraryPrecursor{T<:AbstractFloat}
     iRT::T

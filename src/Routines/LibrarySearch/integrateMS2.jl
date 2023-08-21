@@ -19,24 +19,27 @@ function integrateMS2(
     ms2 = 0
     N = 120000*50
     n = 1
-    nmf = Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N))
-    #Pre-allocate memorry for SparseArrays
-    #fragmentMatches
-    #fragmentMisses
-    #X 
-    #Hs
-    #Hst 
-    #weights
-    #transitions 
 
+
+    #Pre-allocate 
+
+    nmf = Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N))
     fragmentMatches = [FragmentMatch{Float32}() for x in range(1, 10000)]
     fragmentMisses = [FragmentMatch{Float32}() for x in range(1, 10000)]
     transitions = [LibraryFragment{Float32}() for x in range(1, 10000)]
+    H_COLS = zeros(Int64, 10000)
+    H_ROWS = zeros(Int64, 10000)
+    H_VALS = zeros(Float32, 10000)
     prec_ids = [zero(UInt32) for x in range(1, 10000)] #Vector{LibraryFragment{V}}
+    prec_idx = 0
+    transition_idx = 0
     #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
+    for i in range(1, size(spectra[:masses])[1])
+    #for i in ProgressBar(range(1, size(spectra[:masses])[1]))
 
-        if spectrum[:msOrder] == 1
+        #if spectrum[:msOrder] == 1
+        if spectra[:msOrder][i] == 1
             continue
         else
             ms2 += 1
@@ -45,18 +48,23 @@ function integrateMS2(
             i < first(scan_range) ? continue : nothing
             i > last(scan_range) ? continue : nothing
         end
-        if (spectrum[:precursorMZ] < first(mz_range)) | (spectrum[:precursorMZ] > last(mz_range))
+        #if (spectrum[:precursorMZ] < first(mz_range)) | (spectrum[:precursorMZ] > last(mz_range))
+        if (spectra[:precursorMZ][i] < first(mz_range)) | (spectra[:precursorMZ][i] > last(mz_range))
            continue
         end
     
-        transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+        #transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
+        transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectra[:retentionTime][i]), max_peak_width/2.0, spectra[:precursorMZ][i], Float32(quadrupole_isolation_width/2.0))
+        
         #println(length(transitions))
         nmatches, nmisses = matchPeaks(transitions, 
                                     transition_idx,
                                     fragmentMatches,
                                     fragmentMisses,
-                                    spectrum[:masses], 
-                                    spectrum[:intensities], 
+                                    #spectrum[:masses], 
+                                    spectra[:masses][i],
+                                    #spectrum[:intensities], 
+                                    spectra[:intensities][i],
                                     FragmentMatch{Float32},
                                     count_unmatched =true,
                                     δs = [frag_ppm_err],
@@ -66,12 +74,6 @@ function integrateMS2(
                                     ppm = fragment_tolerance
                                     )
 
-        for i in range(1, transition_idx)
-            transitions[i] = LibraryFragment{Float32}()
-        end
-        for i in range(1, prec_idx)
-            prec_idx[i] = zero(UInt32)
-        end
 
         frag_counts = counter(UInt32)
 
@@ -80,47 +82,49 @@ function integrateMS2(
         end
 
         if nmatches > 1
-            X, Hs, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses)
+            X, Hs, IDtoROW = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
             weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)
             #println(size(Hs))
         else
             IDtoROW = UnorderedDictionary{UInt32, UInt32}()
         end
 
-        for i in range(1, nmatches)
-            fragmentMatches[i] = FragmentMatch{Float32}()
-        end
+        reset!(fragmentMatches, nmatches), reset!(fragmentMisses, nmisses)
 
-        for i in range(1, nmisses)
-            fragmentMisses[i] = FragmentMatch{Float32}()
-        end
-
-        for key in prec_ids
+        for i in range(1, prec_idx)
+            key = prec_ids[i]
             if haskey(frag_counts, key)
 
                 if haskey(IDtoROW, key)
                     nmf[:precursor_idx][n] = key
                     nmf[:weight][n] = weights[IDtoROW[key]]
-                    nmf[:rt][n] = spectrum[:retentionTime]
+                    #nmf[:rt][n] = spectrum[:retentionTime]
+                    nmf[:rt][n] = spectra[:retentionTime][i]
                     nmf[:frag_count][n] = frag_counts[key]
 
                 else
                     nmf[:precursor_idx][n] = key
                     nmf[:weight][n] = Float32(0.0)
-                    nmf[:rt][n] = spectrum[:retentionTime]
+                    #nmf[:rt][n] = spectrum[:retentionTime]
+                    nmf[:rt][n] = spectra[:retentionTime][i]
                     nmf[:frag_count][n] = frag_counts[key]
                 end
             else
                 nmf[:precursor_idx][n] = key
                 nmf[:weight][n] = Float32(0.0)
-                nmf[:rt][n] = spectrum[:retentionTime]
+                #nmf[:rt][n] = spectrum[:retentionTime]
+                nmf[:rt][n] = spectra[:retentionTime][i]
                 nmf[:frag_count][n] = 0
             end
             n += 1
         end
+
+        reset!(transitions, transition_idx)
+        fill!(prec_ids, zero(UInt32))
+
     end
     nmf = DataFrame(nmf)
-    sort!(nmf, [:precursor_idx,:rt]);
+    sort!(nmf, [:precursor_idx,:rt], alg=QuickSort);
     return groupby(nmf, :precursor_idx)
 end
 

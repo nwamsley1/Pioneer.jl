@@ -269,7 +269,7 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
                 best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
                 setMatch!(matches, match, Ions[ion], masses[best_peak] +  δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
                 ion += 1
-                if ion > length(Ions)
+                if ion > ion_idx#length(Ions)
                     return match, unmatched_idx
                 end
                 low, high = getPPM(Ions[ion], ppm)
@@ -281,7 +281,7 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
             setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
             unmatched_idx += 1
             ion += 1
-            if ion > length(Ions)
+            if ion > ion_idx#length(Ions)
                 return match, unmatched_idx
             end
             low, high = getPPM(Ions[ion], ppm)

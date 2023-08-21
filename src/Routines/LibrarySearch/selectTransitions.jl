@@ -17,9 +17,10 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::V
         start = searchsortedfirst(precs, by = x->last(x), prec_mz - prec_tol) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), prec_mz + prec_tol) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
+            prec_idx += 1
             for frag in fragment_list[first(precs[i])]
-                transitions[transition_idx] = frag
                 transition_idx += 1 
+                transitions[transition_idx] = frag
             end
             prec_ids[prec_idx] = first(precs[i])
         end
@@ -29,8 +30,8 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::V
     #transitions = Vector{LibraryFragment{V}}() #Initialize list of transitions/fragment Ions
 
     i = 1
-    transition_idx = 1
-    prec_idx = 1
+    transition_idx = 0
+    prec_idx = 0
     rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
     rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
     #prec_ids = UInt32[]
@@ -38,5 +39,10 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::V
         transition_idx, prec_idx = addTransitions!(transitions, prec_ids, transition_idx, prec_idx, fragment_list, rt_index.rt_bins[i].prec, prec_mz, prec_tol)
     end
 
-    return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
+
+    sort!(@view(transitions[1:transition_idx]), 
+          by = x->getFragMZ(x),
+          alg=PartialQuickSort(1:transition_idx)) #Optimize?
+    #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
+    return transitions, prec_ids, transition_idx, prec_idx
 end
