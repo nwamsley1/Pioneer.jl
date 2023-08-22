@@ -151,8 +151,11 @@ end
     Arrow.Table(MS_TABLE_PATHS[1]), 
     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
     frags_mouse_detailed_33NCEcorrected_start1, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
     UInt32(1), #MS_FILE_IDX
-    RT_to_iRT_map_dict[1], #RT to iRT map
+    frag_err_dist_dict[1],
+    selectTransitions!,
+    searchScan!,
     min_frag_count = 4, 
     topN = 1000, 
     fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
@@ -161,15 +164,81 @@ end
     max_peaks = 10000, 
     #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
     #scan_range = (0, 300000), #101357 #22894
-    scan_range = (111357, 112357),
+    #scan_range = (111357, 112357),
+    scan_range = (101357, 101357),
     precursor_tolerance = 20.0,
     min_spectral_contrast =  Float32(0.5),
     min_matched_ratio = Float32(0.45),
-    rt_tol = Float32(20.0),
-    frag_ppm_err = frag_err_dist_dict[1].μ
-    );
+    rt_tol = 20.0,
+    frag_ppm_err = frag_err_dist_dict[1].μ,
+    precs = Counter(UInt32, UInt8, Float32, length(frags_mouse_detailed_33NCEcorrected_start1)),
+    scored_PSMs = makePSMsDict(XTandem(Float32)));
 
-
+    @time chroms = SearchRAW(
+    Arrow.Table(MS_TABLE_PATHS[1]), 
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    frag_err_dist_dict[1],
+    selectRTIndexedTransitions!,
+    missing, #searchRaw!. 
+    rt_index = rt_index,
+    min_frag_count = 4, 
+    topN = 1000, 
+    fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
+    λ = Float32(0), 
+    γ =Float32(0),
+    max_peaks = 10000, 
+    scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+    #scan_range = (0, 300000), #101357 #22894
+    #scan_range = (111357, 122357),
+    #scan_range = (101357, 101357),
+    precursor_tolerance = 20.0,
+    min_spectral_contrast =  Float32(0.5),
+    min_matched_ratio = Float32(0.45),
+    rt_tol = 20.0,
+    frag_ppm_err = frag_err_dist_dict[1].μ,
+    precs = Counter(UInt32, UInt8, Float32, length(frags_mouse_detailed_33NCEcorrected_start1)),
+    scored_PSMs = missing,
+    chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)));
+    #nmf = Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N))
+  
+    @time chroms = SearchRAW(
+        Arrow.Table(MS_TABLE_PATHS[1]), 
+        prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+        frags_mouse_detailed_33NCEcorrected_start1, 
+        RT_to_iRT_map_dict[1], #RT to iRT map'
+        UInt32(1), #MS_FILE_IDX
+        frag_err_dist_dict[1],
+        selectIsotopes!,
+        missing, #searchRaw!. 
+        rt_index = prec_rt_table,
+        min_frag_count = 4, 
+        topN = 1000, 
+        fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
+        λ = Float32(0), 
+        γ =Float32(0),
+        max_peaks = 10000, 
+        scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+        #scan_range = (0, 300000), #101357 #22894
+        #scan_range = (111357, 122357),
+        #scan_range = (101357, 101357),
+        spec_order = Set(1),
+        precursor_tolerance = 20.0,
+        min_spectral_contrast =  Float32(0.5),
+        min_matched_ratio = Float32(0.45),
+        IonTemplateType = Isotope{Float32},
+        IonMatchType = PrecursorMatch{Float32},
+        rt_tol = 20.0,
+        frag_ppm_err = frag_err_dist_dict[1].μ,
+        precs = Counter(UInt32, UInt8, Float32, length(frags_mouse_detailed_33NCEcorrected_start1)),
+        scored_PSMs = missing,
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
+        isotope_dict = isotopes);
+    
+        
+    selectRTIndexedTransitions!
     MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
     best_psms = ""
     ms_file_idx = 1
@@ -248,6 +317,16 @@ end
                     RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 5.0);
                     plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map);
                 
+
+
+                    @time ms1_chroms = integrateMS1(MS_TABLE, 
+                    prec_rt_table, 
+                    isotopes, 
+                    UInt32(ms_file_idx), 
+                    precursor_tolerance = 6.5, 
+                    scan_range = (0, length(MS_TABLE[:scanNumber])), 
+                    λ = Float32(0), 
+                    γ = Float32(0))
 
 
 
@@ -386,3 +465,5 @@ histogram!((test_sums_5_u./5), alpha = 0.5)
 
 
 Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
+
+testmyidea(t::Union{Int64, Bool}) = println(t)

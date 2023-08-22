@@ -50,7 +50,14 @@ function integrateMS2(
            continue
         end
     
-        transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectra[:retentionTime][i]), max_peak_width/2.0, spectra[:precursorMZ][i], Float32(quadrupole_isolation_width/2.0))
+        transition_idx, prec_idx = selectTransitions!(transitions, 
+                                                        prec_ids,
+                                                        fragment_list, 
+                                                        rt_index, 
+                                                        Float64(spectra[:retentionTime][i]), 
+                                                        max_peak_width/2.0, 
+                                                        spectra[:precursorMZ][i], 
+                                                        Float32(quadrupole_isolation_width/2.0))
         
         nmatches, nmisses = matchPeaks(transitions, 
                                     transition_idx,

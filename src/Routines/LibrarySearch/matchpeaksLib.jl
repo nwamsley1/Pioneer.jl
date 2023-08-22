@@ -81,6 +81,7 @@ getPrecID(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.prec_id
 getIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.intensity
 getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
 getPredictedIntenisty(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
+PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Int64), zero(UInt32))
 
 
 """
@@ -388,25 +389,37 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{FragmentMatch{Float32}}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, match_type::DataType; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType}
+function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{M}, unmatched::Vector{M}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
     if count_unmatched
-        #matches = Vector{match_type}()
-        #unmatched = Vector{match_type}()
-        #unmatched = Vector{FragmentMatch{T}}()
         nmatches, nmisses = 0, 0
         for δ in δs
             nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
         end
-
-        return nmatches-1, nmisses-1#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
+        return nmatches, nmisses#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
     else
-        matches = Vector{match_type}()
         for δ in δs
-            matchPeaks!(matches, Ions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+            nmatches, nmisses = matchPeaks!(matches, Ions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
         end
-        return sort(matches, by = x->getPeakInd(x))
+        #sort(matches, by = x->getPeakInd(x))
+        return nmatches, nmisses
     end
 end
+
+#=function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{Match{Float32}}, unmatched::Vector{Match{Float32}}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType}
+    if count_unmatched
+        nmatches, nmisses = 0, 0
+        for δ in δs
+            nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+        end
+        return nmatches, nmisses#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
+    else
+        for δ in δs
+            nmatches, nmisses = matchPeaks!(matches, Ions, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+        end
+        #sort(matches, by = x->getPeakInd(x))
+        return nmatches, nmisses
+    end
+end=#
 
 #=
 using Dictionaries

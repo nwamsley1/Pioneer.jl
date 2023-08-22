@@ -1,12 +1,14 @@
 function SearchRAW(
                     spectra::Arrow.Table, 
-                    #ptable::PrecursorDatabase,
                     frag_index::FragmentIndex{Float32},
-                    fragment_list::Vector{Vector{LibraryFragment{Float32}}},
-                    ms_file_idx::UInt32,
+                    ion_list::Vector{Vector{LibraryFragment{Float32}}},
                     interpolation::Any,
-                    err_dist::Laplace{Float64},;
-                    isolation_width::Float64 = 4.25,
+                    ms_file_idx::UInt32,
+                    err_dist::Laplace{Float64},
+                    selectIons!::Function,
+                    searchScan!::Union{Function, Missing};
+                    rt_index::Union{retentionTimeIndex{Float64, Float32}, Vector{Tuple{Float64, UInt32}}, Missing} = missing,
+                    quadrupole_isolation_width::Float64 = 4.25,
                     precursor_tolerance::Float64 = 5.0,
                     fragment_tolerance::Float64 = 20.0,
                     frag_ppm_err::Float64 = 0.0,
@@ -17,78 +19,119 @@ function SearchRAW(
                     λ::Float32 = Float32(1e3),
                     γ::Float32 = zero(Float32),
                     scan_range::Tuple{Int64, Int64} = (0, 0), 
-                    max_peaks::Int = 200, 
+                    max_peaks::Union{Int64,Bool} = false, 
                     max_iter::Int = 1000,
                     nmf_tol::Float32 = Float32(100.0),
-                    rt_tol::Float32 = Float32(30.0),
+                    rt_tol::Float64 = 30.0,
                     #fragment_match_ppm::U,
-                    data_type::Type{T} = Float64,
                     sample_rate::Float64 = 1.0,
-                    collect_frag_errs = false,
-                    spec_order::Set{Int64} = Set(2)
+                    collect_fmatches = false,
+                    spec_order::Set{Int64} = Set(2),
+                    IonMatchType::DataType = FragmentMatch{Float32},
+                    IonTemplateType::DataType = LibraryFragment{Float32},
+                    regularize::Bool = false,
+                    expected_matches::Int64 = 100000,
+                    precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
+                    max_peak_width::Float64 = 2.0,
+                    chromatograms::Union{Dict{Symbol, Vector}, Missing} = missing,
+                    scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
+                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     ) where {T<:Real}
-    
-    scored_PSMs = makePSMsDict(XTandem(data_type))
 
+    ##########
+    #Initialize 
+    weights = Float32[]
     msms_counts = Dict{Int64, Int64}()
-    precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
-    n = 1
-    all_fmatches = Vector{FragmentMatch{Float32}}()
-    collect_matches ? all_fmatches = [FragmentMatch{Float32}() for x in range(1, 30000)] : nothing
-    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
-    fragmentMatches = [FragmentMatch{Float32}() for _ in range(1, 100000)]
-    fragmentMisses = [FragmentMatch{Float32}() for _ in range(1, 100000)]
-    transitions = [LibraryFragment{Float32}() for _ in range(1, 100000)]
-    prec_ids = [zero(UInt32) for _ in range(1, 10000)]
-
-    H_COLS = zeros(Int64, 100000)
-    H_ROWS = zeros(Int64, 100000)
-    H_VALS = zeros(Float32, 100000)
-  
+    frag_err_idx = 1
+    chrom_idx = 1
     prec_idx = 0
-    transition_idx = 0
-
+    ion_idx = 0
     minimum_rt, maximum_rt = minimum(interpolation), maximum(interpolation)
-    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+
+    ###########
+    #Pre-allocate Arrays to save (lots) of time in garbage collection. 
+    all_fmatches = Vector{IonMatchType}()
+    collect_fmatches ? all_fmatches = [IonMatchType() for x in range(1, expected_matches)] : nothing
+
+    #These are overwritten for every searched spectrum. "expected_matches"
+    #is a guess for the largest array size that would be needed for any spectrum. 
+    #If the guess is too small, the arrays will simply be increased in size as needed
+    #by a pre-determined block-size. 
+    ionMatches = [IonMatchType() for _ in range(1, expected_matches)]
+    ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
+    ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)]
+    prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
+    H_COLS, H_ROWS, H_VALS = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches)
+  
+
+    ##########
+    #Iterate through spectra
     for i in range(1, size(spectra[:masses])[1])
 
+
+        ###########
+        #Scan Filtering
         (i%10000) == 0 ? println(i) : nothing
-        msn = spectra[:msOrder[i]]
+        msn = spectra[:msOrder][i]
         msn ∈ spec_order ? nothing : continue
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 
 
-        i ∈ scan_range ? nothing : continue
+        (i >= first(scan_range)) & (i <= last(scan_range)) ? nothing : continue
         first(rand(1)) <= sample_rate ? nothing : continue
+        #println("i $i")
+        min_intensity = getMinIntensity(spectra[:intensities][i], max_peaks)
 
-        min_intensity = zero(Float32)# spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
+        iRT_low, iRT_high = getRTWindow(interpolation(spectra[:retentionTime][i])::Float64, maximum_rt, minimum_rt, rt_tol)
 
+        ##########
+        #Ion Template Selection
+        #SearchScan! applies a fragment-index based 
+        if !ismissing(searchScan!)
+            prec_count, match_count = searchScan!(precs,
+                        frag_index, 
+                        min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
+                        iRT_low, iRT_high,
+                        Float32(fragment_tolerance), 
+                        Float32(precursor_tolerance),
+                        Float32(quadrupole_isolation_width),
+                        min_frag_count = min_frag_count, 
+                        min_ratio = Float32(min_matched_ratio),
+                        topN = topN
+                        )
+        end
+        #selectIons! 
+        if ismissing(isotope_dict) 
+            ion_idx, prec_idx = selectIons!(ionTemplates, 
+                                               ion_list,
+                                               precs,
+                                               topN,
+                                               prec_ids,
+                                               rt_index,
+                                               spectra[:retentionTime][i],
+                                               Float32(max_peak_width/2.0), #rt_tol
+                                               spectra[:precursorMZ][i], #prec_mz
+                                               Float32(quadrupole_isolation_width/2.0) #prec_tol
+                                               )::Tuple{Int64, Int64}
+        else
+            ion_idx, prec_idx = selectIons!(
+                                            ionTemplates,
+                                            rt_index,
+                                            isotope_dict,
+                                            prec_ids,
+                                            spectra[:retentionTime][i],
+                                            Float32(max_peak_width/2.0)
+                                            )
+        end
+        ion_idx < 2 ? continue : nothing 
 
-        iRT = interpolation(spectra[:retentionTime][i])::Float64
-        (iRT < minimum_rt) ? iRT_low = Float32(-Inf) : iRT_low = Float32(iRT - rt_tol)
-        (iRT > maximum_rt) ? iRT_high = Float32(Inf) : iRT_high = Float32(iRT + rt_tol)
-
-        prec_count, match_count = searchScan!(precs,
-                    frag_index, 
-                    min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
-                    iRT_low, iRT_high,
-                    Float32(fragment_tolerance), 
-                    Float32(precursor_tolerance),
-                    Float32(isolation_width),
-                    min_frag_count = min_frag_count, 
-                    min_ratio = Float32(min_matched_ratio),
-                    topN = topN
-                    )
-        
-        transition_idx, prec_idx = selectTransitions!(transitions, fragment_list, precs, topN)
-        transition_idx < 2 ? continue : nothing 
-        
-        nmatches, nmisses = matchPeaks(transitions, 
-                                    transition_idx,
-                                    fragmentMatches,
-                                    fragmentMisses,
+        ##########
+        #Match sorted list of plausible ions to the observed spectra
+        nmatches, nmisses = matchPeaks(ionTemplates, 
+                                    ion_idx,
+                                    ionMatches,
+                                    ionMisses,
                                     spectra[:masses][i], 
                                     spectra[:intensities][i], 
-                                    FragmentMatch{Float32},
                                     count_unmatched=true,
                                     δs = [frag_ppm_err],
                                     scan_idx = UInt32(i),
@@ -97,44 +140,122 @@ function SearchRAW(
                                     ppm = fragment_tolerance
                                     )
 
-        if nmatches < 2
-            reset!(fragmentMatches, nmatches), reset!(fragmentMisses, nmisses)
-            continue
+        ##########
+        #Spectral Deconvolution and Distance Metrics 
+        if nmatches < 2 #Few matches to do not perform de-convolution 
+            reset!(ionMatches, nmatches), reset!(ionMisses, nmisses)
+            IDtoROW = UnorderedDictionary{UInt32, UInt32}()
+        else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
+            X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            #Non-negative least squares coefficients for each precursor template explaining the spectra 
+            weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            #Spectral distance metrics between the observed spectrum (X) and the library spectra for each precursor (Hs)
+            scores = getDistanceMetrics(X, Hs, last_matched_col)
+
+            ##########
+            #Scoring and recording data
+            if !ismissing(scored_PSMs)
+                unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+
+                ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
+
+                #Score unscored_PSMs and write them to scored_PSMs
+                Score!(scored_PSMs, 
+                        unscored_PSMs, 
+                        length(spectra[:intensities][i]), 
+                        Float64(sum(spectra[:intensities][i])), 
+                        match_count/prec_count, 
+                        scores, #Named Tuple of spectrum simmilarity/distance measures 
+                        weights, #Coefficients for each precursor in the spectral deconvolution
+                        IDtoROW,
+                        scan_idx = i,
+                        min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
+                        min_frag_count = min_frag_count #Remove precursors with fewer fragments 
+                        )
+            end
+        end
+        #Add fragment matches to all_fmatches 
+        frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx, collect_fmatches)
+        
+        ##########
+        #Update Chromatograms 
+        if !ismissing(chromatograms)
+            frag_counts = counter(UInt32) #Basically a Dictionary that counts the number of matched ions (values) for each precursor (keys)
+            for match_idx in range(1, nmatches) #fragmentMatches
+                DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
+            end
+            #Add precursor templates with their weights and retention times to the chromatogram table 
+            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime])
         end
 
-        n = collectFragErrs(all_fmatches, fragmentMatches, nmatches, n, collect_fmatches)
-
-        X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-
-        weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
-
-        scores = getDistanceMetrics(X, Hs, last_matched_col)
-        
-        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
-
-        ScoreFragmentMatches!(unscored_PSMs, fragmentMatches, nmatches,err_dist)
-
-        Score!(scored_PSMs, unscored_PSMs, 
-                length(spectra[:intensities][i]), 
-                Float64(sum(spectra[:intensities][i])), 
-                match_count/prec_count, scores[:scribe], scores[:city_block], scores[:matched_ratio], scores[:spectral_contrast], scores[:entropy_sim], weights, IDtoROW,
-                scan_idx = i,
-                min_spectral_contrast = min_spectral_contrast,
-                min_frag_count = min_frag_count
-                )
-        
-        #Reset 
-        reset!(transitions, transition_idx)
-        reset!(fragmentMatches, nmatches), reset!(fragmentMisses, nmisses)
+        ##########
+        #Reset pre-allocated arrays 
+        reset!(ionTemplates, ion_idx)
+        reset!(ionMatches, nmatches), reset!(ionMisses, nmisses)
+        fill!(prec_ids, zero(UInt32))
 
     end
 
-    if collect_frag_errs
+
+
+    ############
+    #Return Chromatograms and Score/Feature Table
+    if collect_fmatches
         return DataFrame(scored_PSMs), all_matches
     else
-        DataFrame(scored_PSMs)
+        if ismissing(chromatograms)
+            DataFrame(scored_PSMs)
+        elseif ismissing(scored_PSMs)
+            chromatograms = DataFrame(chromatograms)
+            sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
+            return groupby(DataFrame(chromatograms), :precursor_idx)
+        else
+            chromatograms = DataFrame(chromatograms)
+            sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
+            return DataFrame(scored_PSMs), groupby(DataFrame(chromatograms), :precursor_idx)
+        end
     end
 
+end
+
+function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_times::AbstractArray{Union{U, Missing}}) where {T,U<:AbstractFloat}
+    function inc!(chroms::Dict{Symbol, Vector}, n::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64)
+        chroms[:precursor_idx][n] = key
+        chroms[:weight][n] = weight
+        chroms[:rt][n] = rt
+        chroms[:frag_count][n] = frag_count
+    end
+
+    for i in range(1, prec_idx)
+        key = prec_ids[i]
+        if haskey(frag_counts, key)
+    
+            if haskey(id_to_row, key)
+                inc!(chroms, n, key, weights[id_to_row[key]], retention_times[i], frag_counts[key])
+            else
+                inc!(chroms, n, key, Float32(0.0),retention_times[i], frag_counts[key])
+            end
+        else
+            inc!(chroms, n, key, Float32(0.0), retention_times[i], 0)
+        end
+        n += 1
+    end    
+    return n
+end
+
+function getRTWindow(irt::U, max_rt::T, min_rt::T, rt_tol::T) where {T,U<:AbstractFloat}
+    #(irt < min_rt) ? irt_low = Float32(-Inf) : irt_low = Float32(irt - rt_tol)
+    #(irt > max_rt) ? irt_high = Float32(Inf) : irt_high = Float32(irt + rt_tol)
+    #return irt_low, irt_high
+    return Float32(irt - rt_tol), Float32(irt + rt_tol)
+end
+
+function getMinIntensity(intensities::AbstractArray{Union{T, Missing}}, max_peaks::Int) where {T<:AbstractFloat}
+    return intensities[sortperm(intensities, rev = true)[min(max_peaks, length(intensities))]]
+end
+
+function getMinIntensity(intensities::AbstractArray{Union{T, Missing}}, max_peaks::Bool) where {T<:AbstractFloat}
+    return zero(T)
 end
 
 function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
@@ -143,6 +264,19 @@ function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:
     end
 end
 
+function reset!(fms::Vector{PrecursorMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        fms[i] = PrecursorMatch{T}()
+    end
+end
+
+function reset!(fms::Vector{Isotope{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        fms[i] = Isotope{T}()
+    end
+end
+
+
 function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
     for i in range(1, last_non_empty)
         lf[i] = LibraryFragment{T}()
@@ -150,7 +284,7 @@ function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<
 end
 
 
-function collectFragErrs(all_fmatches::Vector{FragmentMatch{T}}, new_fmatches::Vector{FragmentMatch{T}}, nmatches::Int, n::Int, collect_fmatches::Bool) where {T<:AbstractFloat}
+function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {T<:AbstractFloat,M<:Match}
     if collect_fmatches
         for match in range(1, nmatches)
             if n < length(all_fmatches)
@@ -162,15 +296,6 @@ function collectFragErrs(all_fmatches::Vector{FragmentMatch{T}}, new_fmatches::V
     return n
 end
 
-if collect_frag_errs
-    for match in range(1, nmatches)
-        if n < length(all_matches)
-            all_matches[n] = fragmentMatches[match]
-            n += 1
-        end
-
-    end
-end
 #=
 
 function SearchRAW(

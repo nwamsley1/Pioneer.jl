@@ -101,15 +101,21 @@ function Score!(PSMs_dict::Dict,
                 spectrum_peaks::Int, 
                 spectrum_intensity::T, 
                 expected_matches::Float64,
-                scribe_score::Vector{Float32}, 
-                city_block::Vector{Float32}, 
-                matched_ratio::Vector{Float32}, 
-                spectral_contrast::Vector{Float32}, 
-                entropy_sim::Vector{Float32}, 
+                #scribe_score::Vector{Float32}, 
+                #city_block::Vector{Float32}, 
+                #matched_ratio::Vector{Float32}, 
+                #spectral_contrast::Vector{Float32}, 
+                #entropy_sim::Vector{Float32}, 
+                scores::NamedTuple,
                 weight::Vector{Float32}, 
                 IDtoROW::UnorderedDictionary{UInt32, UInt32}; 
                 scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T<:Real}
 
+    scribe_score = scores[:scribe]::Vector{Float32}
+    city_block = scores[:city_block]::Vector{Float32}
+    matched_ratio = scores[:matched_ratio]::Vector{Float32}
+    spectral_contrast = scores[:spectral_contrast]::Vector{Float32}
+    entropy_sim = scores[:entropy_sim]::Vector{Float32}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)

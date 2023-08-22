@@ -1,15 +1,3 @@
-function selectIsotopes(prec_list::Vector{Tuple{Float64, UInt32}}, isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{U}}}, rt::T, rt_tol::T) where {T,U<:AbstractFloat}
-    isotopes = Vector{Isotope{U}}()
-    i = 1
-    rt_start = searchsortedfirst(prec_list, rt - rt_tol, lt=(r,x)->first(r)<x) #First RT bin to search
-    rt_stop = searchsortedlast(prec_list, rt + rt_tol, lt=(x, r)->first(r)>x) #Last RT bin to search 
-    #return rt_start, rt_stop
-    for i in range(rt_start, rt_stop)
-        append!(isotopes, isotope_dict[last(prec_list[i])])
-    end
-    return sort(isotopes, by = x->getMZ(x))
-end
-
 function integrateMS1(
                     spectra::Arrow.Table, 
                     #rt_index::retentionTimeIndex{T, U},

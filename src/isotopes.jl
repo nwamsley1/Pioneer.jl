@@ -70,6 +70,7 @@ getMZ(i::Isotope{T}) where {T<:AbstractFloat} = i.mass
 getIntensity(i::Isotope{T}) where {T<:AbstractFloat} = i.intensity
 getPrecID(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
 Isotope{Float32}() = Isotope(zero(Float32), zero(Float32), zero(UInt32))
+Isotope{Float32}() = Isotope(zero(Float32), zero(Float32), zero(UInt32))
 
 function getMonoMass(comp::Composition,charge::I) where {I<:Integer}
     return (comp.C*12.000000 + 

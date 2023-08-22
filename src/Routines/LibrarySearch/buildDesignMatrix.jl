@@ -8,22 +8,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
             M += 1
         end
     end
-    #println(M)
-    #M = length(unique([getPeakInd(matches[i]) for i in range(1, nmatches)]))
     M += nmisses
-    #println("M2 ", M)
-    #M += length(unique([getPeakInd(misses[i]) for i in range(1, nmisses)]))
-    #Design matrix. One row for every precursor template. One column for every matched peak. 
-    #H_COLS = zeros(Int64, nmatches + nmisses)
-    #H_ROWS = zeros(Int64, nmatches + nmisses)
-    #H_VALS = zeros(T, nmatches + nmisses)
-
-    #Design matrix. One row for every precursor template. One column for every unmatched peak. 
-    #U_COLS = zeros(Int64, nmisses)
-    #U_ROWS = zeros(Int64, nmisses)
-    #U_VALS = zeros(T, nmisses)
-
-    #println()
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(T, M)
 

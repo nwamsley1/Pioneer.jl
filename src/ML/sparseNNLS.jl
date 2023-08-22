@@ -21,7 +21,7 @@ function factorSpectrum(Wnew::Matrix{T}, Wold::Matrix{T}, HHt_diag::Vector{T}, W
         i += 1
     end
 end
-function sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), γ::T = zero(T)/2, max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
+function sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, λ::T, γ::T, regularize::Bool = true; max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
 
     Wnew = 100*ones(T, (1, H.n))
     #Wnew = 100*ones(T, H.n)
@@ -38,6 +38,7 @@ function sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), 
     ##OLS estimate with non-negative constraint since penalties are zero 
     factorSpectrum(Wnew, Wold, HHt_diag, WxHHt_VHt, HHt, λs, max_iter, tol);
 
+    regularize ? nothing : return Wnew 
     #Set adaptive weights 
     setLambdas!(λs, Float32(λ*sqrt(H.m)), γ, Wnew)
     #setLambdas!(λs, Float32(λ), γ, Wnew)
@@ -47,6 +48,8 @@ function sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), 
     return Wnew
 
 end
+
+#sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}) where {T<:AbstractFloat}= sparseNMF(H, X, zero(T), zero(T), regularize = false)
 #=function sparseNMF(H::SparseMatrixCSC{T, Int64}, Ht::SparseMatrixCSC{T, Int64}, X::Vector{T}; λ::T = zero(T), γ::T = zero(T)/2, max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
 
     Wnew = 100*ones(T, (1, H.m))
