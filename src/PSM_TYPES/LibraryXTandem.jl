@@ -23,7 +23,7 @@ XTandem(::Type{Float32}) = XTandem(UInt8(255), zero(UInt8),0, Float32(0), Set(UI
 XTandem(::Type{Float64}) = XTandem(UInt8(255),zero(UInt8),0, Float64(0), Set(UInt8[]), 0, Float64(0), Set(UInt8[]), Float64[], Float64(0), UInt32(0), UInt32(0))
 XTandem() = XTandem(Float64)
 
-function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}}, matches::Vector{FragmentMatch{T}}, nmatches::Int64) where {T,U<:Real}
+function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}}, matches::Vector{FragmentMatch{T}}, nmatches::Int64, errdist::Laplace{Float64}) where {T,U<:Real}
     #UnorderedDictionary{UInt32, FastXTandem}()
     for i in range(1, nmatches)
         match = matches[i]
@@ -31,13 +31,12 @@ function ScoreFragmentMatches!(results::UnorderedDictionary{UInt32, XTandem{U}},
             insert!(results, getPrecID(match), XTandem(U))
             results[getPrecID(match)].ms_file_idx = getMSFileID(match)
         end
-        ModifyFeatures!(results[getPrecID(match)], match, match.match_mz, getIntensity(match))
+        ModifyFeatures!(results[getPrecID(match)], match, match.match_mz, getIntensity(match), errdist)
     end
     #results
 end
 
-function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union{Missing, T}, intensity::Union{Missing, T}) where {U,T<:Real}
-    errdist = Distributions.Normal(0, 3.638279298943919)
+function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union{Missing, T}, intensity::Union{Missing, T}, errdist::Laplace{Float64}) where {U,T<:Real}
     if getIonType(match) == 'b'
         score.b_count += 1
         score.b_int += intensity
@@ -47,8 +46,11 @@ function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union
         score.y_int += intensity
         push!(score.y_ions, getFragInd(match))
     end
-    score.error += Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))#abs(mass - getFragMZ(match))
-
+    #ppm_err = ((mass - getFragMZ(match))/(mass/1e6))  - errdist.θ
+    #score.error += Distributions.logpdf(errdist, ppm_err) - Distributions.logpdf(Uniform(0, 13.073079713498782), min(abs(ppm_err), 13.073079713498782)) #abs(mass - getFragMZ(match))
+    ppm_err =  ((getFragMZ(match) - mass)/(getFragMZ(match)/1e6)) 
+    #score.error += Distributions.logpdf(Laplace(0.0,  errdist.θ), ppm_err) - Distributions.logpdf(Uniform(0, 13.073079713498782), min(abs(ppm_err), 13.073079713498782)) #abs(mass - getFragMZ(match))
+    score.error = ppm_err
     #Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
 
     score.precursor_idx = getPrecID(match)
@@ -175,7 +177,9 @@ function Score!(PSMs_dict::Dict,
         append!(PSMs_dict[:b_ladder], getLongestSet(unscored_PSMs[key].b_ions))
         append!(PSMs_dict[:total_ions], unscored_PSMs[key].y_count + unscored_PSMs[key].b_count)
         append!(PSMs_dict[:poisson], getPoisson(expected_matches, unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
-        append!(PSMs_dict[:error], unscored_PSMs[key].error/(unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
+        
+        #append!(PSMs_dict[:error], unscored_PSMs[key].error/(unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
+        append!(PSMs_dict[:error], unscored_PSMs[key].error)
         append!(PSMs_dict[:spectrum_peaks], spectrum_peaks)
         append!(PSMs_dict[:intensity_explained], (sum(unscored_PSMs[key].b_int) + sum(unscored_PSMs[key].y_int))/spectrum_intensity)
         append!(PSMs_dict[:entropy], StatsBase.entropy(unscored_PSMs[key].intensities))

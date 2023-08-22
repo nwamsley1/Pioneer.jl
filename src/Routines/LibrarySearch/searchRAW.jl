@@ -4,6 +4,181 @@ function SearchRAW(
                     frag_index::FragmentIndex{Float32},
                     fragment_list::Vector{Vector{LibraryFragment{Float32}}},
                     ms_file_idx::UInt32,
+                    interpolation::Any,
+                    err_dist::Laplace{Float64},;
+                    isolation_width::Float64 = 4.25,
+                    precursor_tolerance::Float64 = 5.0,
+                    fragment_tolerance::Float64 = 20.0,
+                    frag_ppm_err::Float64 = 0.0,
+                    topN::Int64 = 20,
+                    min_frag_count::Int64 = 4,
+                    min_matched_ratio::Float32 = Float32(0.8),
+                    min_spectral_contrast::Float32 = Float32(0.65),
+                    λ::Float32 = Float32(1e3),
+                    γ::Float32 = zero(Float32),
+                    scan_range::Tuple{Int64, Int64} = (0, 0), 
+                    max_peaks::Int = 200, 
+                    max_iter::Int = 1000,
+                    nmf_tol::Float32 = Float32(100.0),
+                    rt_tol::Float32 = Float32(30.0),
+                    #fragment_match_ppm::U,
+                    data_type::Type{T} = Float64,
+                    sample_rate::Float64 = 1.0,
+                    collect_frag_errs = false,
+                    spec_order::Set{Int64} = Set(2)
+                    ) where {T<:Real}
+    
+    scored_PSMs = makePSMsDict(XTandem(data_type))
+
+    msms_counts = Dict{Int64, Int64}()
+    precs = Counter(UInt32, UInt8, Float32, length(fragment_list)) #Prec counter
+    n = 1
+    all_fmatches = Vector{FragmentMatch{Float32}}()
+    collect_matches ? all_fmatches = [FragmentMatch{Float32}() for x in range(1, 30000)] : nothing
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    fragmentMatches = [FragmentMatch{Float32}() for _ in range(1, 100000)]
+    fragmentMisses = [FragmentMatch{Float32}() for _ in range(1, 100000)]
+    transitions = [LibraryFragment{Float32}() for _ in range(1, 100000)]
+    prec_ids = [zero(UInt32) for _ in range(1, 10000)]
+
+    H_COLS = zeros(Int64, 100000)
+    H_ROWS = zeros(Int64, 100000)
+    H_VALS = zeros(Float32, 100000)
+  
+    prec_idx = 0
+    transition_idx = 0
+
+    minimum_rt, maximum_rt = minimum(interpolation), maximum(interpolation)
+    #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
+    for i in range(1, size(spectra[:masses])[1])
+
+        (i%10000) == 0 ? println(i) : nothing
+        msn = spectra[:msOrder[i]]
+        msn ∈ spec_order ? nothing : continue
+        msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 
+
+        i ∈ scan_range ? nothing : continue
+        first(rand(1)) <= sample_rate ? nothing : continue
+
+        min_intensity = zero(Float32)# spectrum[:intensities][sortperm(spectrum[:intensities], rev = true)[min(max_peaks, length(spectrum[:intensities]))]]
+
+
+        iRT = interpolation(spectra[:retentionTime][i])::Float64
+        (iRT < minimum_rt) ? iRT_low = Float32(-Inf) : iRT_low = Float32(iRT - rt_tol)
+        (iRT > maximum_rt) ? iRT_high = Float32(Inf) : iRT_high = Float32(iRT + rt_tol)
+
+        prec_count, match_count = searchScan!(precs,
+                    frag_index, 
+                    min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
+                    iRT_low, iRT_high,
+                    Float32(fragment_tolerance), 
+                    Float32(precursor_tolerance),
+                    Float32(isolation_width),
+                    min_frag_count = min_frag_count, 
+                    min_ratio = Float32(min_matched_ratio),
+                    topN = topN
+                    )
+        
+        transition_idx, prec_idx = selectTransitions!(transitions, fragment_list, precs, topN)
+        transition_idx < 2 ? continue : nothing 
+        
+        nmatches, nmisses = matchPeaks(transitions, 
+                                    transition_idx,
+                                    fragmentMatches,
+                                    fragmentMisses,
+                                    spectra[:masses][i], 
+                                    spectra[:intensities][i], 
+                                    FragmentMatch{Float32},
+                                    count_unmatched=true,
+                                    δs = [frag_ppm_err],
+                                    scan_idx = UInt32(i),
+                                    ms_file_idx = ms_file_idx,
+                                    min_intensity = min_intensity,
+                                    ppm = fragment_tolerance
+                                    )
+
+        if nmatches < 2
+            reset!(fragmentMatches, nmatches), reset!(fragmentMisses, nmisses)
+            continue
+        end
+
+        n = collectFragErrs(all_fmatches, fragmentMatches, nmatches, n, collect_fmatches)
+
+        X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(fragmentMatches, fragmentMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+
+        weights = sparseNMF(Hs, X; λ=λ,γ=γ, max_iter=max_iter, tol=nmf_tol)[:]
+
+        scores = getDistanceMetrics(X, Hs, last_matched_col)
+        
+        unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+
+        ScoreFragmentMatches!(unscored_PSMs, fragmentMatches, nmatches,err_dist)
+
+        Score!(scored_PSMs, unscored_PSMs, 
+                length(spectra[:intensities][i]), 
+                Float64(sum(spectra[:intensities][i])), 
+                match_count/prec_count, scores[:scribe], scores[:city_block], scores[:matched_ratio], scores[:spectral_contrast], scores[:entropy_sim], weights, IDtoROW,
+                scan_idx = i,
+                min_spectral_contrast = min_spectral_contrast,
+                min_frag_count = min_frag_count
+                )
+        
+        #Reset 
+        reset!(transitions, transition_idx)
+        reset!(fragmentMatches, nmatches), reset!(fragmentMisses, nmisses)
+
+    end
+
+    if collect_frag_errs
+        return DataFrame(scored_PSMs), all_matches
+    else
+        DataFrame(scored_PSMs)
+    end
+
+end
+
+function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        fms[i] = FragmentMatch{T}()
+    end
+end
+
+function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+    for i in range(1, last_non_empty)
+        lf[i] = LibraryFragment{T}()
+    end
+end
+
+
+function collectFragErrs(all_fmatches::Vector{FragmentMatch{T}}, new_fmatches::Vector{FragmentMatch{T}}, nmatches::Int, n::Int, collect_fmatches::Bool) where {T<:AbstractFloat}
+    if collect_fmatches
+        for match in range(1, nmatches)
+            if n < length(all_fmatches)
+                all_fmatches[n] = new_fmatches[match]
+                n += 1
+            end
+        end
+    end
+    return n
+end
+
+if collect_frag_errs
+    for match in range(1, nmatches)
+        if n < length(all_matches)
+            all_matches[n] = fragmentMatches[match]
+            n += 1
+        end
+
+    end
+end
+#=
+
+function SearchRAW(
+                    spectra::Arrow.Table, 
+                    #ptable::PrecursorDatabase,
+                    frag_index::FragmentIndex{Float32},
+                    fragment_list::Vector{Vector{LibraryFragment{Float32}}},
+                    ms_file_idx::UInt32,
                     interpolation::Any;
                     isolation_width::Float64 = 4.25,
                     precursor_tolerance::Float64 = 5.0,
@@ -167,20 +342,6 @@ function SearchRAW(
     end
 end
 
-function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
-    for i in range(1, last_non_empty)
-        fms[i] = FragmentMatch{T}()
-    end
-end
-
-function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
-    for i in range(1, last_non_empty)
-        lf[i] = LibraryFragment{T}()
-    end
-end
-
-
-#=
 CSV.write("/Users/n.t.wamsley/Projects/TEST_DATA/psms_071923.csv",PSMs)
 
 test_psms = SearchRAW(MS_TABLE, prosit_index_5ppm_15irt, frag_detailed, UInt32(1), linear_spline,

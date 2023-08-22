@@ -91,7 +91,7 @@ init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for ea
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,Laplace{Float64}}()
 lk = ReentrantLock()
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:1])))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     @time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
                     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
@@ -143,7 +143,7 @@ end
 #Main PSM Search
 ###########
 PSMs_dict = Dict{Int64, DataFrame}()
-@time Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+@time Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:1])))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
         @time PSMs = SearchRAW(
                                 MS_TABLE, 
@@ -151,39 +151,43 @@ PSMs_dict = Dict{Int64, DataFrame}()
                                 frags_mouse_detailed_33NCEcorrected_start1, 
                                 UInt32(ms_file_idx), #MS_FILE_IDX
                                 RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map
+                                frag_err_dist_dict[ms_file_idx],
                                 min_frag_count = 4, 
                                 topN = 1000, 
                                 fragment_tolerance = quantile(frag_err_dist_dict[ms_file_idx], 0.975), 
                                 λ = Float32(0), 
                                 γ =Float32(0),
                                 max_peaks = 10000, 
-                                scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+                                #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+                                scan_range = (101357, 111357),
                                 precursor_tolerance = 20.0,
                                 min_spectral_contrast =  Float32(0.5),
                                 min_matched_ratio = Float32(0.45),
                                 rt_tol = Float32(20.0),
                                 frag_ppm_err = frag_err_dist_dict[ms_file_idx].μ
+                                #frag_ppm_err = 0.0
                                 )
-        PSMs = PSMs[PSMs[:,:weight].>100.0,:];
-        @time refinePSMs!(PSMs, MS_TABLE, precursors_mouse_detailed_33NCEcorrected_start1);
-        ###########
-        #Clean features
-        ############
-        PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
-        PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio])
-        replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]))
-        replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,:scribe_score]))
-        #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
-        transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
         lock(lk) do 
             PSMs_dict[ms_file_idx] = PSMs
         end
 end
+############
+@time PSMs = vcat(values(PSMs_dict)...)
+PSMs = PSMs[PSMs[:,:weight].>100.0,:];
+@time refinePSMs!(PSMs, MS_TABLE, precursors_mouse_detailed_33NCEcorrected_start1);
+###########
+#Clean features
+############
+PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf
+PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio])
+replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]))
+replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,:scribe_score]))
+#PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/PSMs_080423.csv"))
+transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
 
 ############
 #Target-Decoy discrimination
 ############
-@time PSMs = vcat(values(PSMs_dict)...)
 
 features = [:hyperscore,:total_ions,:intensity_explained,:error,
             :poisson,:spectral_contrast,:entropy_sim,
@@ -221,7 +225,7 @@ PSMs = groupby(PSMs,:ms_file_idx)
 best_psms_dict = Dict{Int64, DataFrame}()
 
 @time begin
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:2])))
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
     best_psms = ""

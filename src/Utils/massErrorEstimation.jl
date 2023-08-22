@@ -22,7 +22,7 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
         dist[i] = w*rand(err_dist) + (1 - w)*rand(background_dist)
     end
 
-    #=
+    
     p = Plots.histogram(dist, normalize = :probability, bins = 100, alpha = 0.5, label = "Samples from Fitted Dist.",
                         xlabel = "Mass Error (ppm)", ylabel = "Probability",
                         size = 100*[13.3, 7.5],
@@ -38,6 +38,6 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
     #Plots.vline!([median(frag_ppm_errs)])
     Plots.vline!(p, [params(mix_mle)[1][1][1]], lw = 6.0, color = :black, label = "Estimated Mass Error (ppm)",
     show = true)
-    =#
+    
     return err_dist
 end

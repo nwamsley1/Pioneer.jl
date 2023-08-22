@@ -160,13 +160,14 @@ end
     γ =Float32(0),
     max_peaks = 10000, 
     #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
-    scan_range = (0, 300000), #101357 #22894
+    #scan_range = (0, 300000), #101357 #22894
+    scan_range = (111357, 112357),
     precursor_tolerance = 20.0,
     min_spectral_contrast =  Float32(0.5),
     min_matched_ratio = Float32(0.45),
     rt_tol = Float32(20.0),
     frag_ppm_err = frag_err_dist_dict[1].μ
-    )
+    );
 
 
     MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
@@ -273,3 +274,115 @@ end
 end
 
 ArrayInterface.parent_type(Vector{PrecursorBinItem{Float64}})
+
+
+N = 9000000
+test_counter = Counter(UInt32, UInt8, Float32, N) #Prec counter
+rand_sample = [UInt32(x) for x in rand(1:N, 10000)]
+function testCounter(counter::Counter{UInt32, UInt8, Float32}, samp::Vector{UInt32})
+    for s in rand_sample
+        inc!(counter, s, one(Float32))
+    end
+    reset!(counter)
+end
+
+@btime testCounter(test_counter, rand_sample)
+consecutive_sample = [UInt32(x) for x in range(1, 10000)]
+@btime testCounter(test_counter, consecutive_sample)
+
+
+
+N = 10000
+
+S = 20
+test_sums_20 = zeros(Float64, N)
+for i in 1:N
+    test_sums_20[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
+end
+
+S = 10
+test_sums_10 = zeros(Float64, N)
+for i in 1:N
+    test_sums_10[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
+end
+
+S = 4
+test_sums_4 = zeros(Float64, N)
+for i in 1:N
+    test_sums_4[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
+end
+
+S = 10
+test_sums_10_u = zeros(Float64, N)
+for i in 1:N
+    test_sums_10_u[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(Uniform(-15.0, 15.0), S)))
+end
+
+
+histogram((test_sums_20./20), alpha = 0.5)
+
+histogram((test_sums_10./10), alpha = 0.5, bins = 50)
+histogram!((test_sums_10_u./10), alpha = 0.5, bins = 50)
+
+histogram((-1).*(test_sums_5./5), alpha = 0.5, bins = 50)
+histogram!((-1).*(test_sums_5_u./5), alpha = 0.5, bins = 50)
+
+histogram((test_sums_5), alpha = 0.5, bins = 50)
+histogram!((test_sums_5_u), alpha = 0.5, bins = 50)
+
+
+histogram(PSMs[(PSMs[:,:q_value].<=0.01) .& (PSMs[:,:total_ions].==7),:error],
+            alpha = 0.5, bins = 50)
+
+histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]).& (PSMs[:,:total_ions].==7),:error],
+            alpha = 0.5, bins = 50)
+
+
+histogram(PSMs[(PSMs[:,:q_value].<=0.01) .& (PSMs[:,:total_ions].==7),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+
+histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]).& (PSMs[:,:total_ions].==7),:error],
+            alpha = 0.5, bins = 50, normalize = :pdf)
+
+histogram(PSMs[(PSMs[:,:q_value].<=0.01),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+
+histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
+            alpha = 0.5, bins = 50, normalize = :pdf)
+
+            histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
+            alpha = 0.5, bins = 50, normalize = :pdf)
+
+
+    histogram(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.1),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+
+    #histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.05),:error],
+    #        alpha = 0.5, bins = 50, normalize =:pdf)
+
+    histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.01),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+            
+    histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.001),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+
+            histogram!(PSMs[(PSMs[:,:q_value].<=0.01),:error],
+            alpha = 0.5, bins = 50, normalize =:pdf)
+
+        \histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
+        alpha = 0.5, bins = 50, normalize = :pdf)
+
+
+histogram2d(PSMs[PSMs[:,:q_value].<=0.01,:total_ions], PSMs[PSMs[:,:q_value].<=0.01,:error],
+            alpha = 0.5, bins = (50, 50))
+
+            histogram2d!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:total_ions], 
+            PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
+            alpha = 0.5, bins = (50, 50))
+
+histogram((test_sums_5./5), alpha = 0.5)
+histogram!((test_sums_5_u./5), alpha = 0.5)
+
+
+
+Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))

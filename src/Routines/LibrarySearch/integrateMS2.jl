@@ -22,7 +22,6 @@ function integrateMS2(
 
 
     #Pre-allocate 
-
     nmf = Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N))
     fragmentMatches = [FragmentMatch{Float32}() for x in range(1, 10000)]
     fragmentMisses = [FragmentMatch{Float32}() for x in range(1, 10000)]
@@ -36,9 +35,7 @@ function integrateMS2(
     #for (i, spectrum) in ProgressBar(enumerate(Tables.namedtupleiterator(spectra)))
     #for (i, spectrum) in enumerate(Tables.namedtupleiterator(spectra))
     for i in range(1, size(spectra[:masses])[1])
-    #for i in ProgressBar(range(1, size(spectra[:masses])[1]))
 
-        #if spectrum[:msOrder] == 1
         if spectra[:msOrder][i] == 1
             continue
         else
@@ -48,15 +45,13 @@ function integrateMS2(
             i < first(scan_range) ? continue : nothing
             i > last(scan_range) ? continue : nothing
         end
-        #if (spectrum[:precursorMZ] < first(mz_range)) | (spectrum[:precursorMZ] > last(mz_range))
+
         if (spectra[:precursorMZ][i] < first(mz_range)) | (spectra[:precursorMZ][i] > last(mz_range))
            continue
         end
     
-        #transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectrum[:retentionTime]), max_peak_width/2.0, spectrum[:precursorMZ], Float32(quadrupole_isolation_width/2.0))
-        transitions, prec_ids, transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectra[:retentionTime][i]), max_peak_width/2.0, spectra[:precursorMZ][i], Float32(quadrupole_isolation_width/2.0))
+        transition_idx, prec_idx = selectTransitions!(transitions, prec_ids, fragment_list, rt_index, Float64(spectra[:retentionTime][i]), max_peak_width/2.0, spectra[:precursorMZ][i], Float32(quadrupole_isolation_width/2.0))
         
-        #println(length(transitions))
         nmatches, nmisses = matchPeaks(transitions, 
                                     transition_idx,
                                     fragmentMatches,
@@ -98,21 +93,18 @@ function integrateMS2(
                 if haskey(IDtoROW, key)
                     nmf[:precursor_idx][n] = key
                     nmf[:weight][n] = weights[IDtoROW[key]]
-                    #nmf[:rt][n] = spectrum[:retentionTime]
                     nmf[:rt][n] = spectra[:retentionTime][i]
                     nmf[:frag_count][n] = frag_counts[key]
 
                 else
                     nmf[:precursor_idx][n] = key
                     nmf[:weight][n] = Float32(0.0)
-                    #nmf[:rt][n] = spectrum[:retentionTime]
                     nmf[:rt][n] = spectra[:retentionTime][i]
                     nmf[:frag_count][n] = frag_counts[key]
                 end
             else
                 nmf[:precursor_idx][n] = key
                 nmf[:weight][n] = Float32(0.0)
-                #nmf[:rt][n] = spectrum[:retentionTime]
                 nmf[:rt][n] = spectra[:retentionTime][i]
                 nmf[:frag_count][n] = 0
             end

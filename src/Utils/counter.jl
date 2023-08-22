@@ -50,7 +50,7 @@ end
 
 function reset!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} 
     #for i in 1:(getSize(c) - 1)
-    for i in 1:(getSize(c) - 1)
+    @inbounds for i in 1:(getSize(c) - 1)
     #for i in 1:length(c.ids)
     #for i in 1:(getSize(c))
         #if iszero(c.ids[i])
@@ -65,7 +65,7 @@ end
 
 function countFragMatches(c::Counter{I,C,T}, min_count::Int, min_ratio::T) where {I,C<:Unsigned,T<:AbstractFloat} 
     matched_frags = 0
-    for i in 1:(getSize(c) - 1)
+    @inbounds for i in 1:(getSize(c) - 1)
         id = c.ids[i]
         frag_count = getCount(c, id)
         matched_frags += frag_count

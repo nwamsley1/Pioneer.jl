@@ -1,11 +1,23 @@
-function selectTransitions(fragment_list::Vector{Vector{LibraryFragment{T}}}, counter::Counter{I,C}, topN::Int, ppm::AbstractFloat = 20.0) where {T<:AbstractFloat, I,C<:Unsigned}
-    transitions = Vector{LibraryFragment{T}}()
+function selectTransitions!(transitions::Vector{LibraryFragment{V}}, fragment_list::Vector{Vector{LibraryFragment{T}}}, counter::Counter{I,C}, topN::Int, ppm::AbstractFloat = 20.0) where {T,V<:AbstractFloat, I,C<:Unsigned}
+    #transitions = Vector{LibraryFragment{T}}()
     i = 1
+    transition_idx = 0
     while i <= min(topN, counter.matches)
-        append!(transitions, fragment_list[getID(counter, i)])
+        for frag in fragment_list[getID(counter, i)]
+            transition_idx += 1
+            #Grow array if exceeds length
+            transitions[transition_idx] = frag
+        end
         i += 1
     end
-    return sort!(transitions, by = x->getFragMZ(x))
+
+    sort!(@view(transitions[1:transition_idx]), 
+            by = x->getFragMZ(x),
+            alg=PartialQuickSort(1:transition_idx))
+
+    reset!(counter)
+    
+    return transition_idx#sort!(transitions, by = x->getFragMZ(x))
 end
 
 
@@ -20,8 +32,10 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::V
             prec_idx += 1
             for frag in fragment_list[first(precs[i])]
                 transition_idx += 1 
+                #Grow array if exceeds length
                 transitions[transition_idx] = frag
             end
+            #Grow array if exceeds length
             prec_ids[prec_idx] = first(precs[i])
         end
         return transition_idx, prec_idx
@@ -44,5 +58,5 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::V
           by = x->getFragMZ(x),
           alg=PartialQuickSort(1:transition_idx)) #Optimize?
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
-    return transitions, prec_ids, transition_idx, prec_idx
+    return transition_idx, prec_idx
 end

@@ -54,7 +54,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
         N = getLength(precursor_bin)
         lo, hi = 1, N
 
-        while lo <= hi
+        @inbounds @fastmath while lo <= hi
             mid = (lo + hi) ÷ 2
             if getPrecMZ(getPrecursor(precursor_bin, mid)) < window_min
                 lo = mid + 1
@@ -71,7 +71,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
 
         lo, hi = window_start, N
 
-        while lo <= hi
+        @inbounds @fastmath while lo <= hi
             mid = (lo + hi) ÷ 2
             if getPrecMZ(getPrecursor(precursor_bin, mid)) > window_max
                 hi = mid - 1
@@ -108,7 +108,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8, Float32}, precursor_b
             end
         end=#
 
-        for precursor_idx in start:stop
+        @inbounds for precursor_idx in start:stop
             prec = getPrecursor(precursor_bin, precursor_idx)
             inc!(precs, getPrecID(prec), getIntensity(prec))
         end
