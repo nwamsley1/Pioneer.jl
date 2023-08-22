@@ -162,10 +162,10 @@ end
     λ = Float32(0), 
     γ =Float32(0),
     max_peaks = 10000, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+    scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
     #scan_range = (0, 300000), #101357 #22894
     #scan_range = (111357, 112357),
-    scan_range = (101357, 101357),
+    #scan_range = (101357, 101357),
     precursor_tolerance = 20.0,
     min_spectral_contrast =  Float32(0.5),
     min_matched_ratio = Float32(0.45),
@@ -467,3 +467,67 @@ histogram!((test_sums_5_u./5), alpha = 0.5)
 Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
 
 testmyidea(t::Union{Int64, Bool}) = println(t)
+
+
+
+function mainLibrarySearch(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    frag_index::FragmentIndex{Float32},
+    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+    iRT_to_RT_spline::Any,
+    ms_file_idx::UInt32,
+    err_dist::Laplace{Float64},
+    params::NamedTuple)
+
+    frag_ppm_err = params[:frag_err_dist][ms_file_idx]
+    fragment_tolerance = params[:frag_err_dist][ms_file_idx]
+
+    return SearchRAW(
+        spectra, 
+        frag_index, ion_list,
+        iRT_to_RT_spline,
+        ms_file_idx,
+        err_dist,
+        selectTransitions!,
+        searchScan!,
+        
+        expected_matches = params[:expected_matches],
+        frag_ppm_err = frag_ppm_err,
+        fragment_tolerance = fragment_tolerance,
+        max_iter = params[:max_iter],
+        max_peaks = params[:max_peaks],
+
+    )
+
+
+
+end
+
+@time PSMs = SearchRAW(
+    Arrow.Table(MS_TABLE_PATHS[1]), 
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    frag_err_dist_dict[1],
+    selectTransitions!,
+    searchScan!,
+    min_frag_count = 4, 
+    topN = 1000, 
+    fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
+    λ = Float32(0), 
+    γ =Float32(0),
+    max_peaks = 10000, 
+    scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
+    #scan_range = (0, 300000), #101357 #22894
+    #scan_range = (111357, 112357),
+    #scan_range = (101357, 101357),
+    precursor_tolerance = 20.0,
+    min_spectral_contrast =  Float32(0.5),
+    min_matched_ratio = Float32(0.45),
+    rt_tol = 20.0,
+    frag_ppm_err = frag_err_dist_dict[1].μ,
+    precs = Counter(UInt32, UInt8, Float32, length(frags_mouse_detailed_33NCEcorrected_start1)),
+    scored_PSMs = makePSMsDict(XTandem(Float32)));
+

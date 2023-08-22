@@ -15,7 +15,7 @@ incSize!(c::Counter{I,C,T}) where {I,C<:Unsigned,T<:AbstractFloat} = c.size += 1
 getID(c::Counter{I,C,T}, idx::Int) where {I,C<:Unsigned,T<:AbstractFloat} = c.ids[idx]
 
 function update!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {C,I<:Unsigned,T<:AbstractFloat}
-    c.counts[id] = (first(c.counts[id]) + one(C), last(c.counts[id]) + pred_intensity);
+    @fastmath c.counts[id] = (first(c.counts[id]) + one(C), last(c.counts[id]) + pred_intensity);
     return nothing
 end
 
