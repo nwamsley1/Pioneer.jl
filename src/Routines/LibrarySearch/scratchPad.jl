@@ -497,11 +497,22 @@ function mainLibrarySearch(
         fragment_tolerance = fragment_tolerance,
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
-
+        min_frag_count = params[:min_frag_count],
+        min_matched_ratio = params[:min_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        nmf_tol = params[:nmf_tol],
+        precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
+        precursor_tolerance = params[:precursor_tolerance],
+        quadrupole_isolation_width = params[:quadrupole_isolation_width],
+        regularize = params[:regularize],
+        rt_tol = params[:rt_tol],
+        sample_rate = params[:sample_rate],
+        scan_range = params[:scan_range],
+        scored_PSMs = makePSMsDict(XTandem(Float32)),
+        topN = params[:topN],
+        λ = params[:λ],
+        γ = params[:γ]
     )
-
-
-
 end
 
 @time PSMs = SearchRAW(
