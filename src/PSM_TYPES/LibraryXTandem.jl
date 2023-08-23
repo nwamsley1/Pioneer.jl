@@ -99,7 +99,7 @@ end
 function Score!(PSMs_dict::Dict, 
                 unscored_PSMs::UnorderedDictionary{UInt32, XTandem{T}}, 
                 spectrum_peaks::Int, 
-                spectrum_intensity::T, 
+                spectrum_intensity::U, 
                 expected_matches::Float64,
                 #scribe_score::Vector{Float32}, 
                 #city_block::Vector{Float32}, 
@@ -109,7 +109,7 @@ function Score!(PSMs_dict::Dict,
                 scores::NamedTuple,
                 weight::Vector{Float32}, 
                 IDtoROW::UnorderedDictionary{UInt32, UInt32}; 
-                scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T<:Real}
+                scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T,U<:Real}
 
     scribe_score = scores[:scribe]::Vector{Float32}
     city_block = scores[:city_block]::Vector{Float32}
@@ -129,7 +129,7 @@ function Score!(PSMs_dict::Dict,
         )
     end
 
-    function getPoisson(lam::T, observed::Int)
+    function getPoisson(lam::T, observed::Int) where {T<:AbstractFloat}
         function logfac(N)
             N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
         end

@@ -169,7 +169,10 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition::LibraryFragment{Float32}, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat}
+function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition::LibraryFragment{Float32}, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32; block_size = 10000) where {T<:AbstractFloat}
+    if i > length(matches)
+        append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
+    end
     matches[i] = FragmentMatch(getIntensity(transition)::Float32, 
                                  intensity::Float32,
                                  Float32(getFragMZ(transition)),
@@ -188,6 +191,9 @@ function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition
 end
 
 function setMatch!(matches::Vector{PrecursorMatch{T}}, i::Int64, ion::I, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat,I<:IonType}
+    if i > length(matches)
+        append!(matches, [PrecursorMatch{Float32}() for _ in range(1, block_size)])
+    end
     matches[i] = PrecursorMatch(
                     getIntensity(ion),
                     intensity,

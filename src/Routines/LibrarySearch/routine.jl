@@ -42,9 +42,9 @@ using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationM
                                                                                     "matchpeaksLib.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "spectralDistanceMetrics.jl",
-                                                                                    "searchRAW.jl",
                                                                                     "refinePSMs.jl",
                                                                                     "buildRTIndex.jl",
+                                                                                    "searchRAW.jl",
                                                                                     "selectTransitions.jl",
                                                                                     "integrateMS1.jl",
                                                                                     "integrateMS2.jl",
@@ -73,8 +73,88 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetC
 "/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow",
 "/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_2.arrow",
 "/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_3.arrow"]
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow"]
-#Arrow.Table("/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow");
+
+##########
+#Set Search parameters
+first_search_params = Dict(
+    :collect_frag_errs => true,
+    :expected_matches => 1000000,
+    :frag_ppm_err => 0.0,
+    :fragment_tolerance => 30.0,
+    :max_iter => 1000,
+    :max_peaks => false,
+    :min_frag_count => 4,
+    :min_matched_ratio => Float32(0.45),
+    :min_spectral_contrast => Float32(0.5),
+    :nmf_tol => Float32(100),
+    :precursor_tolerance => 5.0,
+    :quadrupole_isolation_width => 4.25,
+    :regularize => false,
+    :rt_bounds => (0.0, 200.0),
+    :rt_tol => 20.0,
+    :sample_rate => 0.01,
+    :topN => 100,
+    :λ => zero(Float32),
+    :γ => zero(Float32)
+)
+main_search_params = Dict(
+    :expected_matches => 1000000,
+    :frag_tol_quantile => 0.975,
+    :max_iter => 1000,
+    :max_peaks => false,
+    :min_frag_count => 4,
+    :min_matched_ratio => Float32(0.45),
+    :min_spectral_contrast => Float32(0.5),
+    :nmf_tol => Float32(100),
+    :precursor_tolerance => 5.0,
+    :quadrupole_isolation_width => 4.25,
+    :regularize => false,
+    :rt_bounds => (0.0, 200.0),
+    :rt_tol => 20.0,
+    :topN => 100,
+    :λ => zero(Float32),
+    :γ => zero(Float32)
+)
+integrate_ms2_params = Dict(
+    :expected_matches => 1000000,
+    :frag_tol_quantile => 0.975,
+    :max_iter => 1000,
+    :max_peak_width => 2.0,
+    :max_peaks => false,
+    :min_frag_count => 4,
+    :min_matched_ratio => Float32(0.45),
+    :min_spectral_contrast => Float32(0.5),
+    :nmf_tol => Float32(100),
+    :precursor_tolerance => 5.0,
+    :quadrupole_isolation_width => 4.25,
+    :regularize => false,
+    :rt_bounds => (0.0, 200.0),
+    :rt_tol => 20.0,
+    :sample_rate => 1.0,
+    :topN => 100,
+    :λ => zero(Float32),
+    :γ => zero(Float32)
+)
+integrate_ms1_params = (
+        :expected_matches => 1000000,
+        :frag_tol_quantile => 0.975,
+        :max_iter => 1000,
+        :max_peak_width => 2.0,
+        :max_peaks => false,
+        :min_frag_count => 4,
+        :min_matched_ratio => Float32(0.45),
+        :min_spectral_contrast => Float32(0.5),
+        :nmf_tol => Float32(100),
+        :precursor_tolerance => 5.0,
+        :quadrupole_isolation_width => 4.25,
+        :regularize => false,
+        :rt_tol => 20.0,
+        :rt_bounds => (0.0, 200.0),
+        :sample_rate => 1.0,
+        :topN => 100,
+        :λ => zero(Float32),
+        :γ => zero(Float32)
+)
 
 ###########
 #Pre-Search
@@ -83,7 +163,25 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetC
 #2) Fragment Mass tolerance
 #3) iRT to RT conversion spline
 ###########
+MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
+@time rtPSMs, all_matches =  firstSearch(
+    MS_TABLE,
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    x->x, #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    Laplace(zero(Float64), 10.0),
+    first_search_params,
+    scan_range = (0, length(MS_TABLE[:masses]))
+    );
+    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]]))) => :iRT);
+    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
+    transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors_mouse_detailed_33NCEcorrected_start1[psm[:precursor_idx]])) => :decoy);
+    rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
 
+    best_precursors = Set(rtPSMs[:,:precursor_idx]);
+    best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
+    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
 println("Starting Pre Search...")
 @time begin
 init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
@@ -91,28 +189,19 @@ init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for ea
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,Laplace{Float64}}()
 lk = ReentrantLock()
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:1])))
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS[1:4])))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    @time rtPSMs, all_matches = SearchRAW(MS_TABLE, 
-                    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-                    frags_mouse_detailed_33NCEcorrected_start1, 
-                    UInt32(ms_file_idx), 
-                    x->x, #Mapp RT to iRT
-                    min_frag_count = 7, 
-                    topN = 5, 
-                    fragment_tolerance = init_frag_tol,#20.0, 
-                    λ = Float32(0), 
-                    γ =Float32(0),
-                    max_peaks = 10000, 
-                    scan_range = (0, length(MS_TABLE[:scanNumber])), #All Scans
-                    precursor_tolerance = 20.0,
-                    min_spectral_contrast =  Float32(0.95),
-                    min_matched_ratio = Float32(.6),
-                    rt_tol = Float32(1e6), #Set arbitrarily high
-                    sample_rate = 0.01, #Sampling rate
-                    frag_ppm_err = 0.0,
-                    collect_frag_errs = true
-                    );
+    println("TEST")
+    @time rtPSMs, all_matches =  firstSearch(
+                                        MS_TABLE,
+                                        prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+                                        frags_mouse_detailed_33NCEcorrected_start1, 
+                                        x->x, #RT to iRT map'
+                                        UInt32(ms_file_idx), #MS_FILE_IDX
+                                        Laplace(zero(Float64), 10.0),
+                                        first_search_params,
+                                        scan_range = (0, length(MS_TABLE[:masses]))
+                                        );
 
 
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}

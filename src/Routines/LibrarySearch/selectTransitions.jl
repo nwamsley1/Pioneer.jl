@@ -12,7 +12,8 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
                             rt::U, 
                             rt_tol::U, 
                             prec_mz::U, 
-                            prec_tol::U) where {T,V,U<:AbstractFloat, I,C<:Unsigned}
+                            prec_tol::U;
+                            block_size = 10000) where {T,V,U<:AbstractFloat, I,C<:Unsigned}
     #transitions = Vector{LibraryFragment{T}}()
     i = 1
     transition_idx = 0
@@ -20,6 +21,10 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
         for frag in fragment_list[getID(counter, i)]
             transition_idx += 1
             #Grow array if exceeds length
+            if transition_idx > length(transitions)
+                append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+            end
+
             transitions[transition_idx] = frag
         end
         i += 1
@@ -44,7 +49,8 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
                             rt::U, 
                             rt_tol::U, 
                             prec_mz::U, 
-                            prec_tol::U) where {T,U,V<:AbstractFloat,  I,C<:Unsigned}
+                            prec_tol::U;
+                            block_size = 10000) where {T,U,V<:AbstractFloat,  I,C<:Unsigned}
     
     #Get matching precursors within an RT bin 
     function addTransitions!(transitions::Vector{LibraryFragment{V}}, prec_ids::Vector{UInt32}, transition_idx::Int64, prec_idx::Int64, fragment_list::Vector{Vector{LibraryFragment{V}}}, precs::Vector{Tuple{UInt32, U}}, prec_mz::U, prec_tol::U)
@@ -55,9 +61,13 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
             for frag in fragment_list[first(precs[i])]
                 transition_idx += 1 
                 #Grow array if exceeds length
+                (transition_idx > length(transitions)) ?  append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)]) : nothing
+
                 transitions[transition_idx] = frag
             end
             #Grow array if exceeds length
+            (prec_idx > length(prec_idx)) ? append!(prec_idx, zeros(UInt32, block_size)) : nothing
+
             prec_ids[prec_idx] = first(precs[i])
         end
         return transition_idx, prec_idx
@@ -98,9 +108,12 @@ function selectIsotopes!(isotopes::Vector{Isotope{T}},
         prec_idx += 1
         for iso in isotope_dict[last(prec_list[i])]
             ion_idx += 1
+            (ion_idx > length(isotopes)) ?  append!(isotopes, [Isotope{T}() for _ in range(1, block_size)]) : nothing
+
             isotopes[ion_idx] = iso
             #append!(isotopes, isotope_dict[last(prec_list[i])])
         end
+        (prec_idx > length(prec_idx)) ? append!(prec_idx, zeros(UInt32, block_size)) : nothing
         prec_ids[prec_idx] = last(prec_list[i])
     end
     sort!(@view(isotopes[1:ion_idx]), 

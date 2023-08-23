@@ -1,4 +1,4 @@
-function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}) where {m<:Match}
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}; block_size = 10000) where {m<:Match}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -9,6 +9,13 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         end
     end
     M += nmisses
+
+    #If M exceeds pre-allocated size
+    if (nmatches + nmisses) >= length(H_COLS) - 1
+        H_COLS = zeros(Int64, length(H_COLS) + block_size)
+        H_ROWS = zeros(Int64, length(H_ROWS) + block_size)
+        H_VALS = zeros(Float32, length(H_VALS) + block_size)
+    end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(T, M)
 

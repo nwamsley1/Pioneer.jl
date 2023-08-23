@@ -330,18 +330,6 @@ end
 
 
 
-@showprogress for i in 1:10
-    sleep(1)
-end
-
-@showprogress pmap(1:10) do i
-    sleep(1)
-end
-
-
-@sync @distributed for i in 1:10
-    sleep(1)
-end
 
 for i in 1:length(test)
     test[i] = PrecursorBinItem(one(UInt32), 0.0, 0.0, one(UInt8))
@@ -379,100 +367,24 @@ for i in 1:N
     test_sums_20[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
 end
 
-S = 10
-test_sums_10 = zeros(Float64, N)
-for i in 1:N
-    test_sums_10[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
-end
 
-S = 4
-test_sums_4 = zeros(Float64, N)
-for i in 1:N
-    test_sums_4[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(frag_err_dist_dict[ms_file_idx], S)))
-end
+PSMs = mainLibrarySearch(
+    Arrow.Table(MS_TABLE_PATHS[1]),
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    frag_err_dist_dict[1],
+    main_search_params
+);
 
-S = 10
-test_sums_10_u = zeros(Float64, N)
-for i in 1:N
-    test_sums_10_u[i] = sum(Distributions.logpdf.(frag_err_dist_dict[ms_file_idx], rand(Uniform(-15.0, 15.0), S)))
-end
-
-
-histogram((test_sums_20./20), alpha = 0.5)
-
-histogram((test_sums_10./10), alpha = 0.5, bins = 50)
-histogram!((test_sums_10_u./10), alpha = 0.5, bins = 50)
-
-histogram((-1).*(test_sums_5./5), alpha = 0.5, bins = 50)
-histogram!((-1).*(test_sums_5_u./5), alpha = 0.5, bins = 50)
-
-histogram((test_sums_5), alpha = 0.5, bins = 50)
-histogram!((test_sums_5_u), alpha = 0.5, bins = 50)
-
-
-histogram(PSMs[(PSMs[:,:q_value].<=0.01) .& (PSMs[:,:total_ions].==7),:error],
-            alpha = 0.5, bins = 50)
-
-histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]).& (PSMs[:,:total_ions].==7),:error],
-            alpha = 0.5, bins = 50)
-
-
-histogram(PSMs[(PSMs[:,:q_value].<=0.01) .& (PSMs[:,:total_ions].==7),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-
-histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]).& (PSMs[:,:total_ions].==7),:error],
-            alpha = 0.5, bins = 50, normalize = :pdf)
-
-histogram(PSMs[(PSMs[:,:q_value].<=0.01),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-
-histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
-            alpha = 0.5, bins = 50, normalize = :pdf)
-
-            histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
-            alpha = 0.5, bins = 50, normalize = :pdf)
-
-
-    histogram(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.1),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-
-    #histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.05),:error],
-    #        alpha = 0.5, bins = 50, normalize =:pdf)
-
-    histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.01),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-            
-    histogram!(PSMs[(PSMs[:,:q_value].<=0.01).& (PSMs[:,:intensity_explained].>0.001),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-
-            histogram!(PSMs[(PSMs[:,:q_value].<=0.01),:error],
-            alpha = 0.5, bins = 50, normalize =:pdf)
-
-        \histogram!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
-        alpha = 0.5, bins = 50, normalize = :pdf)
-
-
-histogram2d(PSMs[PSMs[:,:q_value].<=0.01,:total_ions], PSMs[PSMs[:,:q_value].<=0.01,:error],
-            alpha = 0.5, bins = (50, 50))
-
-            histogram2d!(PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:total_ions], 
-            PSMs[(PSMs[:,:q_value].>0.01) .& (PSMs[:,:decoy]),:error],
-            alpha = 0.5, bins = (50, 50))
-
-histogram((test_sums_5./5), alpha = 0.5)
-histogram!((test_sums_5_u./5), alpha = 0.5)
-
-
-
-Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
-
-testmyidea(t::Union{Int64, Bool}) = println(t)
-
-main_search_params = (
+integrate_ms1_params = (
+    
     expected_matches = 1000000,
     frag_err_dist = frag_err_dist_dict[1],
     frag_tol_quantile = 0.975,
     max_iter = 1000,
+    max_peak_width = 2.0,
     max_peaks = false,
     min_frag_count = 4,
     min_matched_ratio = Float32(0.45),
@@ -489,70 +401,80 @@ main_search_params = (
     γ = zero(Float32)
 )
 
-function mainLibrarySearch(
+function integrateMS1(
     #Mandatory Args
     spectra::Arrow.Table, 
     frag_index::FragmentIndex{Float32},
-    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+    isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
+    prec_rt_list::Vector{Tuple{T, UInt32}},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
-    params::NamedTuple)
+    params::NamedTuple; 
+    N = 600000*10) where {T<:AbstractFloat}
 
     frag_ppm_err = params[:frag_err_dist].μ
     fragment_tolerance = quantile(params[:frag_err_dist], params[:frag_tol_quantile])
 
     return SearchRAW(
         spectra, 
-        frag_index, ion_list,
+        frag_index, 
+        missing, #Not ion list. Instead passing "isotope_dict"
         iRT_to_RT_spline,
         ms_file_idx,
-        err_dist,
-        selectTransitions!,
-        searchScan!,
+        err_dist,  #Not really sure how to estimate this yet?
+        selectIsotopes!, #Ion Selection Function for MS1 integration 
+        missing,
         
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
+        IonTemplateType = Isotope{Float32},
+        IonMatchType = PrecursorMatch{Float32},
+        isotope_dict = isotope_dict,
         max_iter = params[:max_iter],
+        max_peak_width = params[:max_peak_width],
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
         min_spectral_contrast = params[:min_spectral_contrast],
         nmf_tol = params[:nmf_tol],
-        precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
         precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         regularize = params[:regularize],
+        rt_index = prec_rt_list,
         rt_tol = params[:rt_tol],
         sample_rate = params[:sample_rate],
         scan_range = params[:scan_range],
-        scored_PSMs = makePSMsDict(XTandem(Float32)),
+        spec_order = Set(1),
         topN = params[:topN],
         λ = params[:λ],
         γ = params[:γ]
     )
 end
 
-PSMs = mainLibrarySearch(
-    Arrow.Table(MS_TABLE_PATHS[1]),
+integrateMS1(
+    Arrow.Table(MS_TABLE_PATHS[1]), 
     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-    frags_mouse_detailed_33NCEcorrected_start1, 
+    isotopes,
+    prec_rt_table, 
     RT_to_iRT_map_dict[1], #RT to iRT map'
     UInt32(1), #MS_FILE_IDX
     frag_err_dist_dict[1],
-    main_search_params
-);
+    integrate_ms1_params
+)
 
-@time PSMs = SearchRAW(
+@time chroms = SearchRAW(
     Arrow.Table(MS_TABLE_PATHS[1]), 
     prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
     frags_mouse_detailed_33NCEcorrected_start1, 
     RT_to_iRT_map_dict[1], #RT to iRT map'
     UInt32(1), #MS_FILE_IDX
     frag_err_dist_dict[1],
-    selectTransitions!,
-    searchScan!,
+    selectRTIndexedTransitions!,
+    missing, #searchRaw!. 
+    rt_index = rt_index,
     min_frag_count = 4, 
     topN = 1000, 
     fragment_tolerance = quantile(frag_err_dist_dict[1], 0.975), 
@@ -561,7 +483,7 @@ PSMs = mainLibrarySearch(
     max_peaks = 10000, 
     scan_range = (0, length(MS_TABLE[:scanNumber])), #101357 #22894
     #scan_range = (0, 300000), #101357 #22894
-    #scan_range = (111357, 112357),
+    #scan_range = (111357, 122357),
     #scan_range = (101357, 101357),
     precursor_tolerance = 20.0,
     min_spectral_contrast =  Float32(0.5),
@@ -569,5 +491,6 @@ PSMs = mainLibrarySearch(
     rt_tol = 20.0,
     frag_ppm_err = frag_err_dist_dict[1].μ,
     precs = Counter(UInt32, UInt8, Float32, length(frags_mouse_detailed_33NCEcorrected_start1)),
-    scored_PSMs = makePSMsDict(XTandem(Float32)));
+    scored_PSMs = missing,
+    chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)));
 

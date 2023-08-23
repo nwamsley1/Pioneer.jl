@@ -2,7 +2,7 @@ function SearchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::FragmentIndex{Float32},
-                    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+                    ion_list::Union{Vector{Vector{LibraryFragment{Float32}}}, Missing},
                     iRT_to_RT_spline::Any,
                     ms_file_idx::UInt32,
                     err_dist::Laplace{Float64},
@@ -28,6 +28,7 @@ function SearchRAW(
                     precursor_tolerance::Float64 = 5.0,
                     quadrupole_isolation_width::Float64 = 4.25,
                     regularize::Bool = false,
+                    rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
                     rt_index::Union{retentionTimeIndex{Float64, Float32}, Vector{Tuple{Float64, UInt32}}, Missing} = missing,
                     rt_tol::Float64 = 30.0,
                     sample_rate::Float64 = 1.0,
@@ -36,7 +37,7 @@ function SearchRAW(
                     spec_order::Set{Int64} = Set(2),
                     topN::Int64 = 20,
                     λ::Float32 = Float32(1e3),
-                    γ::Float32 = zero(Float32)) where {T<:Real}
+                    γ::Float32 = zero(Float32))
 
     ##########
     #Initialize 
@@ -46,7 +47,7 @@ function SearchRAW(
     chrom_idx = 1
     prec_idx = 0
     ion_idx = 0
-    minimum_rt, maximum_rt = minimum(interpolation), maximum(interpolation)
+    minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
 
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
@@ -59,7 +60,9 @@ function SearchRAW(
     #by a pre-determined block-size. 
     ionMatches = [IonMatchType() for _ in range(1, expected_matches)] #IonMatchType is something that inherits from the "Match" class. 
     ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
+    println("length(ionMisses) ", length(ionMisses))
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
+    println("TEST2")
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
     H_COLS, H_ROWS, H_VALS = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches)
   
@@ -80,7 +83,9 @@ function SearchRAW(
 
         min_intensity = getMinIntensity(spectra[:intensities][i], max_peaks) #Ignore peaks in the spectrum below this minimum intensity
 
-        iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Float64, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
+        #println(typeof(maximum_rt))
+        #println(typeof(spectra[:retentionTime][i]))
+        iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
 
         ##########
         #Ion Template Selection
@@ -155,7 +160,7 @@ function SearchRAW(
             ##########
             #Scoring and recording data
             if !ismissing(scored_PSMs)
-                unscored_PSMs = UnorderedDictionary{UInt32, XTandem{T}}()
+                unscored_PSMs = UnorderedDictionary{UInt32, XTandem{Float32}}()
 
                 ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
 
@@ -201,7 +206,7 @@ function SearchRAW(
     ############
     #Return Chromatograms and Score/Feature Table
     if collect_fmatches
-        return DataFrame(scored_PSMs), all_matches
+        return DataFrame(scored_PSMs), all_fmatches
     else
         if ismissing(chromatograms)
             DataFrame(scored_PSMs)
@@ -218,7 +223,335 @@ function SearchRAW(
 
 end
 
-function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_times::AbstractArray{Union{U, Missing}}) where {T,U<:AbstractFloat}
+function firstSearch(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    frag_index::FragmentIndex{Float32},
+    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+    iRT_to_RT_spline::Any,
+    ms_file_idx::UInt32,
+    err_dist::Laplace{Float64},
+    params::Dict;
+    scan_range = (0, 0))
+
+    #=
+    main_search_params = (
+    expected_matches = 1000000,
+    frag_err_dist = frag_err_dist_dict[1],
+    frag_tol_quantile = 0.975,
+    max_iter = 1000,
+    max_peaks = false,
+    min_frag_count = 4,
+    min_matched_ratio = Float32(0.45),
+    min_spectral_contrast = Float32(0.5),
+    nmf_tol = Float32(100),
+    precursor_tolerance = 5.0,
+    quadrupole_isolation_width = 4.25,
+    regularize = false,
+    rt_tol = 20.0,
+    sample_rate = 1.0,
+    scan_range = (0, 3000000),
+    topN = 100,
+    λ = zero(Float32),
+    γ = zero(Float32)
+    )
+    mainLibrarySearch(
+           Arrow.Table(MS_TABLE_PATHS[1]),
+           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+           frags_mouse_detailed_33NCEcorrected_start1, 
+           RT_to_iRT_map_dict[1], #RT to iRT map'
+           UInt32(1), #MS_FILE_IDX
+           frag_err_dist_dict[1],
+           main_search_params
+       );
+    =#
+    return SearchRAW(
+        spectra, 
+        frag_index, ion_list,
+        iRT_to_RT_spline,
+        ms_file_idx,
+        err_dist,
+        selectTransitions!,
+        searchScan!,
+        
+        collect_fmatches = true,
+        expected_matches = params[:expected_matches],
+        frag_ppm_err = params[:frag_ppm_err],
+        fragment_tolerance = params[:fragment_tolerance],
+        max_iter = params[:max_iter],
+        max_peaks = params[:max_peaks],
+        min_frag_count = params[:min_frag_count],
+        min_matched_ratio = params[:min_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        nmf_tol = params[:nmf_tol],
+        precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
+        precursor_tolerance = params[:precursor_tolerance],
+        quadrupole_isolation_width = params[:quadrupole_isolation_width],
+        regularize = params[:regularize],
+        rt_bounds = params[:rt_bounds],
+        rt_tol = params[:rt_tol],
+        sample_rate = params[:sample_rate],
+        scan_range = scan_range,
+        scored_PSMs = makePSMsDict(XTandem(Float32)),
+        topN = params[:topN],
+        λ = params[:λ],
+        γ = params[:γ]
+    )
+end
+
+function mainLibrarySearch(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    frag_index::FragmentIndex{Float32},
+    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+    iRT_to_RT_spline::Any,
+    ms_file_idx::UInt32,
+    err_dist::Laplace{Float64},
+    params::Dict;
+    scan_range = (0, 0))
+
+    frag_ppm_err = err_dist.μ
+    fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
+
+    #=
+    main_search_params = (
+    expected_matches = 1000000,
+    frag_err_dist = frag_err_dist_dict[1],
+    frag_tol_quantile = 0.975,
+    max_iter = 1000,
+    max_peaks = false,
+    min_frag_count = 4,
+    min_matched_ratio = Float32(0.45),
+    min_spectral_contrast = Float32(0.5),
+    nmf_tol = Float32(100),
+    precursor_tolerance = 5.0,
+    quadrupole_isolation_width = 4.25,
+    regularize = false,
+    rt_tol = 20.0,
+    sample_rate = 1.0,
+    scan_range = (0, 3000000),
+    topN = 100,
+    λ = zero(Float32),
+    γ = zero(Float32)
+    )
+    mainLibrarySearch(
+           Arrow.Table(MS_TABLE_PATHS[1]),
+           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+           frags_mouse_detailed_33NCEcorrected_start1, 
+           RT_to_iRT_map_dict[1], #RT to iRT map'
+           UInt32(1), #MS_FILE_IDX
+           frag_err_dist_dict[1],
+           main_search_params
+       );
+    =#
+    return SearchRAW(
+        spectra, 
+        frag_index, ion_list,
+        iRT_to_RT_spline,
+        ms_file_idx,
+        err_dist,
+        selectTransitions!,
+        searchScan!,
+        
+        expected_matches = params[:expected_matches],
+        frag_ppm_err = frag_ppm_err,
+        fragment_tolerance = fragment_tolerance,
+        max_iter = params[:max_iter],
+        max_peaks = params[:max_peaks],
+        min_frag_count = params[:min_frag_count],
+        min_matched_ratio = params[:min_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        nmf_tol = params[:nmf_tol],
+        precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
+        precursor_tolerance = params[:precursor_tolerance],
+        quadrupole_isolation_width = params[:quadrupole_isolation_width],
+        regularize = params[:regularize],
+        rt_bounds = params[:rt_bounds],
+        rt_tol = params[:rt_tol],
+        sample_rate = 1.0,
+        scan_range = params[:scan_range],
+        scored_PSMs = makePSMsDict(XTandem(Float32)),
+        topN = params[:topN],
+        λ = params[:λ],
+        γ = params[:γ]
+    )
+end
+
+function integrateMS2(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    frag_index::FragmentIndex{Float32},
+    ion_list::Vector{Vector{LibraryFragment{Float32}}},
+    rt_index::retentionTimeIndex{U, T},
+    iRT_to_RT_spline::Any,
+    ms_file_idx::UInt32,
+    err_dist::Laplace{Float64},
+    params::Dict; 
+    N = 600000*10,
+    scan_range =  (0, 0)) where {U,T<:AbstractFloat}
+
+    frag_ppm_err = err_dist.μ
+    fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
+
+
+    #=integrate_ms2_params = (
+    
+    expected_matches = 1000000,
+    frag_err_dist = frag_err_dist_dict[1],
+    frag_tol_quantile = 0.975,
+    max_iter = 1000,
+    max_peak_width = 2.0,
+    max_peaks = false,
+    min_frag_count = 4,
+    min_matched_ratio = Float32(0.45),
+    min_spectral_contrast = Float32(0.5),
+    nmf_tol = Float32(100),
+    precursor_tolerance = 5.0,
+    quadrupole_isolation_width = 4.25,
+    regularize = false,
+    rt_tol = 20.0,
+    sample_rate = 1.0,
+    scan_range = (0, 3000000),
+    topN = 100,
+    λ = zero(Float32),
+    γ = zero(Float32)
+    )
+    
+    integrateMS2(
+           Arrow.Table(MS_TABLE_PATHS[1]), 
+           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+           frags_mouse_detailed_33NCEcorrected_start1, 
+           rt_index, 
+           RT_to_iRT_map_dict[1], #RT to iRT map'
+           UInt32(1), #MS_FILE_IDX
+           frag_err_dist_dict[1],
+           integrate_ms2_params
+       )
+    =#
+
+    return SearchRAW(
+        spectra, 
+        frag_index, ion_list,
+        iRT_to_RT_spline,
+        ms_file_idx,
+        err_dist,
+        selectRTIndexedTransitions!,
+        missing,
+        
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
+        expected_matches = params[:expected_matches],
+        frag_ppm_err = frag_ppm_err,
+        fragment_tolerance = fragment_tolerance,
+        max_iter = params[:max_iter],
+        max_peak_width = params[:max_peak_width],
+        max_peaks = params[:max_peaks],
+        min_frag_count = params[:min_frag_count],
+        min_matched_ratio = params[:min_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        nmf_tol = params[:nmf_tol],
+        precursor_tolerance = params[:precursor_tolerance],
+        quadrupole_isolation_width = params[:quadrupole_isolation_width],
+        regularize = params[:regularize],
+        rt_index = rt_index,
+        rt_bounds = params[:rt_bounds],
+        rt_tol = params[:rt_tol],
+        sample_rate = params[:sample_rate],
+        scan_range = scan_range,
+        topN = params[:topN],
+        λ = params[:λ],
+        γ = params[:γ]
+    )
+end
+
+function integrateMS1(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    frag_index::FragmentIndex{Float32},
+    isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
+    prec_rt_list::Vector{Tuple{T, UInt32}},
+    iRT_to_RT_spline::Any,
+    ms_file_idx::UInt32,
+    err_dist::Laplace{Float64},
+    params::Dict; 
+    N = 600000*10,
+    scan_range = (0, 0)) where {T<:AbstractFloat}
+
+    frag_ppm_err = err_dist.μ
+    fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
+
+    #=
+    integrate_ms1_params = (
+    expected_matches = 1000000,
+    frag_err_dist = frag_err_dist_dict[1],
+    frag_tol_quantile = 0.975,
+    max_iter = 1000,
+    max_peak_width = 2.0,
+    max_peaks = false,
+    min_frag_count = 4,
+    min_matched_ratio = Float32(0.45),
+    min_spectral_contrast = Float32(0.5),
+    nmf_tol = Float32(100),
+    precursor_tolerance = 5.0,
+    quadrupole_isolation_width = 4.25,
+    regularize = false,
+    rt_tol = 20.0,
+    sample_rate = 1.0,
+    scan_range = (0, 3000000),
+    topN = 100,
+    λ = zero(Float32),
+    γ = zero(Float32)
+
+    integrateMS1(
+    Arrow.Table(MS_TABLE_PATHS[1]), 
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    isotopes,
+    prec_rt_table, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    frag_err_dist_dict[1],
+    integrate_ms1_params)
+    )=#
+    return SearchRAW(
+        spectra, 
+        frag_index, 
+        missing, #Not ion list. Instead passing "isotope_dict"
+        iRT_to_RT_spline,
+        ms_file_idx,
+        err_dist,  #Not really sure how to estimate this yet?
+        selectIsotopes!, #Ion Selection Function for MS1 integration 
+        missing,
+        
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
+        expected_matches = params[:expected_matches],
+        frag_ppm_err = frag_ppm_err,
+        fragment_tolerance = fragment_tolerance,
+        IonTemplateType = Isotope{Float32},
+        IonMatchType = PrecursorMatch{Float32},
+        isotope_dict = isotope_dict,
+        max_iter = params[:max_iter],
+        max_peak_width = params[:max_peak_width],
+        max_peaks = params[:max_peaks],
+        min_frag_count = params[:min_frag_count],
+        min_matched_ratio = params[:min_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        nmf_tol = params[:nmf_tol],
+        precursor_tolerance = params[:precursor_tolerance],
+        quadrupole_isolation_width = params[:quadrupole_isolation_width],
+        regularize = params[:regularize],
+        rt_bounds = params[:rt_bounds],
+        rt_index = prec_rt_list,
+        rt_tol = params[:rt_tol],
+        sample_rate = params[:sample_rate],
+        scan_range = scan_range,
+        spec_order = Set(1),
+        topN = params[:topN],
+        λ = params[:λ],
+        γ = params[:γ]
+    )
+end
+
+
+function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_times::AbstractArray{Union{U, Missing}}; block_size = 100000) where {T,U<:AbstractFloat}
     function inc!(chroms::Dict{Symbol, Vector}, n::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64)
         chroms[:precursor_idx][n] = key
         chroms[:weight][n] = weight
@@ -228,6 +561,14 @@ function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionar
 
     for i in range(1, prec_idx)
         key = prec_ids[i]
+        
+        if n > length(chroms[:precursor_idx])
+            #This block of code is triggered when not enough space has been allocated for the chromatograms
+            #So incrase the space allocated by a given "block" size. 
+            for key in keys(chroms)
+                append!(chroms[key], zeros(eltype(chroms[key]), block_size))
+            end
+        end
         if haskey(frag_counts, key)
     
             if haskey(id_to_row, key)
@@ -258,17 +599,17 @@ function getMinIntensity(intensities::AbstractArray{Union{T, Missing}}, max_peak
     return zero(T)
 end
 
-function reset!(fms::Vector{FragmentMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+function reset!(fms::Vector{M}, last_non_empty::Int64) where {M<:Match}
     for i in range(1, last_non_empty)
-        fms[i] = FragmentMatch{T}()
+        fms[i] = M()
     end
 end
 
-function reset!(fms::Vector{PrecursorMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
+#=function reset!(fms::Vector{PrecursorMatch{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
     for i in range(1, last_non_empty)
         fms[i] = PrecursorMatch{T}()
     end
-end
+end=#
 
 function reset!(fms::Vector{Isotope{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
     for i in range(1, last_non_empty)
@@ -276,13 +617,11 @@ function reset!(fms::Vector{Isotope{T}}, last_non_empty::Int64) where {T<:Abstra
     end
 end
 
-
 function reset!(lf::Vector{LibraryFragment{T}}, last_non_empty::Int64) where {T<:AbstractFloat}
     for i in range(1, last_non_empty)
         lf[i] = LibraryFragment{T}()
     end
 end
-
 
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {T<:AbstractFloat,M<:Match}
     if collect_fmatches
