@@ -468,7 +468,26 @@ Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
 
 testmyidea(t::Union{Int64, Bool}) = println(t)
 
-
+main_search_params = (
+    expected_matches = 1000000,
+    frag_err_dist = frag_err_dist_dict[1],
+    frag_tol_quantile = 0.975,
+    max_iter = 1000,
+    max_peaks = false,
+    min_frag_count = 4,
+    min_matched_ratio = Float32(0.45),
+    min_spectral_contrast = Float32(0.5),
+    nmf_tol = Float32(100),
+    precursor_tolerance = 5.0,
+    quadrupole_isolation_width = 4.25,
+    regularize = false,
+    rt_tol = 20.0,
+    sample_rate = 1.0,
+    scan_range = (0, 3000000),
+    topN = 100,
+    λ = zero(Float32),
+    γ = zero(Float32)
+)
 
 function mainLibrarySearch(
     #Mandatory Args
@@ -480,8 +499,8 @@ function mainLibrarySearch(
     err_dist::Laplace{Float64},
     params::NamedTuple)
 
-    frag_ppm_err = params[:frag_err_dist][ms_file_idx]
-    fragment_tolerance = params[:frag_err_dist][ms_file_idx]
+    frag_ppm_err = params[:frag_err_dist].μ
+    fragment_tolerance = quantile(params[:frag_err_dist], params[:frag_tol_quantile])
 
     return SearchRAW(
         spectra, 
@@ -514,6 +533,16 @@ function mainLibrarySearch(
         γ = params[:γ]
     )
 end
+
+PSMs = mainLibrarySearch(
+    Arrow.Table(MS_TABLE_PATHS[1]),
+    prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
+    frags_mouse_detailed_33NCEcorrected_start1, 
+    RT_to_iRT_map_dict[1], #RT to iRT map'
+    UInt32(1), #MS_FILE_IDX
+    frag_err_dist_dict[1],
+    main_search_params
+);
 
 @time PSMs = SearchRAW(
     Arrow.Table(MS_TABLE_PATHS[1]), 
