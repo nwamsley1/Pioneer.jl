@@ -191,7 +191,7 @@ function searchScan!(precs::Counter{UInt32,UInt8, Float32}, f_index::FragmentInd
     #println("TEST")
     min_frag_bin = 0 #Fragment bins with a lower index can be excluded from the search
     ms1_idx = 1
-    lower_bound = precursor_window - width
+    lower_bound = precursor_window - (width)
     lower_bound += -prec_ppm*lower_bound/(1e6)
 
     #ms1_idx = searchsortedfirst(MS1, lower_bound) #Find the first MS1 peak with m/z greater than the lower_bound of the quadrupole isolation window

@@ -66,7 +66,7 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
                 transitions[transition_idx] = frag
             end
             #Grow array if exceeds length
-            (prec_idx > length(prec_idx)) ? append!(prec_idx, zeros(UInt32, block_size)) : nothing
+            (prec_idx > length(prec_ids)) ? append!(prec_ids, zeros(UInt32, block_size)) : nothing
 
             prec_ids[prec_idx] = first(precs[i])
         end
@@ -113,7 +113,7 @@ function selectIsotopes!(isotopes::Vector{Isotope{T}},
             isotopes[ion_idx] = iso
             #append!(isotopes, isotope_dict[last(prec_list[i])])
         end
-        (prec_idx > length(prec_idx)) ? append!(prec_idx, zeros(UInt32, block_size)) : nothing
+        (prec_idx > length(prec_ids)) ? append!(prec_ids, zeros(UInt32, block_size)) : nothing
         prec_ids[prec_idx] = last(prec_list[i])
     end
     sort!(@view(isotopes[1:ion_idx]), 

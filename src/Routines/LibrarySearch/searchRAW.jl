@@ -1,7 +1,7 @@
 function SearchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
-                    frag_index::FragmentIndex{Float32},
+                    frag_index::Union{FragmentIndex{Float32}, Missing},
                     ion_list::Union{Vector{Vector{LibraryFragment{Float32}}}, Missing},
                     iRT_to_RT_spline::Any,
                     ms_file_idx::UInt32,
@@ -26,7 +26,7 @@ function SearchRAW(
                     nmf_tol::Float32 = Float32(100.0),
                     precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
                     precursor_tolerance::Float64 = 5.0,
-                    quadrupole_isolation_width::Float64 = 4.25,
+                    quadrupole_isolation_width::Float64 = 8.5,
                     regularize::Bool = false,
                     rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
                     rt_index::Union{retentionTimeIndex{Float64, Float32}, Vector{Tuple{Float64, UInt32}}, Missing} = missing,
@@ -60,13 +60,10 @@ function SearchRAW(
     #by a pre-determined block-size. 
     ionMatches = [IonMatchType() for _ in range(1, expected_matches)] #IonMatchType is something that inherits from the "Match" class. 
     ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
-    println("length(ionMisses) ", length(ionMisses))
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
-    println("TEST2")
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
     H_COLS, H_ROWS, H_VALS = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches)
   
-
     ##########
     #Iterate through spectra
     for i in range(1, size(spectra[:masses])[1])
@@ -90,22 +87,24 @@ function SearchRAW(
         ##########
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
-        if !ismissing(searchScan!)
+        if !ismissing(searchScan!) | !ismissing(frag_index)
             prec_count, match_count = searchScan!(precs, #counter which keeps track of plausible matches 
                         frag_index, 
                         min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
                         iRT_low, iRT_high,
                         Float32(fragment_tolerance), 
                         Float32(precursor_tolerance),
-                        Float32(quadrupole_isolation_width),
+                        Float32(quadrupole_isolation_width/2.0),
                         min_frag_count = min_frag_count, 
                         min_ratio = Float32(min_matched_ratio),
                         topN = topN
                         )
+            
         end
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
         if ismissing(isotope_dict) 
+            
             ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                ion_list,
                                                precs,
@@ -117,6 +116,8 @@ function SearchRAW(
                                                spectra[:precursorMZ][i], #prec_mz
                                                Float32(quadrupole_isolation_width/2.0) #prec_tol
                                                )::Tuple{Int64, Int64}
+            
+            
         else
             ion_idx, prec_idx = selectIons!(
                                             ionTemplates,
@@ -148,7 +149,7 @@ function SearchRAW(
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
-            reset!(ionMatches, nmatches), reset!(ionMisses, nmisses) #These arrays are pre-allocated so just overwrite to prepare for the next scan 
+            #reset!(ionMatches, nmatches), reset!(ionMisses, nmisses) #These arrays are pre-allocated so just overwrite to prepare for the next scan 
             IDtoROW = UnorderedDictionary{UInt32, UInt32}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
             X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
@@ -163,7 +164,8 @@ function SearchRAW(
                 unscored_PSMs = UnorderedDictionary{UInt32, XTandem{Float32}}()
 
                 ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
-
+                #println("min_spectral_contrast ", min_spectral_contrast)
+                #println("min_frag_count ", min_frag_count)
                 #Score unscored_PSMs and write them to scored_PSMs
                 Score!(scored_PSMs, 
                         unscored_PSMs, 
@@ -190,7 +192,7 @@ function SearchRAW(
                 DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
             end
             #Add precursor templates with their weights and retention times to the chromatogram table 
-            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime])
+            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
         end
 
         ##########
@@ -209,7 +211,7 @@ function SearchRAW(
         return DataFrame(scored_PSMs), all_fmatches
     else
         if ismissing(chromatograms)
-            DataFrame(scored_PSMs)
+            return DataFrame(scored_PSMs)
         elseif ismissing(scored_PSMs)
             chromatograms = DataFrame(chromatograms)
             sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
@@ -308,7 +310,7 @@ function mainLibrarySearch(
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
     params::Dict;
-    scan_range = (0, 0))
+    scan_range::Tuple{Int64, Int64} = (0, 0))
 
     frag_ppm_err = err_dist.μ
     fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
@@ -346,7 +348,8 @@ function mainLibrarySearch(
     =#
     return SearchRAW(
         spectra, 
-        frag_index, ion_list,
+        frag_index, 
+        ion_list,
         iRT_to_RT_spline,
         ms_file_idx,
         err_dist,
@@ -369,7 +372,7 @@ function mainLibrarySearch(
         rt_bounds = params[:rt_bounds],
         rt_tol = params[:rt_tol],
         sample_rate = 1.0,
-        scan_range = params[:scan_range],
+        scan_range = scan_range,
         scored_PSMs = makePSMsDict(XTandem(Float32)),
         topN = params[:topN],
         λ = params[:λ],
@@ -379,11 +382,9 @@ end
 
 function integrateMS2(
     #Mandatory Args
-    spectra::Arrow.Table, 
-    frag_index::FragmentIndex{Float32},
+    spectra::Arrow.Table,
     ion_list::Vector{Vector{LibraryFragment{Float32}}},
     rt_index::retentionTimeIndex{U, T},
-    iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
     params::Dict; 
@@ -431,8 +432,9 @@ function integrateMS2(
 
     return SearchRAW(
         spectra, 
-        frag_index, ion_list,
-        iRT_to_RT_spline,
+        missing, 
+        ion_list,
+        x->x,
         ms_file_idx,
         err_dist,
         selectRTIndexedTransitions!,
@@ -466,10 +468,8 @@ end
 function integrateMS1(
     #Mandatory Args
     spectra::Arrow.Table, 
-    frag_index::FragmentIndex{Float32},
     isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
     prec_rt_list::Vector{Tuple{T, UInt32}},
-    iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
     params::Dict; 
@@ -513,9 +513,9 @@ function integrateMS1(
     )=#
     return SearchRAW(
         spectra, 
-        frag_index, 
+        missing, 
         missing, #Not ion list. Instead passing "isotope_dict"
-        iRT_to_RT_spline,
+        x->x,
         ms_file_idx,
         err_dist,  #Not really sure how to estimate this yet?
         selectIsotopes!, #Ion Selection Function for MS1 integration 
@@ -551,7 +551,7 @@ function integrateMS1(
 end
 
 
-function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_times::AbstractArray{Union{U, Missing}}; block_size = 100000) where {T,U<:AbstractFloat}
+function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
     function inc!(chroms::Dict{Symbol, Vector}, n::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64)
         chroms[:precursor_idx][n] = key
         chroms[:weight][n] = weight
@@ -572,12 +572,12 @@ function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionar
         if haskey(frag_counts, key)
     
             if haskey(id_to_row, key)
-                inc!(chroms, n, key, weights[id_to_row[key]], retention_times[i], frag_counts[key])
+                inc!(chroms, n, key, weights[id_to_row[key]], retention_time, frag_counts[key])
             else
-                inc!(chroms, n, key, Float32(0.0),retention_times[i], frag_counts[key])
+                inc!(chroms, n, key, Float32(0.0),retention_time, frag_counts[key])
             end
         else
-            inc!(chroms, n, key, Float32(0.0), retention_times[i], 0)
+            inc!(chroms, n, key, Float32(0.0), retention_time, 0)
         end
         n += 1
     end    
