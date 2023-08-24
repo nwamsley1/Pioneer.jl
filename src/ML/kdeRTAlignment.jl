@@ -24,7 +24,7 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     #return LinearInterpolation(x_grid, ys, extrapolation_bc = Line())
 end
 
-function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any) where {T<:AbstractFloat}
+function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any; f_out::String = "./") where {T<:AbstractFloat}
     p = Plots.plot(RT, iRT, seriestype=:scatter,
                         xlabel = "Retention Time RT (min)",
                         ylabel ="Indexed Retention Time iRT (min)",
@@ -36,12 +36,14 @@ function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any) where {T<:Abstr
             legendfontsize = 24,
             tickfontsize = 24,
             guidefontsize = 24,
-            margin = 10Plots.mm)
+            margin = 10Plots.mm,
+            dpi = 300)
 
     Plots.plot!(p, (LinRange(minimum(RT), maximum(RT), 100)), 
             rt_map.(LinRange(minimum(RT), maximum(RT), 100)),
             lw = 6.0,
-            label = "RT Spline", show = true)
+            label = "RT Spline")
+    savefig(p, f_out*"_rt_alignment.pdf")
 
 
 end

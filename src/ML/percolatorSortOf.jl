@@ -43,7 +43,16 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
         train_classes = X_labels[train_fold_idxs,1]
 
         #Train a model on the n-1 training folds. Then apply it to get class probabilities for the test-fold. 
-        bst = xgboost((train_features, train_classes), num_round=num_round, colsample_bytree = colsample_bytree, gamma = gamma, max_depth=max_depth, eta = eta, min_child_weight = min_child_weight, subsample = subsample, objective="binary:logistic")
+        bst = xgboost((train_features, train_classes), 
+                        num_round=num_round, 
+                        colsample_bytree = colsample_bytree, 
+                        gamma = gamma, 
+                        max_depth=max_depth, 
+                        eta = eta, 
+                        min_child_weight = min_child_weight, 
+                        subsample = subsample, 
+                        objective="binary:logistic",
+                        watchlist=(;))
         ŷ = XGBoost.predict(bst, X[folds[test_fold_idx],:])
         PSMs[folds[test_fold_idx],:prob] = (1 .- ŷ)
     end

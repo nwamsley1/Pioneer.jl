@@ -1,0 +1,30 @@
+{
+    "expected_matches": 1000000,
+    "frag_ppm_err": 0.0,
+    "frag_tol_quantile": 0.975,
+    "frag_tol_presearch": 30.0,
+    "max_peaks": false,
+    "max_peak_width": 2.0,
+    "min_frag_count": 4,
+    "min_frag_count_presearch": 7,
+    "min_matched_ratio": 0.45,
+    "min_matched_ratio_presearch": 0.6,
+    "min_spectral_contrast": 0.5,
+    "min_spectral_contrast_presearch": 0.95,
+    "prec_tolerance": 5.0,
+    "quadrupole_isolation_width": 8.5, 
+    "rt_bounds":[-20.0, 200.0],
+    "rt_tol": 200.0,
+    "sample_rate": 0.01,
+    "topN_presearch": 5,
+    "topN": 1000,
+
+    "nnls_params":         
+    {
+        "nnls_max_iter": 1000,
+        "nnls_tol": 100,
+        "regularize": false,
+        "lambda": 0.0,
+        "gamma": 0.0
+    }
+}
