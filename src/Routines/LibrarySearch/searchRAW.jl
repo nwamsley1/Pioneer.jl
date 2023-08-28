@@ -192,7 +192,7 @@ function SearchRAW(
                 DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
             end
             #Add precursor templates with their weights and retention times to the chromatogram table 
-            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
+            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, i, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
         end
 
         ##########
@@ -440,7 +440,11 @@ function integrateMS2(
         selectRTIndexedTransitions!,
         missing,
         
-        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), 
+                                :weight => zeros(Float32, N), 
+                                :scan_idx => zeros(UInt32, N),
+                                :rt => zeros(Float32, N), 
+                                :frag_count => zeros(Int64, N)),
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
@@ -551,11 +555,12 @@ function integrateMS1(
 end
 
 
-function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
-    function inc!(chroms::Dict{Symbol, Vector}, n::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64)
+function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, UInt32}, n::Int64, scan_idx::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
+    function inc!(chroms::Dict{Symbol, Vector}, n::Int64, scan_idx::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64)
         chroms[:precursor_idx][n] = key
         chroms[:weight][n] = weight
         chroms[:rt][n] = rt
+        chroms[:scan_idx][n] = scan_idx
         chroms[:frag_count][n] = frag_count
     end
 
@@ -572,12 +577,12 @@ function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionar
         if haskey(frag_counts, key)
     
             if haskey(id_to_row, key)
-                inc!(chroms, n, key, weights[id_to_row[key]], retention_time, frag_counts[key])
+                inc!(chroms, n, scan_idx, key, weights[id_to_row[key]], retention_time, frag_counts[key])
             else
-                inc!(chroms, n, key, Float32(0.0),retention_time, frag_counts[key])
+                inc!(chroms, n, scan_idx, key, Float32(0.0),retention_time, frag_counts[key])
             end
         else
-            inc!(chroms, n, key, Float32(0.0), retention_time, 0)
+            inc!(chroms, n, scan_idx, key, Float32(0.0), retention_time, 0)
         end
         n += 1
     end    

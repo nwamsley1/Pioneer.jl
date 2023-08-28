@@ -79,3 +79,140 @@ integrate_ms1_params = Dict(
         :λ => zero(Float32),
         :γ => zero(Float32)
 )
+
+N = 10000
+z_data = zeros(Float64, (N, N))
+x = collect(range(0, stop=2, length=N))
+y = collect(range(0, stop=2, length=N))
+A = [
+    1 0 0 0 0 ;
+    1 1 1 0 0 ;
+    0 0 1 1 1;
+]
+
+function f(X::Tuple{T, T, T}, A::Matrix{Int64}; α::T = 0.9, β::T = 0.01) where {T<:AbstractFloat}
+    loss = 0.0
+    @turbo for col in 1:size(A)[2]
+        ∑X = 0
+        for row in 1:size(A)[1]
+            #println(row)
+            ∑X += X[row]*A[row, col]
+        end
+        loss += (1- ∑X)^2
+    end
+    return loss
+end
+
+N = 100 - 1
+x = collect(range(0, stop=2, length=N))
+A = [
+    1 0 0 0 0 ;
+    1 1 1 0 0 ;
+    0 0 1 1 1;
+]
+function getMin(x::Vector{T}, A::Matrix{Int64}, f::Function) where {T<:AbstractFloat}
+    min_idx = (0.0, 0.0, 0.0)
+    min = Inf
+    for i in x
+        for j in x
+            for k in x
+                z = f((i, j, k), A)
+                if z < min
+                    min_idx = (i, j, k)
+                    min = z
+                end
+            end
+        end
+    end
+    return min_idx, min
+end
+
+A = [
+    0 0 0 0 0 0;
+    1 1 1 1 1 0;
+    0 0 1 1 1 1;
+    1 1 0 0 0 0
+]
+A'\[1, 1, 1, 1, 1, 1]
+
+A = [
+    1 0 0 0 0 0 1;
+    1 1 1 1 1 0 0;
+    0 0 1 1 1 1 0;
+    1 1 0 0 0 0 0;
+]
+
+A = Float64[
+    1 0 0 0 0 0 1;
+    1 1 1 1 1 0 0;
+    0 0 1 1 1 1 0;
+    1 1 0 0 0 0 0;
+]
+A'\[1, 1, 1, 1, 1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, 7), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+A = Float64[
+    1 0 0 0 0 0 1;
+    1 1 1 1 1 0 0;
+    0 0 1 1 0 0 0;
+    1 1 0 0 0 0 0;
+]
+A'\[1, 1, 1, 1, 1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, 7), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+A = Float64[
+    1 0 1 0 0 0 1;
+    1 1 1 1 1 0 0;
+    0 0 1 1 0 0 0;
+]
+A'\[1, 1, 1, 1, 1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, 7), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+
+
+
+A = Float64[
+    1 0 0 0 0 0 1;
+    1 0 1 1 1 0 0;
+    0 0 1 1 0 1 0;
+    1 1 0 0 0 0 0;
+]
+A'\[1, 1, 1, 1, 1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, 7), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+A = Float64[
+    1 0 0 0 0 0 1;
+    1 0 1 1 1 0 0;
+    0 0 1 1 1 1 0;
+    1 1 0 0 0 0 0;
+]
+A'\[1, 1, 1, 1, 1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, 7), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+
+A = Float64[
+    1 1 0;
+    1 0 1;
+    0 1 1;
+]
+A'\[1, 1, 1]
+sparseNMF(sparse(A'), ones(Float64, size(A)[2]), 0.0, 0.0, false, tol = 1e-6)
+A'.==1.0
+
+
+
+
+
+
+
+A'\[-1, -1, -1, -1, -1, -1]
+
+plot(surface(z=z_data, x=x, y=y))
+xy_min = argmin(z_data)
+println(x[xy_min[1]])
+println(y[xy_min[2]])

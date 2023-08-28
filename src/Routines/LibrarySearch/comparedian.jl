@@ -507,3 +507,12 @@ histogram!(log2.(diann_missing_peptides[:,"Precursor.Normalised"]), normalize = 
 plot(best_psms[best_psms[:,:q_value].<0.01,:RT_pred], best_psms[best_psms[:,:q_value].<0.01,:RT], seriestype = :scatter, alpha = 0.1)
 plot(best_psms[best_psms[:,:q_value].<0.01,:iRT], best_psms[best_psms[:,:q_value].<0.01,:RT], seriestype = :scatter, alpha = 0.1)
 plot!(best_psms[best_psms[:,:decoy],:iRT], best_psms[best_psms[:,:decoy],:RT], seriestype = :scatter, alpha = 0.1)
+
+
+
+diannreport = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
+
+diannreport = unique(diannreport[:,["Protein.Ids","Stripped.Sequence"]])
+sort!(diannreport, ["Protein.Ids"])
+
+Plots.histogram([count(";",ids) for ids in diannreport[:,"Protein.Ids"] if count(";",ids)>0])

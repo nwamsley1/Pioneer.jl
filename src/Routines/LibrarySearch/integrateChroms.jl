@@ -33,6 +33,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     non_zero = BitVector(undef, size(chrom)[1])
     fillNonZero!(non_zero, chrom[:,:weight])
     chrom = chrom[non_zero,:]
+    #chrom[chrom[:,:frag_count].<3,:weight] .= zero(Float32)
     #Too few points to attempt integration
     if size(chrom)[1] < 3
         return (0.0, 0, 0.0, 0.0, missing, missing, missing)
@@ -60,7 +61,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     #Smoothing parameters for chromatogram
     #window_size, order = getSmoothingParams(stop - start, max_smoothing_window, min_smoothing_order)
     window_size, order = getSmoothingParams(stop - start, 5, min_smoothing_order)
-    intensity_smooth = savitzky_golay(intensity[start:stop], window_size, order).y
+    intensity_smooth = intensity[start:stop]#savitzky_golay(intensity[start:stop], window_size, order).y
     intensity_smooth[intensity_smooth .< 0.0] .= zero(eltype(typeof(intensity_smooth)))
 
     if isplot
@@ -164,6 +165,21 @@ function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::V
                     end
                 end
             end
+        end
+    end
+
+    #Roll back boundaries
+    while intensity[best_right - 1] < intensity[best_right]
+        best_right = best_right - 1
+        if best_right == best_left
+            break
+        end
+    end
+
+    while intensity[best_left + 1] < intensity[best_left]
+        best_left += 1
+        if best_right == best_left
+            break
         end
     end
 

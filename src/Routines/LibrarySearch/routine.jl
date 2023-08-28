@@ -229,15 +229,15 @@ spec_load_time = @timed begin
     const frag_list = load_object(frags_list_path)
     const precursors_list = load_object(precursors_list_path)
     const frag_index = load_object(frag_index_path)
-    #@load frags_list_path frags_mouse_detailed_33NCEcorrected_start1
-    #@load precursors_list_path precursors_mouse_detailed_33NCEcorrected_start1
-    #@load frag_index_path prosit_mouse_33NCEcorrected_start1_5ppm_15irt
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/frags_mouse_detailed_33NCEcorrected_start1.jld2" frags_mouse_detailed_33NCEcorrected_start1
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
+    @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt 
 end
 println("Loaded spectral libraries in ", spec_load_time.time, " seconds")
 
 ###########
 #Load RAW File
-#MS_TABLE_PATHS = ["/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow",
+#MS_TABLE_PATHS = ["/Users/n.t.wamsley/Projects/PROSIT/TEST_DATA/MOUSE_TEST/MA5171_MOC1_DMSO_R01_PZ_DIA.arrow"],
 #"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow",
 #"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_2.arrow",
 #"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_3.arrow"]
@@ -399,8 +399,8 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 UInt32(1), #MS_FILE_IDX
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
-                                                scan_range = (101357, 111357),
-                                                #scan_range = (0, length(MS_TABLE[:masses]))
+                                                #scan_range = (101357, 111357),
+                                                scan_range = (0, length(MS_TABLE[:masses]))
                                             );
         PSMs = PSMs[PSMs[:,:weight].>100.0,:];
         refinePSMs!(PSMs, MS_TABLE, precursors_list);
@@ -554,4 +554,38 @@ getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 
 println("Number of unique Precursors ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
 
+MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
+ms_file_idx = 1
+ms2_chroms = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    scan_range = (0, length(MS_TABLE[:scanNumber]))
+#scan_range = (101357, 102357)
+);
+
+
+best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
+best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][10000:10010,[:sequence,:RT,:intensity,:prob]]
+N = 10000
+best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), isplot = true)
+N += 1
 #Why not found in ms2_chroms?
+10097
+
+
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10097,:precursor_idx]),)]
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10097,:precursor_idx]), isplot = true)
+
+
+
+N = 10108
+
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10151,:precursor_idx]),)]
+
+
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10152,:precursor_idx]),)]
+precursor_idx = 889551 
