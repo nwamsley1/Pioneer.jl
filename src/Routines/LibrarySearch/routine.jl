@@ -571,13 +571,21 @@ best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:dec
 best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][10000:10010,[:sequence,:RT,:intensity,:prob]]
 N = 10000
 best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), isplot = true)
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
 N += 1
+
+PSMs[1][PSMs[1][:,:precursor_idx] .== best_psms_passing[N,:precursor_idx],[:sequence,:precursor_idx,:weight,:total_ions,:best_rank,:entropy_sim,:matched_ratio,:RT,:q_value,:prob]]
 #Why not found in ms2_chroms?
 10097
 
 
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10097,:precursor_idx]),)]
+plot(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10162,:precursor_idx]),)][16:29,:rt], 
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10162,:precursor_idx]),)][16:29,:weight],
+seriestype=:scatter)
+
+
 integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10097,:precursor_idx]), isplot = true)
 
 
@@ -588,4 +596,30 @@ ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10151,:precursor_idx]),)]
 
 
 ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10152,:precursor_idx]),)]
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10152,:precursor_idx]), isplot = true)
+best_psms_passing[10152,:scan_idx]
 precursor_idx = 889551 
+
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10152,:precursor_idx]),(best_psms_passing[10152,:scan_idx]), isplot = true)
+best_psms_passing[10152,:scan_idx]
+precursor_idx = 889551 
+
+
+10162 #get rid of points with only one match
+10166 #Tail when there are zeros? No walkback?
+N = 10172 #Inteference?
+10185 #Really bad MS2 bin overlap?
+10211 #worse interference?
+10230 #The worst interference?
+10258 #Chosses wrong integration boundary. early cuttoff
+N = 10346 #missed boundary entirely
+N = 10191 # boundary
+N = 10392 #overlap bin. Missed boundary?
+N = 10402 #Two fragments matching. probably non_specific. #prec_idx = 1773834
+
+
+PSMs[1][PSMs[1][:,:precursor_idx].==6874401,:]
+
+plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt], 
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight],
+seriestype=:scatter)

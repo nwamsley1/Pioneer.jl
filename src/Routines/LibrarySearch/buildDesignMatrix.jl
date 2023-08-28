@@ -20,7 +20,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     X = zeros(T, M)
 
     #Maps a precursor id to a row of H. 
-    precID_to_row = UnorderedDictionary{UInt32, UInt32}()
+    precID_to_row = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
 
     #Current highest row encountered
     prec_row = zero(UInt32)
@@ -32,16 +32,18 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
         if !haskey(precID_to_row,  getPrecID(match))
             prec_row += one(UInt32)
-            insert!(precID_to_row, getPrecID(match), prec_row)
+            insert!(precID_to_row, getPrecID(match), (prec_row, zero(UInt8)))
         end
-
+        if match.predicted_rank < 5
+            precID_to_row[getPrecID(match)] = (precID_to_row[getPrecID(match)][1], precID_to_row[getPrecID(match)][2] + one(UInt8))
+        end
         #If this peak has not been encountered yet, then start filling a new column
         if getPeakInd(match) != last_peak_ind
             col += 1
             last_peak_ind = getPeakInd(match)
             X[col] = getIntensity(match)
         end
-        row = precID_to_row[getPrecID(match)]
+        row = precID_to_row[getPrecID(match)][1]
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(match)
@@ -55,13 +57,13 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
         if !haskey(precID_to_row,  getPrecID(miss))
             prec_row  += UInt8(1)
-            insert!(precID_to_row, getPrecID(miss), prec_row)
+            insert!(precID_to_row, getPrecID(miss), (prec_row, false))
         end
        # if getPeakInd(miss) != last_peak_ind
             col += 1
             last_peak_ind = getPeakInd(miss)
         #end
-        row = precID_to_row[getPrecID(miss)]
+        row = precID_to_row[getPrecID(miss)][1]
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(miss)
