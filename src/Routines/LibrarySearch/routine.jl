@@ -468,6 +468,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
     
+    #Need to change this. Highest intensity given a 1% fdr threshold. 
     best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
    
     transform!(best_psms, AsTable(:) => ByRow(psm -> 
@@ -566,17 +567,24 @@ ms2_chroms = integrateMS2(MS_TABLE,
 #scan_range = (101357, 102357)
 );
 
+for chrom in ProgressBar(ms2_chroms[2:end])
+    chrom[:,:mz] = [MS_TABLE[:precursorMZ][scan] for scan in chrom[:, :scan_idx]]
+end
 
 best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
 best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][10000:10010,[:sequence,:RT,:intensity,:prob]]
 N = 10000
 best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
 integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
+
+#integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), 51807, isplot = true)
+
+#plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+#ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
 N += 1
 
-PSMs[1][PSMs[1][:,:precursor_idx] .== best_psms_passing[N,:precursor_idx],[:sequence,:precursor_idx,:weight,:total_ions,:best_rank,:entropy_sim,:matched_ratio,:RT,:q_value,:prob]]
+PSMs[1][PSMs[1][:,:precursor_idx] .== best_psms_passing[N,:precursor_idx],[:sequence,:precursor_idx,:weight,:total_ions,:best_rank,:entropy_sim,:matched_ratio,:spectral_contrast,:scribe_score,:RT,:q_value,:prob]]
 #Why not found in ms2_chroms?
 10097
 
@@ -623,3 +631,15 @@ PSMs[1][PSMs[1][:,:precursor_idx].==6874401,:]
 plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt], 
 ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight],
 seriestype=:scatter)
+MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
+ms_file_idx = 1
+X, Hs, IDtoROW, last_matched_col =  firstSearch(
+                                    MS_TABLE,
+                                    frag_index,  
+                                    frag_list, 
+                                    x->x, #RT to iRT map'
+                                    UInt32(ms_file_idx), #MS_FILE_IDX
+                                    Laplace(zero(Float64), 10.0),
+                                    first_search_params,
+                                    scan_range = (101357, 101357)
+                                    );

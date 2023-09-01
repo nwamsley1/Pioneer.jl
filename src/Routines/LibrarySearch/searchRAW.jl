@@ -47,6 +47,7 @@ function SearchRAW(
     chrom_idx = 1
     prec_idx = 0
     ion_idx = 0
+    cycle_idx = 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
 
     ###########
@@ -72,6 +73,9 @@ function SearchRAW(
         #Scan Filtering
         #(i%10000) == 0 ? println(i) : nothing
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
+        if msn == 1
+            cycle_idx += 1
+        end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
 
@@ -146,13 +150,22 @@ function SearchRAW(
                                     ppm = fragment_tolerance #Fragment match tolerance in ppm
                                     )
 
+        #for i in range(1, nmatches)
+        #    if getPrecID(ionMatches[i]) == UInt32(1253230)#UInt32(5144773)
+        #        push!(all_fmatches, ionMatches[i])
+        #    end
+        #end
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
+            println("TEST")
             #reset!(ionMatches, nmatches), reset!(ionMisses, nmisses) #These arrays are pre-allocated so just overwrite to prepare for the next scan 
-            IDtoROW = UnorderedDictionary{UInt32, UInt32}()
+            IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
             X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            if i == 50800
+                return X, Hs, IDtoROW, last_matched_col
+            end
             #return X, Hs, IDtoROW, last_matched_col
             #Non-negative least squares coefficients for each precursor template explaining the spectra 
             weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
@@ -193,7 +206,7 @@ function SearchRAW(
                 DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
             end
             #Add precursor templates with their weights and retention times to the chromatogram table 
-            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, i, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
+            chrom_idx = fillChroms!(chromatograms, IDtoROW, chrom_idx, i, cycle_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
         end
 
         ##########
@@ -208,10 +221,12 @@ function SearchRAW(
 
     ############
     #Return Chromatograms and Score/Feature Table
+    #return all_fmatches
     if collect_fmatches
         return DataFrame(scored_PSMs), all_fmatches
     else
         if ismissing(chromatograms)
+            #return all_fmatches
             return DataFrame(scored_PSMs)
         elseif ismissing(scored_PSMs)
             chromatograms = DataFrame(chromatograms)
@@ -446,7 +461,8 @@ function integrateMS2(
                                 :scan_idx => zeros(UInt32, N),
                                 :rt => zeros(Float32, N), 
                                 :frag_count => zeros(Int64, N),
-                                :rank => zeros(UInt8, N)),
+                                :rank => zeros(UInt8, N),
+                                :cycle_idx => zeros(UInt32, N)),
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
@@ -557,14 +573,15 @@ function integrateMS1(
 end
 
 
-function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}, n::Int64, scan_idx::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
-    function inc!(chroms::Dict{Symbol, Vector}, n::Int64, scan_idx::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64,rank::UInt8)
+function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}, n::Int64, scan_idx::Int64, cycle_idx::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
+    function inc!(chroms::Dict{Symbol, Vector}, n::Int64, scan_idx::Int64, cycle_idx::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64,rank::UInt8)
         chroms[:precursor_idx][n] = key
         chroms[:weight][n] = weight
         chroms[:rt][n] = rt
         chroms[:scan_idx][n] = scan_idx
         chroms[:frag_count][n] = frag_count
         chroms[:rank][n] = rank
+        chroms[:cycle_idx][n] = UInt32(cycle_idx)
     end
 
     for i in range(1, prec_idx)
@@ -580,12 +597,12 @@ function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionar
         if haskey(frag_counts, key)
     
             if haskey(id_to_row, key)
-                inc!(chroms, n, scan_idx, key, weights[id_to_row[key][1]], retention_time, frag_counts[key], id_to_row[key][2])
+                inc!(chroms, n, scan_idx, cycle_idx, key, weights[id_to_row[key][1]], retention_time, frag_counts[key], id_to_row[key][2])
             else
-                inc!(chroms, n, scan_idx, key, Float32(0.0),retention_time, frag_counts[key], zero(UInt8))
+                inc!(chroms, n, scan_idx, cycle_idx, key, Float32(0.0),retention_time, frag_counts[key], zero(UInt8))
             end
         else
-            inc!(chroms, n, scan_idx, key, Float32(0.0), retention_time, 0, zero(UInt8))
+            inc!(chroms, n, scan_idx, cycle_idx, key, Float32(0.0), retention_time, 0, zero(UInt8))
         end
         n += 1
     end    
