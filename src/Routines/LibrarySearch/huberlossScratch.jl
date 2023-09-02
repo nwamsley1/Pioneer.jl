@@ -69,7 +69,7 @@ end=#
 include("src/ML/sparseNNLS.jl")
 @time begin 
     for i in range(1, 1000)
-        solveHuber2!(Hs, r, X₁, Float32(δ), max_iter_outer = 10, max_iter_inner = 20, tol = Hs.n*10, λ = Float32(0.0));
+        solveHuber3!(Hs, r, X₁, Float32(δ), max_iter_outer = 10000, max_iter_inner = 20, tol = Hs.n*10, λ = Float32(0.0));
         X₁.=Float32(1000)
         r = Hs*X₁ .- b
     end
@@ -77,7 +77,7 @@ end
 solveHuber2!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*10, λ = Float32(0.0))
 X₁ = X₁ = 100*ones(eltype(Hs), Hs.n);
 r = Hs*X₁ .- b;
-solveHuber2!(Hs, r, X₁, Float32(δ), max_iter_outer = 10, max_iter_inner = 20, tol = Hs.n*10, λ = Float32(0.0))
+solveHuber3!(Hs, r, X₁, Float32(δ), max_iter_outer = 10000, max_iter_inner = 20, tol = Hs.n*10, λ = Float32(0.0))
 
 dot(X₁, weights[:])/(norm(X₁)*norm(weights[:]))
 corspearman(X₁, weights[:])
@@ -85,7 +85,7 @@ dot(X₁.==0.0, weights[:].==0.0)/(norm(X₁.==0.0)*norm(weights[:].==0.0))
 
 
 
-plot(log10.(X₁ .+ 1), log10.(weights[:] .+ 1), seriestype=:scatter)
+plot(log10.(X₁ .+ 1), log10.(weights[:] .+ 1), seriestype=:scatter, alpha = 0.2)
 
 #plot(X₁,weights[:], seriestype=:scatter)
 

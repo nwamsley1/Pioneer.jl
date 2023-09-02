@@ -155,6 +155,88 @@ function solveHuber2!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::V
     end
     return i
 end
+
+function solveHuber3!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
+    L1 = zero(T)
+    L2 = zero(T)
+    L1vec = zeros(T, Hs.n)
+    ΔX = T(Inf)
+    skipped = 0
+    unskipped = 0
+    #X₁ .= 1000*ones(T, length(X₁))
+    #r = Hs*X₁ .- b
+    i = 0
+    best = range(1, Hs.n)
+    while (i < max_iter_outer) & (ΔX > tol)
+        #Sum of differences bewteen i+1 and i'th iteration
+        ΔX = 0.0
+        #Loop through single variable optimizations
+        #for col in range(1, Hs.n)
+        for col in best
+            #=if randn(1)[1] < L1vec[col]
+                #L1vec[col] = 
+                skipped += 1
+                continue
+            else
+                unskipped += 1
+            end=#
+            L1,L2 = zero(T), zero(T)
+            n = 0
+            X0 = X₁[col]
+            X₀ = X0
+            ########
+            #Newton-Raphson to optimize w.r.t X₁[col]. 
+            ########
+            while (n < max_iter_inner)
+                X0 = X₁[col]
+                L1 = zero(T)
+                L2 = zero(T)
+                @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+
+                    #Least-Squares 
+                    #L1 += Hs.nzval[i]*r[Hs.rowval[i]]
+                    #L2 += Hs.nzval[i]^2
+
+                    #Huber
+                    R = (r[Hs.rowval[i]]/δ)^2
+                    L1 += Hs.nzval[i]*r[Hs.rowval[i]]*((1 + R)^(-1/2))
+                    L2 += (Hs.nzval[i]^2)/((1 + R)^(3/2))
+                end
+                #Apply Damping Factor
+                X₁[col] = max(X₁[col] - 0.5*(L1+λ)/L2, 0.0)
+                #No Damping Factor
+                #X₁[col] = max(X₁[col] - (L1+λ)/L2, 0.0)
+
+
+                #Update residuals 
+                @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+                    r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+                end
+
+                ########
+                #Stopping Criterion for single variable Newton-Raphson
+                #Accuracy requirement increases each outer-loop
+                #Need to find a generally acceptable parameter value
+                ########
+                if abs((X₁[col]-X0)/X0) < 0.1/i
+                    break
+                end
+
+                if X₁[col]==0.0
+                    break
+                end
+                n += 1
+            end
+            L1vec[col] = L1#1/(1.1 + n)
+            ΔX += abs(X₁[col]-X₀)
+        end
+        i += 1
+        best = sortperm(abs.(L1vec), rev = true)
+    end
+    #println("skipped $skipped")
+    #println("unskipped $unskipped")
+    return i
+end
 #mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
 #=function factorSpectrum(Wnew::Vector{T}, Wold::Vector{T}, HHt_diag::Vector{T}, WxHHt_VHt::Matrix{T}, HHt::SparseMatrixCSC{T, Int64}, λ::T, max_iter::Int, tol::T) where {T<:AbstractFloat}
     a = Inf
