@@ -21,6 +21,7 @@ function factorSpectrum(Wnew::Matrix{T}, Wold::Matrix{T}, HHt_diag::Vector{T}, W
         i += 1
     end
 end
+
 function sparseNMF(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, λ::T, γ::T, regularize::Bool = true; max_iter::Int = 1000, tol::T = 100*one(T)) where {T<:AbstractFloat}
 
     Wnew = 100*ones(T, (1, H.n))
@@ -90,7 +91,194 @@ function setLambdas!(λs::Vector{T}, λ::T, γ::T, W::Matrix{T}, adaptive::Bool 
     end
 end
 
-function solveHuber2!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
+function getDerivatives!(Hs::SparseMatrixCSC{Float64, Int64}, r::Vector{Float64}, X₁::Vector{Float64}, col::Int64, δ::Float64, X0::Float32)
+    L0 = zero(Float64)
+    L1 = zzero(Float64)
+    L2 = zero(Float64)
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        #Huber
+        rval = r[Hs.rowval[i]]
+        hsval = Hs.nzval[i]
+        #R = (1 + (rval/δ)^2)^(-1/2)
+        RS = (1 + (rval/δ)^2)
+        #Quake's Fast Inverse Square Root Algorighm
+        #Different magic for float64. 
+        R = RS
+        int64 = reinterpret(UInt64, xₛ)
+        int64 = 0x5fe6eb50c7b537a9 - int64 >> 1
+        R = reinterpret(Float64, int64)
+        R *= 1.5 - RS * 0.5 * R^2
+        HSVAL_R = hsval * R
+
+        L1 += HSVAL_R * rval
+        L2 += (hsval) * HSVAL_R * ((R)^(2))
+        L0 += (δ^2)*((1/R) - 1)
+
+        #=
+        #R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
+        #L1 += r[Hs.rowval[i]]*((R))
+        #L2 += ((R)^(3))/Hs.nzval[i]
+        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        =#
+    end
+    return L0, L1, L2
+end
+
+function getDerivatives!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{Float32}, X₁::Vector{Float32}, col::Int64, δ::Float32, X0::Float32)
+    #L0 = zero(Float32)
+    L1 = zero(Float32)
+    L2 = zero(Float32)
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        #Huber
+        rval = r[Hs.rowval[i]]
+        hsval = Hs.nzval[i]
+        #R = (1 + (rval/δ)^2)^(-1/2)
+        RS = (1 + (rval/δ)^2)
+        #Quake's Fast Inverse Square Root Algorighm
+        #Different magic for float64. 
+        R = RS
+        int32 = reinterpret(UInt32, R)
+        int32 = 0x5f3759df - int32 >> 1 #Magic 
+        R = reinterpret(Float32, int32)
+        R *= 1.5f0 - RS * 0.5f0 * R^2
+        HSVAL_R = hsval * R
+
+        L1 += HSVAL_R * rval
+        L2 += (hsval) * HSVAL_R * ((R)^(2))
+        #L0 += (δ^2)*((1/R) - 1)
+
+        #=
+        #R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
+        #L1 += r[Hs.rowval[i]]*((R))
+        #L2 += ((R)^(3))/Hs.nzval[i]
+        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        =#
+    end
+    return L1, L2
+end
+
+function getL0!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{Float32}, X₁::Vector{Float32}, col::Int64, δ::Float32, X0::Float32)
+    L0 = zero(Float32)
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        rval = r[Hs.rowval[i]]
+        RS = (1 + (rval/δ)^2)
+        L0 += (δ^2)*(sqrt(RS) - 1)
+    end
+    return L0
+end
+
+function newtonRaphson!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {T<:AbstractFloat}
+    n = 0
+    x = X₁[col]
+    X0 = X₁[col]
+    while (n < max_iter_inner)
+        L1, L2 = getDerivatives!(Hs, r, X₁, col, δ, X0)
+        #col == 56 ? println("L0 $L0, L1 $L1, L2 $L2, X₁[col] ", X₁[col], "n $n") : nothing
+        #abs(L1) > δ*0.90 ? println("col $col; L1 $L1") : nothing
+        X0 = X₁[col] 
+        if abs(L1) < δ*0.90
+            @fastmath X₁[col] = max(X₁[col] - 0.5*(L1)/(sqrt(n+1)*L2), zero(T))
+            #@fastmath X₁[col] = max(X₁[col] - 0.5*one(T)*(L1)/(L2), zero(T))
+        else
+            L0 = getL0!(Hs, r, X₁, col, δ, X0)
+            @fastmath X₁[col] = max(X₁[col] - L0/L1, zero(T))
+        end
+        ########
+        #Stopping Criterion for single variable Newton-Raphson
+        ########
+        #if (abs((X₁[col]-X0)/(X0)) < accuracy)
+        if abs(X₁[col] - X0) < accuracy
+            break
+        end
+        n += 1
+    end
+    return X₁[col]-x
+end
+
+function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100) where {T<:AbstractFloat,U<:Real}
+    ΔX = Inf
+    i = 0
+    while (i < max_iter_outer) & (ΔX > tol)
+        ΔX = 0.0
+        #Update each variable once 
+        for col in range(1, Hs.n)
+            δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = max_iter_inner, accuracy = T(100)))
+            ΔX += δx
+        end
+        i += 1
+    end
+    return i
+end
+
+#mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
+#=
+
+function solveHuber3!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
+    L1 = zero(T)
+    L2 = zero(T)
+    Hst = sparse(transpose(Hs))
+    ΔX = T(Inf)
+
+    #Update each variable once 
+    for col in range(1, Hs.n)
+        newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = max_iter_inner, accuracy = T(100), λ = λ)
+    end
+
+    #Setup greedy coordinate descnet 
+    max_gradient = MutableBinaryMaxHeap([Inf for x in 1:Hs.n])
+    for col in range(1, Hs.n)
+        L1 = getGradient!(Hs, r, col, δ)
+        update!(max_gradient, col, abs(L1))
+    end
+    #gradients = Float32[]
+    #diffs = Float32[]
+    #ns = Int64[]
+    i = 0
+    
+    while (i < max_iter_outer) & (ΔX > tol)
+        L1,L2 = zero(T), zero(T)
+        val, col = top_with_handle(max_gradient) #Coefficient with the largest gradient. 
+        #println("col $col; val $val; X₁[col] ", X₁[col])
+        #push!(gradients, val)
+        #println("val is $val and col is $col and i is $i")
+
+        ########
+        #Newton-Raphson to optimize w.r.t X₁[col]. 
+        ########
+        #X0 = X₁[col]
+        n = newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = max_iter_inner, accuracy = T(10), λ = λ)
+        #=push!(ns, n)
+        if !iszero(X₁[col])
+            push!(diffs, abs(X0 - X₁[col])/(X₁[col] + 1000))
+            #push!(diffs, abs(X0 - X₁[col]))
+        end=#
+
+        ########
+        #Which gradients need to be updated?
+        ########
+        gradients_to_update = getGradientsToUpdate!(Hs, Hst, col);
+
+        ########
+        #calculate any gradients that have changed
+        ########
+        for column in gradients_to_update
+            #println("column $column")
+            L1 = getGradient!(Hs, r,  column, δ)
+            #=if column == 100
+                println("col is $column and L1 is $L1")
+            end=#
+            iszero(X₁[ column]) & (sign(L1) == 1) ? update!(max_gradient, column, 0.0) :  update!(max_gradient, column, abs(L1))
+        end
+        i += 1
+    end
+    #return gradients, diffs, ns
+    return i
+end
+
+function solveHuber2!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int64 = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
     L1 = zero(T)
     L2 = zero(T)
     ΔX = T(Inf)
@@ -155,90 +343,116 @@ function solveHuber2!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::V
     end
     return i
 end
+function newtonRaphson!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01, λ::Float32 = zero(Float32)) where {T<:AbstractFloat}
+    n = 0
+    x = X₁[col]
+    X0 = X₁[col]
+    δX = T(0.0)
+    while (n < max_iter_inner)
+        L1 = zero(T)
+        L2 = zero(T)
+        
+        @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            r[Hs.rowval[i]] += Hs.nzval[i]*(δX)
 
-function solveHuber3!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
-    L1 = zero(T)
-    L2 = zero(T)
-    L1vec = zeros(T, Hs.n)
-    ΔX = T(Inf)
-    skipped = 0
-    unskipped = 0
-    #X₁ .= 1000*ones(T, length(X₁))
-    #r = Hs*X₁ .- b
-    i = 0
-    best = range(1, Hs.n)
-    while (i < max_iter_outer) & (ΔX > tol)
-        #Sum of differences bewteen i+1 and i'th iteration
-        ΔX = 0.0
-        #Loop through single variable optimizations
-        #for col in range(1, Hs.n)
-        for col in best
-            #=if randn(1)[1] < L1vec[col]
-                #L1vec[col] = 
-                skipped += 1
-                continue
-            else
-                unskipped += 1
-            end=#
-            L1,L2 = zero(T), zero(T)
-            n = 0
-            X0 = X₁[col]
-            X₀ = X0
-            ########
-            #Newton-Raphson to optimize w.r.t X₁[col]. 
-            ########
-            while (n < max_iter_inner)
-                X0 = X₁[col]
-                L1 = zero(T)
-                L2 = zero(T)
-                @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            #Huber
+            rval = r[Hs.rowval[i]]
+            hsval = Hs.nzval[i]
+            #R = (1 + (rval/δ)^2)^(-1/2)
+            RS = (1 + (rval/δ)^2)
 
-                    #Least-Squares 
-                    #L1 += Hs.nzval[i]*r[Hs.rowval[i]]
-                    #L2 += Hs.nzval[i]^2
+            #Quake's Fast Inverse Square Root Algorighm
+            #Different magic for float64. 
+            R = RS
+            int32 = reinterpret(UInt32, R)
+            int32 = 0x5f3759df - int32 >> 1 #Magic 
+            R = reinterpret(Float32, int32)
+            R *= 1.5f0 - RS * 0.5f0 * R^2
+            HSVAL_R = hsval * R
+            L1 += HSVAL_R * rval
+            L2 += (hsval) * HSVAL_R * ((R)^(2))
 
-                    #Huber
-                    R = (r[Hs.rowval[i]]/δ)^2
-                    L1 += Hs.nzval[i]*r[Hs.rowval[i]]*((1 + R)^(-1/2))
-                    L2 += (Hs.nzval[i]^2)/((1 + R)^(3/2))
-                end
-                #Apply Damping Factor
-                X₁[col] = max(X₁[col] - 0.5*(L1+λ)/L2, 0.0)
-                #No Damping Factor
-                #X₁[col] = max(X₁[col] - (L1+λ)/L2, 0.0)
-
-
-                #Update residuals 
-                @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-                    r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
-                end
-
-                ########
-                #Stopping Criterion for single variable Newton-Raphson
-                #Accuracy requirement increases each outer-loop
-                #Need to find a generally acceptable parameter value
-                ########
-                if abs((X₁[col]-X0)/X0) < 0.1/i
-                    break
-                end
-
-                if X₁[col]==0.0
-                    break
-                end
-                n += 1
-            end
-            L1vec[col] = L1#1/(1.1 + n)
-            ΔX += abs(X₁[col]-X₀)
+            #R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
+            #L1 += r[Hs.rowval[i]]*((R))
+            #L2 += ((R)^(3))/Hs.nzval[i]
+            #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
         end
-        i += 1
-        best = sortperm(abs.(L1vec), rev = true)
+
+        #Newton-Raphson update with damping factor
+        #X₁[col] = max(X₁[col] - (0.5/(n + 1))*(L1+λ)/(L2), 0.0)
+        X0 = X₁[col]
+        @fastmath X₁[col] = max(X₁[col] - one(T)*(L1+λ)/(sqrt(n + 1)*L2), zero(T))
+        δX = X₁[col] - X0
+        #Update residuals 
+        #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        #    r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        #end
+    
+        ########
+        #Stopping Criterion for single variable Newton-Raphson
+        #Accuracy requirement increases each outer-loop
+        #Need to find a generally acceptable parameter value
+        ########
+        #if (abs((X₁[col]-X0)/(X0)) < accuracy)
+        if abs(δX) < accuracy
+            break
+        end
+        #=if iszero(X₁[col]) & (sign(L1) == 1)
+            break
+        end=#
+        n += 1
     end
-    #println("skipped $skipped")
-    #println("unskipped $unskipped")
-    return i
+    return X₁[col]-x
 end
-#mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
-#=function factorSpectrum(Wnew::Vector{T}, Wold::Vector{T}, HHt_diag::Vector{T}, WxHHt_VHt::Matrix{T}, HHt::SparseMatrixCSC{T, Int64}, λ::T, max_iter::Int, tol::T) where {T<:AbstractFloat}
+
+
+
+function getGradient!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, col::Int64, δ::T) where {T<:AbstractFloat}
+    L1 = zero(T)
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        R = (r[Hs.rowval[i]]/δ)^2
+        L1 += Hs.nzval[i]*r[Hs.rowval[i]]*((1 + R)^(-1/2))
+    end
+    return L1
+end
+
+function getGradientsToUpdate!(Hs::SparseMatrixCSC{Float32, Int64}, Hst::SparseMatrixCSC{Float32, Int64}, col::Int64)     
+    gradients_to_update = Set{Int64}()  
+    for row in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        #Get all non-zero elements in the row
+        for i in Hst.colptr[Hs.rowval[row]]:(Hst.colptr[Hs.rowval[row] + 1] - 1)
+            #This gradient needs to be updated. 
+            if i != col
+                push!(gradients_to_update, Hst.rowval[i])
+            end
+        end
+    end
+    return gradients_to_update
+end
+
+function firstOrder!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01, λ::Float32 = zero(Float32)) where {T<:AbstractFloat}
+
+    X0 = X₁[col]
+    L0 = zero(T)
+    L1 = zero(T)
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        #R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
+        R = (1 + (r[Hs.rowval[i]]/δ)^2)^(1/2)
+        L0 += (δ^2)*(R - 1)
+        L1 += r[Hs.rowval[i]]*Hs.nzval[i]/R
+        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+    end
+
+    @fastmath X₁[col] = max(X₁[col] - L0/L1, zero(T))
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+    end
+
+    return
+end
+
+
+function factorSpectrum(Wnew::Vector{T}, Wold::Vector{T}, HHt_diag::Vector{T}, WxHHt_VHt::Matrix{T}, HHt::SparseMatrixCSC{T, Int64}, λ::T, max_iter::Int, tol::T) where {T<:AbstractFloat}
     a = Inf
     i = 1
     while (abs(a) > tol) & (i < max_iter)

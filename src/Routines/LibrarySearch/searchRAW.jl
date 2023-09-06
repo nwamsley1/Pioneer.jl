@@ -158,17 +158,22 @@ function SearchRAW(
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
-            println("TEST")
+            #println("TEST")
             #reset!(ionMatches, nmatches), reset!(ionMisses, nmisses) #These arrays are pre-allocated so just overwrite to prepare for the next scan 
             IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
             X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-            if i == 50800
-                return X, Hs, IDtoROW, last_matched_col
-            end
+            #if i == 50800
+            #    return X, Hs, IDtoROW, last_matched_col
+            #end
             #return X, Hs, IDtoROW, last_matched_col
             #Non-negative least squares coefficients for each precursor template explaining the spectra 
-            weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            
+            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            weights = zeros(Float32, Hs.n)
+            #solveHuber!(Hs, Hs*weights .- X, weights, Float32(20000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
+            solveHuber!(Hs, Hs*weights .- X, weights, Float32(5000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
+
             #Spectral distance metrics between the observed spectrum (X) and the library spectra for each precursor (Hs)
             scores = getDistanceMetrics(X, Hs, last_matched_col)
 

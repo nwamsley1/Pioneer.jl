@@ -51,11 +51,14 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     end
     #non_zero = non_zero.&(chrom[:,:frag_count].!=1)
     chrom = chrom[non_zero,:]
-    println(chrom)
     best_scan_idx = findfirst(x->x==best_scan_idx, chrom[:,:scan_idx])
     #chrom[chrom[:,:frag_count].<3,:weight] .= zero(Float32)
     #Too few points to attempt integration
     if size(chrom)[1] < 3
+        return (0.0, 0, 0.0, 0.0, missing, missing, missing)
+    end
+     
+    if best_scan_idx === nothing
         return (0.0, 0, 0.0, 0.0, missing, missing, missing)
     end
 
@@ -105,7 +108,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
         #Plots.plot(rt, intensity*36, show = true, seriestype=:scatter)
         Plots.plot(rt, intensity, show = true, seriestype=:scatter)
         #Plots.plot!(rt, savitzky_golay(intensity, window_size, order).y, fillrange = [0.0 for x in 1:length(intensity_smooth)], alpha = 0.25, color = :grey, show = true);
-        #Plots.plot!(rt,  intensity, fillrange = [0.0 for x in 1:length(intensity)], alpha = 0.25, color = :grey, show = true);
+        Plots.plot!(rt,  intensity, fillrange = [0.0 for x in 1:length(intensity)], alpha = 0.25, color = :grey, show = true);
         #max.(savitzky_golay((frag_counts.^2).*intensity, window, order).y, zero(T))
         #Plots.plot!(rt,  max.(savitzky_golay((frag_counts.^2).*intensity, window_size, order).y, zero(Float32)), fillrange = [0.0 for x in 1:length(intensity)], alpha = 0.25, color = :grey, show = true);
        
@@ -165,13 +168,12 @@ end
 
 function getSmoothDerivative(x::Vector{T}, y::Vector{U}, window::Int, order::Int) where {T,U<:AbstractFloat}
     #Smooth the first derivative 
-    p = plot()
-    println("TEST")
+    #p = plot()
     smooth_y = max.(savitzky_golay(y, window, order).y, zero(T))
-    plot!(p, x, 10*smooth_y, seriestype = :scatter, show = true)
-    plot!(p, x, savitzky_golay(diff(smooth_y)./diff(x), window, order).y, seriestype = :scatter, show = true)
+    #!(p, x, 10*smooth_y, seriestype = :scatter, show = true)
+    #plot!(p, x, savitzky_golay(diff(smooth_y)./diff(x), window, order).y, seriestype = :scatter, show = true)
  
-    plot!(p, x, savitzky_golay(diff(y)./diff(x), window, order).y, seriestype = :scatter, show = true)
+    #plot!(p, x, savitzky_golay(diff(y)./diff(x), window, order).y, seriestype = :scatter, show = true)
     #plot!(p, x, diff(smooth_y)./diff(x), seriestype = :scatter, show = true)
     #return diff(smooth_y)./diff(x)
     #return savitzky_golay(diff(y)./diff(x), window, order).y
@@ -189,8 +191,8 @@ function getZeroCrossings(Y::Vector{T}, X::Vector{U}) where {T,U<:AbstractFloat}
             push!(zero_crossings_slope, slope)
         end
     end
-    println("zero_crossings_idx ", zero_crossings_idx)
-    println("zero_crossings_idx ", zero_crossings_slope)
+    #println("zero_crossings_idx ", zero_crossings_idx)
+    #println("zero_crossings_idx ", zero_crossings_slope)
     return zero_crossings_idx, zero_crossings_slope
 end
 
@@ -234,11 +236,11 @@ function getPeakBounds(best_scan_idx::Int, intensity::Vector{T}, rt::Vector{T}, 
             end
         end
     end
-    println("best_right2 $best_right")
-    println("best_left $best_left")
+    #println("best_right2 $best_right")
+    #println("best_left $best_left")
     #Roll back boundaries
     r = best_right
-    while r >= best_peak
+    while (r >= best_peak) & (r > 0)
     #while intensity[best_right - 1] <= intensity[best_right]
         if iszero(intensity[r])
             best_right = r
@@ -246,10 +248,9 @@ function getPeakBounds(best_scan_idx::Int, intensity::Vector{T}, rt::Vector{T}, 
             best_right = best_right - 1
         end
         r = r - 1
-        println(r)
     end
     l = best_left
-    while l <= best_peak
+    while (l <= best_peak) & (l > 0)
     #best_intensity[best_left + 1] <= intensity[best_left]
         if iszero(intensity[l])
             best_left = l
@@ -258,8 +259,8 @@ function getPeakBounds(best_scan_idx::Int, intensity::Vector{T}, rt::Vector{T}, 
         end
         l += 1
     end
-    println("best_right2 $best_right")
-    println("best_left $best_left")
+    #println("best_right2 $best_right")
+    #println("best_left $best_left")
     return best_peak_slope, best_left, best_right, best_peak
 end
 

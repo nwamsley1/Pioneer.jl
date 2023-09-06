@@ -226,13 +226,16 @@ frag_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfil
 
 println("Loading spectral libraries into main memory...")
 spec_load_time = @timed begin
-    const frag_list = load_object(frags_list_path)
-    const precursors_list = load_object(precursors_list_path)
-    const frag_index = load_object(frag_index_path)
+    #const frag_list = load_object(frags_list_path)
+    #const precursors_list = load_object(precursors_list_path)
+    #const frag_index = load_object(frag_index_path)
     @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/frags_mouse_detailed_33NCEcorrected_start1.jld2" frags_mouse_detailed_33NCEcorrected_start1
     @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
     @load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/prosit_mouse_33NCEcorrected_start1_5ppm_15irt.jld2" prosit_mouse_33NCEcorrected_start1_5ppm_15irt 
 end
+frag_index = prosit_mouse_33NCEcorrected_start1_5ppm_15irt
+precursors_list = precursors_mouse_detailed_33NCEcorrected_start1
+frag_list = frags_mouse_detailed_33NCEcorrected_start1
 println("Loaded spectral libraries in ", spec_load_time.time, " seconds")
 
 ###########
@@ -326,6 +329,7 @@ integrate_ms1_params = Dict(
         :λ => zero(Float32),
         :γ => zero(Float32)
 )
+MS_DATA_DIR = "/Users/n.t.wamsley/Projects/PROSIT/TEST_DATA/MOUSE_TEST"
 =#
 
 ###########
@@ -464,6 +468,8 @@ PSMs = groupby(PSMs,:ms_file_idx);
 println("Begining Integration ...")
 best_psms_dict = Dict{Int64, DataFrame}()
 integration_time = @timed begin
+MS_TABLE_PATH = MS_TABLE_PATHS[1]
+ms_file_idx = 1
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS[1:1]))
 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
@@ -489,11 +495,11 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                     frag_err_dist_dict[ms_file_idx],
                                     integrate_ms2_params, 
                                     scan_range = (0, length(MS_TABLE[:scanNumber]))
-                                    #scan_range = (101357, 102357)
+                                    #can_range = (101357, 110357)
                                     );
     
     #Integrate MS2 Chromatograms 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
     
     #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
     best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6),:];
@@ -563,25 +569,84 @@ ms2_chroms = integrateMS2(MS_TABLE,
     UInt32(ms_file_idx), 
     frag_err_dist_dict[ms_file_idx],
     integrate_ms2_params, 
-    scan_range = (0, length(MS_TABLE[:scanNumber]))
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 50000)
 #scan_range = (101357, 102357)
 );
 
 for chrom in ProgressBar(ms2_chroms[2:end])
     chrom[:,:mz] = [MS_TABLE[:precursorMZ][scan] for scan in chrom[:, :scan_idx]]
 end
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+   
 
 best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
 best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][10000:10010,[:sequence,:RT,:intensity,:prob]]
 N = 10000
-best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
+#best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
 integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-
-#integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), 51807, isplot = true)
-
-#plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-#ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
 ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+N += 1
+
+
+include("src/Routines/LibrarySearch/searchRAW.jl")
+ms2_chroms = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 50000)
+#scan_range = (101357, 102357)
+);
+
+ms2_chroms_huber = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 50000)
+#scan_range = (101357, 102357)
+);
+include("src/ML/sparseNNLS.jl")
+include("src/Routines/LibrarySearch/searchRAW.jl")
+ms2_chroms_huber_2 = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 50000)
+#scan_range = (101357, 102357)
+);
+
+#integratePrecursor(ms2_chroms_huber, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+#integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+
+N = 10045
+plot(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+alpha = 0.5)
+
+N += 1
+
+cor(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight],
+ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
+
+N += 1
+
+integratePrecursor(ms2_chroms_huber, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+
 N += 1
 
 PSMs[1][PSMs[1][:,:precursor_idx] .== best_psms_passing[N,:precursor_idx],[:sequence,:precursor_idx,:weight,:total_ions,:best_rank,:entropy_sim,:matched_ratio,:spectral_contrast,:scribe_score,:RT,:q_value,:prob]]

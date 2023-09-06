@@ -108,7 +108,7 @@ function Score!(PSMs_dict::Dict,
                 #entropy_sim::Vector{Float32}, 
                 scores::NamedTuple,
                 weight::Vector{Float32}, 
-                IDtoROW::UnorderedDictionary{UInt32, UInt32}; 
+                IDtoROW::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}; 
                 scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T,U<:Real}
 
     scribe_score = scores[:scribe]::Vector{Float32}
@@ -170,7 +170,7 @@ function Score!(PSMs_dict::Dict,
     end
 
     for key in keys(unscored_PSMs)
-        index = IDtoROW[unscored_PSMs[key].precursor_idx]
+        index = IDtoROW[unscored_PSMs[key].precursor_idx][1]
         if spectral_contrast[index]<min_spectral_contrast
             continue
         end
