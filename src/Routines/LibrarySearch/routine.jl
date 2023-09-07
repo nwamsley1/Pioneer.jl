@@ -623,19 +623,56 @@ ms2_chroms_huber_2 = integrateMS2(MS_TABLE,
     scan_range = (40000, 50000)
 #scan_range = (101357, 102357)
 );
-
+include("src/Routines/LibrarySearch/searchRAW.jl")
+include("src/ML/sparseNNLS.jl")
+ms2_chroms_huber_3 = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 70000)
+#scan_range = (101357, 102357)
+);
 #integratePrecursor(ms2_chroms_huber, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
 #integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
 
 N = 10045
-plot(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+N = 10250
+
+N = 10296
+
+N = 10045
+
+N = 10250
+squared_error = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+plot(squared_error[:,:rt],
+squared_error[:,:weight], seriestype=:scatter,
 alpha = 0.5)
-plot!(ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+#plot!(ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+#ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+#alpha = 0.5)
+#plot!(ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
+#ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+#alpha = 0.5)
+huber_loss = ms2_chroms_huber_3[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+plot!(huber_loss[:,:rt],
+huber_loss[:,:weight], seriestype=:scatter,
 alpha = 0.5)
-plot!(ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
+hline!([20000])
+N += 1
+
+julia> precursors_mouse_detailed_33NCEcorrected_start1[0x0078dd68]
+LibraryPrecursor{Float32}(46.953674f0, 414.7449f0, 0.7946125f0, false, 0x02, 0x002ab610, UInt32[0x00000001], "13869", "TEALPGLK", 0x00, 0x01, 0x08)
+
+julia> precursors_mouse_detailed_33NCEcorrected_start1[8952516]
+LibraryPrecursor{Float32}(71.09662f0, 414.7449f0, 0.8327717f0, false, 0x02, 0x0029f55f, UInt32[0x00000001], "1412", "SVDLPGLK", 0x00, 0x01, 0x08)
+plot(ms2_chroms[(precursor_idx=UInt32(0x0078dd68),)][:,:rt],
+ms2_chroms[(precursor_idx=UInt32(0x0078dd68),)][:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(ms2_chroms_huber_3[(precursor_idx=UInt32(0x0078dd68),)][:,:rt],
+ms2_chroms_huber_3[(precursor_idx=UInt32(0x0078dd68),)][:,:weight], seriestype=:scatter,
 alpha = 0.5)
 
 N += 1

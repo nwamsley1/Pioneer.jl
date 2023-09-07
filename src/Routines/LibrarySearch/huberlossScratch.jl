@@ -4,6 +4,36 @@ using JLD2, LinearAlgebra, Dictionaries, SparseArrays, LoopVectorization, StatsB
 @load "/Users/n.t.wamsley/Desktop/X_test.jld2" X
 @load "/Users/n.t.wamsley/Desktop/Hs_test.jld2" Hs
 @load "/Users/n.t.wamsley/Desktop/IDtoROW.jld2" IDtoROW
+
+include("src/Routines/LibrarySearch/searchRAW.jl")
+include("src/ML/sparseNNLS.jl")
+Hs, weights, X, IDtoROW = integrateMS2(MS_TABLE, 
+    frag_list, 
+    rt_index,
+    UInt32(ms_file_idx), 
+    frag_err_dist_dict[ms_file_idx],
+    integrate_ms2_params, 
+    #scan_range = (0, length(MS_TABLE[:scanNumber]))
+    scan_range = (40000, 70000)
+#scan_range = (101357, 102357)
+);
+
+
+sum(X[Hs[:,1].!=0.0])./sum(Hs[:,1][Hs[:,1].!=0.0])
+sum(X[Hs[:,8].!=0.0])./sum(Hs[:,8][Hs[:,8].!=0.0])
+X[Hs[:,2].!=0.0]
+include("src/ML/sparseNNLS.jl")
+#weights[:] = weights0
+#weights0 = weights[:]
+#weights = Float32.(max.(Hs\X, Float32(0.0)))
+weights = sparseNMF(Hs, X, zero(Float32), zero(Float32), false, max_iter=100, tol=Float32(1000.0))[:]
+weights0 = weights[:]
+i_ = @time solveHuber!(Hs, Hs*weights .- X,  weights, Float32(10000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
+weights0[1:2]
+weights[1:2]
+corspearman(weights0, weights)
+plot(log.(weights0), log.(weights), seriestype=:scatter)
+
 include("src/ML/sparseNNLS.jl")
 δ = Float32(20000.0)
 #δ = 1000000.0
@@ -40,17 +70,18 @@ corspearman(X₁, weights[:])
 dot(X₁.==0.0, weights[:].==0.0)/(norm(X₁.==0.0)*norm(weights[:].==0.0))
 #Hs_test, X₁_test = @time solveHuber4!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*1000, λ = Float32(0.0));
 
-test_vals = LinRange(-1e4, 1e4, 1000)
-r = Hs*X₁ .- b;
-X₁_test = X₁[:]
+test_vals = LinRange(-1e7, 3e7, 1000)
+r = Hs*weights .- X;
+X₁_test = weights[:]
 Hs_test = Hs
 costs = Float64[]
 L1s = Float64[]
 L2s = Float64[]
-COL = 4
+δ = Float32(5000)
+COL = 1
 for val in test_vals
     X₁_test[COL] = val
-    r = Hs*X₁_test .- b
+    r = Hs*X₁_test .- X
     cost = 0.0
     L1 = 0.0
     L2 = 0.0
@@ -70,6 +101,7 @@ test_vals[end] - L1s[end]/L2s[end]
 plot(test_vals, costs)
 plot!(test_vals, costs[end] .+ L1s[end].*(test_vals .- test_vals[end]) .+ (L2s[end]/2).*(test_vals .- test_vals[end]).^2)
 vline!([test_vals[end] - costs[end]/L1s[end]])
+vline!([weights[1]])
 
 #plot(test_vals, costs)
 #plot!(test_vals, costs[end] .+ L1s[end].*(test_vals .- test_vals[end]) .+ (L2s[end]*150/2).*(test_vals .- test_vals[end]).^2)
