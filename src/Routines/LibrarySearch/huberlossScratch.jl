@@ -28,7 +28,7 @@ include("src/ML/sparseNNLS.jl")
 #weights = Float32.(max.(Hs\X, Float32(0.0)))
 weights = sparseNMF(Hs, X, zero(Float32), zero(Float32), false, max_iter=100, tol=Float32(1000.0))[:]
 weights0 = weights[:]
-i_ = @time solveHuber!(Hs, Hs*weights .- X,  weights, Float32(10000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
+i_ = @time solveHuber!(Hs, Hs*weights .- X,  weights, Float32(5000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
 weights0[1:2]
 weights[1:2]
 corspearman(weights0, weights)
@@ -115,7 +115,9 @@ vline!([test_vals[end] - costs[end]/L1s[end]])
 plot!(test_vals, L1s[end].*test_vals)
 plot(test_vals, log2.(costs))
 plot(test_vals, L1s)
-hline!([9000])
+vline!([1.4558388e7])
+vline!([ 7.279194e6])
+vline!([2.7907338e6])
 plot(test_vals, log.(abs.(L1s)))
 plot(test_vals, L2s)
 

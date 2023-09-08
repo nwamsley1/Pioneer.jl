@@ -125,12 +125,12 @@ function getDerivatives!(Hs::SparseMatrixCSC{Float64, Int64}, r::Vector{Float64}
     return L0, L1, L2
 end
 
-function getDerivatives!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{Float32}, X₁::Vector{Float32}, col::Int64, δ::Float32, X0::Float32)
+function getDerivatives!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{Float32}, col::Int64, δ::Float32)
     #L0 = zero(Float32)
     L1 = zero(Float32)
     L2 = zero(Float32)
     @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-        r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
+        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
         #Huber
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
@@ -170,6 +170,107 @@ function getL0!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{Float32}, X₁::V
     return L0
 end
 
+function updateResiduals!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, col::Int64, X1, X0) where {T<:AbstractFloat}
+    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        r[Hs.rowval[i]] += Hs.nzval[i]*(X1 - X0)
+    end
+end
+function newtonRaphson!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {T<:AbstractFloat}
+    n = 0
+    x = X₁[col]
+    X0 = X₁[col]
+    min_l1, min_x1 = zero(T), zero(T)
+    max_l1, max_x1 = zero(T), zero(T)
+    while (n < max_iter_inner)
+        L1, L2 = getDerivatives!(Hs, r, col, δ)
+        if !isinf(L1)
+            if L1 > max_l1
+                max_x1, max_l1 = X₁[col], L1
+            elseif L1 < min_l1
+                min_x1, min_l1 = X₁[col], L1
+            end
+        end
+        X0 = X₁[col] 
+        @fastmath X₁[col] = max(X₁[col] - 0.5*(L1)/(sqrt(n+1)*L2), zero(T))
+        n += 1
+        #Shouldn't need to check for this. 
+        #Seems to happen when L1 or L2 blow out to Inf .
+        if isnan(X₁[col]) 
+            X₁[col] = zero(T)
+        end
+
+        updateResiduals!(Hs, r, col, X₁[col], X0)
+
+        ########
+        #Stopping Criterion for single variable Newton-Raphson
+        ########
+        abs(X₁[col] - X0) < accuracy ? break : nothing
+    end
+
+    if n == max_iter_inner
+        return bisection!(Hs, r, X₁, col, δ, min_x1, max_x1, min_l1, max_l1, max_iter_inner = max_iter_inner*2, accuracy = accuracy)
+    else
+        return X₁[col]-x
+    end
+end
+
+function bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, a::T, b::T, fa::T, fb::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {T<:AbstractFloat}
+    n = 0
+    c = (a + b)/2
+
+    updateResiduals!(Hs, r, col, c, X₁[col])
+
+    X₁[col] = c
+    x = X₁[col]
+    X0 = X₁[col]
+
+    while (n < max_iter_inner)
+        fc = 0.0
+
+        for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+            R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
+            fc += r[Hs.rowval[i]]*((R))
+        end
+
+        if (sign(fc) != sign(fa))
+            b, fb = c, fc
+        else
+            a, fa = c, fc
+        end
+
+        c = (a + b)/2
+        X0 = X₁[col]
+        X₁[col] = c
+
+        updateResiduals!(Hs, r, col, X₁[col], X0)
+
+        ########
+        #Stopping Criterion for single variable Newton-Raphson
+        ########
+        abs(X₁[col] - X0) < accuracy ? break : nothing
+        n += 1
+    end
+    return X₁[col] - x
+end
+
+function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100) where {T<:AbstractFloat,U<:Real}
+    ΔX = Inf
+    i = 0
+    while (i < max_iter_outer) & (ΔX > tol)
+        ΔX = 0.0
+        #Update each variable once 
+        for col in range(1, Hs.n)
+            #δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = (min(1 + i*2, max_iter_inner)), accuracy = T(100)))
+            δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = max_iter_inner, accuracy = T(100)))
+            ΔX += δx
+        end
+        i += 1
+    end
+    return i
+end
+
+#mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
+#=
 function newtonRaphson!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {T<:AbstractFloat}
     n = 0
     a = 0
@@ -180,16 +281,16 @@ function newtonRaphson!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vecto
         #col  ∈ (1,2) ? println("col $col, L1 $L1, L2 $L2, X₁[col] ", X₁[col], "n $n") : nothing
         #abs(L1) > δ*0.90 ? println("col $col; L1 $L1") : nothing
         X0 = X₁[col] 
-        if (abs(L1) < δ*0.9) #& (X₁[col]>0.0)#& (abs(L2) > 1e-7)
+        #if (abs(L1) < δ*0.9) #& (X₁[col]>0.0)#& (abs(L2) > 1e-7)
             #col  ∈ (1,2) ? println("col $col, X₁[col] - 0.5*(L1)/(sqrt(n+1)*L2) ", X₁[col] - 0.5*(L1)/(sqrt(n+1)*L2)) : nothing
             @fastmath X₁[col] = max(X₁[col] - 0.5*(L1)/(sqrt(n+1)*L2), zero(T))
             #@fastmath X₁[col] = max(X₁[col] - 0.5*one(T)*(L1)/(L2), zero(T))
-        else
-            L0 = getL0!(Hs, r, X₁, col, δ, X0)
-            #col ∈ (1,2) ? println("col $col, L0 $L0, L0/L1 ", L0/L1, " X₁[col] - L0/(L1) ", X₁[col] - L0/(L1)) : nothing
-            @fastmath X₁[col] = max(X₁[col] - L0/((a + 1)*L1), zero(T))
-            a += 1
-        end
+        #else
+        #    L0 = getL0!(Hs, r, X₁, col, δ, X0)
+        #    #col ∈ (1,2) ? println("col $col, L0 $L0, L0/L1 ", L0/L1, " X₁[col] - L0/(L1) ", X₁[col] - L0/(L1)) : nothing
+        #    @fastmath X₁[col] = max(X₁[col] - L0/((a + 1)*L1), zero(T))
+        #    a += 1
+        #end
         n += 1
         #Shouldn't need to check for this. 
         #Seems to happen when L1 or L2 blow out to Inf .
@@ -206,29 +307,13 @@ function newtonRaphson!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vecto
     @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
     end
-    return X₁[col]-x
-end
 
-function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100) where {T<:AbstractFloat,U<:Real}
-    ΔX = Inf
-    i = 0
-    while (i < max_iter_outer) & (ΔX > tol)
-        ΔX = 0.0
-        #Update each variable once 
-        #for col in sortperm(X₁, rev = true)#range(1, Hs.n)
-        for col in range(1, Hs.n)
-            #δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = (min(1 + i*2, max_iter_inner)), accuracy = T(100)))
-            δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = max_iter_inner, accuracy = T(100)))
-            ΔX += δx
-        end
-        i += 1
+    if n == max_iter_inner
+        return bisection(Hs, r, X₁, col, δ, min_max_l1, max_iter_inner = max_iter_inner, accuracy = accuracy)
+    else
+        return X₁[col]-x
     end
-    return i
 end
-
-#mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
-#=
-
 function solveHuber3!(Hs::SparseMatrixCSC{Float32, Int64}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100, λ::Float32 = zero(Float32)) where {T<:AbstractFloat,U<:Real}
     L1 = zero(T)
     L2 = zero(T)

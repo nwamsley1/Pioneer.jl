@@ -179,16 +179,16 @@ function SearchRAW(
             #=for (id, row) in pairs(IDtoROW)
                 weights[first(row)] = precursor_weights[id]
             end=#
-            if i == 45147 
-                println("IDtoROW[8952516] ", IDtoROW[8952516])
-                return Hs, weights, X, IDtoROW
-            end
+            #if i == 45147 
+            #    println("IDtoROW[8952516] ", IDtoROW[8952516])
+            #    return Hs, weights, X, IDtoROW
+            #end
             weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
             
             #weights = weights0[:]
             #max.(Float32.(Hs\X), zero(Float32))
             #solveHuber!(Hs, Hs*weights .- X, weights, Float32(20000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
-            solveHuber!(Hs, Hs*weights .- X, weights, Float32(10000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
+            solveHuber!(Hs, Hs*weights .- X, weights, Float32(5000), max_iter_outer = 100, max_iter_inner = 100, tol = Hs.n*100);
             #weights[weights0.<weights] = weights0[weights0.<weights]
             #Set new weights
             #=for (id, row) in pairs(IDtoROW)

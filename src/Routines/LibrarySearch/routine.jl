@@ -625,7 +625,7 @@ ms2_chroms_huber_2 = integrateMS2(MS_TABLE,
 );
 include("src/Routines/LibrarySearch/searchRAW.jl")
 include("src/ML/sparseNNLS.jl")
-ms2_chroms_huber_3 = integrateMS2(MS_TABLE, 
+@time ms2_chroms_huber_3 = integrateMS2(MS_TABLE, 
     frag_list, 
     rt_index,
     UInt32(ms_file_idx), 
@@ -645,7 +645,9 @@ N = 10296
 
 N = 10045
 
-N = 10250
+#N = 10250
+#N = 10143
+N = 10303
 squared_error = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
 plot(squared_error[:,:rt],
 squared_error[:,:weight], seriestype=:scatter,
@@ -661,6 +663,7 @@ plot!(huber_loss[:,:rt],
 huber_loss[:,:weight], seriestype=:scatter,
 alpha = 0.5)
 hline!([20000])
+hline!([5000])
 N += 1
 
 julia> precursors_mouse_detailed_33NCEcorrected_start1[0x0078dd68]
