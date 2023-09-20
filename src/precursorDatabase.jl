@@ -247,7 +247,8 @@ end
 include("applyMods.jl")
 
 
-function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{FastaEntry},  
+function buildPrecursorTable!(ptable::PrecursorTable, 
+                                peptides_fasta::Vector{FastaEntry},  
                                 fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
                                 var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
                                 n::Int)
@@ -260,15 +261,9 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
     for peptide in peptides_fasta
         sequence = getSeq(peptide)
         protein_name = getID(peptide)
-        if protein_name == "YYYQRGILAK"
-            println(peptide)
-        end
         #Current peptide differs from previous
         if sequence != previous_peptide
             decoy = isDecoy(peptide)
-            #if decoy
-            #    sequence = shufflefast(sequence)
-            #end
             #Apply fixed modifications
             peptide_sequence_fixed_mods = fixedMods(sequence, fixed_mods)
 
@@ -306,13 +301,15 @@ function buildPrecursorTable!(ptable::PrecursorTable, peptides_fasta::Vector{Fas
     end
 end
 
-function buildPrecursorTable!(test_table::PrecursorTable, fasta_path::String; min_length::Int = 8, max_length::Int = 30,
-    fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
-    var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
-    n_var_mods::Int = 2)
-peptides_fasta = digestFasta(parseFasta(fasta_path), max_length = max_length, min_length = min_length)
-
-buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, n_var_mods);
-
-return nothing
-end
+#function buildPrecursorTable!(test_table::PrecursorTable, fasta_path::String; 
+#                            min_length::Int = 8, 
+#                            max_length::Int = 30,
+#                            fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+#                            var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+#                            n_var_mods::Int = 2) = buildPrecursorTable()
+#peptides_fasta = digestFasta(parseFasta(fasta_path), max_length = max_length, min_length = min_length)#
+#
+#buildPrecursorTable!(test_table, peptides_fasta, fixed_mods, var_mods, n_var_mods);#
+#
+#return nothing
+#end

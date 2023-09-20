@@ -68,9 +68,10 @@ function SearchRAW(
     #weights
     precursor_weights = zeros(Float32, length(ion_list))
 
+    fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
     ##########
     #Iterate through spectra
-    for i in range(1, size(spectra[:masses])[1])
+    for i in ProgressBar(range(1, size(spectra[:masses])[1]))
 
         ###########
         #Scan Filtering
@@ -87,8 +88,6 @@ function SearchRAW(
 
         min_intensity = getMinIntensity(spectra[:intensities][i], max_peaks) #Ignore peaks in the spectrum below this minimum intensity
 
-        #println(typeof(maximum_rt))
-        #println(typeof(spectra[:retentionTime][i]))
         iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
 
         ##########
@@ -152,54 +151,49 @@ function SearchRAW(
                                     min_intensity = min_intensity, #Ignore peaks below this intensity
                                     ppm = fragment_tolerance #Fragment match tolerance in ppm
                                     )
-
-        #for i in range(1, nmatches)
-        #    if getPrecID(ionMatches[i]) == UInt32(1253230)#UInt32(5144773)
-        #        push!(all_fmatches, ionMatches[i])
-        #    end
-        #end
+        #=for m in ionMatches
+            if m.prec_id ==9301047
+                key = m.ion_type*string(m.frag_index)*"+"*string(m.frag_charge)
+                if haskey(fragment_intensities)
+                    push!(fragment_intensities[key], (spectra[:retentionTime][i], m.intensity))
+                else
+                    insert!(fragment_intensities, key, [(spectra[:retentionTime][i], m.intensity)])
+                end
+            end
+        end=#
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
-            #println("TEST")
-            #reset!(ionMatches, nmatches), reset!(ionMisses, nmisses) #These arrays are pre-allocated so just overwrite to prepare for the next scan 
             IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
             X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-            #if i == 50800
-            #    return X, Hs, IDtoROW, last_matched_col
-            #end
-            #return X, Hs, IDtoROW, last_matched_col
-            #Non-negative least squares coefficients for each precursor template explaining the spectra 
-            
-            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
-            #weights = zeros(Float32, Hs.n)
 
-            #Get old weights
-            #=for (id, row) in pairs(IDtoROW)
-                weights[first(row)] = precursor_weights[id]
-            end=#
-            #if i == 45147 
-            #    println("IDtoROW[8952516] ", IDtoROW[8952516])
-            #    return Hs, weights, X, IDtoROW
-            #end
-            weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
-            
-            #weights = weights0[:]
-            #max.(Float32.(Hs\X), zero(Float32))
-            #solveHuber!(Hs, Hs*weights .- X, weights, Float32(20000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*100);
-            solveHuber!(Hs, Hs*weights .- X, weights, Float32(5000), max_iter_outer = 100, max_iter_inner = 100, tol = Hs.n*100);
-            #weights[weights0.<weights] = weights0[weights0.<weights]
-            #Set new weights
-            #=for (id, row) in pairs(IDtoROW)
-                if isnan(weights[first(row)])
-                    println("ISNAN")
-                    println("i $i")
-                    println("weights $weights")
-                    return
+            #=for match in range(1,nmatches)
+                m = ionMatches[match]
+                if m.prec_id ==9301047
+                    key = m.ion_type*string(m.frag_index)*"+"*string(m.frag_charge)
+                    if haskey(fragment_intensities, key)
+                        push!(fragment_intensities[key], (spectra[:retentionTime][i], m.intensity))
+                    else
+                        insert!(fragment_intensities, key, [(spectra[:retentionTime][i], m.intensity)])
+                    end
                 end
-                precursor_weights[id] = weights[first(row)]
             end=#
+            #Initial guess from non-negative least squares. May need to reconsider if this is beneficial
+            weights = zeros(eltype(Hs), Hs.n)#sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            for (id, row) in pairs(IDtoROW)
+                weights[first(row)] = precursor_weights[id]
+            end
+
+            if i == 43869
+                return Hs, X, weights, IDtoROW
+            end
+            solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+
+            for (id, row) in pairs(IDtoROW)
+                precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
+            end
+            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
             #Spectral distance metrics between the observed spectrum (X) and the library spectra for each precursor (Hs)
             scores = getDistanceMetrics(X, Hs, last_matched_col)
 
@@ -209,8 +203,6 @@ function SearchRAW(
                 unscored_PSMs = UnorderedDictionary{UInt32, XTandem{Float32}}()
 
                 ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
-                #println("min_spectral_contrast ", min_spectral_contrast)
-                #println("min_frag_count ", min_frag_count)
                 #Score unscored_PSMs and write them to scored_PSMs
                 Score!(scored_PSMs, 
                         unscored_PSMs, 
@@ -249,7 +241,7 @@ function SearchRAW(
     end
 
 
-
+    #return fragment_intensities
     ############
     #Return Chromatograms and Score/Feature Table
     #return all_fmatches

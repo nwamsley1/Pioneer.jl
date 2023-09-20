@@ -68,12 +68,12 @@ getMz(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.mz
 getTotalIntensity(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.total_intensity
 getPepID(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.pep_id
 #addIntensity!(p::LibraryPrecursor{T}, intensity::T) where {T<:AbstractFloat} = p.total_intensity[] += intensity
-ArrowTypes.arrowname(::Type{LibraryFragment{Float32}}) = :LibraryFragment
-ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
-fixed_mods = [(p=r"C", r="C[Carb]")]
-mods_dict = Dict("Carb" => Float64(57.021464),
-                 "Ox" => Float64(15.994915)
-                 )
+#ArrowTypes.arrowname(::Type{LibraryFragment{Float32}}) = :LibraryFragment
+#ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
+#fixed_mods = [(p=r"C", r="C[Carb]")]
+#mods_dict = Dict("Carb" => Float64(57.021464),
+#                 "Ox" => Float64(15.994915)
+#                 )
 
 function parseSequence(seq::String, charge::UInt8, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}) where {T<:AbstractFloat}
 
@@ -243,7 +243,7 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #return frags_simple, frags_detailed, precursors
 end
 
-
+#=
 """
 
 @time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict, start_ion = 1);
@@ -367,6 +367,7 @@ plot(best_psms[:,:RT_pred], best_psms[:,:RT], seriestype = :scatter, alpha = 0.1
 
 
 """
+=#
 #########
 #Read chronologer
 #=

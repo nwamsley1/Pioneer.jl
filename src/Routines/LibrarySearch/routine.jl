@@ -178,7 +178,7 @@ end
 #Load Dependencies 
 ##########
 #Fragment Library Parsing
-[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl"]];
+[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl","parseFasta.jl","PrecursorDatabase.jl"]];
 
 [include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["buildPrositCSV.jl",
                                                                                     "parsePrositLib.jl"]];
@@ -561,22 +561,100 @@ getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 
 println("Number of unique Precursors ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
 
-MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
-ms_file_idx = 1
+
+MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
+    
+#Need to change this. Highest intensity given a 1% fdr threshold. 
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
+
+transform!(best_psms, AsTable(:) => ByRow(psm -> 
+            precursors_list[psm[:precursor_idx]].mz
+            ) => :prec_mz
+            );
+
+#Need to sort RTs 
+sort!(best_psms,:RT, rev = false);
+#Build RT index of precursors to integrate
+rt_index = buildRTIndex(best_psms);
+
+println("Integrating MS2...")
 ms2_chroms = integrateMS2(MS_TABLE, 
-    frag_list, 
-    rt_index,
-    UInt32(ms_file_idx), 
-    frag_err_dist_dict[ms_file_idx],
-    integrate_ms2_params, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber]))
-    scan_range = (40000, 50000)
-#scan_range = (101357, 102357)
-);
+                                frag_list, 
+                                rt_index,
+                                UInt32(ms_file_idx), 
+                                frag_err_dist_dict[ms_file_idx],
+                                integrate_ms2_params, 
+                                scan_range = (0, length(MS_TABLE[:scanNumber]))
+                                #can_range = (101357, 110357)
+                                );
+
+ms2_chroms_square = integrateMS2(MS_TABLE, 
+                                frag_list, 
+                                rt_index,
+                                UInt32(ms_file_idx), 
+                                frag_err_dist_dict[ms_file_idx],
+                                integrate_ms2_params, 
+                                scan_range = (0, length(MS_TABLE[:scanNumber]))
+                                #can_range = (101357, 110357)
+                                );
+
+N = 10065
+best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
+N = 10065
+N = 9936
+#include("src/Routines/LibrarySearch/integrateChroms.jl")
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+#integratePrecursor(ms2_chrom_square, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
+N += 1
+
+include("src/Routines/LibrarySearch/integrateChroms.jl")
+ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+#Integrate MS2 Chromatograms 
+transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+
+
+include("src/Routines/LibrarySearch/SearchRAW.jl")
+fragment_intensities = integrateMS2(MS_TABLE, 
+                                frag_list, 
+                                rt_index,
+                                UInt32(ms_file_idx), 
+                                frag_err_dist_dict[ms_file_idx],
+                                integrate_ms2_params, 
+                                scan_range = (0, length(MS_TABLE[:scanNumber]))
+                                #can_range = (101357, 110357)
+                                );
+
+p = plot()
+#p = plot(title = "TEST", fontfamily="helvetica")
+for (color, t) in enumerate(keys(fragment_intensities))
+    plot!(p, fragment_intensities[t], color = color, legend = true, label = t)
+    plot!(p, fragment_intensities[t], seriestype=:scatter, color = color, label = nothing, show = true)
+end
+
+Hs, X, weights, IDtoROW = integrateMS2(MS_TABLE, 
+                                frag_list, 
+                                rt_index,
+                                UInt32(ms_file_idx), 
+                                frag_err_dist_dict[ms_file_idx],
+                                integrate_ms2_params, 
+                                scan_range = (0, length(MS_TABLE[:scanNumber]))
+                                #can_range = (101357, 110357)
+                                );
+
+solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+Hs[:,17]
+X[Hs[:,17].!=0.0]
+
+Hs = Matrix(Hs)
+Hs[2568,17] = 0.2
+Hs = sparse(Hs)
+
+test = frags_mouse_detailed_33NCEcorrected_start1[9301047]
 
 for chrom in ProgressBar(ms2_chroms[2:end])
     chrom[:,:mz] = [MS_TABLE[:precursorMZ][scan] for scan in chrom[:, :scan_idx]]
 end
+
 transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
    
 
@@ -585,8 +663,19 @@ best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][1000
 N = 10000
 #best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
 integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+#ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
 N += 1
+
+p = [6e5, 30.2, 0.15]
+m(t, p) = p[1]*exp.((-1).*((t .- p[2]).^2)./(2*p[3]^2))
+m(ts, p)
+plot(squared_error[:,:rt],
+squared_error[:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(huber_loss[:,:rt],
+huber_loss[:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(ts, m(ts, p))
 
 
 include("src/Routines/LibrarySearch/searchRAW.jl")
@@ -648,7 +737,7 @@ N = 10045
 #N = 10250
 #N = 10143
 N = 10303
-squared_error = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+squared_error = ms2_chroms_square[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
 plot(squared_error[:,:rt],
 squared_error[:,:weight], seriestype=:scatter,
 alpha = 0.5)
@@ -658,7 +747,7 @@ alpha = 0.5)
 #plot!(ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
 #ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
 #alpha = 0.5)
-huber_loss = ms2_chroms_huber_3[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
+huber_loss = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
 plot!(huber_loss[:,:rt],
 huber_loss[:,:weight], seriestype=:scatter,
 alpha = 0.5)

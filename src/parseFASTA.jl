@@ -1,6 +1,6 @@
-using Dictionaries
-using Combinatorics
-include("precursor.jl")
+#using Dictionaries
+#using Combinatorics
+#include("src/precursor.jl")
 
 
 """
@@ -57,10 +57,10 @@ function digest(sequence::AbstractString; regex::Regex = r"[KR][^P|$]", max_leng
 end
 
 
-using FASTX
-using CodecZlib
-using Dictionaries
-file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_10090.fasta.gz"
+#using FASTX
+#using CodecZlib
+#using Dictionaries
+#file_path = "/Users/n.t.wamsley/RIS_temp/HAMAD_MAY23/mouse_SIL_List/UP000000589_10090.fasta.gz"
 #function parseRule(identifier::String)
 #    split(identifier, "|")[2]
 #end
@@ -106,14 +106,14 @@ function shufflefast(s::String)
 end
 
 """
-    parseFasta(fasta_path::String, parse_identifier::Function = x -> x)::Vector{FastaEntry}
+        parseFasta(fasta_path::String, parse_identifier::Function = x -> x)::Vector{FastaEntry}
 
-Given a fasta file, loads the identifier, description, and sequence into an in memory representation 
-`FastaEntry` for each entry. Returns Vector{FastaEntry}
+    `    Given a fasta file, loads the identifier, description, and sequence into an in memory representation 
+    `FastaEntry` for each entry. Returns Vector{FastaEntry}
 
-- `fasta_path::String` -- Path to a ".fasta" or ".fasta.gz"
-- `parse_identifier::Function ` -- Function takes a String argument and returns a String 
-
+    - `fasta_path::String` -- Path to a ".fasta" or ".fasta.gz"
+    - `parse_identifier::Function ` -- Function takes a String argument and returns a String 
+    `
 """
 function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])::Vector{FastaEntry}
 
@@ -170,4 +170,64 @@ function digestFasta(fasta::Vector{FastaEntry}; regex::Regex = r"[KR][^P|$]", ma
 end
 
 #digestFasta(parseFasta("/Users/n.t.wamsley/Projects/TEST_DATA/proteomes/UP000000589_10090.fasta.gz"))
+#=
+FASTA_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/"
+fasta_paths = [joinpath(FASTA_DIR, file) for file in filter(file -> isfile(joinpath(FASTA_DIR, file)) && match(r".fasta.gz$", file) != nothing, readdir(FASTA_DIR))];
+peptides_fasta = sort!(vcat([digestFasta(parseFasta(fasta)) for fasta in fasta_paths]...), by = x->getSeq(x))
+precursor_table = PrecursorTable()
+fixed_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
+var_mods = [(p=r"(M)", r="[MOx]")]
+buildPrecursorTable!(precursor_table, peptides_fasta, fixed_mods, var_mods, 2)
+const charge_facs = Float32[1, 0.9, 0.85, 0.8, 0.75]
 
+function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer) where {T<:AbstractFloat}
+    return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
+end
+
+buildPrositCSV(precursor_table,  
+                "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/humanYeastEcoli_NCE33_corrected_091623.csv",
+                min_length = 7, 
+                max_length = 30, 
+                nce = 33.0, 
+                dynamic_nce = true
+                )
+
+buildPrositCSV(precursor_table,  
+                "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/humanYeastEcoli_NCE33_fixed_091623.csv",
+                min_length = 7, 
+                max_length = 30, 
+                nce = 33.0, 
+                dynamic_nce = false
+                )
+
+
+
+FASTA_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/"
+fasta_paths = ["/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000005640_9606_human.fasta.gz"]
+peptides_fasta = sort!(vcat([digestFasta(parseFasta(fasta)) for fasta in fasta_paths]...), by = x->getSeq(x))
+precursor_table = PrecursorTable()
+fixed_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
+var_mods = [(p=r"(M)", r="[MOx]")]
+buildPrecursorTable!(precursor_table, peptides_fasta, fixed_mods, var_mods, 2)
+const charge_facs = Float32[1, 0.9, 0.85, 0.8, 0.75]
+
+function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer) where {T<:AbstractFloat}
+    return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
+end
+
+buildPrositCSV(precursor_table,  
+                "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/human_NCE33_corrected_091623.csv",
+                min_length = 7, 
+                max_length = 30, 
+                nce = 33.0, 
+                dynamic_nce = true
+                )
+
+buildPrositCSV(precursor_table,  
+                "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/human_NCE33_fixed_091623.csv",
+                min_length = 7, 
+                max_length = 30, 
+                nce = 33.0, 
+                dynamic_nce = false
+                )
+=#

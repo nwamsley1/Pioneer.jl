@@ -35,17 +35,26 @@ corspearman(weights0, weights)
 plot(log.(weights0), log.(weights), seriestype=:scatter)
 
 include("src/ML/sparseNNLS.jl")
-δ = Float32(20000.0)
+δ = Float32(5000.0)
 #δ = 1000000.0
 weights = sparseNMF(Hs, X, zero(Float32), zero(Float32));
 b = X[:];
-@profview begin
-for i in range(1, 100)
-    X₁ = 0*ones(eltype(Hs), Hs.n);
-    r = Hs*X₁ .- b
-    solveHuber4!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 10, tol = Hs.n*1000, λ = Float32(0.0));
+X₁ = 0*ones(eltype(Hs), Hs.n);
+@time begin
+    for i in range(1, 1000)
+        X₁ = 0*ones(eltype(Hs), Hs.n);
+        r = Hs*X₁ .- b
+        solveHuber!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 10, tol = Hs.n*10);
+    end
 end
-end
+
+include("src/ML/sparseNNLS.jl")
+δ = Float32(5000.0)
+X₁ = 0*ones(eltype(Hs), Hs.n);
+r = Hs*X₁ .- b;
+solveHuber!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 10, tol = Hs.n*100);
+
+
 
 println("reps $reps")
 X₁ = X₁*Float32(1.1);
@@ -70,7 +79,7 @@ corspearman(X₁, weights[:])
 dot(X₁.==0.0, weights[:].==0.0)/(norm(X₁.==0.0)*norm(weights[:].==0.0))
 #Hs_test, X₁_test = @time solveHuber4!(Hs, r, X₁, Float32(δ), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n*1000, λ = Float32(0.0));
 
-test_vals = LinRange(-1e7, 3e7, 1000)
+test_vals = LinRange(-1e5, 4e5, 1000)
 r = Hs*weights .- X;
 X₁_test = weights[:]
 Hs_test = Hs
@@ -78,7 +87,7 @@ costs = Float64[]
 L1s = Float64[]
 L2s = Float64[]
 δ = Float32(5000)
-COL = 1
+COL = 17
 for val in test_vals
     X₁_test[COL] = val
     r = Hs*X₁_test .- X
@@ -100,7 +109,7 @@ test_vals[end] - L1s[end]/L2s[end]
 
 plot(test_vals, costs)
 plot!(test_vals, costs[end] .+ L1s[end].*(test_vals .- test_vals[end]) .+ (L2s[end]/2).*(test_vals .- test_vals[end]).^2)
-vline!([test_vals[end] - costs[end]/L1s[end]])
+vline!([135357.39f0])
 vline!([weights[1]])
 
 #plot(test_vals, costs)
@@ -266,4 +275,24 @@ stop at i = 3
 julia> println(X₁)
 Float32[9089.632, 5455.184]
 =#
+using Convex, SCS
 
+#cost = sum(huber(H*X - b, 5000))
+cost = sum((5000^2)*(sqrt(1 + ((H*X - b)/(5000))^2) - 1))
+cost = sum(norm2((H*X - b)))
+p = minimize(cost, [X >= 0])
+solve!(p, SCS.Optimizer())
+
+using Random
+Random.seed!(1);
+n = 100
+number_samples = round(Int64,1.5*n);
+beta_true = 5*randn(n);
+X = randn(n, number_samples);
+Y = zeros(number_samples);
+v = randn(number_samples);
+
+beta = Variable(n);
+
+cost = sum(huber(X' * beta - Y, 1));
+solve!(minimize(cost), () -> SCS.Optimizer())

@@ -41,7 +41,7 @@ end
 
 
 
-function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_length::Int = 30,
+function buildPrositCSV(fasta::Union{String, PrecursorTable}, f_out::String; min_length::Int = 8, max_length::Int = 30,
                         min_charge::Int = 2, max_charge::Int = 4,
                         fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}(), 
                         var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}} = [(p=r"(M)", r="[MOx]")],
@@ -49,19 +49,21 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
                         nce::Float64 = 30.0,
                         default_charge::Int = 3,
                         dynamic_nce::Bool = true)
-
-    test_table = PrecursorTable()
-    buildPrecursorTable!(test_table, fasta, min_length = min_length, max_length = max_length,
-                        fixed_mods = fixed_mods, var_mods = var_mods, n_var_mods = n_var_mods)
+    precursor_table = fasta
+    if typeof(precursor_table) == String
+        precursor_table = PrecursorTable()
+        buildPrecursorTable!(precursor_table, fasta,
+                            fixed_mods, var_mods, n_var_mods)
+    end
     
     open(f_out, "w") do file
         write(file, "accession_number,modified_sequence,collision_energy,precursor_charge,prot_ids,pep_id,decoy\n")
-        for (id, pep) in ProgressBar(Base.pairs(test_table.id_to_pep))
+        for (id, pep) in ProgressBar(Base.pairs(precursor_table.id_to_pep))
             sequence = replace(getSeq(pep), r"M\[MOx\]"=>"M(ox)")
             sequence = replace(sequence, r"C\[Carb\]"=>"C")
             unmod_sequence = replace(sequence, r"M(ox)"=>"M")
-            prot_id = join([prot_id for prot_id in collect(getProtFromPepID(test_table, id))],";")
-            accession = join([getName(getProtein(test_table, prot_id)) for prot_id in collect(getProtFromPepID(test_table, id))],";")
+            prot_id = join([prot_id for prot_id in collect(getProtFromPepID(precursor_table, id))],";")
+            accession = join([getName(getProtein(precursor_table, prot_id)) for prot_id in collect(getProtFromPepID(precursor_table , id))],";")
             #Check for illegal amino acid characters
             if (occursin("[H", sequence)) | (occursin("U", sequence)) | (occursin("O", sequence)) |  (occursin("X", sequence)) | occursin("Z", getSeq(pep)) | occursin("B", getSeq(pep))
                 continue
@@ -69,7 +71,7 @@ function buildPrositCSV(fasta::String, f_out::String; min_length::Int = 8, max_l
             #Enforce length constraints
             #There is a bug here because the sequence length includes "M(ox)". 
             #So the maximum length of a methionine oxidized peptide is actually 30 - 4. 
-            if (length(unmod_sequence) > 30) | (length(unmod_sequence) < 7)
+            if (length(unmod_sequence) >max_length) | (length(unmod_sequence) < min_length)
                 continue
             end 
             decoy = isDecoy(pep)
