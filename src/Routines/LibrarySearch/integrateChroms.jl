@@ -15,18 +15,18 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
  the peak parameters extracted by curve fitting are not distorted and the effect of random noise in the signal is reduced by curve fitting over multiple
   data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
 """
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32, best_scan_idx::Int64; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false) where {T<:AbstractFloat}
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false)
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
-        return (0.0, 0, 0.0, 0.0, missing, missing, missing)
+        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
     #Chromatogram for the precursor. 
     #Has columns "weight" and "rt". 
     chrom = chroms[(precursor_idx=precursor_idx,)]
-    return integratePrecursor(chrom, best_scan_idx, max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, isplot = isplot)
+    return integratePrecursor(chrom, eltype(chrom[:,:intensity]), max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, min_scans = min_scans, min_width = min_width, integration_width = integration_width, integration_points = integration_points, isplot = isplot)
 end
 
-function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, best_scan::Int64; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, isplot::Bool = false)
+function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, T::Type; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false)
 
     non_zero = BitVector(undef, size(chrom)[1])
     fillNonZero!(non_zero, chrom[:,:weight])
@@ -35,10 +35,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     #Retain only most abundant within each cycle .
     for i in range(1, size(chrom)[1]-1)
         if chrom[i,:cycle_idx] == chrom[i+1,:cycle_idx]
-            #if chrom[i,:rank] < chrom[i+1,:rank]
-            #    non_zero[i] = false
-            #elseif chrom[i,:rank] > chrom[i + 1,:rank]
-            #    non_zero[i + 1] = false
+            #May not be appropriate criterion to choose between competing scans
             if chrom[i,:weight] > chrom[i + 1,:weight]
                 non_zero[i + 1] = false
             else
@@ -46,19 +43,21 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
             end
         end
     end
-    #non_zero[chrom[:,:rank].<2] .= false
     chrom = chrom[non_zero,:]
-    display(chrom)
     #Scan with the highest score 
     #Too few points to attempt integration
     if size(chrom)[1] < 3
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
-    #Add zero intensity points to both ends of the chromatogram
+
+    #########
+    #Pad intensity and rt with zeros. 
+    #This is gross and messy
     rt = chrom[:,:rt]
     for i in 1:5
         rt = pad(rt[:], rt[1] - (rt[2] - rt[1]), rt[end] + (rt[end] - rt[end - 1]))
     end
+
     intensity = collect(chrom[:,:weight])
 
     intensity[chrom[:,:rank].<2].=0.0
@@ -67,19 +66,22 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     frag_counts = collect(chrom[:,:frag_count])
     frag_counts = pad( frag_counts, zero(eltype(typeof( frag_counts))), zero(eltype(typeof( frag_counts))), 5)
 
+
+    #########
+    #Get Boundaries for fitting EGH curve 
     #Smoothing parameters for first derivative
     window_size, order = getSmoothingParams(length(rt), max_smoothing_window, min_smoothing_order)
 
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
-    #best_peak_slope, start, stop, mid =  getIntegrationBounds(best_scan_idx, rt, (frag_counts).*intensity, window_size, order, 1.0/6.0, 5)
-    best_peak_slope, start, stop, mid = getIntegrationBounds(frag_counts, 
-                                                            rt, intensity, window_size, order, 1.0/6.0, 5)
+    start, stop = getIntegrationBounds(frag_counts, rt, intensity, window_size, order, min_width, min_scans)
 
     #No sufficiently wide peak detected. 
     if (stop - start) < 5
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
+    ########
+    #Fit EGH Curve 
     #Initial Parameter Guess
     best_scan_idx = argmax(intensity[start:stop].*frag_counts[start:stop])
     p0 = getP0(Float32(0.1), 
@@ -96,26 +98,34 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
-    peak_area = Integrate(EGH, EGH_FIT.param, (Float32(EGH_FIT.param[2] - 1.0), 
-                                                Float32(EGH_FIT.param[2] + 1.0)))
-                                                
+    peak_area = Integrate(EGH, EGH_FIT.param, (Float32(EGH_FIT.param[2] - integration_width/2), 
+                                                Float32(EGH_FIT.param[2] + integration_width/2)),
+                                                n = integration_points)
+
+
+    ##########
+    #Plots                                           
     if isplot
+        #Plot Data
         Plots.plot(rt[start:stop], intensity[start:stop], show = true, seriestype=:scatter)
-        X = LinRange(Float32(EGH_FIT.param[2] - 2.0), Float32(EGH_FIT.param[2] + 2.0), 1000)
+        #Plots Fitted EGH Curve
+        X = LinRange(Float32(EGH_FIT.param[2] - 2.0), Float32(EGH_FIT.param[2] + integration_width/2), integration_points)
         Plots.plot!(X,  
                     EGH(Float32.(collect(X)), EGH_FIT.param), 
-                    fillrange = [0.0 for x in 1:1000], 
+                    fillrange = [0.0 for x in 1:integration_points], 
                     alpha = 0.25, color = :grey, show = true
-                    );
-        Plots.vline!([rt[start]], color = :red);
-        Plots.vline!([rt[stop]], color = :red);
+                    ); 
+        #Plots.vline!([rt[start]], color = :red);
+        #Plots.vline!([rt[stop]], color = :red);
     end
 
+
+    ############
+    #Calculate Features
     MODEL_INTENSITY = EGH(rt, EGH_FIT.param)
     RESID = abs.(intensity .- MODEL_INTENSITY)
-
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)) .& (intensity.>(EGH_FIT.param[end]*0.1))
-    #println("GOF ", 1 - sum(RESID[MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)])/sum(intensity[MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)]))
+
     var = std(RESID)/EGH_FIT.param[4]
     GOF = 1 - sum(RESID[GOF_IDX])/sum(intensity[GOF_IDX])
     FWHM = getFWHM(0.5, EGH_FIT.param[3], EGH_FIT.param[1])
@@ -128,8 +138,6 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     tᵣ = EGH_FIT.param[2]
     τ = EGH_FIT.param[3]
     H = EGH_FIT.param[4]
-    #println("standard_error(EGH_FIT) ", standard_errors(EGH_FIT) )
-    #println("standard_error(EGH_FIT) ", standard_errors(EGH_FIT)./EGH_FIT.param )
     return peak_area, GOF, FWHM, FWHM_01, asymmetry, points_above_FWHM, points_above_FWHM_01, σ, tᵣ, τ, H
 end
 
@@ -154,9 +162,6 @@ end
 
 function fillNonZero!(non_zero::BitVector, intensity::Vector{T}) where {T<:AbstractFloat}
     for i in 1:(length(intensity))
-        #if iszero(intensity[i])&(iszero(intensity[min(i+1, end)]))
-        #if iszero(intensity[i])&(iszero(intensity[min(i+1, end)])==false)
-            #non_zero[i] = false
         if iszero(intensity[i])&(iszero(intensity[min(i+1, end)])==false)
             non_zero[i] = false
         else
@@ -168,9 +173,6 @@ end
 function getIntegrationBounds(frag_counts::Vector{Int64}, RTs::Vector{T}, intensities::Vector{U}, window::Int, order::Int, min_width_t::Float64, min_width::Int) where {T,U<:AbstractFloat}
     #Get indices of first derivative zero crossings and the slope of the first derivative at each crossing
     zero_idx, zero_sign = getZeroCrossings(getSmoothDerivative(RTs, intensities, window, order), RTs[1:end - 1])
-    #savitzky_golay(y, window, order).y
-    #savitzky_golay(intensity, window, order).y
-    #return getPeakBounds(frag_counts, Float32.(savitzky_golay(intensities, window, order).y), RTs, zero_idx, zero_sign, min_width_t, min_width)
     return getPeakBounds(frag_counts, intensities, RTs, zero_idx, zero_sign, min_width_t, min_width)
 end
 
@@ -195,8 +197,6 @@ end
 function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
 
     best_peak_intensity = -Inf
-    best_peak = 0
-    best_peak_slope = 0
     best_left = 0
     best_right = 0
     N = length(intensity) 
@@ -222,8 +222,6 @@ function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vec
                     if (rt[right_bound] - rt[left_bound]) >= min_width_t #If peak width (in minutes) exceeds minimum
                         #best_peak_dist = abs((rt[zero_crossings_1d[i]])-(rt[best_scan_idx]))#intensity[zero_crossings_1d[i]]
                         best_peak_intensity = intensity[zero_crossings_1d[i]]*frag_counts[zero_crossings_1d[i]]
-                        best_peak = zero_crossings_1d[i]
-                        best_peak_slope = abs(zero_crossings_slope[i])
                         best_left = left_bound#max(left_bound - 2, 1)
                         best_right = right_bound# min(right_bound + 2, length(intensity))
                     end
@@ -232,7 +230,7 @@ function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vec
         end
     end
 
-    return best_peak_slope, best_left, best_right, best_peak
+    return best_left, best_right
 end
 
 #=function getPeakBounds(intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
@@ -289,7 +287,7 @@ end
     end
 
     return best_peak_slope, best_left, best_right, best_peak
-end=#
+end
 
 function getFWHM(X::Vector{T}, Y::Vector{U}, start::Int, mid::Int, stop::Int) where {T,U<:AbstractFloat}
     function getMid(y, x_start, x_stop, y_start, y_stop)
@@ -317,6 +315,7 @@ function getFWHM(X::Vector{T}, Y::Vector{U}, start::Int, mid::Int, stop::Int) wh
     return right_x - left_x
 
 end
+=#
 #=
 
 function integrateRAW(
