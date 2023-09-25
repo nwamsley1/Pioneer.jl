@@ -475,8 +475,11 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
     
     #Need to change this. Highest intensity given a 1% fdr threshold. 
-    best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
-   
+    #best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
+
+    #Get Best PSM per precursor
+    best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMs[PSMs[:,:q_value].<=0.25,:], [:sequence,:charge]));
+    
     transform!(best_psms, AsTable(:) => ByRow(psm -> 
                 precursors_list[psm[:precursor_idx]].mz
                 ) => :prec_mz
@@ -499,18 +502,19 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                     );
     
     #Integrate MS2 Chromatograms 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
+    #Need to speed up this part. 
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H]);
     
     #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
-    best_psms = best_psms[(best_psms[:,:intensity].>0).&(best_psms[:,:count].>=6),:];
-    best_psms[:,:RT_error] = abs.(best_psms[:,:apex] .- best_psms[:,:RT_pred]);
+    best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false).&(best_psms[:,:points_above_FWHM].>=1).&(best_psms[:,:points_above_FWHM_01].>=5),:];
+    best_psms[:,:RT_error] = abs.(best_psms[:,:tᵣ] .- best_psms[:,:RT_pred]);
 
     #Get Predicted Isotope Distributions 
     #For some reason this requires a threadlock. Need to investiage further. 
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
-    lock(lk) do 
+    #lock(lk) do 
         isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
-    end
+    #end
 
     prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x));
 
@@ -524,11 +528,17 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                     scan_range = (0, length(MS_TABLE[:scanNumber])));
 
     #Get MS1/MS2 Chromatogram Correlations and Offsets 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(ms1_chroms, ms2_chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
+    #transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(ms1_chroms, ms2_chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 
     #Integrate MS1 Chromatograms 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:intensity_ms1, 
-    :count_ms1, :SN_ms1, :slope_ms1, :peak_error_ms1,:apex_ms1,:fwhm_ms1]);
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:peak_area_ms1,
+                                        :GOF_ms1,
+                                        :FWHM_ms1,
+                                        :FWHM_01_ms1,
+                                        :asymmetry_ms1,
+                                        :points_above_FWHM_ms1,
+                                        :points_above_FWHM_01_ms1,
+                                        :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
     
     lock(lk) do 
         best_psms_dict[ms_file_idx] = best_psms;
@@ -536,13 +546,83 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
 
 end
 end
+integratePrecursor(ms1_chroms, UInt32(best_psms[N,:precursor_idx]), isplot = false)
+N = N + 1
+
+histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:τ])), alpha = 0.5)
+histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:τ])), alpha = 0.5)
+
+bins = LinRange(-2, 2, 200)
+histogram((best_psms[best_psms[:,:decoy],:δt]), alpha = 0.5, normalize=:pdf, bins = bins)
+histogram!((best_psms[best_psms[:,:decoy].==false,:δt]), alpha = 0.5, normalize = :pdf, bins = bins)
+
+bins = LinRange(-2, 2, 200)
+histogram((best_psms[best_psms[:,:decoy],:ρ]), alpha = 0.5, normalize=:pdf, bins = bins)
+histogram!((best_psms[best_psms[:,:decoy].==false,:ρ]), alpha = 0.5, normalize = :pdf, bins = bins)
+
+
+#bins = LinRange(-2, 2, 200)
+histogram((best_psms[best_psms[:,:decoy],:points_above_FWHM_01]), alpha = 0.5, normalize=:probability)
+histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:points_above_FWHM_01]), alpha = 0.5, normalize = :probability)
+
+bins = LinRange(-2, 2, 100)
+histogram2d((best_psms[(best_psms[:,:decoy].==true) .& (ismissing.(best_psms[:,:ρ]).==false),:δt]), 
+            (best_psms[(best_psms[:,:decoy].==true) .& (ismissing.(best_psms[:,:ρ]).==false),:entropy_sim]), 
+alpha = 0.5, normalize = :probability, bins = bins)
+
+histogram2d((best_psms[(best_psms[:,:decoy].==false) .& (ismissing.(best_psms[:,:ρ]).==false),:δt]), 
+            (best_psms[(best_psms[:,:decoy].==false) .& (ismissing.(best_psms[:,:ρ]).==false),:entropy_sim]), 
+alpha = 0.5, normalize = :probability, bins = bins)
+
+bins = LinRange(-2, 2, 100)
+histogram(log2.(best_psms[(best_psms[:,:decoy].==true),:weight]), alpha = 0.5, normalize = :probability)
+histogram!(log2.(best_psms[(best_psms[:,:decoy].==false),:weight]), alpha = 0.5, normalize = :probability)
+histogram!(log2.(best_psms[(best_psms[:,:decoy].==false).& (best_psms[:,:q_value].<=0.01),:weight]), alpha = 0.5, normalize = :probability)
+histogram!(best_psms[(best_psms[:,:decoy].==false),:δt], alpha = 0.5, normalize = :probability, bins = bins)
+
+histogram((best_psms[(best_psms[:,:decoy].==true),:prec_ρ]), alpha = 0.5, normalize = :probability)
+#histogram!((best_psms[(best_psms[:,:decoy].==false),:entropy_sim]), alpha = 0.5, normalize = :probability)
+#histogram!(log2.(best_psms[(best_psms[:,:decoy].==false),:peak_area]), alpha = 0.5, normalize = :probability)
+histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:prec_ρ]), alpha = 0.5, normalize = :probability)
+
+
+
+
+histogram((best_psms[(best_psms[:,:decoy].==true),:prec_ρ]), alpha = 0.5, normalize = :probability)
+histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:prec_ρ]), alpha = 0.5, normalize = :probability)
+
+bins = LinRange(0.5, 1.0, 200)
+histogram((best_psms[(best_psms[:,:decoy].==true),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
+histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
+
+bins = (LinRange(0, 30, 100), LinRange(12, 30, 100))
+histogram2d(log2.(best_psms[:,:peak_area]), log2.(best_psms[:,:peak_area_ms1]), alpha = 0.5, normalize = :probability, bins = bins)
+
+
+bins = (LinRange(4, 8, 100), LinRange(4, 8, 100))
+histogram2d(log10.(best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:peak_area]), 
+log10.(best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:peak_area_ms1]), alpha = 0.5, normalize = :probability, bins = bins)
+
+
+histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:n_precs]), alpha = 0.5, normalize = :probability)
+
+
+
+histogram!(best_psms[(best_psms[:,:decoy].==false),:δt], alpha = 0.5, normalize = :probability, bins = bins)
+
+
+best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:δt].==0.0),:]
+
 println("Finished peak integration in ", integration_time.time, " seconds")
 println("Train target-decoy model at precursor level...")
 #best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),[:precursor_idx,:q_value,:matched_ratio,:entropy_sim,:intensity]]
 best_psms = vcat(values(best_psms_dict)...);
 #Model Features 
 features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:RT_error,:y_ladder,:RT,:entropy_sim,:n_obs,:charge,:city_block,:matched_ratio,:scribe_score, :missed_cleavage,:Mox,:best_rank,:topn];
-append!(features, [:intensity,:intensity_ms1,:count, :SN, :peak_error,:fwhm,:offset,:cross_cor]);
+append!(features, [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:ρ,:δt,:peak_area_ms1,:points_above_FWHM_ms1]);
+
+best_psms = best_psms[(best_psms[:,:GOF].>=0.5),:];
+  
 
 #Train Model 
 xgboost_time = @timed bst = rankPSMs!(best_psms, 
@@ -561,6 +641,10 @@ getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
 
 println("Number of unique Precursors ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
 
+
+
+sum((best_psms[:,:entropy_sim].>0.4).&(best_psms[:,:decoy]))
+sum((best_psms[:,:entropy_sim].>0.4).&(best_psms[:,:decoy].==false))
 
 MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
     

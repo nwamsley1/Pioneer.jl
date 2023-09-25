@@ -66,7 +66,12 @@ function SearchRAW(
     H_COLS, H_ROWS, H_VALS = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches)
   
     #weights
-    precursor_weights = zeros(Float32, length(ion_list))
+    precursor_weights = ""
+    if ismissing(ion_list)
+        precursor_weights = zeros(Float32, maximum(keys(isotope_dict)))
+    else
+        precursor_weights = zeros(Float32, length(ion_list))
+    end
 
     fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
     ##########
@@ -185,9 +190,6 @@ function SearchRAW(
                 weights[first(row)] = precursor_weights[id]
             end
 
-            if i == 43869
-                return Hs, X, weights, IDtoROW
-            end
             solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
             for (id, row) in pairs(IDtoROW)
@@ -566,8 +568,14 @@ function integrateMS1(
         selectIsotopes!, #Ion Selection Function for MS1 integration 
         missing,
         
-        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), :weight => zeros(Float32, N), :rt => zeros(Float32, N), :frag_count => zeros(Int64, N)),
-        expected_matches = params[:expected_matches],
+        chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), 
+        :weight => zeros(Float32, N), 
+        :scan_idx => zeros(UInt32, N),
+        :rt => zeros(Float32, N), 
+        :frag_count => zeros(Int64, N),
+        :rank => zeros(UInt8, N),
+        :cycle_idx => zeros(UInt32, N)),
+                expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
         IonTemplateType = Isotope{Float32},

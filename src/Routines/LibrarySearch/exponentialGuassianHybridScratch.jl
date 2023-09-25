@@ -1,3 +1,6 @@
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
 function EGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
      y = zeros(T, length(t))
@@ -10,8 +13,13 @@ function EGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
     return y
 end
 
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
 function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::Vector{T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
      for (i, tᵢ) in enumerate(t)
         d = 2*p[1] + p[3]*(tᵢ - p[2])
         if real(d) > 0
@@ -23,6 +31,9 @@ function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::Vector{T}) where 
     return nothing
 end
 
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
 function JEGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
     J = zeros(T, (length(t), length(p)))
@@ -43,8 +54,13 @@ function JEGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
 end
 
 function Integrate(f::Function, p::Vector{T}, bounds::Tuple{T, T}, n::Int64 = 1000) where {T<:AbstractFloat}
+
+    #Use GuassLegendre Quadrature to integrate f on the integration bounds 
+    #using FastGaussQuadrature
     x, w = gausslegendre(n)
     a, b = first(bounds), last(bounds)
+    #Quadrature rules are for integration bounds -1 to 1 but can shift
+    #to arbitrary bounds a and b. 
     return ((b - a)/2)*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
 end
 
@@ -55,112 +71,42 @@ function getP0(α::T, B::T, A::T, tᵣ::T, H::T) where {T<:AbstractFloat}
              H]
 end
 
+getP0(p0::NTuple{5, T}) where {T<:AbstractFloat} = getP0(p0[1], p0[2],p0[3],p0[4],p0[5])
+
 function getFWHM(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
-    B = (-1/2)*(sqrt(log(α)*((τ^2)*log(α) - 8*σ)) + τ*log(α))
-    A = (1/2)*( τ*log(α) - sqrt(log(α)*((τ^2)*log(α) - 8*σ)))
+    #FWHM given parameters for EGH function 
+
+    #When is absolute value necessary. 
+    B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
+    A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
     return abs(A) + abs(B)
 end
 
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-N  += 1
-
-using FastGaussQuadrature
-x, w = gausslegendre(100)
-a = fit1.param[2] - 2.0
-b = fit1.param[2] + 2.0
-((b - a)/2)*dot(w, EGH(collect(x).*((b - a)/2) .+ (a + b)/2, fit1.param))
-
-for prec in precursors_list
-    if prec.sequence == "M(ox)YPIDFEK"
-        println("Valine ", prec)
-    end
-    if prec.sequence == "M(ox)YPLDFEK"
-        println("Isoleucine ", prec)
-    end
-end
-VPAGLPDLK
-NumericalIntegration.integrate(huber_loss[:,:rt], EGH(Float64.(collect(huber_loss[:,:rt])), fit1.param), TrapezoidalFast())
-a = ts[1]
-b = ts[end]
-gausslegen
-EGH(collect(ts), fit1.param)
-
-
-
-pg = [0.1^2, 30.2, 1/16, 6e5]
-@btime fit0 = curve_fit(EGH, Float64.(x[17:end]), Float64.(y[17:end]), pg)
-
-pg = [0.1^2, 30.2, 1/16, 6e5]
-@btime fit1 = curve_fit(EGH, JEGH, Float64.(x[17:end]), Float64.(y[17:end]), pg)
-
-fit1 = curve_fit(EGH, JEGH, Float64.(x), Float64.(y), pg)
-
-N = 9936
-
-squared_error = ms2_chroms_square[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][1:35,:]
-huber_loss = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][1:35,:]
-plot(squared_error[:,:rt],
-squared_error[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-plot!(huber_loss[:,:rt],
-huber_loss[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-
-x = huber_loss[:,:rt]
-y = huber_loss[:,:weight]
-fit1 = curve_fit(EGH, JEGH, Float64.(x), Float64.(y), pg)
-#Integrate(EGH, fit1.param, (fit1.param[2] - 1.0, fit1.param[2] + 1.0))
-#plot!(collect(ts), EGH(collect(ts), fit0.param))
-ts = LinRange(fit1.param[2] - 2.0, fit1.param[2] + 2.0, 2000)
-plot(collect(ts), EGH(collect(ts), (fit1.param)))
-
-f = EGH(collect(ts), (fit1.param))
-fit1.param[2] = fit1.param[2] - 0.5
-g = EGH(collect(ts), (fit1.param))
-plot(collect(ts),f)
-plot!(collect(ts),g)
-
-@time EGH!(f, ts, fit1.param)
-
-function getOffset(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}, δt::T) where {T<:AbstractFloat}
+function CrossCorrFFT(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}, δt::T) where {T<:AbstractFloat}
+    
     if length(f) != length(g)
-        #Need to throw and error here
-        return 
+        throw(ArgumentError("f and g must be of the same length"))
     end
-
-    mean1, mean2, = 0.0, 0.0 # = LinearAlgebra.norm(f)*LinearAlgebra.norm(g)#sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
-    for i in range(1, length(f))
-        mean1 += f[i, 1]
-        mean2 += g[i, 1]
-    end
-
-    mean1, mean2 = mean1/length(f), mean2/length(f)
-
-    norm1, norm2 = 0.0, 0.0
-    for i in range(1, length(f))
-        norm1 += (f[i, 1] - mean1)^2
-        norm2 += (g[i, 1] - mean2)^2
-    end
-
-    norm1, norm2 = sqrt(norm1), sqrt(norm2)
-    norm = norm1*norm2
-    #norm = 1
 
     #Inplace fast fourier transform
+    #Unfortunately rfft! is not implemented at this time so must use fft!. 
     fft!(@view(f[:,1]), 1)
     fft!(@view(g[:,1]), 1)
 
-    #Elementwise multiplication in frequency domain
+    #Elementwise multiplication in frequency domain. 
+    #Overwrite output to f so we don't need to allocate
+    #This is the cross correlation theorem. corr(f, g) = ifft(fft(f)*conj(fft(g)))
+    #f⋆g = ℱ[conj(F(v))G(v)]
     for i in range(1, size(f)[1])
         f[i, 1] = conj((f[i, 1]))*(g[i, 1])
     end
 
     #Get Cross Correlation
     ifft!(f)
-    cross_corr = f
-    #plot(real.(f)/norm, show = true)
+    cross_corr = f #Rename 
+
     #########
-    #Get Maximum Cross Correlation
+    #Get Offset with Maximum Cross Correlation
     max = 0.0
     offset = 0
     for i in eachindex(cross_corr)
@@ -170,201 +116,184 @@ function getOffset(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}, δt::T) where {
         end
     end
 
-    #cross_corr = irfft(conj.(rfft(f)).*rfft(g), length(f))./norm
 
     if offset > length(f)÷2
-        return -abs(length(f) - offset)*δt, max/norm
+        return -abs(length(f) - offset)*δt
     else
-        return offset*δt, max/norm
+        return (offset)*δt
     end
 end
 
-x = huber_loss[:,:rt]
-y = huber_loss[:,:weight]
-fit1 = curve_fit(EGH, JEGH, Float64.(x), Float64.(y), pg)
-N = 1000
-ts = LinRange(fit1.param[2] - 2.0, fit1.param[2] + 2.0, N)
-f = zeros(Complex{Float64}, N, 1)
-g = zeros(Complex{Float64}, N, 1)
-f[:,1] .= complex.(EGH(collect(ts), (fit1.param)))
-fit1.param[2] = fit1.param[2] - 1.0
-fit1.param[3] += 1.0
-fit1.param[1] = 0.0
-fit1.param[4] = fit1.param[4]/5000000
-g[:,1] .= complex.(EGH(collect(ts), (fit1.param)))
-#g = rand(Complex{Float64}, N, 1)
-norm = LinearAlgebra.norm(real.(f))*LinearAlgebra.norm(real.(g))
-f = f./norm
-f = f .- mean(f)
-g = g./norm
-g = g .- mean(g)
-plot(real.(g), seriestype=:scatter)
-plot!(real.(f), seriestype=:scatter)
-@time getOffset(f, g, 4.0/N)
+function pearson_corr(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}) where {T<:AbstractFloat}
+    mean1, mean2, = 0.0, 0.0 # = LinearAlgebra.norm(f)*LinearAlgebra.norm(g)#sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
+    for i in range(1, length(f))
+        mean1 += real(f[i, 1])
+        mean2 += real(g[i, 1])
+    end
 
+    mean1, mean2 = mean1/length(f), mean2/length(f)
 
-#FFT in place  
-fft!(@view(f[:,1]), 1)
-fft!(@view(g[:,1]), 1)
-for i in range(1, size(f)[1])
-    f[i, 1] = conj(f[i, 1])*g[i, 1]
-end
-plot(real.(ifft!(f)))
+    norm1, norm2, dot = 0.0, 0.0, 0.0
 
-p = plan_fft!(zeros(Float64, 2000); flags=FFTW.ESTIMATE, timelimit=Inf)
+    for i in range(1, length(f))
+        fᵢ, gᵢ = (real(f[i, 1]) - mean1), (real(g[i, 1]) - mean2)
+        dot += fᵢ*gᵢ
+        norm1 += (fᵢ)^2
+        norm2 += (gᵢ)^2
+    end
 
-
-buf_FFT = rand(Complex{Float64}, 10,10)
-#in-place FFT on the first column of the matrix
-fft!( view(buf_FFT, 1:size(buf_FFT, 1),1), 1 ) 
-#alternately, to save some typing:
-ifft!( view(buf_FFT, Colon(), 1), 1 )
-#Or, even simpler, use the @view macro
-ifft!(@view(buf_FFT[:,1]), 1)
-
-getOffset(f, g, 4.0/2000)
-getOffset(g, f, 4.0/2000)
-getOffset(f, f, 4.0/2000)
-
-
-norm = sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
-cross_cor = irfft(conj.(rfft(f_pad)).*rfft(g_pad), 1999)./norm
-(1999 - argmax(cross_cor))*((maximum(x) - minimum(x))/1000)
-plot(cross_cor)
-
-N = 2000
-f = f[:,1]
-g = g[:,1]
-norm = sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
-cross_cor = irfft(conj.(rfft(f)).*rfft(g), N)./norm
-(N - argmax(cross_cor))*((maximum(x) - minimum(x))/N)
-plot(cross_cor)
-
-
-norm = sqrt(sum((f .- mean(f)).^2))*sqrt(sum((f .- mean(f)).^2))
-cross_cor = irfft(conj.(rfft(f)).*rfft(f), N)./norm
-(N- argmax(cross_cor))*((maximum(x) - minimum(x))/N)
-plot!(cross_cor)
-
-norm = sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
-cross_cor = irfft(conj.(rfft(g)).*rfft(f), N)./norm
-(N - argmax(cross_cor))*((maximum(x) - minimum(x))/N)
-plot!(cross_cor)
-
-
-
-
-norm = sqrt(sum((f_pad .- mean(f_pad)).^2))*sqrt(sum((f_pad .- mean(f_pad)).^2))
-cross_cor = irfft(conj.(rfft(f_pad)).*rfft(f_pad), 1999)./norm
-(1999 - argmax(cross_cor))*((maximum(x) - minimum(x))/1000)
-
-
-
-norm = sqrt(sum((f .- mean(f)).^2))*sqrt(sum((g .- mean(g)).^2))
-cross_cor = irfft(conj.(rfft(f)).*rfft(g), 1000)./norm
-(1000 - argmax(cross_cor))*((maximum(x) - minimum(x))/1000)
-
-
-norm = sqrt(sum((f_pad .- mean(f_pad)).^2))*sqrt(sum((f_pad .- mean(f_pad)).^2))
-cross_cor = irfft(conj.(rfft(f_pad)).*rfft(f_pad), 1999)./norm
-(1999 - argmax(cross_cor))*((maximum(x) - minimum(x))/1000)
-
-
-
-
-
-cyclic_conv = ifft(fft(f).*fft(g))
-plot(collect(ts), real.(cyclic_conv))
-
-plot(collect(ts), imag.(cyclic_conv))
-plot(collect(ts),f)
-plot(collect(ts),g)
-argmax(real.(cyclic_conv))
-
-
-FastCyclicConv1D(f,g) = ifft(fft(f).*fft(g))
-function FastLinearConvolution(f,g)
-    N = length(f)
-    M = length(g)
-
-    f_pad = [ f; zeros(M-1) ]     
-    g_pad = [ g; zeros(N-1) ]     
-
-    return FastCyclicConv1D( f_pad, g_pad )
+    return dot/sqrt(norm1*norm2)
 end
 
-plot(collect(ts),f)
-plot!(collect(ts),g)
-(maximum(x) - minimum(x))/1000
-(1999 - argmax(irfft(conj.(rfft(f_pad)).*rfft(g_pad), 1999)./norm))*((maximum(x) - minimum(x))/1000)
+function CrossCorrMS1vMS2(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_params::Vector{T}, ms2_params::Vector{T}; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
+   
+    #Points at which to evaluate the function. 
+    #May need to re-evalute how we find the window center
+    times = LinRange(T(ms2_params[2] - width_t), T(ms2_params[2] + width_t), N)
 
-norm = sqrt(sum((f_pad .- mean(f_pad)).^2))*sqrt(sum((g_pad .- mean(g_pad)).^2))
-cross_cor = irfft(conj.(rfft(f_pad)).*rfft(g_pad), 1999)./norm
+    #Fill ms1 and ms2 in place with values for teh exponential-gaussian hybrid function
+    EGH!(ms1, times, ms1_params)
+    EGH!(ms2, times, ms2_params)
 
+    #Pearson Correlation
+    ρ = pearson_corr(ms1, ms2)
 
-(maximum(x) - minimum(x))/1000
-(1999 - argmax(irfft(conj.(rfft(f_pad)).*rfft(g_pad), 1999)./norm))*((maximum(x) - minimum(x))/1000)
+    δt = CrossCorrFFT(ms1, ms2, T(width_t*2/N))
 
-plot(LinRange(minimum(x), maximum(x), 1999),
-cross_cor)
+    return δt, ρ
 
-sqrt(sum((f_pad .- mean(f_pad)).^2))*sqrt(sum((g_pad .- mean(g_pad)).^2))
+end
 
-N = length(f)
-M = length(g)
+ms1 = zeros(Complex{Float32}, 500, 1)
+ms2 = zeros(Complex{Float32}, 500, 1)
+select!(best_psms, Not(:ρ))
+select!(best_psms, Not(:δt))
+best_psms[:,:δt] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
+best_psms[:,:ρ] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
+for i in range(1, size(best_psms)[1])
 
-f_pad = [ f; zeros(M-1) ]     
-g_pad = [ g; zeros(N-1) ]     
+    ms1_params = [best_psms[i,:σ_ms1],
+                  best_psms[i,:tᵣ_ms1],
+                  best_psms[i,:τ_ms1],
+                  best_psms[i,:H_ms1]
+    ]
 
-LinRange(minimum(x), maximum(x), 1000)[argmax(irfft(conj.(rfft(f_pad)).*rfft(g_pad), 1999))]
-LinRange(minimum(x), maximum(x), 1000)[argmax(g)]
+    if sum(ismissing.(ms1_params))>0
+        best_psms[i,:δt] = missing
+        best_psms[i,:ρ] = missing
+        continue
+    end
 
+    ms2_params = [best_psms[i,:σ],
+                  best_psms[i,:tᵣ],
+                  best_psms[i,:τ],
+                  best_psms[i,:H]
+    ]
+    δt, ρ = CrossCorrMS1vMS2(ms1, ms2, ms1_params, ms2_params)
+    best_psms[i,:δt] = δt
+    best_psms[i,:ρ] = ρ
+end
 
-plot(1:1001, crosscor(f, g, -500:500))
-
-plot!(1:1001, crosscor(f, f, -500:500))
-
-plot(LinRange(minimum(x), maximum(x), 1999),
-real.(FastLinearConvolution(f, f)))
-plot!(LinRange(minimum(x), maximum(x), 1000), f*0.5e8)
-
-plot!(collect(ts),f*0.5e8)
-plot!(collect(ts),g*0.5e8)
-
-plot(LinRange(minimum(x), maximum(x), 1000),
-irfft(rfft(f).*rfft(g), 1000))
-plot!(collect(ts),f*0.5e8)
-plot!(collect(ts),g*0.5e8)
-
-LinRange(minimum(x), maximum(x), 1999)[argmax(real.(FastLinearConvolution(f, g)))] - LinRange(minimum(x), maximum(x), 1999)[argmax([ f; zeros(1000-1) ] )]
-
-LinRange(minimum(x), maximum(x), 1000)[argmax(irfft(rfft(f).*rfft(g), 1000))] - LinRange(minimum(x), maximum(x), 1000)[argmax(g)]
-LinRange(minimum(x), maximum(x), 1000)[argmax(g)] - LinRange(minimum(x), maximum(x), 1000)[argmax(f)]
-
-
-plot(LinRange(minimum(x), maximum(x), 1000),
-irfft(rfft(f).*rfft(f), 1000))
-plot!(collect(ts),f*0.5e8)
-plot!(collect(ts),g*0.5e8)
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.25,:], :precursor_idx));
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.25,:], :precursor_idx));
 
 
+sort(PSMs[1][PSMs[1][:,:q_value].<=0.01,[:precursor_idx,:q_value,:prob]],:precursor_idx)
 
-N += 1
-(1000 - 864)*((maximum(x) - minimum(x))/1000)
+function getBestPSM(sdf::SubDataFrame{DataFrame, DataFrames.Index, SubArray{Int64, 1, Vector{Int64}, Tuple{UnitRange{Int64}}, true}})
+    if any(sdf.q_value.<=0.01)
+        return sdf[argmax((sdf.q_value.<=0.01).*(sdf.hyperscore)),:]
+    else
+        return sdf[argmax(sdf.prob),:]
+    end
+end
+
+best_psms[best_psms[:,:GOF].>0.99,[:GOF,:points_above_FWHM,:points_above_FWHM_01,:sequence,:q_value,:decoy]]
+
+value_counts(df, col) = combine(groupby(df, col), nrow)
+value_counts(best_psms, :precursor_idx)
+
+best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=1.0,:], [:sequence,:charge]));
+  
+
+grouped_df = groupby(best_psms, :sequence);
+best_psms[:,:n_precs] = (combine(grouped_df) do sub_df
+    #if size(sub_df)[1] == 28
+    #    display(sub_df[:,[:precursor_idx,:sequence,:charge]])
+    #end
+    repeat([size(sub_df)[1]], size(sub_df)[1])
+end)[:,:x1]
+
+ms1 = zeros(Complex{Float32}, 500, 1)
+ms2 = zeros(Complex{Float32}, 500, 1)
+select!(best_psms, Not(:ρ))
+select!(best_psms, Not(:δt))
+best_psms[:,:δt] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
+best_psms[:,:ρ] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
+for i in range(1, size(best_psms)[1])
 
 
-p = [6e5, 30.2, 0.15]
-m(t, p) = p[1]*exp.((-1).*((t .- p[2]).^2)./(2*p[3]^2))
-m(ts, p)
-plot!(ts, m(ts, p))
+end
 
+select!(best_psms, Not(:prec_ρ))
+best_psms[:,:prec_ρ] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
+grouped_df = groupby(best_psms, :sequence);
+best_psms[:,:prec_ρ] = (combine(grouped_df) do sub_df
 
-using Splines2, GLM, Random
-x = huber_loss[:,:rt]
-y = huber_loss[:,:weight]
-ns1 = Splines2.ns_(x, df = 15, intercept = true);
-X = ns1(x);
-fit1 = lm(X, y)
+    if size(sub_df)[1] == 1
+        return repeat([missing], size(sub_df)[1])
+    end
 
-plot!(x,
-GLM.predict(fit1, ns1(x)))
+    precs = sortperm(sub_df[:,:peak_area], rev=true)[1:2]
+
+    p1_params = [sub_df[precs[1],:σ],
+                  sub_df[precs[1],:tᵣ],
+                  sub_df[precs[1],:τ],
+                  sub_df[precs[1],:H]
+    ]
+
+    p2_params = [sub_df[precs[2],:σ],
+                  sub_df[precs[2],:tᵣ],
+                  sub_df[precs[2],:τ],
+                  sub_df[precs[2],:H]
+    ]
+
+    if (sum(ismissing.(p1_params))>0) |  (sum(ismissing.(p2_params))>0)
+        return repeat([missing], size(sub_df)[1])
+    end
+
+    δt, ρ = CrossCorrMS1vMS2(ms1, ms2, p1_params, p2_params)
+
+    return repeat([ρ], size(sub_df)[1])
+
+end)[:,:x1]
+
+sort(best_psms,:sequence)[:,[:precursor_idx,:sequence,:n_precs,:charge,:ρ]]
+best_psms[(best_psms[:,:peak_area].>(10^7.9)),[:peak_area,:peak_area_ms1,:precursor_idx,:sequence,:ρ]] #.&(best_psms[:,:peak_area_ms1].<10^5),:]
+
+sort(PSMs[1][PSMs[1][:,:precursor_idx].== 5455685,[:weight,:prob,:q_value,:RT]],:weight)
+test = PSMs[(PSMs[:,:sequence].=="IWHHTFYNELR"),:] 
+best_psms[best_psms[:,:GOF].>0.99,[:precursor_idx,:GOF,:points_above_FWHM,:points_above_FWHM_01,:sequence,:q_value,:decoy]]
+#=
+sort(PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx])).&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]],:hyperscore)
+
+sort(PSMs[(PSMs[:,:sequence].=="IWHHTFYNELR").&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]],:hyperscore)
+
+best_psms_passing = best_psms[best_psms[:,:q_value].<=0.01,:]
+
+N = 10000
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
+N  += 1
+PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx])).&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]]
+best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:δt].==0.0),:]
+N = findfirst(x->x== 5455685  , best_psms[:,:precursor_idx])
+huber_loss = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:]
+ms1 = ms1_chroms[(precursor_idx=UInt32(best_psms[N,:precursor_idx]),)][:,:]
+plot(huber_loss[:,:rt],
+huber_loss[:,:weight], seriestype=:scatter,
+alpha = 0.5)
+plot!(ms1[:,:rt],
+ms1[:,:weight], seriestype=:scatter,
+alpha = 0.5)
+
+=#
