@@ -45,34 +45,18 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
         end
     end
     chrom = chrom[non_zero,:]
-    display(chrom)
+    #display(chrom)
     #Scan with the highest score 
     #Too few points to attempt integration
     if size(chrom)[1] < 3
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
     #########
-    #Pad intensity and rt with zeros. 
-    #This is gross and messy
+    #
     rt = chrom[:,:rt]
     intensity = collect(chrom[:,:weight])
     intensity[chrom[:,:rank].<2].=0.0
     frag_counts = collect(chrom[:,:frag_count])
-    #=
-    rt = chrom[:,:rt]
-    for i in 1:5
-        rt = pad(rt[:], rt[1] - (rt[2] - rt[1]), rt[end] + (rt[end] - rt[end - 1]))
-    end
-
-    intensity = collect(chrom[:,:weight])
-
-    intensity[chrom[:,:rank].<2].=0.0
-    intensity = pad(intensity, zero(eltype(typeof(intensity))), zero(eltype(typeof(intensity))), 5)
-
-    frag_counts = collect(chrom[:,:frag_count])
-    frag_counts = pad( frag_counts, zero(eltype(typeof(frag_counts))), zero(eltype(typeof( frag_counts))), 5)
-    =#
-
 
     #########
     #Get Boundaries for fitting EGH curve 
@@ -96,6 +80,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     catch
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
+
     peak_area = Integrate(EGH, EGH_FIT.param, (T(EGH_FIT.param[2] - integration_width/2), 
                                                T(EGH_FIT.param[2] + integration_width/2)),
                                                integration_points)
@@ -121,6 +106,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     MODEL_INTENSITY = EGH(rt, EGH_FIT.param)
     RESID = abs.(intensity .- MODEL_INTENSITY)
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)) .& (intensity.>(EGH_FIT.param[end]*0.1))
+    GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.0)) .& (intensity.>(EGH_FIT.param[end]*0.0))
 
     var = std(RESID)/EGH_FIT.param[4]
     GOF = 1 - sum(RESID[GOF_IDX])/sum(intensity[GOF_IDX])
@@ -221,7 +207,7 @@ function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vec
             end
         end
     end
-    println("TEST")
+
     if best_left == best_right
         return 1, length(rt)
     end

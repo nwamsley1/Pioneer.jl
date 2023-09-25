@@ -1,7 +1,7 @@
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """
-function EGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
      y = zeros(T, length(t))
      for (i, tᵢ) in enumerate(t)
@@ -16,7 +16,7 @@ end
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """
-function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::Vector{T}) where {T<:AbstractFloat}
+function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::NTuple{4, T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
     #Given parameters in 'p'
     #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
@@ -34,7 +34,7 @@ end
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """
-function JEGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+function JEGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
     J = zeros(T, (length(t), length(p)))
     for (i, tᵢ) in enumerate(t)
@@ -53,7 +53,7 @@ function JEGH(t::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
    return J
 end
 
-function Integrate(f::Function, p::Vector{T}, bounds::Tuple{T, T}, n::Int64 = 1000) where {T<:AbstractFloat}
+function Integrate(f::Function, p::NTuple{4, T}, bounds::Tuple{T, T}, n::Int64 = 1000) where {T<:AbstractFloat}
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 
     #using FastGaussQuadrature
@@ -145,7 +145,7 @@ function pearson_corr(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}) where {T<:Ab
     return dot/sqrt(norm1*norm2)
 end
 
-function CrossCorrMS1vMS2(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_params::Vector{T}, ms2_params::Vector{T}; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
+function pearson_corr(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_params::NTuple{4, T}, ms2_params::NTuple{4, T}; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
    
     #Points at which to evaluate the function. 
     #May need to re-evalute how we find the window center
@@ -156,11 +156,11 @@ function CrossCorrMS1vMS2(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_
     EGH!(ms2, times, ms2_params)
 
     #Pearson Correlation
-    ρ = pearson_corr(ms1, ms2)
+    return pearson_corr(ms1, ms2)
+        
+    #δt = CrossCorrFFT(ms1, ms2, T(width_t*2/N))
 
-    δt = CrossCorrFFT(ms1, ms2, T(width_t*2/N))
-
-    return δt, ρ
+    #return δt, ρ
 
 end
 
@@ -170,35 +170,30 @@ select!(best_psms, Not(:ρ))
 select!(best_psms, Not(:δt))
 best_psms[:,:δt] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
 best_psms[:,:ρ] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
-for i in range(1, size(best_psms)[1])
 
-    ms1_params = [best_psms[i,:σ_ms1],
-                  best_psms[i,:tᵣ_ms1],
-                  best_psms[i,:τ_ms1],
-                  best_psms[i,:H_ms1]
-    ]
+function get_ρ(sdf::SubDataFrame{DataFrame, DataFrames.Index, SubArray{Int64, 1, Vector{Int64}, Tuple{UnitRange{Int64}}, true}}, ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}})
+    for i in range(1, size(best_psms)[1])
 
-    if sum(ismissing.(ms1_params))>0
-        best_psms[i,:δt] = missing
-        best_psms[i,:ρ] = missing
-        continue
+        ms1_params = (sdf[:σ_ms1],
+                        sdf[:tᵣ_ms1],
+                        sdf[:τ_ms1],
+                        sdf[:H_ms1])
+
+        if sum(ismissing.(ms1_params))>0
+            sdf[:ρ] = missing
+            continue
+        end
+
+        ms2_params = (sdf[:σ],
+                        sdf[:tᵣ],
+                        sdf[:τ],
+                        sdf[:H]
+        )
+        
+        best_psms[i,:ρ] = pearson_corr(ms1, ms2, ms1_params, ms2_params)
+
     end
-
-    ms2_params = [best_psms[i,:σ],
-                  best_psms[i,:tᵣ],
-                  best_psms[i,:τ],
-                  best_psms[i,:H]
-    ]
-    δt, ρ = CrossCorrMS1vMS2(ms1, ms2, ms1_params, ms2_params)
-    best_psms[i,:δt] = δt
-    best_psms[i,:ρ] = ρ
 end
-
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.25,:], :precursor_idx));
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.25,:], :precursor_idx));
-
-
-sort(PSMs[1][PSMs[1][:,:q_value].<=0.01,[:precursor_idx,:q_value,:prob]],:precursor_idx)
 
 function getBestPSM(sdf::SubDataFrame{DataFrame, DataFrames.Index, SubArray{Int64, 1, Vector{Int64}, Tuple{UnitRange{Int64}}, true}})
     if any(sdf.q_value.<=0.01)
@@ -280,8 +275,8 @@ sort(PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx]))
 sort(PSMs[(PSMs[:,:sequence].=="IWHHTFYNELR").&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]],:hyperscore)
 
 best_psms_passing = best_psms[best_psms[:,:q_value].<=0.01,:]
+integratePrecursor(ms1_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
 
-N = 10000
 integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
 N  += 1
 PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx])).&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]]

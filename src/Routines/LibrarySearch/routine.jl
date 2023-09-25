@@ -406,7 +406,7 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 #scan_range = (101357, 111357),
                                                 scan_range = (0, length(MS_TABLE[:masses]))
                                             );
-        PSMs = PSMs[PSMs[:,:weight].>100.0,:];
+        PSMs = PSMs[PSMs[:,:weight].>1000.0,:];
         refinePSMs!(PSMs, MS_TABLE, precursors_list);
         lock(lk) do 
             PSMs_dict[ms_file_idx] = PSMs
@@ -503,7 +503,9 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     
     #Integrate MS2 Chromatograms 
     #Need to speed up this part. 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H]);
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, 
+                                                UInt32(psm[:precursor_idx]), 
+                                                (0.1f0, 0.15f0, 0.15f0, Float32(psm[:RT]), psm[:weight]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H]);
     
     #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
     best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false).&(best_psms[:,:points_above_FWHM].>=1).&(best_psms[:,:points_above_FWHM_01].>=5),:];
@@ -513,7 +515,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #For some reason this requires a threadlock. Need to investiage further. 
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
     #lock(lk) do 
-        isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
+    isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
     #end
 
     prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x));
@@ -531,7 +533,13 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(ms1_chroms, ms2_chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 
     #Integrate MS1 Chromatograms 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), isplot = false)) => [:peak_area_ms1,
+    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), 
+                                        (0.1f0, 
+                                        0.15f0, 
+                                        0.15f0, 
+                                        Float32(psm[:tᵣ]), 
+                                        Float32(1e4)),
+                                        isplot = false)) => [:peak_area_ms1,
                                         :GOF_ms1,
                                         :FWHM_ms1,
                                         :FWHM_01_ms1,
@@ -540,6 +548,11 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                         :points_above_FWHM_01_ms1,
                                         :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
     
+    #QC Metrics
+    best_psms = best_psms[best_psms[:,:peak_area].>0.0,:];
+    best_psms = best_psms[best_psms[:,:FWHM].>(6/60),:];
+    best_psms = best_psms[best_psms[:,:GOF].>0.5,:];
+
     lock(lk) do 
         best_psms_dict[ms_file_idx] = best_psms;
     end
@@ -549,8 +562,11 @@ end
 integratePrecursor(ms1_chroms, UInt32(best_psms[N,:precursor_idx]), isplot = false)
 N = N + 1
 
-histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:τ])), alpha = 0.5)
-histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:τ])), alpha = 0.5)
+histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:asymmetry])), alpha = 0.5)
+histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:asymmetry])), alpha = 0.5)
+
+histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:peak_area_ms1])), alpha = 0.5)
+histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:peak_area_ms1])), alpha = 0.5)
 
 bins = LinRange(-2, 2, 200)
 histogram((best_psms[best_psms[:,:decoy],:δt]), alpha = 0.5, normalize=:pdf, bins = bins)
@@ -595,14 +611,14 @@ bins = LinRange(0.5, 1.0, 200)
 histogram((best_psms[(best_psms[:,:decoy].==true),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
 histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
 
-bins = (LinRange(0, 30, 100), LinRange(12, 30, 100))
-histogram2d(log2.(best_psms[:,:peak_area]), log2.(best_psms[:,:peak_area_ms1]), alpha = 0.5, normalize = :probability, bins = bins)
+bins = (LinRange(0, 30, 100), LinRange(0, 30, 100))
+histogram2d(log2.(best_psms[:,:peak_area]), log2.(max.(best_psms[:,:peak_area_ms1], 0.0)), alpha = 0.5, normalize = :probability, bins = bins)
 
-
-bins = (LinRange(4, 8, 100), LinRange(4, 8, 100))
-histogram2d(log10.(best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:peak_area]), 
-log10.(best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:peak_area_ms1]), alpha = 0.5, normalize = :probability, bins = bins)
-
+#=
+bins = (LinRange(0, 8, 100), LinRange(0, 8, 100))
+histogram2d(log10.(best_psms[(best_psms[:,:decoy].==true) .& (best_psms[:,:q_value].<=0.01),:peak_area]), 
+log10.(max.(best_psms[(best_psms[:,:decoy].==true) .& (best_psms[:,:q_value].<=0.01),:peak_area_ms1], 0.0)), alpha = 0.5, normalize = :probability, bins = bins)
+=#
 
 histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:n_precs]), alpha = 0.5, normalize = :probability)
 
@@ -620,6 +636,9 @@ best_psms = vcat(values(best_psms_dict)...);
 #Model Features 
 features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:RT_error,:y_ladder,:RT,:entropy_sim,:n_obs,:charge,:city_block,:matched_ratio,:scribe_score, :missed_cleavage,:Mox,:best_rank,:topn];
 append!(features, [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:ρ,:δt,:peak_area_ms1,:points_above_FWHM_ms1]);
+
+features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:RT_error,:RT,:entropy_sim,:charge,:city_block,:matched_ratio,:scribe_score, :missed_cleavage,:Mox,:best_rank,:topn];
+append!(features, [:peak_area,:GOF,:asymmetry,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:ρ,:peak_area_ms1]);
 
 best_psms = best_psms[(best_psms[:,:GOF].>=0.5),:];
   
