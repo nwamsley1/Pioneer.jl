@@ -50,7 +50,8 @@ function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union
     #score.error += Distributions.logpdf(errdist, ppm_err) - Distributions.logpdf(Uniform(0, 13.073079713498782), min(abs(ppm_err), 13.073079713498782)) #abs(mass - getFragMZ(match))
     #ppm_err =  (getFragMZ(match) - mass)/(getFragMZ(match)/1e6)
     #score.error += Distributions.logpdf(Laplace((-1.0)*errdist.μ,  errdist.θ), ppm_err) - Distributions.logpdf(Uniform(0, 13.073079713498782), min(abs(ppm_err), 13.073079713498782)) #abs(mass - getFragMZ(match))
-    score.error += abs((getFragMZ(match) - mass)/(getFragMZ(match)/1e6)) 
+    ppm_err = (getFragMZ(match))/(getFragMZ(match)/1e6)
+    score.error +=  Distributions.logpdf(errdist, ppm_err*sqrt(match.intensity))
     #Distributions.logpdf(errdist, abs(mass - getFragMZ(match))/(mass/1e6))
 
     score.precursor_idx = getPrecID(match)

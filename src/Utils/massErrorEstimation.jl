@@ -11,6 +11,8 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
     #Estimte mixture model parameters by EM algorithm
     mix_mle = fit_mle(mix_guess, errs; atol = 1e-5, robust = true, infos = false)
 
+    println(Distributions.params(mix_mle))
+
     err_dist = err_model(Distributions.params(mix_mle)[1][1][1], Distributions.params(mix_mle)[1][1][2])
     background_dist = Distributions.Uniform(Distributions.params(mix_mle)[1][2][1], Distributions.params(mix_mle)[1][2][2])
     bernoulli = Distributions.Bernoulli(Distributions.params(mix_mle)[2][1])
@@ -22,8 +24,8 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
         dist[i] = w*rand(err_dist) + (1 - w)*rand(background_dist)
     end
 
-    
-    p = Plots.histogram(dist, normalize = :probability, bins = 100, alpha = 0.5, label = "Samples from Fitted Dist.",
+    bins = LinRange(quantile(errs, 0.01), quantile(errs, 0.99), 100)
+    p = Plots.histogram(dist, normalize = :probability, bins = bins, alpha = 0.5, label = "Samples from Fitted Dist.",
                         xlabel = "Mass Error (ppm)", ylabel = "Probability",
                         size = 100*[13.3, 7.5],
                         fontsize = 24,
@@ -34,10 +36,10 @@ function estimateErrorDistribution(errs::Vector{T}, err_model::Type{D}, frag_err
                         margin = 10Plots.mm, legend = :topleft,
                         dpi = 300)
 
-    Plots.histogram!(p, (errs), normalize = :probability, bins = 100, alpha = 0.5, label = "Observed Mass Errors (ppm)")
+    Plots.histogram!(p, (errs), normalize = :probability, bins = bins, alpha = 0.5, label = "Observed Mass Errors (ppm)")
     #Plots.vline!([median(frag_ppm_errs)])
-    Plots.vline!(p, [Distributions.params(mix_mle)[1][1][1]], lw = 6.0, color = :black, label = "Estimated Mass Error (ppm)")
-    Plots.savefig(p, f_out*"mass_error.pdf")
+    Plots.vline!(p, [Distributions.params(mix_mle)[1][1][1]], lw = 6.0, color = :black, label = "Estimated Mass Error (ppm)", show = true)
+    #Plots.savefig(p, f_out*"mass_error.pdf")
     
     return err_dist
 end

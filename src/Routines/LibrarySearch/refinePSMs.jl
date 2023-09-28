@@ -20,9 +20,15 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])
     ############################
 
-    sort!(PSMs, [:scan_idx, :total_ions]);
+    ###########################
+    #Filter on Rank and Topn
+    filter!(:best_rank => x -> x<2, PSMs)
+    filter!(:topn => x -> x>1, PSMs)
+    ############################
+
 
     # Number of PSMs occuring for each precursor 
+    sort!(PSMs, [:precursor_idx]);
     grouped_df = groupby(PSMs, :precursor_idx);
     PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
         repeat([size(sub_df)[1]], size(sub_df)[1])

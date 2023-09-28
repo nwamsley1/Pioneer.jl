@@ -52,7 +52,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
     #########
-    #
+    #Probably don't need to allocate all of this memory. 
     rt = chrom[:,:rt]
     intensity = collect(chrom[:,:weight])
     intensity[chrom[:,:rank].<2].=0.0
@@ -70,20 +70,18 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     #Fit EGH Curve 
     EGH_FIT = nothing
     try
-        EGH_FIT = curve_fit(EGH, 
-                            JEGH, 
-                            rt[start:stop],
-                            intensity[start:stop],
-                            #rt[start:stop],
-                            #intensity[start:stop],
-                            getP0(p0))
+        EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
+                                    JEGH_inplace, 
+                                    rt[start:stop],
+                                    intensity[start:stop],
+                                    #(chrom[start:stop, :rank] .+ 1)./4,
+                                    getP0(p0);
+                                    #w = chrom[start:stop, :rank]./4,
+                                    inplace = true)
     catch
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
-
-    peak_area = Integrate(EGH, EGH_FIT.param, (T(EGH_FIT.param[2] - integration_width/2), 
-                                               T(EGH_FIT.param[2] + integration_width/2)),
-                                               integration_points)
+    peak_area = Integrate(EGH, Tuple(EGH_FIT.param), n = integration_points)
     ##########
     #Plots                                           
     if isplot
@@ -92,7 +90,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
         #Plots Fitted EGH Curve
         X = LinRange(T(EGH_FIT.param[2] - 1.0), T(EGH_FIT.param[2] + 1.0), integration_points)
         Plots.plot!(X,  
-                    EGH(T.(collect(X)), EGH_FIT.param), 
+                    EGH(T.(collect(X)), Tuple(EGH_FIT.param)), 
                     fillrange = [0.0 for x in 1:integration_points], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
@@ -103,7 +101,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
 
     ############
     #Calculate Features
-    MODEL_INTENSITY = EGH(rt, EGH_FIT.param)
+    MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
     RESID = abs.(intensity .- MODEL_INTENSITY)
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)) .& (intensity.>(EGH_FIT.param[end]*0.1))
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.0)) .& (intensity.>(EGH_FIT.param[end]*0.0))

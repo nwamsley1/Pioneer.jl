@@ -431,14 +431,18 @@ transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[
 #Target-Decoy discrimination
 ############
 
-features = [:hyperscore,:total_ions,:intensity_explained,:error,
+PSMs[:, :err_norm] = PSMs[:,:error]./PSMs[:,:total_ions]
+
+PSMs[:, :err_likelihood_norm] = PSMs[:,:error_likelihood]./PSMs[:,:total_ions]
+
+features = [:hyperscore,:total_ions,:intensity_explained,:err_norm,:error,#:err_likelihood_norm,
             :poisson,:spectral_contrast,:entropy_sim,
             :RT_error,:scribe_score,:y_ladder,:RT,:n_obs,:charge,
             :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
 
 
 println("XGBoost for 10% FDR PSMs...")
-main_search_xgboost_time = @timed rankPSMs!(PSMs, features, 
+main_search_xgboost_time = @timed bst = rankPSMs!(PSMs, features, 
                 colsample_bytree = 1.0, 
                 min_child_weight = 10, 
                 gamma = 10, 
@@ -453,10 +457,55 @@ main_search_xgboost_time = @timed rankPSMs!(PSMs, features,
 getQvalues!(PSMs, PSMs[:,:prob], PSMs[:,:decoy]);
 println("Target PSMs at 1% FDR: ", sum((PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false)))
 
+bins = LinRange(-15, -5, 100)
+histogram(PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false),:err_norm], alpha= 0.5, bins = bins, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy]),:err_norm], alpha= 0.5, bins = bins, normalize = :probability)
+
+#bins = LinRange(-300, 0, 100)
+histogram(PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false).&(PSMs[:,:total_ions].>8),:err_norm], alpha= 0.5, bins = bins, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy]).&(PSMs[:,:total_ions].>8),:err_norm], alpha= 0.5, bins = bins, normalize = :probability)
 ##########
 #Regroup PSMs by file id 
 PSMs = groupby(PSMs,:ms_file_idx);
 
+
+#fit()
+#n, p = size(PSMs[:,features])
+#Β = Variable(p)
+#problem = minimize(logisticloss(-PSMs[:,:decoy].*(Matrix(PSMs[:,features])*Β)))
+#solve!(problem, () -> SCS.Optimizer(verbose=false))
+
+#using GLM
+#model_fit = glm(Matrix(PSMs[:,features]), PSMs[:,:decoy], Binomial(), ProbitLink())
+features = [:hyperscore,:total_ions,:intensity_explained,:error,
+            :poisson,:spectral_contrast,:entropy_sim,
+            :RT_error,:scribe_score,:y_ladder,:RT,:n_obs,:charge,
+            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn]
+select!(PSMs, Not(:intercept))
+PSMs[:,:intercept] = ones(Float64, size(PSMs)[1])
+PSMs[:,:target] = PSMs[:,:decoy].==false
+PSMs[:,:weight_log2] = log2.(PSMs[:,:weight])
+PSMs[:,:matched_ratio_log2] = log2.(PSMs[:,:matched_ratio])
+PSMs[:,:err_norm_log2] = log2.((-1.0)*PSMs[:,:err_norm])
+PSMs[:,:err_log2] = log2.((-1.0)*PSMs[:,:error])
+model_fit = glm(@formula(target ~ entropy_sim + 
+                                poisson + hyperscore + topn +
+                                scribe_score + weight_log2 + topn + spectral_contrast + 
+                                n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMs, Binomial(), ProbitLink())
+
+#One not encode Mox and missed cleavage?
+Y′ = GLM.predict(model_fit, PSMs);
+
+histogram(Y′[PSMs[:,:decoy]], normalize = :probability);
+histogram!(Y′[PSMs[:,:decoy].==false], normalize = :probability);
+
+
+
+
+getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
+println("Target PSMs at 1% FDR: ", sum((PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false)))
+
+Set(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:sequence])∩Set(PSMs[PSMs[:,:q_value].<=0.25,:sequence])
 #PSMs[(PSMs[:,:q_value].<=0.01).&(PSMs[:,:decoy].==false),:precursor_idx]
 #########
 #save psms
@@ -476,7 +525,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     
     #Need to change this. Highest intensity given a 1% fdr threshold. 
     #best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
-
+    @time begin
     #Get Best PSM per precursor
     best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMs[PSMs[:,:q_value].<=0.25,:], [:sequence,:charge]));
     
@@ -505,7 +554,10 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #Need to speed up this part. 
     transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, 
                                                 UInt32(psm[:precursor_idx]), 
-                                                (0.1f0, 0.15f0, 0.15f0, Float32(psm[:RT]), psm[:weight]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H]);
+                                                (0.1f0, #Fraction peak height α
+                                                 0.15f0, #Distance from vertical line containing the peak maximum to the leading edge at α fraction of peak height
+                                                 0.15f0, #Distance from vertical line containing the peak maximum to the trailing edge at α fraction of peak height
+                                                 Float32(psm[:RT]), psm[:weight]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H]);
     
     #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
     best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false).&(best_psms[:,:points_above_FWHM].>=1).&(best_psms[:,:points_above_FWHM_01].>=5),:];
@@ -515,7 +567,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #For some reason this requires a threadlock. Need to investiage further. 
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
     #lock(lk) do 
-    isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
+        isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
     #end
 
     prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x));
@@ -528,9 +580,6 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                     frag_err_dist_dict[ms_file_idx], 
                                     integrate_ms1_params,
                                     scan_range = (0, length(MS_TABLE[:scanNumber])));
-
-    #Get MS1/MS2 Chromatogram Correlations and Offsets 
-    #transform!(best_psms, AsTable(:) => ByRow(psm -> getCrossCorr(ms1_chroms, ms2_chroms, UInt32(psm[:precursor_idx]))) => [:offset,:cross_cor]);
 
     #Integrate MS1 Chromatograms 
     transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), 
@@ -548,103 +597,50 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                         :points_above_FWHM_01_ms1,
                                         :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
     
-    #QC Metrics
-    best_psms = best_psms[best_psms[:,:peak_area].>0.0,:];
-    best_psms = best_psms[best_psms[:,:FWHM].>(6/60),:];
-    best_psms = best_psms[best_psms[:,:GOF].>0.5,:];
+    #Get Correlation between MS1 and MS2 train_classes
+    pearson_corr!(best_psms, N = 500)
 
+    #########
+    #Quality Filter
+    best_psms[isnan.(coalesce.(best_psms[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing
+    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.6,:peak_area_ms1].=missing
+    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.6,:ρ].=missing
+    best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:peak_area_ms1].=missing
+    best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:ρ].=missing
+
+    #Peak area is non-zero and non-missing
+    best_psms = best_psms[(best_psms[:,:peak_area].>0.0).&(ismissing.(best_psms[:,:peak_area]).==false),:]; 
+    #FWHM must exceed minimum threshold
+    best_psms = best_psms[best_psms[:,:FWHM].>(6/60),:];
+    #Minimum Goodness of Fit 
+    best_psms = best_psms[best_psms[:,:GOF].>0.6,:]; 
+
+    best_psms_old = best_psms
+    end
     lock(lk) do 
         best_psms_dict[ms_file_idx] = best_psms;
     end
 
 end
 end
-integratePrecursor(ms1_chroms, UInt32(best_psms[N,:precursor_idx]), isplot = false)
-N = N + 1
-
-histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:asymmetry])), alpha = 0.5)
-histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:asymmetry])), alpha = 0.5)
-
-histogram(log2.(abs.(best_psms[best_psms[:,:decoy],:peak_area_ms1])), alpha = 0.5)
-histogram!(log2.(abs.(best_psms[best_psms[:,:decoy].==false,:peak_area_ms1])), alpha = 0.5)
-
-bins = LinRange(-2, 2, 200)
-histogram((best_psms[best_psms[:,:decoy],:δt]), alpha = 0.5, normalize=:pdf, bins = bins)
-histogram!((best_psms[best_psms[:,:decoy].==false,:δt]), alpha = 0.5, normalize = :pdf, bins = bins)
-
-bins = LinRange(-2, 2, 200)
-histogram((best_psms[best_psms[:,:decoy],:ρ]), alpha = 0.5, normalize=:pdf, bins = bins)
-histogram!((best_psms[best_psms[:,:decoy].==false,:ρ]), alpha = 0.5, normalize = :pdf, bins = bins)
-
-
-#bins = LinRange(-2, 2, 200)
-histogram((best_psms[best_psms[:,:decoy],:points_above_FWHM_01]), alpha = 0.5, normalize=:probability)
-histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:points_above_FWHM_01]), alpha = 0.5, normalize = :probability)
-
-bins = LinRange(-2, 2, 100)
-histogram2d((best_psms[(best_psms[:,:decoy].==true) .& (ismissing.(best_psms[:,:ρ]).==false),:δt]), 
-            (best_psms[(best_psms[:,:decoy].==true) .& (ismissing.(best_psms[:,:ρ]).==false),:entropy_sim]), 
-alpha = 0.5, normalize = :probability, bins = bins)
-
-histogram2d((best_psms[(best_psms[:,:decoy].==false) .& (ismissing.(best_psms[:,:ρ]).==false),:δt]), 
-            (best_psms[(best_psms[:,:decoy].==false) .& (ismissing.(best_psms[:,:ρ]).==false),:entropy_sim]), 
-alpha = 0.5, normalize = :probability, bins = bins)
-
-bins = LinRange(-2, 2, 100)
-histogram(log2.(best_psms[(best_psms[:,:decoy].==true),:weight]), alpha = 0.5, normalize = :probability)
-histogram!(log2.(best_psms[(best_psms[:,:decoy].==false),:weight]), alpha = 0.5, normalize = :probability)
-histogram!(log2.(best_psms[(best_psms[:,:decoy].==false).& (best_psms[:,:q_value].<=0.01),:weight]), alpha = 0.5, normalize = :probability)
-histogram!(best_psms[(best_psms[:,:decoy].==false),:δt], alpha = 0.5, normalize = :probability, bins = bins)
-
-histogram((best_psms[(best_psms[:,:decoy].==true),:prec_ρ]), alpha = 0.5, normalize = :probability)
-#histogram!((best_psms[(best_psms[:,:decoy].==false),:entropy_sim]), alpha = 0.5, normalize = :probability)
-#histogram!(log2.(best_psms[(best_psms[:,:decoy].==false),:peak_area]), alpha = 0.5, normalize = :probability)
-histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:prec_ρ]), alpha = 0.5, normalize = :probability)
-
-
-
-
-histogram((best_psms[(best_psms[:,:decoy].==true),:prec_ρ]), alpha = 0.5, normalize = :probability)
-histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:prec_ρ]), alpha = 0.5, normalize = :probability)
-
-bins = LinRange(0.5, 1.0, 200)
-histogram((best_psms[(best_psms[:,:decoy].==true),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
-histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:GOF]), alpha = 0.5, normalize = :probability, bins = bins)
-
-bins = (LinRange(0, 30, 100), LinRange(0, 30, 100))
-histogram2d(log2.(best_psms[:,:peak_area]), log2.(max.(best_psms[:,:peak_area_ms1], 0.0)), alpha = 0.5, normalize = :probability, bins = bins)
-
-#=
-bins = (LinRange(0, 8, 100), LinRange(0, 8, 100))
-histogram2d(log10.(best_psms[(best_psms[:,:decoy].==true) .& (best_psms[:,:q_value].<=0.01),:peak_area]), 
-log10.(max.(best_psms[(best_psms[:,:decoy].==true) .& (best_psms[:,:q_value].<=0.01),:peak_area_ms1], 0.0)), alpha = 0.5, normalize = :probability, bins = bins)
-=#
-
-histogram!((best_psms[(best_psms[:,:decoy].==false) .& (best_psms[:,:q_value].<=0.01),:n_precs]), alpha = 0.5, normalize = :probability)
-
-
-
-histogram!(best_psms[(best_psms[:,:decoy].==false),:δt], alpha = 0.5, normalize = :probability, bins = bins)
-
-
-best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:δt].==0.0),:]
 
 println("Finished peak integration in ", integration_time.time, " seconds")
 println("Train target-decoy model at precursor level...")
 #best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),[:precursor_idx,:q_value,:matched_ratio,:entropy_sim,:intensity]]
 best_psms = vcat(values(best_psms_dict)...);
 #Model Features 
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:RT_error,:y_ladder,:RT,:entropy_sim,:n_obs,:charge,:city_block,:matched_ratio,:scribe_score, :missed_cleavage,:Mox,:best_rank,:topn];
-append!(features, [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:ρ,:δt,:peak_area_ms1,:points_above_FWHM_ms1]);
+features = [:hyperscore,:total_ions,:intensity_explained,
+            :poisson,:spectral_contrast,:entropy_sim,
+            :RT_error,:scribe_score,:RT,:charge,
+            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn,:err_norm,:error]
+append!(features, [:peak_area,:GOF,:asymmetry,:points_above_FWHM_01,:H,:ρ]);
 
-features = [:hyperscore,:total_ions,:intensity_explained,:error,:poisson,:spectral_contrast,:RT_error,:RT,:entropy_sim,:charge,:city_block,:matched_ratio,:scribe_score, :missed_cleavage,:Mox,:best_rank,:topn];
-append!(features, [:peak_area,:GOF,:asymmetry,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:ρ,:peak_area_ms1]);
 
-best_psms = best_psms[(best_psms[:,:GOF].>=0.5),:];
-  
 
+best_psms = best_psms_old 
 #Train Model 
-xgboost_time = @timed bst = rankPSMs!(best_psms, 
+#xgboost_time = @timed bst = rankPSMs!(best_psms, 
+bst, folds = rankPSMs!(best_psms, 
                         features,
                         colsample_bytree = 1.0, 
                         min_child_weight = 10, 
@@ -655,288 +651,15 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.0375, 
                         max_train_size = size(best_psms)[1]);
+
 getQvalues!(best_psms, best_psms[:,:prob], best_psms[:,:decoy]);
-
-
 println("Number of unique Precursors ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
 
+bins = LinRange(0, 1, 100)
+histogram(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:q_value], alpha =  0.5, norm = :probability, bins = bins)
+histogram!(best_psms[(best_psms[:,:q_value].>0.01).&(best_psms[:,:decoy]),:prob], alpha =  0.5, norm = :probability, bins = bins)
 
 
-sum((best_psms[:,:entropy_sim].>0.4).&(best_psms[:,:decoy]))
-sum((best_psms[:,:entropy_sim].>0.4).&(best_psms[:,:decoy].==false))
-
-MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])    
-    
-#Need to change this. Highest intensity given a 1% fdr threshold. 
-best_psms = combine(sdf -> sdf[argmax(sdf.prob),:], groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.1,:], :precursor_idx));
-
-transform!(best_psms, AsTable(:) => ByRow(psm -> 
-            precursors_list[psm[:precursor_idx]].mz
-            ) => :prec_mz
-            );
-
-#Need to sort RTs 
-sort!(best_psms,:RT, rev = false);
-#Build RT index of precursors to integrate
-rt_index = buildRTIndex(best_psms);
-
-println("Integrating MS2...")
-ms2_chroms = integrateMS2(MS_TABLE, 
-                                frag_list, 
-                                rt_index,
-                                UInt32(ms_file_idx), 
-                                frag_err_dist_dict[ms_file_idx],
-                                integrate_ms2_params, 
-                                scan_range = (0, length(MS_TABLE[:scanNumber]))
-                                #can_range = (101357, 110357)
-                                );
-
-ms2_chroms_square = integrateMS2(MS_TABLE, 
-                                frag_list, 
-                                rt_index,
-                                UInt32(ms_file_idx), 
-                                frag_err_dist_dict[ms_file_idx],
-                                integrate_ms2_params, 
-                                scan_range = (0, length(MS_TABLE[:scanNumber]))
-                                #can_range = (101357, 110357)
-                                );
-
-N = 10065
-best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
-N = 10065
-N = 9936
-#include("src/Routines/LibrarySearch/integrateChroms.jl")
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-#integratePrecursor(ms2_chrom_square, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-N += 1
-
-include("src/Routines/LibrarySearch/integrateChroms.jl")
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
-#Integrate MS2 Chromatograms 
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
-
-
-include("src/Routines/LibrarySearch/SearchRAW.jl")
-fragment_intensities = integrateMS2(MS_TABLE, 
-                                frag_list, 
-                                rt_index,
-                                UInt32(ms_file_idx), 
-                                frag_err_dist_dict[ms_file_idx],
-                                integrate_ms2_params, 
-                                scan_range = (0, length(MS_TABLE[:scanNumber]))
-                                #can_range = (101357, 110357)
-                                );
-
-p = plot()
-#p = plot(title = "TEST", fontfamily="helvetica")
-for (color, t) in enumerate(keys(fragment_intensities))
-    plot!(p, fragment_intensities[t], color = color, legend = true, label = t)
-    plot!(p, fragment_intensities[t], seriestype=:scatter, color = color, label = nothing, show = true)
-end
-
-Hs, X, weights, IDtoROW = integrateMS2(MS_TABLE, 
-                                frag_list, 
-                                rt_index,
-                                UInt32(ms_file_idx), 
-                                frag_err_dist_dict[ms_file_idx],
-                                integrate_ms2_params, 
-                                scan_range = (0, length(MS_TABLE[:scanNumber]))
-                                #can_range = (101357, 110357)
-                                );
-
-solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
-Hs[:,17]
-X[Hs[:,17].!=0.0]
-
-Hs = Matrix(Hs)
-Hs[2568,17] = 0.2
-Hs = sparse(Hs)
-
-test = frags_mouse_detailed_33NCEcorrected_start1[9301047]
-
-for chrom in ProgressBar(ms2_chroms[2:end])
-    chrom[:,:mz] = [MS_TABLE[:precursorMZ][scan] for scan in chrom[:, :scan_idx]]
-end
-
-transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms2_chroms, UInt32(psm[:precursor_idx]), psm[:scan_idx], isplot = false)) => [:intensity, :count, :SN, :slope, :peak_error,:apex,:fwhm]);
-   
-
-best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
-best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:][10000:10010,[:sequence,:RT,:intensity,:prob]]
-N = 10000
-#best_psms_passing = best_psms[(best_psms[:,:q_value].<0.01) .& (best_psms[:,:decoy].==false),:]
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-#ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
-N += 1
-
-p = [6e5, 30.2, 0.15]
-m(t, p) = p[1]*exp.((-1).*((t .- p[2]).^2)./(2*p[3]^2))
-m(ts, p)
-plot(squared_error[:,:rt],
-squared_error[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-plot!(huber_loss[:,:rt],
-huber_loss[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-plot!(ts, m(ts, p))
-
-
-include("src/Routines/LibrarySearch/searchRAW.jl")
-ms2_chroms = integrateMS2(MS_TABLE, 
-    frag_list, 
-    rt_index,
-    UInt32(ms_file_idx), 
-    frag_err_dist_dict[ms_file_idx],
-    integrate_ms2_params, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber]))
-    scan_range = (40000, 50000)
-#scan_range = (101357, 102357)
-);
-
-ms2_chroms_huber = integrateMS2(MS_TABLE, 
-    frag_list, 
-    rt_index,
-    UInt32(ms_file_idx), 
-    frag_err_dist_dict[ms_file_idx],
-    integrate_ms2_params, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber]))
-    scan_range = (40000, 50000)
-#scan_range = (101357, 102357)
-);
-include("src/ML/sparseNNLS.jl")
-include("src/Routines/LibrarySearch/searchRAW.jl")
-ms2_chroms_huber_2 = integrateMS2(MS_TABLE, 
-    frag_list, 
-    rt_index,
-    UInt32(ms_file_idx), 
-    frag_err_dist_dict[ms_file_idx],
-    integrate_ms2_params, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber]))
-    scan_range = (40000, 50000)
-#scan_range = (101357, 102357)
-);
-include("src/Routines/LibrarySearch/searchRAW.jl")
-include("src/ML/sparseNNLS.jl")
-@time ms2_chroms_huber_3 = integrateMS2(MS_TABLE, 
-    frag_list, 
-    rt_index,
-    UInt32(ms_file_idx), 
-    frag_err_dist_dict[ms_file_idx],
-    integrate_ms2_params, 
-    #scan_range = (0, length(MS_TABLE[:scanNumber]))
-    scan_range = (40000, 70000)
-#scan_range = (101357, 102357)
-);
-#integratePrecursor(ms2_chroms_huber, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-#integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-
-N = 10045
-N = 10250
-
-N = 10296
-
-N = 10045
-
-#N = 10250
-#N = 10143
-N = 10303
-squared_error = ms2_chroms_square[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
-plot(squared_error[:,:rt],
-squared_error[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-#plot!(ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-#ms2_chroms_huber[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
-#alpha = 0.5)
-#plot!(ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt],
-#ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight], seriestype=:scatter,
-#alpha = 0.5)
-huber_loss = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)]
-plot!(huber_loss[:,:rt],
-huber_loss[:,:weight], seriestype=:scatter,
-alpha = 0.5)
-hline!([20000])
-hline!([5000])
-N += 1
-
-julia> precursors_mouse_detailed_33NCEcorrected_start1[0x0078dd68]
-LibraryPrecursor{Float32}(46.953674f0, 414.7449f0, 0.7946125f0, false, 0x02, 0x002ab610, UInt32[0x00000001], "13869", "TEALPGLK", 0x00, 0x01, 0x08)
-
-julia> precursors_mouse_detailed_33NCEcorrected_start1[8952516]
-LibraryPrecursor{Float32}(71.09662f0, 414.7449f0, 0.8327717f0, false, 0x02, 0x0029f55f, UInt32[0x00000001], "1412", "SVDLPGLK", 0x00, 0x01, 0x08)
-plot(ms2_chroms[(precursor_idx=UInt32(0x0078dd68),)][:,:rt],
-ms2_chroms[(precursor_idx=UInt32(0x0078dd68),)][:,:weight], seriestype=:scatter,
-alpha = 0.5)
-plot!(ms2_chroms_huber_3[(precursor_idx=UInt32(0x0078dd68),)][:,:rt],
-ms2_chroms_huber_3[(precursor_idx=UInt32(0x0078dd68),)][:,:weight], seriestype=:scatter,
-alpha = 0.5)
-
-N += 1
-
-cor(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight],
-ms2_chroms_huber_2[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight])
-
-N += 1
-
-integratePrecursor(ms2_chroms_huber, UInt32(best_psms_passing[N,:precursor_idx]),(best_psms_passing[N,:scan_idx]), isplot = true)
-
-N += 1
-
-PSMs[1][PSMs[1][:,:precursor_idx] .== best_psms_passing[N,:precursor_idx],[:sequence,:precursor_idx,:weight,:total_ions,:best_rank,:entropy_sim,:matched_ratio,:spectral_contrast,:scribe_score,:RT,:q_value,:prob]]
-#Why not found in ms2_chroms?
-10097
-
-
-plot(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10162,:precursor_idx]),)][16:29,:rt], 
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10162,:precursor_idx]),)][16:29,:weight],
-seriestype=:scatter)
-
-
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10097,:precursor_idx]), isplot = true)
-
-
-
-N = 10108
-
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10151,:precursor_idx]),)]
-
-
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[10152,:precursor_idx]),)]
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10152,:precursor_idx]), isplot = true)
-best_psms_passing[10152,:scan_idx]
-precursor_idx = 889551 
-
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[10152,:precursor_idx]),(best_psms_passing[10152,:scan_idx]), isplot = true)
-best_psms_passing[10152,:scan_idx]
-precursor_idx = 889551 
-
-
-10162 #get rid of points with only one match
-10166 #Tail when there are zeros? No walkback?
-N = 10172 #Inteference?
-10185 #Really bad MS2 bin overlap?
-10211 #worse interference?
-10230 #The worst interference?
-10258 #Chosses wrong integration boundary. early cuttoff
-N = 10346 #missed boundary entirely
-N = 10191 # boundary
-N = 10392 #overlap bin. Missed boundary?
-N = 10402 #Two fragments matching. probably non_specific. #prec_idx = 1773834
-
-
-PSMs[1][PSMs[1][:,:precursor_idx].==6874401,:]
-
-plot!(ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:rt], 
-ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:weight],
-seriestype=:scatter)
-MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])
-ms_file_idx = 1
-X, Hs, IDtoROW, last_matched_col =  firstSearch(
-                                    MS_TABLE,
-                                    frag_index,  
-                                    frag_list, 
-                                    x->x, #RT to iRT map'
-                                    UInt32(ms_file_idx), #MS_FILE_IDX
-                                    Laplace(zero(Float64), 10.0),
-                                    first_search_params,
-                                    scan_range = (101357, 101357)
-                                    );
+bins = LinRange(0, 1, 100)
+histogram(best_psms[(best_psms[:,:decoy]),:prob], alpha =  0.5, norm = :probability, bins = bins)
+histogram!(best_psms[(best_psms[:,:decoy].==false),:prob], alpha =  0.5, norm = :probability, bins = bins)

@@ -31,6 +31,37 @@ function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::NTuple{4, T}) whe
     return nothing
 end
 
+
+function EGH_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+     for (i, tᵢ) in enumerate(x)
+        d = 2*p[1] + p[3]*(tᵢ - p[2])
+        if real(d) > 0
+            F[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
+        else
+            F[i] = zero(T)
+        end
+    end
+end
+
+function JEGH_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    for (i, tᵢ) in enumerate(x)
+        δt = tᵢ - p[2]
+        d = 2*p[1] + p[3]*δt
+        q = δt/d
+        f = exp((-δt^2)/(d))
+        #f = exp((-δt^2)/(d))
+        if d > 0
+            J[i,1] = (2*(q)^2)*p[4]*f
+            J[i,2] = p[4]*(2*q - (p[3]*(q^2)))*f
+            J[i,3] = ((δt)*(q^2))*p[4]*f
+            J[i,4] = f
+        end
+   end
+end
+
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """
@@ -53,12 +84,21 @@ function JEGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
    return J
 end
 
-function Integrate(f::Function, p::NTuple{4, T}, bounds::Tuple{T, T}, n::Int64 = 1000) where {T<:AbstractFloat}
+function Integrate(f::Function, p::NTuple{4, T}; α::AbstractFloat = 0.001, n::Int64 = 1000) where {T<:AbstractFloat}
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 
     #using FastGaussQuadrature
     x, w = gausslegendre(n)
-    a, b = first(bounds), last(bounds)
+
+    function getBase(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
+        B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
+        A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
+        return abs(A), abs(B)
+    end
+
+    A, B = getBase(α, p[3], p[1])
+    a = p[2] - A
+    b = p[2] + B
     #Quadrature rules are for integration bounds -1 to 1 but can shift
     #to arbitrary bounds a and b. 
     return ((b - a)/2)*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
@@ -145,8 +185,11 @@ function pearson_corr(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}) where {T<:Ab
     return dot/sqrt(norm1*norm2)
 end
 
-function pearson_corr(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_params::NTuple{4, T}, ms2_params::NTuple{4, T}; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
+function pearson_corr(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_params::NTuple{4, Union{T,Missing}}, ms2_params::NTuple{4, Union{T,Missing}}; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
    
+    if any(ismissing.(ms1_params)) | any(ismissing.(ms2_params))
+        return missing
+    end
     #Points at which to evaluate the function. 
     #May need to re-evalute how we find the window center
     times = LinRange(T(ms2_params[2] - width_t), T(ms2_params[2] + width_t), N)
@@ -164,6 +207,41 @@ function pearson_corr(ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}}, ms1_para
 
 end
 
+function pearson_corr!(psms::DataFrame; N::Int64 = 500, width_t::Float64 = 2.0) where {T<:AbstractFloat}
+    ms1 = zeros(Complex{Float32}, N, 1)
+    ms2 = zeros(Complex{Float32}, N, 1)
+    psms[:,:ρ] = Vector{Union{Missing, Float32}}(undef, size(psms)[1])
+    i = 0
+    for psm in eachrow(psms)
+        i += 1
+        ms1_params = (psm[:σ_ms1],
+                        psm[:tᵣ_ms1],
+                        psm[:τ_ms1],
+                        psm[:H_ms1])
+
+        if any(ismissing.(ms1_params))
+            psms[i,:ρ] = missing
+            continue
+        end
+
+        ms2_params = (psm[:σ],
+                        psm[:tᵣ],
+                        psm[:τ],
+                        psm[:H]
+        )
+        
+        psms[i,:ρ] = pearson_corr(ms1, ms2, ms1_params, ms2_params, N = N, width_t = width_t)
+    end
+end
+
+function getBestPSM(sdf::SubDataFrame)
+    if any(sdf.q_value.<=0.01)
+        return sdf[argmax((sdf.q_value.<=0.01).*(sdf.hyperscore)),:]
+    else
+        return sdf[argmax(sdf.prob),:]
+    end
+end
+
 ms1 = zeros(Complex{Float32}, 500, 1)
 ms2 = zeros(Complex{Float32}, 500, 1)
 select!(best_psms, Not(:ρ))
@@ -171,37 +249,9 @@ select!(best_psms, Not(:δt))
 best_psms[:,:δt] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
 best_psms[:,:ρ] = Vector{Union{Missing, Float32}}(undef, size(best_psms)[1])#zeros(Float32, size(best_psms)[1])
 
-function get_ρ(sdf::SubDataFrame{DataFrame, DataFrames.Index, SubArray{Int64, 1, Vector{Int64}, Tuple{UnitRange{Int64}}, true}}, ms1::Matrix{Complex{T}}, ms2::Matrix{Complex{T}})
-    for i in range(1, size(best_psms)[1])
 
-        ms1_params = (sdf[:σ_ms1],
-                        sdf[:tᵣ_ms1],
-                        sdf[:τ_ms1],
-                        sdf[:H_ms1])
 
-        if sum(ismissing.(ms1_params))>0
-            sdf[:ρ] = missing
-            continue
-        end
 
-        ms2_params = (sdf[:σ],
-                        sdf[:tᵣ],
-                        sdf[:τ],
-                        sdf[:H]
-        )
-        
-        best_psms[i,:ρ] = pearson_corr(ms1, ms2, ms1_params, ms2_params)
-
-    end
-end
-
-function getBestPSM(sdf::SubDataFrame{DataFrame, DataFrames.Index, SubArray{Int64, 1, Vector{Int64}, Tuple{UnitRange{Int64}}, true}})
-    if any(sdf.q_value.<=0.01)
-        return sdf[argmax((sdf.q_value.<=0.01).*(sdf.hyperscore)),:]
-    else
-        return sdf[argmax(sdf.prob),:]
-    end
-end
 
 best_psms[best_psms[:,:GOF].>0.99,[:GOF,:points_above_FWHM,:points_above_FWHM_01,:sequence,:q_value,:decoy]]
 
@@ -277,8 +327,9 @@ sort(PSMs[(PSMs[:,:sequence].=="IWHHTFYNELR").&(PSMs[:,:q_value].<=0.01),[:seque
 best_psms_passing = best_psms[best_psms[:,:q_value].<=0.01,:]
 integratePrecursor(ms1_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
 
-integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
+integratePrecursor(ms2_chroms, UInt32(best_psms[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms[N,:RT]), best_psms[N,:weight]), isplot = true)
 N  += 1
+
 PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx])).&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]]
 best_psms[(best_psms[:,:decoy].==true).&(best_psms[:,:δt].==0.0),:]
 N = findfirst(x->x== 5455685  , best_psms[:,:precursor_idx])
@@ -291,4 +342,65 @@ plot!(ms1[:,:rt],
 ms1[:,:weight], seriestype=:scatter,
 alpha = 0.5)
 
+
+
+
 =#
+
+bins = LinRange(0, 0.6, 100)
+histogram(PSMs[(PSMs[:,:decoy]),:q_value], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy].==false).&(PSMs[:,:q_value].<=0.25),:q_value], bins = bins, alpha = 0.5, normalize = :probability)
+
+frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
+frag_intensities = [match.intensity for match in best_matches];
+frag_mz =  [match.theoretical_mz for match in best_matches];
+
+plot(sqrt.(frag_mz), frag_ppm_errs.*sqrt.(frag_intensities), seriestype=:scatter, alpha = 0.1)
+plot((frag_mz), frag_ppm_errs.*sqrt.(frag_intensities), seriestype=:scatter, alpha = 0.1)
+
+plot(sqrt.(frag_intensities), frag_ppm_errs, seriestype=:scatter, alpha = 0.1)
+
+histogram2d(frag_ppm_errs, log2.(frag_intensities))
+
+histogram(frag_ppm_errs.*sqrt.(frag_intensities).*sqrt.(frag_mz))
+
+frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, 30.0,
+f_out = "" );
+
+frag_err_dist = estimateErrorDistribution((frag_ppm_errs .- 3.385).*sqrt.(frag_intensities), Laplace{Float64}, 0.0, 3.0, 30.0,
+f_out = "" );
+
+frag_err_dist = estimateErrorDistribution((frag_ppm_errs .- 3.385)./sqrt.(frag_intensities), Laplace{Float64}, 0.0, 3.0, 30.0,
+f_out = "" );
+
+
+frag_err_dist = estimateErrorDistribution((frag_ppm_errs .- 3.385).*sqrt.(1000*rand(length(frag_intensities))), Laplace{Float64}, 0.0, 3.0, 30.0,
+f_out = "" );
+
+plot(abs.((frag_ppm_errs .- 3.385)),
+        sqrt.(frag_intensities), seriestype=:scatter, alpha = 0.1, ylim = (0, 1e3))
+
+estimateErrorDistribution((frag_ppm_errs .- 3.385).*sqrt.(frag_intensities), Laplace{Float64}, 0.0, 3.0, 30.0,
+f_out = "" );
+
+bins = LinRange(-15, -5, 100)
+histogram(best_psms[(best_psms[:,:decoy]),:err_likelihood_norm], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:err_likelihood_norm], bins = bins, alpha = 0.5, normalize = :probability)
+
+
+bins = LinRange(-30, 30, 50)
+histogram(frag_ppm_errs[frag_intensities.<1e5], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(frag_ppm_errs[frag_intensities.>1e6], bins = bins, alpha = 0.5, normalize = :probability)
+
+
+bins = LinRange(-15, -5, 100)
+histogram(PSMs[(PSMs[:,:decoy]),:err_likelihood_norm], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy].==false).&(PSMs[:,:q_value].<=0.01),:err_likelihood_norm], bins = bins, alpha = 0.5, normalize = :probability)
+
+bins = LinRange(-5e8, 0, 100)
+histogram(PSMs[(PSMs[:,:decoy]),:err_norm], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy].==false).&(PSMs[:,:q_value].<=0.01),:err_norm], bins = bins, alpha = 0.5, normalize = :probability)
+
+bins = LinRange(-15e8, 0, 100)
+histogram(PSMs[(PSMs[:,:decoy]),:error], bins = bins, alpha = 0.5, normalize = :probability)
+histogram!(PSMs[(PSMs[:,:decoy].==false).&(PSMs[:,:q_value].<=0.01),:error], bins = bins, alpha = 0.5, normalize = :probability)
