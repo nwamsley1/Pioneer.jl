@@ -38,6 +38,7 @@ function SearchRAW(
                     topN::Int64 = 20,
                     λ::Float32 = Float32(1e3),
                     γ::Float32 = zero(Float32))
+    println("max_peak_width $max_peak_width")
 
     ##########
     #Initialize 
@@ -76,7 +77,8 @@ function SearchRAW(
     fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
     ##########
     #Iterate through spectra
-    for i in ProgressBar(range(1, size(spectra[:masses])[1]))
+    #for i in ProgressBar(range(1, size(spectra[:masses])[1]))
+    for i in range(1, size(spectra[:masses])[1])
 
         ###########
         #Scan Filtering
@@ -172,7 +174,8 @@ function SearchRAW(
             IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
             X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-
+            #println("Hs.n ", Hs.n)
+            #println("Hs.m ", Hs.m)
             #=for match in range(1,nmatches)
                 m = ionMatches[match]
                 if m.prec_id ==9301047
@@ -189,7 +192,8 @@ function SearchRAW(
             for (id, row) in pairs(IDtoROW)
                 weights[first(row)] = precursor_weights[id]
             end
-
+            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=Hs.n)[:]
             solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
             for (id, row) in pairs(IDtoROW)
@@ -216,7 +220,7 @@ function SearchRAW(
                         IDtoROW,
                         scan_idx = i,
                         min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-                        min_frag_count = min_frag_count #Remove precursors with fewer fragments 
+                        min_frag_count = 4#min_frag_count #Remove precursors with fewer fragments 
                         )
             end
         end

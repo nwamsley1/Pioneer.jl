@@ -10,12 +10,14 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> psm[:weight] < 10.0) => :nmf)
     transform!(PSMs, AsTable(:) => ByRow(psm -> getCharge(precursors[psm[:precursor_idx]])) => :charge)
+
     ###########################
 
     ###########################
     #Estimate RT Prediction Error
     best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[:,:spectral_contrast].>min_spectral_contrast) .& (PSMs[:,:decoy].==false),:], [:scan_idx]))
     @time linear_spline = KDEmapping(best_psms[:,:iRT], best_psms[:,:RT])
+    best_psms = nothing
     PSMs[:,:RT_pred] = linear_spline(PSMs[:,:iRT])
     PSMs[:,:RT_error] = abs.(PSMs[:,:RT_pred] .- PSMs[:,:RT])
     ############################
@@ -33,10 +35,43 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
         repeat([size(sub_df)[1]], size(sub_df)[1])
     end)[:,:x1]
+    grouped_df = nothing
+
+    #######################
+    #Clean Features
+    PSMs[isnan.(PSMs[:,:matched_ratio]),:matched_ratio] .= Inf;
+    PSMs[(PSMs[:,:matched_ratio]).==Inf,:matched_ratio] .= maximum(PSMs[(PSMs[:,:matched_ratio]).!=Inf,:matched_ratio]);
+    replace!(PSMs[:,:city_block], -Inf => minimum(PSMs[PSMs[:,:city_block].!=-Inf,:city_block]));
+    replace!(PSMs[:,:scribe_score], Inf => minimum(PSMs[PSMs[:,:scribe_score].!=Inf,:scribe_score]));
+    transform!(PSMs, AsTable(:) => ByRow(psm -> length(collect(eachmatch(r"ox", psm[:sequence])))) => [:Mox]);
+
+    #######################
+    #Transform Features
+    PSMs[:, :err_norm] = PSMs[:,:error]./PSMs[:,:total_ions]
+    PSMs[:,:err_norm_log2] = log2.((-1.0)*PSMs[:,:err_norm])
+    PSMs[:,:err_log2] = log2.((-1.0)*PSMs[:,:error])
+    PSMs[:,:target] = PSMs[:,:decoy].==false
+    PSMs[:,:weight_log2] = log2.(PSMs[:,:weight])
+    PSMs[:,:matched_ratio_log2] = log2.(PSMs[:,:matched_ratio])
+    filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), PSMs);
+    ########################
+    #Rough Target-Decoy discrimination
+    model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
+    scribe_score + weight_log2 + topn + spectral_contrast + 
+    n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMs, 
+    Binomial(), 
+    ProbitLink())
+    Y′ = GLM.predict(model_fit, PSMs);
+    getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
+    println("Target PSMs at 25% FDR: ", sum((PSMs[:,:q_value].<=0.25).&(PSMs[:,:decoy].==false)))
+    PSMs[:,:prob] = allowmissing(Y′)
+
+    #Get Best PSM per precursor
+    return combine(sdf -> getBestPSM(sdf), groupby(PSMs[PSMs[:,:q_value].<=0.25,:], [:sequence,:charge]));
 
 end
 
-
+#sum(psms_counts[:,:nrow].>2)
 #=
 function rtSpline(X::Vector{T}, Y::Vector{T}; n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     sort_order = sortperm(X)

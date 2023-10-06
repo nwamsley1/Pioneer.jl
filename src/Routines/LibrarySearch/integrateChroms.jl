@@ -18,7 +18,7 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
 function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32, p0::NTuple{5, T}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {T<:AbstractFloat}
 
     if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
     #Chromatogram for the precursor. 
@@ -55,7 +55,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     #Probably don't need to allocate all of this memory. 
     rt = chrom[:,:rt]
     intensity = collect(chrom[:,:weight])
-    intensity[chrom[:,:rank].<2].=0.0
+    #intensity[chrom[:,:rank].<2].=0.0
     frag_counts = collect(chrom[:,:frag_count])
 
     #########
@@ -69,11 +69,17 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     ########
     #Fit EGH Curve 
     EGH_FIT = nothing
+    #filter = FIRFilter(MSF(4.0, 3, 1))
+    #filter = MSF(4.0, 5, 1)
+    #filter = filtfilt(filter, intensity)
+    #println("test filter ", filter)
     try
+        smooth = savitzky_golay(intensity, 3, 1).y
         EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
                                     JEGH_inplace, 
                                     rt[start:stop],
-                                    intensity[start:stop],
+                                    #intensity[start:stop],
+                                    Float32.(smooth[start:stop]),
                                     #(chrom[start:stop, :rank] .+ 1)./4,
                                     getP0(p0);
                                     #w = chrom[start:stop, :rank]./4,
@@ -87,13 +93,18 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     if isplot
         #Plot Data
         Plots.plot(rt, intensity, show = true, seriestype=:scatter)
+
+        Plots.plot!(rt, savitzky_golay(intensity, 7, 3).y, show = true, seriestype=:scatter)
+        Plots.plot!(rt, filter, show = true, seriestype=:scatter)
         #Plots Fitted EGH Curve
         X = LinRange(T(EGH_FIT.param[2] - 1.0), T(EGH_FIT.param[2] + 1.0), integration_points)
+        
         Plots.plot!(X,  
                     EGH(T.(collect(X)), Tuple(EGH_FIT.param)), 
                     fillrange = [0.0 for x in 1:integration_points], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
+
         Plots.vline!([rt[start]], color = :red);
         Plots.vline!([rt[stop]], color = :red);
     end
@@ -174,7 +185,7 @@ function getZeroCrossings(Y::Vector{T}, X::Vector{U}) where {T,U<:AbstractFloat}
     return zero_crossings_idx, zero_crossings_slope
 end
 
-function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vector{T}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
+function getPeakBounds(frag_counts::Vector{Int64}, intensity::Vector{T}, rt::Vector{AbstractFloat}, zero_crossings_1d::Vector{Int64}, zero_crossings_slope::Vector{U}, min_width_t::Float64 = 10.0, min_width::Int = 5) where {T,U<:AbstractFloat}
 
     best_peak_intensity = -Inf
     best_left = 1

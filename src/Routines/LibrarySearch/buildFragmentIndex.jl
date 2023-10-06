@@ -192,7 +192,7 @@ end
 getPPM(frag_mz::T, ppm::T) where {T<:AbstractFloat} = ppm*frag_mz/1e6
 
 
-function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat, rt_size::AbstractFloat; low_frag_mz::AbstractFloat = 150.0, high_frag_mz::AbstractFloat = 1700.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
+function buildFragmentIndex!(frag_ions::Vector{FragmentIon{T}}, bin_ppm::AbstractFloat, rt_size::AbstractFloat; low_frag_mz::AbstractFloat = 80.0, high_frag_mz::AbstractFloat = 3000.0, low_prec_mz::AbstractFloat = 300.0, high_prec_mz::AbstractFloat = 1100.0) where {T<:AbstractFloat}
     println("sorting...")
     sort!(frag_ions, by = x->x.frag_mz)
     println("sorted")

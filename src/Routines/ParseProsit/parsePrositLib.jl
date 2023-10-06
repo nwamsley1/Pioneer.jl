@@ -50,6 +50,7 @@ struct LibraryPrecursor{T<:AbstractFloat}
     iRT::T
     mz::T
     total_intensity::T
+    base_peak_intensity::T
     isDecoy::Bool
     charge::UInt8
     pep_id::UInt32
@@ -67,6 +68,7 @@ getCharge(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.charge
 getMz(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.mz
 getTotalIntensity(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.total_intensity
 getPepID(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.pep_id
+getBasePeakInt(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.base_peak_intensity
 #addIntensity!(p::LibraryPrecursor{T}, intensity::T) where {T<:AbstractFloat} = p.total_intensity[] += intensity
 #ArrowTypes.arrowname(::Type{LibraryFragment{Float32}}) = :LibraryFragment
 #ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
@@ -164,6 +166,12 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         #pre-allocate library fragments for the n'th precursor
         nth_precursor_frags = Vector{LibraryFragment{Float32}}()#undef, length(matches))
         total_intensity = zero(Float32)
+
+        #Changes every m/z bin
+        low_frag_mz = ((mz - 400.4319)/8.0037)*1.667 + 83.667
+        high_frag_mz = ((mz - 404.4337)/8.0037)*25 + 1265.0
+
+        
         #########
         #Parse each fragment ion 
         for (i, _match) in enumerate(matches)
@@ -179,9 +187,19 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
             
         end
 
+        
+        
+        sorted_intensities = sort(intensities[(intensities.>low_frag_mz).&(intensities.<high_frag_mz)], rev = true)
+        idx = max(findfirst(x->(x/total_intensity)>0.9, cumsum(sorted_intensities)), min(5, length(sorted_intensities)))
+        IQ = sorted_intensities[idx]
+        #if sum(intensities.>IQ) <=8
+        #    findfirst(x->x>0.8, cumsum(sorted_intensities))
+        #end
         #Should probably change to denserank. 1223 vs. 1234. 
         #different way of dealing with ties, although probably ties are very rare if they ever occur
         ranks = ordinalrank(intensities, rev = true)
+        base_peak_intensity = zero(Float32)
+        
         for i in eachindex(matches)
             fragment_name = matches[i]
             #ion_type = match(pattern, fragment_name)
@@ -193,6 +211,9 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
             end
             if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
                 continue
+            end
+            if intensities[i]./total_intensity > base_peak_intensity
+                base_peak_intensity = intensities[i]./total_intensity
             end
             #Add the n'th fragment 
             push!(nth_precursor_frags,  LibraryFragment(
@@ -207,22 +228,29 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
                                                 UInt8(ranks[i]) #rank
             ))
 
-            push!(frags_simple[Threads.threadid()],
-                    FragmentIon(
-                        masses[i], #frag_mz
-                        UInt32(N[Threads.threadid()][1]), #prec_id
-                        mz, #prec_mz 
-                        intensities[i]/total_intensity, #prec_intensity
-                        iRT, #prec_rt
-                        charge, #prec_charge
-                    )
-            )
+
+            ###########
+            #Only retain most important fragments for the index!
+            #Greater than the intensity quantile
+            if intensities[i] >= IQ
+                push!(frags_simple[Threads.threadid()],
+                        FragmentIon(
+                            masses[i], #frag_mz
+                            UInt32(N[Threads.threadid()][1]), #prec_id
+                            mz, #prec_mz 
+                            intensities[i]/total_intensity, #prec_intensity
+                            iRT, #prec_rt
+                            charge, #prec_charge
+                        )
+                )
+            end
 
         end
         precursors[N[Threads.threadid()][1]] = LibraryPrecursor(
                                             iRT, #iRT
                                             mz, #mz
                                             total_intensity, #total_intensity
+                                            base_peak_intensity,
                                             decoy, #isDecoy
                                             charge, #charge
                                             pep_id, #pep_id
@@ -244,8 +272,39 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
 end
 
 #=
-"""
 
+total_sub = 0
+total_all = 0
+for i in ProgressBar(range(1,length(prosit_lib["f_det"])))
+#for i in range(1, 10)#length(prosit_lib["f_det"])))
+    if length(prosit_lib["f_det"][i])<1
+        continue
+    end
+    try
+        intensities = [x.intensity for x in  prosit_lib["f_det"][i]]
+        sorted_intensities = sort(intensities, rev = true)
+        total_intensity = prosit_lib["precursors"][i].total_intensity
+        idx = max(findfirst(x->(x/total_intensity)>0.9, cumsum(sorted_intensities)), min(5, length(intensities)))
+        #println(idx)
+        #println(idx/length(intensities))
+        total_sub += idx
+        total_all += length(intensities)
+    catch
+        println(i)
+        println(prosit_lib["f_det"][i])
+        println("TEST ", findfirst(x->(x/total_intensity)>0.8))
+    end
+end
+"""
+#ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
+fixed_mods = [(p=r"C", r="C[Carb]")]
+mods_dict = Dict("Carb" => Float64(57.021464),
+                 "Ox" => Float64(15.994915)
+                 )
+f_simp, f_det, f_precs = parsePrositLib("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/Prosit_HumanYeastEcoli_NCE33_fixed_091623.csv", fixed_mods, mods_dict);
+value_counts(df, col) = combine(groupby(df, col), nrow)
+TEST_CSV[TEST_CSV[:,:modified_sequence].=="YPKEGTHIK",:]
+groupby(TEST_CSV,:modified_sequence)
 @time frags_simple, frags_detailed, precursors = parsePrositLib("/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/prosit_mouse_NCE33_dynamicNCE_073123.csv", fixed_mods, mods_dict, start_ion = 1);
 frags_mouse_simple_33NCEcorrected_start1 = frags_simple
 frags_mouse_detailed_33NCEcorrected_start1 = frags_detailed

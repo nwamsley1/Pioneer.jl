@@ -327,7 +327,25 @@ sort(PSMs[(PSMs[:,:sequence].=="IWHHTFYNELR").&(PSMs[:,:q_value].<=0.01),[:seque
 best_psms_passing = best_psms[best_psms[:,:q_value].<=0.01,:]
 integratePrecursor(ms1_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms_passing[N,:weight]), isplot = true)
 
-integratePrecursor(ms2_chroms, UInt32(best_psms[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms[N,:RT]), best_psms[N,:weight]), isplot = true)
+integratePrecursor(ms2_chroms, UInt32(11328380, (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms[N,:weight]), isplot = true)
+
+
+integratePrecursor(ms1_chroms, UInt32(11328380), (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), isplot = true)
+ms1_chroms[(precursor_idx=UInt32(11328380),)][:,:]
+
+
+integratePrecursor(ms2_chroms, UInt32(11328380), (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), isplot = true)
+ms2_chroms[(precursor_idx=UInt32(11328380),)][:,:]
+
+N = 1000
+integratePrecursor(ms2_chroms,UInt32(best_psms[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), isplot = true)
+ms2_chroms[(precursor_idx=UInt32(best_psms[N,:precursor_idx]),)][:,:]
+N += 1
+
+integratePrecursor(ms1_chroms_huber, UInt32(11328380), (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), isplot = true)
+ms1_chroms_huber[(precursor_idx=UInt32(11328380),)][:,:]
+
+huber_loss = ms2_chroms[(precursor_idx=UInt32(best_psms_passing[N,:precursor_idx]),)][:,:]
 N  += 1
 
 PSMs[(PSMs[:,:precursor_idx].==UInt32(best_psms_passing[N,:precursor_idx])).&(PSMs[:,:q_value].<=0.01),[:sequence,:prob,:q_value,:hyperscore,:RT]]
@@ -344,6 +362,8 @@ alpha = 0.5)
 
 
 
+integratePrecursor(ms2_chroms, UInt32(best_psms_passing[N,:precursor_idx]), (0.1f0, 0.15f0, 0.15f0, Float32(best_psms_passing[N,:RT]), best_psms[N,:weight]), isplot = true)
+N  += 1
 
 =#
 
