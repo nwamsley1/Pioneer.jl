@@ -75,10 +75,14 @@ function SearchRAW(
     end
 
     fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
+    solve_time = 0.0
+    index_search_time = 0.0
+    prep_time = 0.0
+    index_ions_time = 0.0
     ##########
     #Iterate through spectra
-    #for i in ProgressBar(range(1, size(spectra[:masses])[1]))
-    for i in range(1, size(spectra[:masses])[1])
+    for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    #for i in range(1, size(spectra[:masses])[1])
 
         ###########
         #Scan Filtering
@@ -101,15 +105,15 @@ function SearchRAW(
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
         if !ismissing(searchScan!) | !ismissing(frag_index)
-            prec_count, match_count = searchScan!(precs, #counter which keeps track of plausible matches 
+            index_search_time += @elapsed prec_count, match_count = searchScan!(precs, #counter which keeps track of plausible matches 
                         frag_index, 
                         min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
                         iRT_low, iRT_high,
                         Float32(fragment_tolerance), 
                         Float32(precursor_tolerance),
                         Float32(quadrupole_isolation_width/2.0),
-                        min_frag_count = min_frag_count, 
-                        min_ratio = Float32(min_matched_ratio),
+                        min_frag_count = 1,#min_frag_count, 
+                        min_ratio = 0.8f0,#Float32(min_matched_ratio),
                         topN = topN
                         )
             
@@ -118,7 +122,7 @@ function SearchRAW(
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
         if ismissing(isotope_dict) 
             
-            ion_idx, prec_idx = selectIons!(ionTemplates, 
+            index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                ion_list,
                                                precs,
                                                topN,
@@ -129,8 +133,6 @@ function SearchRAW(
                                                spectra[:precursorMZ][i], #prec_mz
                                                Float32(quadrupole_isolation_width/2.0) #prec_tol
                                                )::Tuple{Int64, Int64}
-            
-            
         else
             ion_idx, prec_idx = selectIons!(
                                             ionTemplates,
@@ -145,7 +147,7 @@ function SearchRAW(
 
         ##########
         #Match sorted list of plausible ions to the observed spectra
-        nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
+        prep_time += @elapsed nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
                                     ion_idx, #search ionTemplates[1:ion_idx]
                                     ionMatches, #Fill with matched ions 
                                     ionMisses, #Fill with unmatched ions 
@@ -173,7 +175,7 @@ function SearchRAW(
         if nmatches < 2 #Few matches to do not perform de-convolution 
             IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
-            X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            prep_time += @elapsed X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
             #println("Hs.n ", Hs.n)
             #println("Hs.m ", Hs.m)
             #=for match in range(1,nmatches)
@@ -194,7 +196,10 @@ function SearchRAW(
             end
             #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
             #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=Hs.n)[:]
-            solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+            #println("i $i")
+            #println("size(Hs) ", size(Hs))
+            #println("size(X) ", size(X))
+            solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
             for (id, row) in pairs(IDtoROW)
                 precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
@@ -220,7 +225,7 @@ function SearchRAW(
                         IDtoROW,
                         scan_idx = i,
                         min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-                        min_frag_count = 4#min_frag_count #Remove precursors with fewer fragments 
+                        min_frag_count = 2#min_frag_count #Remove precursors with fewer fragments 
                         )
             end
         end
@@ -246,7 +251,10 @@ function SearchRAW(
 
     end
 
-
+    println("solve_time $solve_time")
+    println("prep_time $prep_time")
+    println("index_search_time $index_search_time")
+    println("index_ions_time $index_ions_time")
     #return fragment_intensities
     ############
     #Return Chromatograms and Score/Feature Table
@@ -269,7 +277,6 @@ function SearchRAW(
     end
 
 end
-
 function firstSearch(
     #Mandatory Args
     spectra::Arrow.Table, 

@@ -16,7 +16,7 @@ using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationM
 ##########
 #Example Usage 
 #julia --threads 24 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/Projects/PROSIT/TEST_DATA/MOUSE_TEST /Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423 -s true 
-#julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_20irt/ -s true
+#julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/ -s true
 function parse_commandline()
     s = ArgParseSettings()
 
@@ -217,7 +217,7 @@ end
                                                                                    "integrateChroms.jl",
                                                                                    "getCrossCorr.jl",
                                                                                     "queryFragmentIndex.jl",
-                                                                                    ]];
+                                                                                    "scratch_newchroms.jl"]];
 
 
                                                                                                                                  
@@ -230,8 +230,9 @@ end
 #Load Spectral Library
 #Need to find a way to speed this up.  
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/"
 prosit_lib_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-
+#prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart1.jld2"
 println("Loading spectral libraries into main memory...")
 
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/"
@@ -444,22 +445,60 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 UInt32(ms_file_idx), #MS_FILE_IDX
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
-                                                #scan_range = (101357, 112357),
+                                                #scan_range = (201389, 204389),
                                                 
                                                 scan_range = (0, length(MS_TABLE[:masses]))
                                             );
-        println("Search time for $ms_file_idx ", sub_search_time.time)
+        println("before filter ", size(PSMs))
+        #filter!(x->x.topn>1, PSMs);
+        #println("after filter", size(PSMs))
+        #println("Search time for $ms_file_idx ", sub_search_time.time)
         #PSMs = PSMs[PSMs[:,:weight].>5000.0,:];
         #filter!(:weight => x -> x<5000.0,PSMs);
-        PSMs = PSMs[PSMs[:,:weight].>0.0,:];
-        PSMs = PSMs[PSMs[:,:total_ions].>3,:];
+        #PSMs = PSMs[PSMs[:,:weight].>0.0,:];
+        #PSMs = PSMs[PSMs[:,:total_ions].>3,:];
+        #for i in ProgressBar(size(PSMs)[1])
+        #    prec_id = PSMs[i,:precursor_idx]
+        #    base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
+        #    PSMs[i,:weight] = PSMs[i,:weight]/base_peak_intensity
+        #end
+        PSMs[:,:q_value] .= 0.0
+        #PSMs[isnan.(PSMs[:,:entropy_sim]),:entropy_sim] .= 0.0;
+        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        PSMS_SUB = PSMs[PSMs[:,:n_obs].>2,:];
+        model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
+                                    scribe_score + weight_log2 + topn + spectral_contrast + 
+                                    n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMS_SUB, 
+                                    Binomial(), 
+                                    ProbitLink())
+        Y′ = GLM.predict(model_fit, PSMS_SUB);
+        getQvalues!(PSMS_SUB, allowmissing(Y′),  allowmissing(PSMS_SUB[:,:decoy]));
+        println("Target PSMs at 25% FDR: ", sum((PSMS_SUB[:,:q_value].<=0.25).&(PSMS_SUB[:,:decoy].==false)))
+        PSMS_SUB[:,:prob] = allowmissing(Y′)
+
+
+        #PSMS_SUB = PSMS_SUB[(PSMS_SUB[:,:q_value].<=0.25),:]
+        sort!(PSMS_SUB,:RT);
+        test_chroms = groupby(PSMS_SUB[:,[:precursor_idx,:q_value,:prob,:decoy,:scan_idx,:topn,:total_ions,:scribe_score,:spectral_contrast,:entropy_sim,:matched_ratio,:hyperscore,:weight,:RT,:RT_pred]],:precursor_idx);
+
+
+        best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMS_SUB, [:precursor_idx]))
+        
         #filter!(:total_ions => x -> x<4, PSMs);
-        sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        #sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        sub_search_time = @timed transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursorMS2(test_chroms, 
+                                            UInt32(psm[:precursor_idx]), 
+                                            (0.1f0, #Fraction peak height α
+                                            0.15f0, #Distance from vertical line containing the peak maximum to the leading edge at α fraction of peak height
+                                            0.15f0, #Distance from vertical line containing the peak maximum to the trailing edge at α fraction of peak height
+                                            Float32(psm[:RT]), psm[:weight]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:weight_sum,:hyperscore_sum,:entropy_sum,:scribe_sum,:ions_sum,:data_points,:ratio_sum,:base_width]);
+
         println("Refine PSMs! time for $ms_file_idx ", sub_search_time.time)
 
         sub_search_time = @timed lock(lk) do 
             println("ms_file_idx: $ms_file_idx has ", size(PSMs))
             PSMs = nothing
+            PSMS_SUB = nothing
             BPSMS[ms_file_idx] = best_psms
         end
         println("Assigne best_psms_time for $ms_file_idx ", sub_search_time.time)
@@ -485,7 +524,7 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
     
     best_psms = nothing
     #lock(lk) do 
-        best_psms = BPSMS[ms_file_idx]     
+    best_psms = BPSMS[ms_file_idx]     
     #end
     #Get Best PSM per precursor
     #best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMs[ms_file_idx][PSMs[ms_file_idx][:,:q_value].<=0.25,:], [:sequence,:charge]));
@@ -494,7 +533,7 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                 prosit_lib["precursors"][psm[:precursor_idx]].mz
                 ) => :prec_mz
                 );
-    
+    #=
     #Need to sort RTs 
     sort!(best_psms,:RT, rev = false);
     #Build RT index of precursors to integrate
@@ -526,17 +565,28 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
     println("integrate ms2 gctime for $ms_file_idx ", sub_search_time.gctime)
     #Remove Peaks with 0 MS2 intensity or fewer than 6 points accross the peak. 
     #best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false).&(best_psms[:,:points_above_FWHM].>=1).&(best_psms[:,:points_above_FWHM_01].>=5),:];
-    best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:];
-    best_psms[:,:RT_error] = abs.(best_psms[:,:tᵣ] .- best_psms[:,:RT_pred]);
+    =#
+    #best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:];
+    for i in range(1, size(best_psms)[1])
+        if ismissing(best_psms[i,:tᵣ])
+            best_psms[i, :RT_error] = abs.(best_psms[i,:RT_pred] - best_psms[i,:RT])
+            best_psms[i,:tᵣ] = best_psms[i,:RT]
+        else
+            best_psms[i,:RT_error] = abs.(best_psms[i,:tᵣ] .- best_psms[i,:RT_pred]);
+        end
+    end
 
     #Get Predicted Isotope Distributions 
     #For some reason this requires a threadlock. Need to investiage further. 
     isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
-    #lock(lk) do 
-        isotopes = getIsotopes(best_psms[:,:sequence], best_psms[:,:precursor_idx], best_psms[:,:charge], QRoots(4), 4);
-    #end
+    lock(lk) do 
+        isotopes = getIsotopes(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:sequence], 
+                                        best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:precursor_idx], 
+                                        best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:charge], QRoots(4), 4);
+    end
 
-    prec_rt_table = sort(collect(zip(best_psms[:,:RT], UInt32.(best_psms[:,:precursor_idx]))), by = x->first(x));
+    prec_rt_table = sort(collect(zip(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:RT], 
+    UInt32.(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:precursor_idx]))), by = x->first(x));
 
     println("Integrating MS1 $ms_file_idx...")
     ms1_chroms = integrateMS1(MS_TABLE, 
@@ -545,7 +595,7 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                     UInt32(ms_file_idx), 
                                     frag_err_dist_dict[ms_file_idx], 
                                     integrate_ms1_params,
-                                    scan_range = (0, length(MS_TABLE[:scanNumber])));
+                                    scan_range = (1, length(MS_TABLE[:scanNumber])));
 
     #Integrate MS1 Chromatograms 
     transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), 
@@ -569,14 +619,14 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
     #########
     #Quality Filter
     best_psms[isnan.(coalesce.(best_psms[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing
-    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.6,:peak_area_ms1].=missing
-    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.6,:ρ].=missing
+    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.4,:peak_area_ms1].=missing
+    best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.4,:ρ].=missing
     best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:peak_area_ms1].=missing
     best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:ρ].=missing
-
+    best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
     println("SIZE best_psms $ms_file_idx before filter ", size(best_psms))
     #Peak area is non-zero and non-missing
-    best_psms = best_psms[(best_psms[:,:peak_area].>0.0).&(ismissing.(best_psms[:,:peak_area]).==false),:]; 
+    #best_psms = best_psms[(best_psms[:,:peak_area].>0.0).&(ismissing.(best_psms[:,:peak_area]).==false),:]; 
     #FWHM must exceed minimum threshold
     #best_psms = best_psms[best_psms[:,:FWHM].>(6/60),:];
     #Minimum Goodness of Fit 
@@ -601,10 +651,56 @@ transform!(best_psms, AsTable(:) => ByRow(psm -> MS_TABLE_PATHS[psm[:ms_file_idx
 
 
 
-CSV.write("/Users/n.t.wamsley/TEST_DATA/best_psms_100523_5ppm_15.csv", best_psms)
+CSV.write("/Users/n.t.wamsley/TEST_DATA/TEST_ALL_unscored.csv", best_psms)
+
+for i in ProgressBar(size(best_psms)[1])
+    prec_id = best_psms[i,:precursor_idx]
+    base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
+    best_psms[i,:peak_area] = best_psms[i,:peak_area]/base_peak_intensity
+end
 
 
-best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/best_psms_100523_5ppm_15.csv"))
+for i in ProgressBar(size(best_psms)[1])
+    prec_id = best_psms[i,:precursor_idx]
+    base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
+    best_psms[i,:H] = best_psms[i,:H]/base_peak_intensity
+end
+
+for i in ProgressBar(size(best_psms)[1])
+    prec_id = best_psms[i,:precursor_idx]
+    base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
+    best_psms[i,:weight] = best_psms[i,:weight]/base_peak_intensity
+end
+
+features = [:hyperscore,:total_ions,:intensity_explained,
+            :poisson,:spectral_contrast,:entropy_sim,
+            :RT_error,:scribe_score,:RT,:charge,
+            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn,:err_norm,:error]
+append!(features, [:peak_area,:GOF,:asymmetry,:points_above_FWHM_01,:points_above_FWHM,:H,:ρ,:FWHM, :FWHM_01, :y_ladder, :b_ladder, :n_obs,:peak_area_ms1,:prec_mz,:sequence_length,:spectrum_peaks,
+:weight_sum,:hyperscore_sum,:entropy_sum,:scribe_sum,:ions_sum,:data_points,:ratio_sum,:base_width]);
+
+#Train Model 
+best_psms[:,:q_value] .= 0.0
+xgboost_time = @timed bst = rankPSMs!(best_psms, 
+                        features,
+                        colsample_bytree = 1.0, 
+                        min_child_weight = 5, 
+                        gamma = 1, 
+                        subsample = 0.5, 
+                        n_folds = 2, 
+                        num_round = 200, 
+                        max_depth = 10, 
+                        eta = 0.05, 
+                        #eta = 0.0175,
+                        train_fraction = 4.0/9.0,
+                        n_iters = 2);
+
+getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+println("unique ", length(unique(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:precursor_idx])))
+CSV.write("/Users/n.t.wamsley/TEST_DATA/TEST_ALL_SCORED.csv", best_psms)
+value_counts(df, col) = combine(groupby(df, col), nrow)
+println(value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:ms_file_idx]))
+#best_psms = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/best_psms_100523_5ppm_15.csv"))
 #CSV.write("/Users/n.t.wamsley/TEST_DATA/best_psms_100423_demult_adjusted.csv", PIONEER)
 #=
 for i in ProgressBar(size(best_psms)[1])

@@ -175,6 +175,9 @@ function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition
     if i > length(matches)
         append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
     end
+    #if iszero(getPrecID(transition))
+    #    println("TEST C")
+    #end
     matches[i] = FragmentMatch(getIntensity(transition)::Float32, 
                                  intensity::Float32,
                                  Float32(getFragMZ(transition)),
@@ -288,6 +291,9 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
             end
             #Important that this is also within the first if statement. 
             #Need to check the next fragment against the current peak. 
+            #if iszero(getPrecID(Ions[ion]))
+            #    println("TEST A")
+            #end
             unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
             ion += 1
             if ion > ion_idx#length(Ions)
@@ -301,6 +307,9 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
     end
 
     while ion <= ion_idx#length(Ions)
+        #if iszero(getPrecID(Ions[ion]))
+        #    println("TEST B")
+        #end
         unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
         ion += 1
     end

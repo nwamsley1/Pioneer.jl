@@ -59,7 +59,7 @@ function ModifyFeatures!(score::XTandem{U}, match::FragmentMatch{T}, mass::Union
     if match.predicted_rank < score.best_rank
         score.best_rank = match.predicted_rank
     end
-    if match.predicted_rank < 4
+    if match.predicted_rank < 3
         score.topn += one(UInt8)
     end
     #push!(results[prec_id].test, getIonType(Transitions[transition]))
@@ -171,6 +171,9 @@ function Score!(PSMs_dict::Dict,
     end
 
     for key in keys(unscored_PSMs)
+        if !haskey(IDtoROW, unscored_PSMs[key].precursor_idx)
+            continue
+        end
         index = IDtoROW[unscored_PSMs[key].precursor_idx][1]
         if spectral_contrast[index]<min_spectral_contrast
             continue
@@ -178,6 +181,9 @@ function Score!(PSMs_dict::Dict,
         if (unscored_PSMs[key].y_count + unscored_PSMs[key].b_count) < min_frag_count
             continue
         end
+        #if matched_ratio[index]<0.5
+        #    continue
+        #end
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
         append!(PSMs_dict[:y_ladder], getLongestSet(unscored_PSMs[key].y_ions))

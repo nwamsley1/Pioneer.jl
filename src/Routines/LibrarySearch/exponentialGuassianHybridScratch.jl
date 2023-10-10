@@ -13,6 +13,34 @@ function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
     return y
 end
 
+function GAUSS(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+     y = zeros(T, length(t))
+     for (i, tᵢ) in enumerate(t)
+       y[i] = p[3]*exp((-1.0)*((tᵢ - p[2])^2)/(2*p[1]^2))
+    end
+    return y
+end
+
+function GAUSS_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+     for (i, tᵢ) in enumerate(x)
+        F[i] = p[3]*exp((-1.0)*((tᵢ - p[2])^2)/(2*p[1]^2))
+    end
+end
+
+function JGAUSS_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    for (i, tᵢ) in enumerate(x)
+        d = ((tᵢ - p[2])^2)/(2*p[1]^2)
+        #f = exp((-δt^2)/(d))
+            J[i,1] = 2*d*p[3]*exp((-1.0)*(d))
+            J[i,2] = 2*d*p[3]*exp((-1.0)*(d))/p[1]
+            J[i,3] = exp((-1.0)*(d))
+   end
+end
+
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """

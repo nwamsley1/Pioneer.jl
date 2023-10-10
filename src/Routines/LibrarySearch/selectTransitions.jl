@@ -19,13 +19,16 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
     transition_idx = 0
     while i <= min(topN, counter.matches)
         for frag in fragment_list[getID(counter, i)]
-            transition_idx += 1
+            if !iszero(frag.intensity)
+                transition_idx += 1
+                transitions[transition_idx] = frag
+            end
+            
             #Grow array if exceeds length
             if transition_idx > length(transitions)
                 append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
             end
 
-            transitions[transition_idx] = frag
         end
         i += 1
     end

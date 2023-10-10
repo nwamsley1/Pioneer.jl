@@ -34,7 +34,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
             prec_row += one(UInt32)
             insert!(precID_to_row, getPrecID(match), (prec_row, zero(UInt8)))
         end
-        if getRank(match) < 5
+        if getRank(match) < 3
             precID_to_row[getPrecID(match)] = (precID_to_row[getPrecID(match)][1], precID_to_row[getPrecID(match)][2] + one(UInt8))
         end
         #If this peak has not been encountered yet, then start filling a new column

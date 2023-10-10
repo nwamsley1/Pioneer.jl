@@ -132,6 +132,7 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
             Xentropy = log(Xsum) - Xentropy/Xsum
             HXentropy = log(HXsum) - HXentropy/HXsum 
             Hentropy = log(Hsum) - Hentropy/Hsum
+
             HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
             HXentropy = zero(Float32)
             HXsum = zero(Float32)

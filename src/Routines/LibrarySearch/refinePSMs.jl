@@ -24,8 +24,8 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
 
     ###########################
     #Filter on Rank and Topn
-    filter!(:best_rank => x -> x<2, PSMs)
-    filter!(:topn => x -> x>1, PSMs)
+    #filter!(:best_rank => x -> x<2, PSMs)
+    #filter!(:topn => x -> x>1, PSMs)
     ############################
 
 
@@ -52,10 +52,13 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[:,:err_log2] = log2.((-1.0)*PSMs[:,:error])
     PSMs[:,:target] = PSMs[:,:decoy].==false
     PSMs[:,:weight_log2] = log2.(PSMs[:,:weight])
+    PSMs[isinf.(PSMs[:,:weight_log2]),:weight_log2] .= 0.0;
     PSMs[:,:matched_ratio_log2] = log2.(PSMs[:,:matched_ratio])
-    filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), PSMs);
+    PSMs[isinf.(PSMs[:,:matched_ratio_log2]),:matched_ratio_log2] .= 0.0;
+    #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), PSMs);
     ########################
     #Rough Target-Decoy discrimination
+    #=
     model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
     scribe_score + weight_log2 + topn + spectral_contrast + 
     n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMs, 
@@ -68,7 +71,8 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
 
     #Get Best PSM per precursor
     return combine(sdf -> getBestPSM(sdf), groupby(PSMs[PSMs[:,:q_value].<=0.25,:], [:sequence,:charge]));
-
+    =#
+    return 
 end
 
 #sum(psms_counts[:,:nrow].>2)

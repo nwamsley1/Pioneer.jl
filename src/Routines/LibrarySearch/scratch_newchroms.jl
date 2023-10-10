@@ -1,14 +1,26 @@
-function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, p0::NTuple{5, U}, T::Type; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
+function integratePrecursorMS2(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32, p0::NTuple{5, T}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {T<:AbstractFloat}
+
+    if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
+        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+    end
+
+    #Chromatogram for the precursor. 
+    #Has columns "weight" and "rt". 
+    chrom = chroms[(precursor_idx=precursor_idx,)]
+    return integratePrecursorMS2(chrom, p0, eltype(chrom[:,:weight]), max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, min_scans = min_scans, min_width = min_width, integration_width = integration_width, integration_points = integration_points, isplot = isplot)
+end
+
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, p0::NTuple{5, U}, T::Type; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
     
     function getBestPSM(sdf::DataFrame)
         if any(sdf.q_value.<=0.01)
             #return argmax((sdf.q_value.<=0.01).*(sdf.hyperscore))
-            return argmax((sdf.q_value.<=0.01).*(sdf.weight))
+            return argmax((sdf.q_value.<=0.01).*(sdf.weight).*(sdf.total_ions))
         else
-            return argmax(sdf.weight)
+            return argmax(sdf.weight.*(sdf.total_ions))
         end
     end
-    
+    #display(chrom)
     non_zero = BitVector(undef, size(chrom)[1])
     fillNonZero!(non_zero, chrom[:,:weight])
     #Same precursor may be isolated multiple times within a single cycle_idx
@@ -23,6 +35,7 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
             end
         end
     end
+    #display(chrom)
     chrom = chrom[non_zero,:]
     
     best_scan = getBestPSM(chrom)
@@ -40,39 +53,50 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     end
     #########
     #Probably don't need to allocate all of this memory. 
-    rt = Float32.(chrom[:,:RT])
-    intensity = collect(chrom[:,:weight])
-    #intensity[chrom[:,:rank].<2].=0.0
-    frag_counts = collect(chrom[:,:total_ions])
-
-    #########
-    #Get Boundaries for fitting EGH curve 
-    #Smoothing parameters for first derivative
-    window_size, order = getSmoothingParams(length(rt), max_smoothing_window, min_smoothing_order)
-
+    min_intensity = maximum(chrom[:,:weight])/100.0
+    rt = Float32.(chrom[chrom[:,:weight].>=min_intensity,:RT])
+    pushfirst!(rt, Float32(chrom[1,:RT] - 0.25))
+    push!(rt, Float32(chrom[end,:RT] + 0.25))
+    intensity = collect(chrom[chrom[:,:weight].>=min_intensity,:weight])
+    pushfirst!(intensity, Float32(0.0))
+    push!(intensity, Float32(0.0))
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
     start, stop = 1, length(intensity)# getIntegrationBounds(Int64.(frag_counts), rt, intensity, window_size, order, min_width, min_scans)
 
     ########
     #Fit EGH Curve 
     EGH_FIT = nothing
-    #filter = FIRFilter(MSF(4.0, 3, 1))
-    #filter = MSF(4.0, 5, 1)
-    #filter = filtfilt(filter, intensity)
-    #println("test filter ", filter)
+    mask = ones(Bool, length(intensity))
     try
+       
+        for i in range(1, length(intensity) - 2)
+            if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[i + 2])
+                mask[i + 1] = 0
+                #intensity[i + 1] = (intensity[i] + intensity[i + 2])/2
+            end
+            if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[min(i + 3, length(intensity))])
+                #a = (intensity[min(i + 3, length(intensity))])/2
+                #intensity[i + 1] = a 
+                #intensity[ i + 2] = a
+                mask[i + 1] = 0
+                if (intensity[i + 2] < intensity[min(i + 3, length(intensity))])
+                    mask[i + 2] = 0
+                end
+            end
+        end
+        #println(mask)
+        #mask = [true, true, false, true, false, false, true]
         p0 = (0.1f0, 0.15f0, 0.15f0, Float32(best_rt), Float32(height))
-        
-        smooth = savitzky_golay(intensity, 3, 1).y
-
+        smooth = intensity
         EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
                                     JEGH_inplace, 
-                                    rt[start:stop],
+                                    rt[mask],
                                     #intensity[start:stop],
-                                    Float32.(smooth[start:stop]),
+                                    Float32.(smooth[mask]),
+                                    #Float32.(smooth),
+                                    #w,
                                     #(chrom[start:stop, :rank] .+ 1)./4,
                                     getP0(p0);
-                                    #w = chrom[start:stop, :rank]./4,
                                     inplace = true)
     catch
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
@@ -83,7 +107,8 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     if isplot
         #Plot Data
         Plots.plot(rt, intensity, show = true, seriestype=:scatter)
-
+        Plots.plot!(rt[mask], intensity[mask], show = true, seriestype=:scatter)
+        Plots.plot!(chrom[:,:RT], chrom[:,:weight], show = true, alpha = 0.5, seriestype=:scatter)
         #Plots.plot!(rt, savitzky_golay(intensity, 7, 3).y, show = true, seriestype=:scatter)
         #Plots.plot!(rt, filter, show = true, seriestype=:scatter)
         #Plots Fitted EGH Curve
@@ -94,6 +119,12 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
                     fillrange = [0.0 for x in 1:integration_points], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
+        #println(Tuple(GAUSS_FIT.param))
+        #Plots.plot!(X,  
+        #            GAUSS(T.(collect(X)), Tuple(GAUSS_FIT.param)), 
+        #            fillrange = [0.0 for x in 1:integration_points], 
+        #            alpha = 0.25, color = :red, show = true
+        #            ); 
         Plots.vline!([best_rt], color = :blue);
         Plots.vline!([rt[start]], color = :red);
         Plots.vline!([rt[stop]], color = :red);
@@ -119,5 +150,5 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     tᵣ = EGH_FIT.param[2]
     τ = EGH_FIT.param[3]
     H = EGH_FIT.param[4]
-    return peak_area, GOF, FWHM, FWHM_01, asymmetry, points_above_FWHM, points_above_FWHM_01, σ, tᵣ, τ, H, sum(chrom[:,:weight]), sum(chrom[:,:hyperscore]), sum(chrom[:,:entropy_sim]), sum(chrom[:,:scribe_score]), sum(chrom[:,:total_ions]), size(chrom)[1], mean(chrom[:,:matched_ratio]), rt[end] - rt[1]
+    return peak_area, GOF, FWHM, FWHM_01, asymmetry, points_above_FWHM, points_above_FWHM_01, σ, tᵣ, τ, H, sum(chrom[:,:weight]), sum(log2.(chrom[:,:spectral_contrast])), sum(chrom[:,:entropy_sim]), sum(log2.(chrom[:,:prob])), sum(chrom[:,:total_ions]), size(chrom)[1], mean(chrom[:,:matched_ratio]), rt[end] - rt[1]
 end

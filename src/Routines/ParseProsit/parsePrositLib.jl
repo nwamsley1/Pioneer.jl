@@ -122,8 +122,8 @@ function split_array_into_chunks(arr::Vector, num_chunks::Int)
 end
 #CSV.write("outputfile.csv",test_prosit[1000000:1000036,:],delim=',')
 
-function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3, low_frag_mz::AbstractFloat = 299.0, high_frag_mz::AbstractFloat = 1351.0) where {T<:AbstractFloat}
-
+function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3, low_frag_mz::AbstractFloat = 299.0, high_frag_mz::AbstractFloat = 1351.0, max_rank_index::Int64 = 5, index_start_ion::Int64 = 3) where {T<:AbstractFloat}
+    println("START")
     #"/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/examples/peptidelist.msms"
     prosit_library = CSV.File(prosit_csv_path)
     charge_pattern = r"\((\w+)\+\)"
@@ -166,38 +166,72 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         #pre-allocate library fragments for the n'th precursor
         nth_precursor_frags = Vector{LibraryFragment{Float32}}()#undef, length(matches))
         total_intensity = zero(Float32)
+        total_intensity_specific = zero(Float32)
 
         #Changes every m/z bin
         low_frag_mz = ((mz - 400.4319)/8.0037)*1.667 + 83.667
         high_frag_mz = ((mz - 404.4337)/8.0037)*25 + 1265.0
 
         
+        intensities_specific = intensities[:]
+        for (i, _match) in enumerate(matches)
+
+            ion_index = parse(UInt8, match(index_pattern, _match).captures[1]) 
+
+
+            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
+            )&(masses[i]<high_frag_mz
+            )&(ion_index>=index_start_ion)
+
+            if in_frag_index == false
+                intensities_specific[i] = zero(Float32)
+            end
+
+            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
+            )&(masses[i]<high_frag_mz
+            )&(ion_index>=start_ion)
+
+            if in_frag_index == false
+                intensities[i] = zero(Float32)
+            end
+        end
+        ranks = ordinalrank(intensities, rev = true)
+        ranks_specific = ordinalrank(intensities_specific, rev = true)
         #########
         #Parse each fragment ion 
         for (i, _match) in enumerate(matches)
-            if parse(UInt8, match(index_pattern, _match).captures[1]) < start_ion
-                intensities[i] = zero(Float32)
-                continue
+
+            ion_index = parse(UInt8, match(index_pattern, _match).captures[1]) 
+
+            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
+            )&(masses[i]<high_frag_mz
+            )&(ranks_specific[i]<=max_rank_index #rank does not exceed the max rank
+            )&(ion_index>=index_start_ion)
+
+            if in_frag_index
+                total_intensity_specific += intensities[i]
             end
-            if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
-                intensities[i] = zero(Float32)
-                continue
+
+            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
+            )&(masses[i]<high_frag_mz
+            )&(ion_index>=start_ion)
+
+            if in_frag_index
+                total_intensity += intensities[i]
             end
-            total_intensity += intensities[i]
             
         end
 
-        
-        
-        sorted_intensities = sort(intensities[(intensities.>low_frag_mz).&(intensities.<high_frag_mz)], rev = true)
-        idx = max(findfirst(x->(x/total_intensity)>0.9, cumsum(sorted_intensities)), min(5, length(sorted_intensities)))
-        IQ = sorted_intensities[idx]
         #if sum(intensities.>IQ) <=8
         #    findfirst(x->x>0.8, cumsum(sorted_intensities))
         #end
         #Should probably change to denserank. 1223 vs. 1234. 
         #different way of dealing with ties, although probably ties are very rare if they ever occur
-        ranks = ordinalrank(intensities, rev = true)
+        #in_frag_index = (intensities.>low_frag_mz).&(intensities.<high_frag_mz).&(ranks.<=max_rank)
+        #sorted_intensities = sort(intensities[(intensities.>low_frag_mz).&(intensities.<high_frag_mz).&(ranks.<=max_rank)], rev = true)
+        #idx = max(findfirst(x->(x/total_intensity)>0.9, cumsum(sorted_intensities)), min(5, length(sorted_intensities)))
+        #IQ = sorted_intensities[idx]
+
         base_peak_intensity = zero(Float32)
         
         for i in eachindex(matches)
@@ -232,13 +266,17 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
             ###########
             #Only retain most important fragments for the index!
             #Greater than the intensity quantile
-            if intensities[i] >= IQ
+            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
+                            )&(masses[i]<high_frag_mz
+                            )&(ranks_specific[i]<=max_rank_index #rank does not exceed the max rank
+                            )&(ion_index>=index_start_ion)
+            if in_frag_index
                 push!(frags_simple[Threads.threadid()],
                         FragmentIon(
                             masses[i], #frag_mz
                             UInt32(N[Threads.threadid()][1]), #prec_id
                             mz, #prec_mz 
-                            intensities[i]/total_intensity, #prec_intensity
+                            intensities[i]/total_intensity_specific, #prec_intensity
                             iRT, #prec_rt
                             charge, #prec_charge
                         )
