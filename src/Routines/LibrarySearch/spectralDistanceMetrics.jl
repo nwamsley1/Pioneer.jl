@@ -1,4 +1,3 @@
-
 function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_matched_col::Int) where {T<:AbstractFloat}
     scribe_scores = zeros(T, H.n)
     city_block_scores = zeros(T, H.n)
@@ -132,7 +131,6 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
             Xentropy = log(Xsum) - Xentropy/Xsum
             HXentropy = log(HXsum) - HXentropy/HXsum 
             Hentropy = log(Hsum) - Hentropy/Hsum
-
             HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
             HXentropy = zero(Float32)
             HXsum = zero(Float32)

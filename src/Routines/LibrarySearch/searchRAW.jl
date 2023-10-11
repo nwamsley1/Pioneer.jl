@@ -64,8 +64,9 @@ function SearchRAW(
     ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
-    H_COLS, H_ROWS, H_VALS = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches)
-  
+    H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Bool, expected_matches)
+    
+
     #weights
     precursor_weights = ""
     if ismissing(ion_list)
@@ -112,8 +113,8 @@ function SearchRAW(
                         Float32(fragment_tolerance), 
                         Float32(precursor_tolerance),
                         Float32(quadrupole_isolation_width/2.0),
-                        min_frag_count = 1,#min_frag_count, 
-                        min_ratio = 0.8f0,#Float32(min_matched_ratio),
+                        min_frag_count = 2,#min_frag_count, 
+                        min_ratio = 0.0f0,#Float32(2/3),#Float32(min_matched_ratio),
                         topN = topN
                         )
             
@@ -160,54 +161,55 @@ function SearchRAW(
                                     min_intensity = min_intensity, #Ignore peaks below this intensity
                                     ppm = fragment_tolerance #Fragment match tolerance in ppm
                                     )
-        #=for m in ionMatches
-            if m.prec_id ==9301047
-                key = m.ion_type*string(m.frag_index)*"+"*string(m.frag_charge)
-                if haskey(fragment_intensities)
-                    push!(fragment_intensities[key], (spectra[:retentionTime][i], m.intensity))
-                else
-                    insert!(fragment_intensities, key, [(spectra[:retentionTime][i], m.intensity)])
-                end
-            end
-        end=#
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
             IDtoROW = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
-            prep_time += @elapsed X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-            #println("Hs.n ", Hs.n)
-            #println("Hs.m ", Hs.m)
-            #=for match in range(1,nmatches)
-                m = ionMatches[match]
-                if m.prec_id ==9301047
-                    key = m.ion_type*string(m.frag_index)*"+"*string(m.frag_charge)
-                    if haskey(fragment_intensities, key)
-                        push!(fragment_intensities[key], (spectra[:retentionTime][i], m.intensity))
-                    else
-                        insert!(fragment_intensities, key, [(spectra[:retentionTime][i], m.intensity)])
+            IDtoROW_weights = UnorderedDictionary{UInt32, UInt32}()
+            prep_time += @elapsed begin
+                X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+                weights = nothing
+                #Initial guess from non-negative least squares. May need to reconsider if this is beneficial
+                #How to only score basedon n+ ions (eclude y1, y2, b1, b2 for example)
+                if ismissing(isotope_dict) 
+                    scores = getDistanceMetrics(X, Hs, last_matched_col)
+
+                    placeholder = zeros(UInt32, Hs.n)
+                    for (id, row) in pairs(IDtoROW)
+                        if (scores[:matched_ratio][first(row)] <= 0.5) | (scores[:spectral_contrast][first(row)] <= 0.5)
+                            delete!(IDtoROW, id)
+                        else
+                            placeholder[first(row)] = id
+                        end
                     end
+
+                    n = one(UInt32)
+                    for id in placeholder
+                        if !iszero(id)
+                            insert!(IDtoROW_weights, id, n)
+                            n += one(UInt32)
+                        end
+                    end
+                    #return Hs, IDtoROW, IDtoROW_weights, scores
+                    Hs = Hs[:,(scores[:matched_ratio].>=0.5).&(scores[:spectral_contrast].>=0.5)]
+                    #println("shape(Hs) after ", size(Hs))
+                    weights = zeros(eltype(Hs), Hs.n)
+                    for (id, row) in pairs(IDtoROW_weights)
+                        weights[row] = precursor_weights[id]# = precursor_weights[id]
+                    end
+                else
+                    weights = zeros(eltype(Hs), Hs.n)
                 end
-            end=#
-            #Initial guess from non-negative least squares. May need to reconsider if this is beneficial
-            weights = zeros(eltype(Hs), Hs.n)#sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
-            for (id, row) in pairs(IDtoROW)
-                weights[first(row)] = precursor_weights[id]
+
             end
-            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
-            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=Hs.n)[:]
-            #println("i $i")
-            #println("size(Hs) ", size(Hs))
-            #println("size(X) ", size(X))
+
             solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
-            for (id, row) in pairs(IDtoROW)
-                precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
+            for (id, row) in pairs(IDtoROW_weights)
+                precursor_weights[id] = weights[row]# = precursor_weights[id]
             end
             #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
-            #Spectral distance metrics between the observed spectrum (X) and the library spectra for each precursor (Hs)
-            scores = getDistanceMetrics(X, Hs, last_matched_col)
-
             ##########
             #Scoring and recording data
             if !ismissing(scored_PSMs)
@@ -223,9 +225,10 @@ function SearchRAW(
                         scores, #Named Tuple of spectrum simmilarity/distance measures 
                         weights, #Coefficients for each precursor in the spectral deconvolution
                         IDtoROW,
+                        IDtoROW_weights, 
                         scan_idx = i,
                         min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-                        min_frag_count = 2#min_frag_count #Remove precursors with fewer fragments 
+                        min_frag_count = min_frag_count #Remove precursors with fewer fragments 
                         )
             end
         end

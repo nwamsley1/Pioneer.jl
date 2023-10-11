@@ -142,7 +142,8 @@ test_chroms = groupby(PSMS_SUB[:,[:precursor_idx,:q_value,:prob,:decoy,:scan_idx
 
 N = 20000
 test_chroms[N]
-plot(test_chroms[N][:,:RT], test_chroms[N][:,:weight], seriestype=:scatter)
+
+plot(test_chroms[(precursor_idx =  4190469,)][:,:RT], test_chroms[(precursor_idx =  4190469,)][:,:weight], seriestype=:scatter)
 prec_id = test_chroms[N][:,:precursor_idx][1]
 huber_loss = ms2_chroms[(precursor_idx=prec_id,)][:,:]
 plot!(huber_loss[:,:rt], huber_loss[:,:weight], seriestype=:scatter)
@@ -220,10 +221,11 @@ best_psms[best_psms[:,:precursor_idx].==prec_id,[:precursor_idx,:prob,:q_value,:
 
 
 main_search_params[:min_spectral_contrast] = 0.5f0
-main_search_params[:min_matched_ratio] = 0.6f0
+main_search_params[:min_matched_ratio] = 0.5f0
 main_search_params[:min_frag_count] = 2
 main_search_params[:topN] = 1000000
-sub_search_time = @timed PSMS_TEST01 = mainLibrarySearch(
+sub_search_time = @timed 
+PSMs = mainLibrarySearch(
     MS_TABLE,
     prosit_lib["f_index"],
     prosit_lib["f_det"],
@@ -233,7 +235,7 @@ sub_search_time = @timed PSMS_TEST01 = mainLibrarySearch(
     main_search_params,
     scan_range = (201389, 204389),
     
-    #scan_range = (0, length(MS_TABLE[:masses]))
+    #scan_range = (1, length(MS_TABLE[:masses]))
 );
 
 PSMS_TEST01 = X, Hs, IDtoROW, last_matched_col, ionMatches, ionMisses, filtered_nmatches, filtered_nmisses, nmatches, nmisses = mainLibrarySearch(
@@ -318,8 +320,20 @@ Hs = Hs[sum(Hs, dims = 2)[:,1].>0.0,:]
 we
 
 
+Hs_new = Hs[:,(scores[:matched_ratio].>=0.5).&(scores[:spectral_contrast].>=0.5)]
+
+w = zeros(eltype(Hs_new), Hs_new.n)
+#for (id, row) in pairs(IDtoROW_weights)
+#    weights[row] = precursor_weights[id]# = precursor_weights[id]
+#end
 
 
+i = 1
+for (id, row) in pairs(IDtoROW)
+    println(sum(Hs_new[:,first(row)] .- Hs[:,first(IDtoROW_weights[id])]))
+    i += 1
+end
+#Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()
             for i in range(1, nmatches)

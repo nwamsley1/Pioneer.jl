@@ -15,10 +15,10 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         H_COLS = zeros(Int64, length(H_COLS) + block_size)
         H_ROWS = zeros(Int64, length(H_ROWS) + block_size)
         H_VALS = zeros(Float32, length(H_VALS) + block_size)
+        H_MASK = zeros(Bool, length(H_VALS) + block_size)
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(T, M)
-
     #Maps a precursor id to a row of H. 
     precID_to_row = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
 
@@ -47,6 +47,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(match)
+        #H_MASK[i] = getFragInd(match) > 2
         #println("i ", i)
     end
     H_ncol = col
@@ -67,6 +68,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(miss)
+        #H_MASK[i] = getFragInd(miss) > 2
     end
     #if i >= (nmatches - 1)
     #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
@@ -304,3 +306,49 @@ function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}}) #where {T<:A
     return X, H, precID_to_row
 end=#
 
+            #=
+            last_open = 1
+            filtered_nmisses = 0
+            for i in range(1, nmatches)
+                m = ionMatches[i]
+                if haskey(IDtoROW_SUB, getPrecID(m))
+                        filtered_nmatches += 1
+                        ionMatches[last_open] = ionMatches[i]
+                        last_open = filtered_nmatches + 1
+                end
+            end
+            filtered_nmisses = 0
+            for i in range(1, nmisses)
+                m = ionMisses[i]
+                if haskey(IDtoROW_SUB, getPrecID(m))
+                        filtered_nmisses += 1
+                        ionMisses[last_open] = ionMisses[i]
+                        last_open = filtered_nmisses + 1
+                end
+            end
+
+            prep_time += @elapsed X, Hs, IDtoROW, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, filtered_nmatches, filtered_nmisses, H_COLS, H_ROWS, H_VALS)
+            =#
+            #=
+            weights = zeros(eltype(Hs), Hs.n)#sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            ids = zeros(UInt32, length(weights))
+            for (id, row) in pairs(IDtoROW)
+                ids[first(row)] = id
+            end
+            for (id, row) in pairs(IDtoROW)
+                weights[first(row)] = precursor_weights[id]
+            end
+            #prep_time += @elapsed begin 
+            col_mask = scores[:matched_ratio] .> 0.5
+            Hs = Hs[:,col_mask]
+            weights = weights[col_mask]
+            ids = ids[col_mask]
+            for (id, row) in pairs(IDtoROW)
+                if !col_mask[first(row)]
+                    delete!(IDtoROW, id)
+                end
+            end
+            for (row, id) in enumerate(ids)
+                IDtoROW[id] = (row, last(IDtoROW[id]))
+            end
+            =#

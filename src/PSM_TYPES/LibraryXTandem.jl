@@ -109,7 +109,8 @@ function Score!(PSMs_dict::Dict,
                 #entropy_sim::Vector{Float32}, 
                 scores::NamedTuple,
                 weight::Vector{Float32}, 
-                IDtoROW::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}; 
+                IDtoROW::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}},
+                IDtoROW_weights::UnorderedDictionary{UInt32, UInt32}; 
                 scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T,U<:Real}
 
     scribe_score = scores[:scribe]::Vector{Float32}
@@ -204,7 +205,7 @@ function Score!(PSMs_dict::Dict,
         append!(PSMs_dict[:city_block], city_block[index])
         append!(PSMs_dict[:matched_ratio], matched_ratio[index])
         append!(PSMs_dict[:entropy_sim], entropy_sim[index])
-        append!(PSMs_dict[:weight], weight[index])
+        append!(PSMs_dict[:weight], weight[IDtoROW_weights[unscored_PSMs[key].precursor_idx]])
 
         append!(PSMs_dict[:scan_idx], scan_idx)
         append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)

@@ -232,7 +232,7 @@ end
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/"
 prosit_lib_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-#prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart1.jld2"
+#prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart2.jld2"
 println("Loading spectral libraries into main memory...")
 
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/"
@@ -376,7 +376,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                         UInt32(ms_file_idx), #MS_FILE_IDX
                                         Laplace(zero(Float64), first_search_params[:fragment_tolerance]),
                                         first_search_params,
-                                        scan_range = (0, length(MS_TABLE[:masses]))
+                                        scan_range = (1, length(MS_TABLE[:masses]))
                                         );
 
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
@@ -447,7 +447,7 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
                                                 
-                                                scan_range = (0, length(MS_TABLE[:masses]))
+                                                scan_range = (1, length(MS_TABLE[:masses]))
                                             );
         println("before filter ", size(PSMs))
         #filter!(x->x.topn>1, PSMs);

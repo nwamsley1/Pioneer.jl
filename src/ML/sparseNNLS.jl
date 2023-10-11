@@ -326,6 +326,11 @@ function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T
         #Update each variable once 
         max_diff = 0.0
         for col in range(1, Hs.n)
+            #If matched ratio for this column is bad then skip. Make sure that colum of Hs is overwritten to all zeros first. 
+            #if mask[col] < 0.5
+                #println("skpped")
+            #    continue
+            #end
             #δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = (min(1 + i*2, max_iter_inner)), accuracy = T(100)))
             δx = abs(newton_bisection!(Hs, r, X₁, col, δ, max_iter = max_iter_inner, accuracy = T(100)))
             if δx/X₁[col] > max_diff
