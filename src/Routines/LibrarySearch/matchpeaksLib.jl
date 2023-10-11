@@ -83,7 +83,7 @@ getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
 getPredictedIntenisty(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
 PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Int64), zero(UInt32))
 getRank(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = one(UInt8)
-
+getFragInd(::PrecursorMatch{Float32}) = Inf
 
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)

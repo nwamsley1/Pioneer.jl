@@ -1,4 +1,4 @@
-function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_matched_col::Int) where {T<:AbstractFloat}
+function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, MASK::SparseMatrixCSC{Float32, Int64}, last_matched_col::Int) where {T<:AbstractFloat}
     scribe_scores = zeros(T, H.n)
     city_block_scores = zeros(T, H.n)
     spectral_contrast_scores = zeros(T, H.n)
@@ -23,11 +23,17 @@ function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_mat
 
         N = 0
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            H_sqrt_sum += sqrt(H.nzval[i])
-            X_sqrt_sum += sqrt(X[H.rowval[i]] + 1e-10)#/Xsum
-            H2_norm += H.nzval[i]^2
-            X2_norm += X[H.rowval[i]]^2 + 1e-10
-            dot_product += H.nzval[i]*X[H.rowval[i]]
+        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+
+            mask = MASK.nzval[i]
+            H_sqrt_sum += mask*sqrt(H.nzval[i])
+            X_sqrt_sum += sqrt(mask*X[H.rowval[i]] + 1e-10)#/Xsum
+            H2_norm += (mask*H.nzval[i])^2 + 1e-10
+            X2_norm += (mask*X[H.rowval[i]])^2 + 1e-10
+            dot_product += mask*H.nzval[i]*X[H.rowval[i]]
+
+            #Want matched_ratio to include all ions, so don't use mask here 
             matched_sum += H.nzval[i]*matched[H.rowval[i]]
             unmatched_sum += H.nzval[i]*(1 - matched[H.rowval[i]])
             N += 1
@@ -39,11 +45,14 @@ function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_mat
         X2_norm = sqrt(X2_norm)
 
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            scribe_score +=  (
+        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            mask = MASK.nzval[i]
+            scribe_score +=  mask*(
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
                                 (sqrt(X[H.rowval[i]])/X_sqrt_sum)
                                 )^2  
-            city_block_dist += abs(
+            city_block_dist += mask*abs(
                 (H.nzval[i]/H2_norm) -
                 (X[H.rowval[i]]/X2_norm)
             )        
@@ -55,7 +64,7 @@ function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_mat
         matched_ratio[col] = matched_sum/unmatched_sum
     end
 
-    entropy_scores = getEntropy(X, H)
+    entropy_scores = getEntropy(X, H, MASK)
 
     return (scribe = scribe_scores, 
             city_block = city_block_scores, 
@@ -65,7 +74,7 @@ function getDistanceMetrics(X::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_mat
 
 end
     
-function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# where {T<:AbstractFloat}
+function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64}, MASK::SparseMatrixCSC{Float32, Int64})# where {T<:AbstractFloat}
     T = Float32
     entropy_sim = zeros(T, H.n)
     for col in range(1, H.n)
@@ -79,9 +88,11 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
         HXentropy = zero(T)
 
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            hp = H.nzval[i]#/Hsum
-            xp = X[H.rowval[i]]#/Xsum
-            Hentropy += hp*log(hp)
+            #MASK is true for selected ions and false otherwise
+            mask = MASK.nzval[i]
+            hp = mask*H.nzval[i]#/Hsum
+            xp = mask*X[H.rowval[i]]#/Xsum
+            Hentropy += hp*log(hp + 1e-10)
             #HXentropy += (hp + xp)*log(hp + xp)
             Xentropy += xp*log(xp + 1e-10)
             Xsum += xp
@@ -90,9 +101,11 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
         end
 
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            hp = H.nzval[i]/Hsum
-            xp = X[H.rowval[i]]/Xsum
-            HXentropy += (hp + xp)*log(hp + xp)
+            #MASK is true for selected ions and false otherwise
+            mask = MASK.nzval[i]
+            hp = mask*H.nzval[i]/Hsum
+            xp = mask*X[H.rowval[i]]/Xsum
+            HXentropy += (hp + xp)*log(hp + xp + 1e-10)
             HXsum += xp + hp
         end
         Xentropy = log(Xsum) - Xentropy/Xsum
@@ -112,19 +125,23 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
             Xsum = zero(T)
             HXsum = zero(T)
             @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-                hp = H.nzval[i]^Hw#/Hsum
-                xp = X[H.rowval[i]]^Xw#/Xsum
-                Hentropy += hp*log(hp)
+                #MASK is true for selected ions and false otherwise
+                mask = MASK.nzval[i]
+                hp = mask*H.nzval[i]^Hw#/Hsum
+                xp = mask*X[H.rowval[i]]^Xw#/Xsum
+                Hentropy += hp*log(hp + 1e-10)
                 Xentropy += xp*log(xp + 1e-10)
                 Xsum += xp
                 Hsum += hp
             end
 
             @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-                hp = (H.nzval[i]^Hw)/Hsum
-                xp = (X[H.rowval[i]]^Xw)/Xsum
+                #MASK is true for selected ions and false otherwise
+                mask = MASK.nzval[i]
+                hp = mask*(H.nzval[i]^Hw)/Hsum
+                xp = mask*(X[H.rowval[i]]^Xw)/Xsum
                 hxp = (hp + xp)^HXw
-                HXentropy += (hxp)*log(hxp)
+                HXentropy += (hxp)*log(hxp + 1e-10)
                 HXsum += hxp
             end
 
@@ -135,10 +152,12 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
             HXentropy = zero(Float32)
             HXsum = zero(Float32)
             @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-                hp = (H.nzval[i]^Hw)/Hsum
-                xp = (X[H.rowval[i]]^Xw)/Xsum
+                #MASK is true for selected ions and false otherwise
+                mask = MASK.nzval[i]
+                hp = mask*(H.nzval[i]^Hw)/Hsum
+                xp = mask*(X[H.rowval[i]]^Xw)/Xsum
                 hxp = (hp + xp)^HXw
-                HXentropy += (hxp)*log(hxp)
+                HXentropy += (hxp)*log(hxp + 1e-10)
                 HXsum += hxp
             end
 

@@ -35,7 +35,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             end
         end
     end
-    #display(chrom)
+    display(chrom)
     chrom = chrom[non_zero,:]
     
     best_scan = getBestPSM(chrom)
@@ -43,7 +43,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     height = chrom[best_scan,:weight]
     #println(best_rt)
     chrom = chrom[(chrom[:,:RT].>(best_rt - 0.5)).&((chrom[:,:RT]).<(best_rt + 0.5)),:]
-    #display(chrom)
+    display(chrom)
     #return chrom
     #display(chrom)
     #Scan with the highest score 
@@ -67,7 +67,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Fit EGH Curve 
     EGH_FIT = nothing
     mask = ones(Bool, length(intensity))
-    try
+    #try
        
         for i in range(1, length(intensity) - 2)
             if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[i + 2])
@@ -98,9 +98,28 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                     #(chrom[start:stop, :rank] .+ 1)./4,
                                     getP0(p0);
                                     inplace = true)
-    catch
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
-    end
+#=
+        LORENZ_FIT = LsqFit.curve_fit(LORENZ_inplace, 
+                                    #JGAUSS_inplace, 
+                                    rt[mask],
+                                    #intensity[start:stop],
+                                    Float32.(smooth[mask]),
+                                    #Float32.(smooth),
+                                    #w,
+                                    #(chrom[start:stop, :rank] .+ 1)./4,
+                                    #[Float32(height)/Float32(2*π), Float32(best_rt), 0.2f0];
+                                    [Float32(height)*Float32(sqrt(2*π)), Float32(best_rt), 1.0f0];
+                                    inplace = true,
+                                    #show_trace = true,
+                                    #lower = Float32[1e3, 0, 0.01],
+                                    #upper = Float32[1e10, 1000, 1],
+                                    autodiff=:finiteforward)
+        println([Float32(height), Float32(best_rt), 0.2f0])
+        println("GAUSS_FIT ", LORENZ_FIT.param)
+=#
+    #catch
+    #    return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+    #end
     peak_area = Integrate(EGH, Tuple(EGH_FIT.param), n = integration_points)
     ##########
     #Plots                                           
@@ -119,6 +138,14 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     fillrange = [0.0 for x in 1:integration_points], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
+        
+        #=
+                    Plots.plot!(X,  
+                    LORENZ(T.(collect(X)), Tuple(LORENZ_FIT.param)), 
+                    fillrange = [0.0 for x in 1:integration_points], 
+                    alpha = 0.25, color = :blue, show = true
+                    ); 
+        =#
         #println(Tuple(GAUSS_FIT.param))
         #Plots.plot!(X,  
         #            GAUSS(T.(collect(X)), Tuple(GAUSS_FIT.param)), 
@@ -129,7 +156,6 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         Plots.vline!([rt[start]], color = :red);
         Plots.vline!([rt[stop]], color = :red);
     end
-
 
     ############
     #Calculate Features

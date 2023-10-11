@@ -84,6 +84,83 @@ function JEGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
    return J
 end
 
+function GAUSS(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
+    h = p[1] 
+    μ = p[2] 
+    σ = p[3]
+    y = zeros(T, length(t))
+    for (i, tᵢ) in enumerate(t)
+       y[i] = h*exp((-(tᵢ - μ))/(2*σ^2))
+    end
+    return y
+end
+
+function GAUSS_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+
+    h = p[1] 
+    μ = p[2] 
+    σ = p[3]
+    for (i, tᵢ) in enumerate(x)
+        F[i] =  h*exp((-(tᵢ - μ))/(2*σ^2))
+    end
+end
+
+function JGAUSS_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    for (i, tᵢ) in enumerate(x)
+        d = γ^2 + (tᵢ - t₀)^2
+        n = h*((tᵢ - t₀)^2 - γ^2)
+        #f = exp((-δt^2)/(d))
+            J[i,1] = γ/d
+            J[i,2] = n/d
+            J[i,3] = 2*γ*h*(tᵢ - t₀)/(d^2)
+   end
+end
+
+
+function LORENZ(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    y = zeros(T, length(t))
+    for (i, tᵢ) in enumerate(t)
+       y[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
+    end
+    return y
+end
+
+function LORENZ_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    for (i, tᵢ) in enumerate(x)
+        F[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
+    end
+end
+
+function JLORENZ_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    for (i, tᵢ) in enumerate(x)
+        d = γ^2 + (tᵢ - t₀)^2
+        n = h*((tᵢ - t₀)^2 - γ^2)
+        #f = exp((-δt^2)/(d))
+            J[i,1] = γ/d
+            J[i,2] = n/d
+            J[i,3] = 2*γ*h*(tᵢ - t₀)/(d^2)
+   end
+end
+
 function Integrate(f::Function, p::NTuple{4, T}; α::AbstractFloat = 0.001, n::Int64 = 1000) where {T<:AbstractFloat}
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 

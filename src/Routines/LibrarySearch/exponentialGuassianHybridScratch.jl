@@ -14,10 +14,12 @@ function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
 end
 
 function GAUSS(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-     y = zeros(T, length(t))
-     for (i, tᵢ) in enumerate(t)
-       y[i] = p[3]*exp((-1.0)*((tᵢ - p[2])^2)/(2*p[1]^2))
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    y = zeros(T, length(t))
+    for (i, tᵢ) in enumerate(t)
+       y[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
     end
     return y
 end
@@ -26,18 +28,23 @@ function GAUSS_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:Abstr
     #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
     #Given parameters in 'p'
     #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
-     for (i, tᵢ) in enumerate(x)
-        F[i] = p[3]*exp((-1.0)*((tᵢ - p[2])^2)/(2*p[1]^2))
+
+    h = p[1] 
+    t₀ = p[2] 
+    γ = p[3]
+    for (i, tᵢ) in enumerate(x)
+        F[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
     end
 end
 
 function JGAUSS_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
     for (i, tᵢ) in enumerate(x)
-        d = ((tᵢ - p[2])^2)/(2*p[1]^2)
+        d = γ^2 + (xᵢ - x₀)^2
+        n = h*((xᵢ - x₀)^2 - γ^2)
         #f = exp((-δt^2)/(d))
-            J[i,1] = 2*d*p[3]*exp((-1.0)*(d))
-            J[i,2] = 2*d*p[3]*exp((-1.0)*(d))/p[1]
-            J[i,3] = exp((-1.0)*(d))
+            J[i,1] = γ/d
+            J[i,2] = n/d
+            J[i,3] = 2*γ*h*(x₁ - x₀)/(d^2)
    end
 end
 
@@ -269,6 +276,8 @@ function getBestPSM(sdf::SubDataFrame)
         return sdf[argmax(sdf.prob),:]
     end
 end
+
+
 
 ms1 = zeros(Complex{Float32}, 500, 1)
 ms2 = zeros(Complex{Float32}, 500, 1)

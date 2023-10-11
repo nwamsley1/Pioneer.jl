@@ -153,13 +153,15 @@ include("src/Routines/LibrarySearch/scratch_newchroms.jl")
 
 
 N = 5000
-prec_id = diann_only[N]#test_chroms[N][:,:precursor_idx][1]
-prec_id =  2716182
-#test_chroms[N]
+
+
+best_psms_passing= best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:]
+prec_id = best_psms_passing[N,:precursor_idx]
 integratePrecursorMS2(test_chroms,UInt32(prec_id), (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), isplot = true)
-prosit_lib["precursors"][prec_id]
-best_psms[best_psms[:,:precursor_idx].==prec_id,[:precursor_idx,:prob,:q_value,:weight,:sequence,:n_obs,:peak_area]]
+#test_chroms[(precursor_idx = prec_id,)]
 N += 1
+
+PSMs[PSMs[:,:precursor_idx].==prec_id,[:precursor_idx,:decoy,:scan_idx,:total_ions,:RT,:matched_ratio,:spectral_contrast,:weight]]
 #plot(test[:,:RT], test[:,:weight], seriestype=:scatter)
 best_psms[:,[:precursor_idx,:sequence,:total_ions,:entropy_sim,:matched_ratio,:spectral_contrast,:n_obs]]
 test_chroms[(precursor_idx=2348785  ,)]
@@ -188,7 +190,6 @@ best_psms[:,:mean_ratio] = best_psms[:,:ratio_sum]./best_psms[:,:data_points]
 best_psms_old = best_psms[:,:]
 best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:]
 best_psms[:,:q_value] .= 0.0
-best_psms[isnan.(best_psms[:,:ρ]),:ρ] .= missing;
 for i in range(1, size(best_psms)[1])
     if ismissing(best_psms[i,:ρ])
         continue
@@ -260,7 +261,7 @@ println("Search time for $ms_file_idx ", sub_search_time.time)
 
 
 main_search_params[:min_spectral_contrast] = 0.5f0
-main_search_params[:min_matched_ratio] = 0.6f0
+main_search_params[:min_matched_ratio] = 0.45f0
 main_search_params[:min_frag_count] = 2
 sub_search_time = @timed PSMs = mainLibrarySearch(
     MS_TABLE,
@@ -333,6 +334,40 @@ for (id, row) in pairs(IDtoROW)
     println(sum(Hs_new[:,first(row)] .- Hs[:,first(IDtoROW_weights[id])]))
     i += 1
 end
+rtPSMs, all_matches  = firstSearch(
+    MS_TABLE,
+    prosit_lib["f_index"],
+    prosit_lib["f_det"],
+    x->x, #RT to iRT map'
+    UInt32(ms_file_idx), #MS_FILE_IDX
+    Laplace(zero(Float64), first_search_params[:fragment_tolerance]),
+    first_search_params,
+    scan_range = (200000, 210000)
+    #scan_range = (1, length(MS_TABLE[:masses]))
+    );
+first(rtPSMs, 5)
+include("src/Routines/LibrarySearch/spectralDistanceMetrics.jl")
+rtPSMs, all_matches  = firstSearch(
+    MS_TABLE,
+    prosit_lib["f_index"],
+    prosit_lib["f_det"],
+    x->x, #RT to iRT map'
+    UInt32(ms_file_idx), #MS_FILE_IDX
+    Laplace(zero(Float64), first_search_params[:fragment_tolerance]),
+    first_search_params,
+    scan_range = (200000, 210000)
+    #scan_range = (1, length(MS_TABLE[:masses]))
+    );
+first(rtPSMs, 5)
+
+X = LinRange(-1.0, 1.0, 100)
+
+Plots.plot(X,  
+GAUSS(collect(X), Tuple((3e5, 0.0, 0.1))), 
+fillrange = [0.0 for x in 1:length(X)], 
+alpha = 0.25, color = :blue, show = true
+); 
+
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()

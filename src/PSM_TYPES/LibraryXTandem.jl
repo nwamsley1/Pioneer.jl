@@ -175,13 +175,17 @@ function Score!(PSMs_dict::Dict,
         if !haskey(IDtoROW, unscored_PSMs[key].precursor_idx)
             continue
         end
+
+        
         index = IDtoROW[unscored_PSMs[key].precursor_idx][1]
         if spectral_contrast[index]<min_spectral_contrast
             continue
         end
+
         if (unscored_PSMs[key].y_count + unscored_PSMs[key].b_count) < min_frag_count
             continue
         end
+
         #if matched_ratio[index]<0.5
         #    continue
         #end

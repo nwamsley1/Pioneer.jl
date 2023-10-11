@@ -1,4 +1,4 @@
-function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}; block_size = 10000) where {m<:Match}
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}, H_MASK::Vector{Float32}; block_size = 10000) where {m<:Match}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -47,7 +47,7 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(match)
-        #H_MASK[i] = getFragInd(match) > 2
+        H_MASK[i] = Float32(getFragInd(match) > 2)
         #println("i ", i)
     end
     H_ncol = col
@@ -68,13 +68,13 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         H_COLS[i] = col
         H_ROWS[i] = row
         H_VALS[i] = getPredictedIntenisty(miss)
-        #H_MASK[i] = getFragInd(miss) > 2
+        H_MASK[i] = Float32(getFragInd(miss) > 2)
     end
     #if i >= (nmatches - 1)
     #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
     #end
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
-    return X, sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_VALS[1:(nmatches + nmisses)])), precID_to_row, H_ncol
+    return X, sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_VALS[1:(nmatches + nmisses)])), sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_MASK[1:(nmatches + nmisses)])) , precID_to_row, H_ncol
     
 end
 #=
