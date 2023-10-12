@@ -168,7 +168,8 @@ test_chroms[(precursor_idx=2348785  ,)]
 
 
 best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMs, [:precursor_idx]))
-sub_search_time = @timed transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursorMS2(test_chroms, 
+@profview 
+@time transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursorMS2(test_chroms, 
                                                 UInt32(psm[:precursor_idx]), 
                                                 (0.1f0, #Fraction peak height α
                                                 0.15f0, #Distance from vertical line containing the peak maximum to the leading edge at α fraction of peak height
@@ -368,6 +369,18 @@ fillrange = [0.0 for x in 1:length(X)],
 alpha = 0.25, color = :blue, show = true
 ); 
 
+gx, gw = gausslegendre(100)
+test_time = @timed begin for N in range(5000, 40000)
+    prec_id = best_psms_passing[N,:precursor_idx]
+    integratePrecursorMS2(test_chroms,
+    gx, gw,
+                            UInt32(prec_id), 
+                            (0.1f0, 0.15f0, 0.15f0, Float32(66.2004), Float32(1e4)), 
+                            isplot = false, 
+                            integration_points = 60)
+    end
+end
+N += 1
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()

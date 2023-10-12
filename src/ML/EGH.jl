@@ -13,6 +13,16 @@ function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
     return y
 end
 
+function EGH(t::T, p::NTuple{4, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    d = 2*p[1] + p[3]*(t - p[2])
+    if d > 0
+        return p[4]*exp((-(t - p[2])^2)/d)
+    else
+        return zero(T)
+    end
+end
+
 """
 Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
 """
@@ -161,11 +171,11 @@ function JLORENZ_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:Abs
    end
 end
 
-function Integrate(f::Function, p::NTuple{4, T}; α::AbstractFloat = 0.001, n::Int64 = 1000) where {T<:AbstractFloat}
+function Integrate(f::Function, x::Vector{Float64}, w::Vector{Float64}, p::NTuple{4, T}; α::AbstractFloat = 0.01, n::Int64 = 1000) where {T<:AbstractFloat}
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 
     #using FastGaussQuadrature
-    x, w = gausslegendre(n)
+    #x, w = gausslegendre(n)
 
     function getBase(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
         B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
@@ -178,6 +188,11 @@ function Integrate(f::Function, p::NTuple{4, T}; α::AbstractFloat = 0.001, n::I
     b = p[2] + B
     #Quadrature rules are for integration bounds -1 to 1 but can shift
     #to arbitrary bounds a and b. 
+    #dotp = 0.0
+    #for i in eachindex(x)
+    #    dotp = f(Float32(x[i]*((b - a)/2) + (a + b)/2), p)*w[i]
+    #end
+    #return ((b - a)/2)*dotp#*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
     return ((b - a)/2)*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
 end
 
