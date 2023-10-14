@@ -1,4 +1,4 @@
-function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, x::Vector{Float64}, w::Vector{Float64}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.01f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.25f0, isplot::Bool = false)
     
     function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat})
         best_scan_idx = 1
@@ -106,81 +106,30 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
    
     T = eltype(chrom.weight)
 
-    #display(chrom)
-    #@with chrom begin 
     filter = falses(size(chrom)[1])
     setFilter!(filter, chrom.weight, chrom.scan_idx)
     best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value)
     best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
     filterOnRT!(filter, best_rt, chrom.RT)
     #Needs to be setable parametfer. 1% is currently hard-coded
-    filterLowIntensity!(filter, height/Float32(100), chrom.weight)
-    #end
+    filterLowIntensity!(filter, height*intensity_filter_fraction, chrom.weight)
     #Filter out samples below intensity threshold. 
     intensity, rt, lsq_fit_weight = zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  ones(Float32, (size(chrom)[1] - sum(filter)) + 2)
     #Offset needs to be a parameter/optional argument
 
     fillIntensityandRT!(intensity, rt, filter, chrom.weight, chrom.RT)
-    rt[1], rt[end] = rt[2] - 0.25f0, rt[end-1] + 0.25f0
+    rt[1], rt[end] = rt[2] - tail_distance, rt[end-1] + tail_distance
     intensity[1], intensity[end] = zero(Float32), zero(Float32)
     fillLsqFitWeights!(lsq_fit_weight, intensity)
 
-    #=
-    right_w = rt[end - 1] - rt[argmax(intensity)]
-    left_w = rt[argmax(intensity)] - rt[2]
-    w = 0.2
-    if left_w < w
-        if right_w > w
-            rt[1] = rt[argmax(intensity)] - right_w
-            intensity[1] = intensity[end - 1]
-        else
-            rt[1] = rt[2] - 0.25f0
-        end
-    else
-        lsq_fit_weight[1] = 0.0f0
-    end
-
-    if right_w < w
-        if left_w > w
-            rt[end] = rt[argmax(intensity)] + left_w
-            intensity[end - 1] = intensity[2]
-        else
-            rt[end] = rt[end - 1] + 0.25f0
-        end
-    else
-        lsq_fit_weight[end] = 0.0f0
-    end
-    =#
-    #=
-    rt = rt[2:end - 1]
-    intensity = intensity[2:end - 1]
-    lsq_fit_weight = lsq_fit_weight[2:end - 1]
-    
-    println("intensity $intensity")
-    println("rt $rt")
-    println("lsq_fit_weight $lsq_fit_weight")
-    =#
     #Scan with the highest score 
     #Too few points to attempt integration
     if (size(chrom)[1] - sum(filter)) < 2
-        return best_scan#(missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+        return nothing
     end
-    #########
-    #Probably don't need to allocate all of this memory. 
-    #=
-    min_intensity = maximum(chrom[:,:weight])/100.0
-    rt = Float32.(chrom[chrom[:,:weight].>=min_intensity,:RT])
-    pushfirst!(rt, Float32(chrom[1,:RT] - 0.25))
-    push!(rt, Float32(chrom[end,:RT] + 0.25))
-    intensity = collect(chrom[chrom[:,:weight].>=min_intensity,:weight])
-    pushfirst!(intensity, Float32(0.0))
-    push!(intensity, Float32(0.0))
-    #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
-    start, stop = 1, length(intensity)# getIntegrationBounds(Int64.(frag_counts), rt, intensity, window_size, order, min_width, min_scans)
-    =#
+
     ########
     #Fit EGH Curve 
-      
     EGH_FIT = nothing
     try
         EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
@@ -188,36 +137,17 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                     rt,
                                     intensity,
                                     lsq_fit_weight,
-                                    getP0((0.1f0, 
-                                            0.15f0, 
-                                            0.15f0, 
+                                    getP0((α, 
+                                            half_width_at_α, 
+                                            half_width_at_α, 
                                             Float32(best_rt), 
                                             Float32(height)
                                         ));
-                                    x_tol = 1e-3,
-                                    maxIter = 100,
+                                    x_tol = LsqFit_tol,
+                                    maxIter = Lsq_max_iter,
                                     inplace = true)
-        #=
-        LORENZ_FIT = LsqFit.curve_fit(LORENZ_inplace, 
-                                    #JGAUSS_inplace, 
-                                    rt[mask],
-                                    #intensity[start:stop],
-                                    Float32.(smooth[mask]),
-                                    #Float32.(smooth),
-                                    #w,
-                                    #(chrom[start:stop, :rank] .+ 1)./4,
-                                    #[Float32(height)/Float32(2*π), Float32(best_rt), 0.2f0];
-                                    [Float32(height)*Float32(sqrt(2*π)), Float32(best_rt), 1.0f0];
-                                    inplace = true,
-                                    #show_trace = true,
-                                    #lower = Float32[1e3, 0, 0.01],
-                                    #upper = Float32[1e10, 1000, 1],
-                                    autodiff=:finiteforward)
-        println([Float32(height), Float32(best_rt), 0.2f0])
-        println("GAUSS_FIT ", LORENZ_FIT.param)
-        =#
     catch
-        return best_scan#(missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+        return nothing
     end
 
     ##########
@@ -231,7 +161,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), integration_points)
         Plots.plot!(X,  
                     EGH(T.(collect(X)), Tuple(EGH_FIT.param)), 
-                    fillrange = [0.0 for x in 1:integration_points], 
+                    fillrange = [0.0 for x in 1:length(x)], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
     
@@ -245,9 +175,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     
     MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
     
-    peak_area = Integrate(EGH, x, w, Tuple(EGH_FIT.param), n = integration_points)
-    #return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
- 
+    peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
+   
     sum_of_residuals = zero(Float32)
     points_above_FWHM = zero(Int32)
     points_above_FWHM_01 = zero(Int32)
@@ -264,7 +193,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     GOF = 1 - sum_of_residuals/sum(intensity)
     FWHM = getFWHM(0.5, EGH_FIT.param[3], EGH_FIT.param[1])
     FWHM_01 = getFWHM(0.01, EGH_FIT.param[3], EGH_FIT.param[1])
-    asymmetry = atan(abs(EGH_FIT.param[3])/sqrt(abs(EGH_FIT.param[1]/2)))
+    #asymmetry = atan(abs(EGH_FIT.param[3])/sqrt(abs(EGH_FIT.param[1]/2)))
 
 
 
@@ -285,14 +214,12 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     mean_ratio = mean(chrom.matched_ratio)
     base_width = rt[end] - rt[1]
-
-    #best_psms[row_idx,:best_scan] = best_scan
     
     chrom.peak_area[best_scan] = peak_area
     chrom.GOF[best_scan] = GOF
     chrom.FWHM[best_scan] = FWHM
     chrom.FWHM_01[best_scan] = FWHM_01
-    chrom.asymmetry[best_scan] = asymmetry
+    #chrom.asymmetry[best_scan] = asymmetry
     chrom.points_above_FWHM[best_scan] = points_above_FWHM
     chrom.points_above_FWHM_01[best_scan] = points_above_FWHM_01
     chrom.σ[best_scan] = σ
@@ -310,74 +237,26 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     chrom.best_scan[best_scan] = true
     
 
-    return best_scan
+    return nothing
 end
 
-function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; n_quadrature_nodes::Int64 = 100)
-    ##########
-    #Add New Columsn to best_psms_df. 
-    #=
-    new_cols = [(:peak_area,                   Union{Float32, Missing})
-    (:GOF,                      Union{Float32, Missing})
-    (:FWHM,                     Union{Float32, Missing})
-    (:FWHM_01,                  Union{Float32, Missing})
-    (:asymmetry,                Union{Float32, Missing})
-    (:points_above_FWHM,        Union{Float32, Missing})
-    (:points_above_FWHM_01,     Union{Float32, Missing})
-    (:σ,                        Union{Float32, Missing})
-    (:tᵣ,                       Union{Float32, Missing})
-    (:τ,                        Union{Float32, Missing})
-    (:H,                        Union{Float32, Missing})
-    (:sum_of_weights,           Union{Float32, Missing})
-    (:mean_spectral_contrast,   Union{Float32, Missing})
-    (:entropy_sum,              Union{Float32, Missing})
-    (:mean_log_probability,     Union{Float32, Missing})
-    (:ions_sum,                 Union{Int32, Missing})
-    (:data_points,              Union{Int32, Missing})
-    (:mean_matched_ratio,       Union{Float32, Missing})
-    (:base_width_min,           Union{Float32, Missing})]
+function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; n_quadrature_nodes::Int64 = 100, intensity_filter_fraction::Float32 = 0.01f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.25f0, isplot::Bool = false)
 
-    for column in new_cols
-        col_type = last(column)
-        best_psms_df[!,first(column)] = Vector{col_type}(undef, size(best_psms_df)[1])
-    end
-    =#
-    println("TEST")
     gx, gw = gausslegendre(n_quadrature_nodes)
-    #return combine(sdf -> integratePrecursorMS2(
-   #     sdf,
-   #     gx,
-   #     gw) = grouped_precursor_df
-   # )
-    for i in ProgressBar(range(1, length(grouped_precursor_df)))
-        integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},gx,gw)
-    end
-    #combine(grouped_precursor_df) do sdf
-    #    best_row = integratePrecursorMS2(sdf,gx,gw);
-    #    sdf[best_row, :]
-    #end
-    #=
-        ], grouped_precursor_df)
-        for precursor_group_idx::Int64 in ProgressBar(range(1, length(grouped_precursor_df)))#length(test_chroms)))
-            best_row::Int64, failed::Bool = integratePrecursorMS2(
-                                    grouped_precursor_df[precursor_group_idx]::SubDataFrame,
-                                    gx,
-                                    gw
-                                )
-            if failed
-                #println("failed at $precursor_group_idx")
-                for col_name in new_cols
-                    best_psms_df[precursor_group_idx, first(col_name)] = missing
-                end
-            end
 
-            #=
-            for col_name in names#names([precursor_group_idx])
-                best_psms_df[precursor_group_idx, col_name] = grouped_precursor_df[precursor_group_idx][best_row, col_name]
-            end
-            =#
-        end
-    =#
+    for i in ProgressBar(range(1, length(grouped_precursor_df)))
+        integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
+                                gx::Vector{Float64},
+                                gw::Vector{Float64},
+                                intensity_filter_fraction = intensity_filter_fraction,
+                                α = α,
+                                half_width_at_α = half_width_at_α,
+                                LsqFit_tol = LsqFit_tol,
+                                Lsq_max_iter = Lsq_max_iter,
+                                tail_distance = tail_distance,
+                                isplot = isplot
+                                )
+    end
 
 end
 #=

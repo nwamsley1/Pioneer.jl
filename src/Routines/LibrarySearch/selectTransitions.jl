@@ -96,11 +96,11 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
 end
 
 function selectIsotopes!(isotopes::Vector{Isotope{T}},
-                        prec_list::Vector{Tuple{Float64, UInt32}}, 
+                        prec_list::Vector{Tuple{Union{V, Missing}, UInt32}}, 
                         isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{T}}}, 
                         prec_ids::Vector{UInt32}, 
                         rt::U, 
-                        rt_tol::U) where {T,U<:AbstractFloat}
+                        rt_tol::U) where {T,U,V<:AbstractFloat}
     i = 0
     ion_idx = 0
     prec_idx = 0

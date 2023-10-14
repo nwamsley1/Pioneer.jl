@@ -171,7 +171,7 @@ function JLORENZ_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:Abs
    end
 end
 
-function Integrate(f::Function, x::Vector{Float64}, w::Vector{Float64}, p::NTuple{4, T}; α::AbstractFloat = 0.01, n::Int64 = 1000) where {T<:AbstractFloat}
+function Integrate(f::Function, x::Vector{Float64}, w::Vector{Float64}, p::NTuple{4, T}; α::AbstractFloat = 0.01) where {T<:AbstractFloat}
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 
     #using FastGaussQuadrature
@@ -306,20 +306,19 @@ function pearson_corr!(psms::DataFrame; N::Int64 = 500, width_t::Float64 = 2.0) 
     i = 0
     for psm in eachrow(psms)
         i += 1
-        ms1_params = (psm[:σ_ms1],
-                        psm[:tᵣ_ms1],
-                        psm[:τ_ms1],
-                        psm[:H_ms1])
-
-        if any(ismissing.(ms1_params))
+        if ismissing(psm[:τ_ms1])
             psms[i,:ρ] = missing
             continue
         end
+        ms1_params = (Float32(psm[:σ_ms1]),
+        Float32(psm[:tᵣ_ms1]),
+        Float32(psm[:τ_ms1]),
+        Float32(psm[:H_ms1]))
 
-        ms2_params = (psm[:σ],
-                        psm[:tᵣ],
-                        psm[:τ],
-                        psm[:H]
+        ms2_params = (Float32(psm[:σ]),
+                        Float32(psm[:tᵣ]),
+                        Float32(psm[:τ]),
+                        Float32(psm[:H])
         )
         
         psms[i,:ρ] = pearson_corr(ms1, ms2, ms1_params, ms2_params, N = N, width_t = width_t)

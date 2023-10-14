@@ -16,7 +16,7 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, la
     PSMs[:,:q_value] = q_values;
 end
 =#
-function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, labels::Vector{Union{Missing, Bool}})
+function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, T}}, labels::Vector{Union{Missing, Bool}}) where {T<:AbstractFloat}
     #Could bootstratp to get more reliable values. 
     #q_values = zeros(Float64, (length(probs),))
     order = reverse(sortperm(probs)) #Sort class probabilities

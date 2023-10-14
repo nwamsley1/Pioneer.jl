@@ -71,29 +71,29 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
     Dict(
 
         #Stanard Metrics 
-        :hyperscore => T[],
-        :error => T[],
-        :y_ladder => Int8[],
-        :b_ladder => Int8[],
-        :poisson => T[],
-        :total_ions => UInt32[],
-        :entropy => T[],
-        :spectrum_peaks => UInt32[],
-        :intensity_explained => T[],
+        :hyperscore => Float16[],
+        :error => Float16[],
+        :y_ladder => UInt8[],
+        :b_ladder => UInt8[],
+        :poisson => Float16[],
+        :total_ions => UInt16[],
+        #:entropy => T[],
+        :spectrum_peaks => UInt16[],
+        :intensity_explained => Float16[],
         :best_rank => UInt8[],
         :topn => UInt8[],
 
         #Spectral Distrance Metrics
-        :spectral_contrast => Float32[],
-        :scribe_score => Float32[],
-        :city_block => Float32[],
-        :matched_ratio => Float32[],
-        :entropy_sim => Float32[],
+        :spectral_contrast => Float16[],
+        :scribe_score => Float16[],
+        :city_block => Float16[],
+        :matched_ratio => Float16[],
+        :entropy_sim => Float16[],
 
         :weight => Float32[],
-        :scan_idx => Int64[],
+        :scan_idx => UInt32[],
         :precursor_idx => UInt32[],
-        :ms_file_idx => UInt32[]
+        :ms_file_idx => UInt16[]
     )
 end
 
@@ -190,29 +190,29 @@ function Score!(PSMs_dict::Dict,
         #    continue
         #end
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
-        append!(PSMs_dict[:hyperscore], HyperScore(unscored_PSMs[key]))
-        append!(PSMs_dict[:y_ladder], getLongestSet(unscored_PSMs[key].y_ions))
-        append!(PSMs_dict[:b_ladder], getLongestSet(unscored_PSMs[key].b_ions))
-        append!(PSMs_dict[:total_ions], unscored_PSMs[key].y_count + unscored_PSMs[key].b_count)
-        append!(PSMs_dict[:poisson], getPoisson(expected_matches, unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
+        append!(PSMs_dict[:hyperscore], Float16(HyperScore(unscored_PSMs[key])))
+        append!(PSMs_dict[:y_ladder], UInt8(getLongestSet(unscored_PSMs[key].y_ions)))
+        append!(PSMs_dict[:b_ladder], UInt8(getLongestSet(unscored_PSMs[key].b_ions)))
+        append!(PSMs_dict[:total_ions], UInt16(unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
+        append!(PSMs_dict[:poisson], Float16(getPoisson(expected_matches, unscored_PSMs[key].y_count + unscored_PSMs[key].b_count)))
         
         #append!(PSMs_dict[:error], unscored_PSMs[key].error/(unscored_PSMs[key].y_count + unscored_PSMs[key].b_count))
-        append!(PSMs_dict[:error], unscored_PSMs[key].error)
-        append!(PSMs_dict[:spectrum_peaks], spectrum_peaks)
-        append!(PSMs_dict[:intensity_explained], (sum(unscored_PSMs[key].b_int) + sum(unscored_PSMs[key].y_int))/spectrum_intensity)
-        append!(PSMs_dict[:entropy], StatsBase.entropy(unscored_PSMs[key].intensities))
-        append!(PSMs_dict[:best_rank], unscored_PSMs[key].best_rank)
-        append!(PSMs_dict[:topn], unscored_PSMs[key].topn)
+        append!(PSMs_dict[:error], Float16(log2(abs(unscored_PSMs[key].error))))
+        append!(PSMs_dict[:spectrum_peaks], UInt16(spectrum_peaks))
+        append!(PSMs_dict[:intensity_explained], Float16((sum(unscored_PSMs[key].b_int) + sum(unscored_PSMs[key].y_int))/spectrum_intensity))
+        #append!(PSMs_dict[:entropy], StatsBase.entropy(unscored_PSMs[key].intensities))
+        append!(PSMs_dict[:best_rank], UInt8(unscored_PSMs[key].best_rank))
+        append!(PSMs_dict[:topn], UInt8(unscored_PSMs[key].topn))
 
-        append!(PSMs_dict[:spectral_contrast], spectral_contrast[index])
-        append!(PSMs_dict[:scribe_score], scribe_score[index])
-        append!(PSMs_dict[:city_block], city_block[index])
-        append!(PSMs_dict[:matched_ratio], matched_ratio[index])
-        append!(PSMs_dict[:entropy_sim], entropy_sim[index])
-        append!(PSMs_dict[:weight], weight[IDtoROW_weights[unscored_PSMs[key].precursor_idx]])
+        append!(PSMs_dict[:spectral_contrast], Float16(spectral_contrast[index]))
+        append!(PSMs_dict[:scribe_score], Float16(scribe_score[index]))
+        append!(PSMs_dict[:city_block], Float16(city_block[index]))
+        append!(PSMs_dict[:matched_ratio], Float16(matched_ratio[index]))
+        append!(PSMs_dict[:entropy_sim], Float16(entropy_sim[index]))
+        append!(PSMs_dict[:weight], Float32(weight[IDtoROW_weights[unscored_PSMs[key].precursor_idx]]))
 
-        append!(PSMs_dict[:scan_idx], scan_idx)
-        append!(PSMs_dict[:precursor_idx], unscored_PSMs[key].precursor_idx)
-        append!(PSMs_dict[:ms_file_idx], unscored_PSMs[key].ms_file_idx)
+        append!(PSMs_dict[:scan_idx], UInt32(scan_idx))
+        append!(PSMs_dict[:precursor_idx], UInt32(unscored_PSMs[key].precursor_idx))
+        append!(PSMs_dict[:ms_file_idx], UInt16(unscored_PSMs[key].ms_file_idx))
     end
 end

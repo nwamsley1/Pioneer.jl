@@ -29,7 +29,7 @@ function SearchRAW(
                     quadrupole_isolation_width::Float64 = 8.5,
                     regularize::Bool = false,
                     rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
-                    rt_index::Union{retentionTimeIndex{Float64, Float32}, Vector{Tuple{Float64, UInt32}}, Missing} = missing,
+                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     rt_tol::Float64 = 30.0,
                     sample_rate::Float64 = 1.0,
                     scan_range::Tuple{Int64, Int64} = (0, 0),
@@ -37,7 +37,7 @@ function SearchRAW(
                     spec_order::Set{Int64} = Set(2),
                     topN::Int64 = 20,
                     λ::Float32 = Float32(1e3),
-                    γ::Float32 = zero(Float32))
+                    γ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
     println("max_peak_width $max_peak_width")
 
     ##########
@@ -542,7 +542,7 @@ function integrateMS1(
     #Mandatory Args
     spectra::Arrow.Table, 
     isotope_dict::UnorderedDictionary{UInt32, Vector{Isotope{Float32}}},
-    prec_rt_list::Vector{Tuple{T, UInt32}},
+    prec_rt_list::Vector{Tuple{Union{Missing,T}, UInt32}} ,
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
     params::Dict; 

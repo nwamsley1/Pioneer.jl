@@ -449,69 +449,26 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 
                                                 scan_range = (1, length(MS_TABLE[:masses]))
                                             );
-        println("before filter ", size(PSMs))
-        #filter!(x->x.topn>1, PSMs);
-        #println("after filter", size(PSMs))
-        #println("Search time for $ms_file_idx ", sub_search_time.time)
-        #PSMs = PSMs[PSMs[:,:weight].>5000.0,:];
-        #filter!(:weight => x -> x<5000.0,PSMs);
-        #PSMs = PSMs[PSMs[:,:weight].>0.0,:];
-        #PSMs = PSMs[PSMs[:,:total_ions].>3,:];
-        for i in ProgressBar(size(PSMs)[1])
-            prec_id = PSMs[i,:precursor_idx]
-            base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
-            PSMs[i,:weight] = PSMs[i,:weight]/base_peak_intensity
-        end
-        CSV.write("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101323.csv", PSMs);
-        PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101323.csv"))
-        PSMs[:,:q_value] .= 0.0
-        #PSMs[isnan.(PSMs[:,:entropy_sim]),:entropy_sim] .= 0.0;
-        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-        filter!(x -> x.n_obs>2, PSMs);#PSMs[PSMs[:,:n_obs].>2,:];
-        model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
-                                    scribe_score + weight_log2 + topn + spectral_contrast + 
-                                    n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMs, 
-                                    Binomial(), 
-                                    ProbitLink())
-        Y′ = GLM.predict(model_fit, PSMs);
-        getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
-        println("Target PSMs at 25% FDR: ", sum((PSMSs.q_value.<=0.25).&(PSMs.decoy.==false)))
-        PSMs[:,:prob] = allowmissing(Y′)
-        #PSMS_SUB = PSMS_SUB[(PSMS_SUB[:,:q_value].<=0.25),:]
-        sort!(PSMs,:RT);
-        #test_chroms = groupby(PSMS_SUB[:,[:precursor_idx,:q_value,:prob,:decoy,:scan_idx,:topn,:total_ions,:scribe_score,:spectral_contrast,:entropy_sim,:matched_ratio,:hyperscore,:weight,:RT,:RT_pred]],:precursor_idx);
 
-        for column in new_cols
-            col_type = last(column)
-            PSMs[!,first(column)] = Vector{col_type}(undef, size(PSMs)[1])
-        end
-        PSMs[!,:best_scan] .= false
-        any(ismissing.(PSMs[:,:GOF]).==false)
+        CSV.write("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101423.csv", PSMs);
+        #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101423.csv"))
+        #PSMs[isnan.(PSMs[:,:entropy_sim]),:entropy_sim] .= 0.0;
+        time_test = @timed refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        
+        
+        sort!(PSMs,:RT); #Sorting before grouping is critical. 
         test_chroms = groupby(PSMs, :precursor_idx);
-        any(ismissing.(test_chroms[1][:,:GOF]).==false)
-        #test_time = @timed best_psms_test = DataFrame(best_psms_dict)
+        #Integrate 
         time_test = @timed integratePrecursors(test_chroms)
-        any(ismissing.(test_chroms[1][:,:GOF]).==false)
-        any(ismissing.(PSMs[:,:GOF]).==false)
-        #Keep only the best scans
         time_test = @timed filter!(x -> x.best_scan, PSMs);
         
         #filter!(:total_ions => x -> x<4, PSMs);
         #sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-        sub_search_time = @timed transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursorMS2(test_chroms, 
-                                            UInt32(psm[:precursor_idx]), 
-                                            (0.1f0, #Fraction peak height α
-                                            0.15f0, #Distance from vertical line containing the peak maximum to the leading edge at α fraction of peak height
-                                            0.15f0, #Distance from vertical line containing the peak maximum to the trailing edge at α fraction of peak height
-                                            Float32(psm[:RT]), psm[:weight]), isplot = false)) => [:peak_area,:GOF,:FWHM,:FWHM_01,:asymmetry,:points_above_FWHM,:points_above_FWHM_01,:σ,:tᵣ,:τ,:H,:weight_sum,:hyperscore_sum,:entropy_sum,:scribe_sum,:ions_sum,:data_points,:ratio_sum,:base_width]);
-
         println("Refine PSMs! time for $ms_file_idx ", sub_search_time.time)
 
         sub_search_time = @timed lock(lk) do 
             println("ms_file_idx: $ms_file_idx has ", size(PSMs))
-            PSMs = nothing
-            PSMS_SUB = nothing
-            BPSMS[ms_file_idx] = best_psms
+            BPSMS[ms_file_idx] = PSMs
         end
         println("Assigne best_psms_time for $ms_file_idx ", sub_search_time.time)
         #println("TEST length(prec_counts) ", length(prec_counts))
@@ -597,7 +554,7 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                         best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:charge], QRoots(4), 4);
     end
 
-    prec_rt_table = sort(collect(zip(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:RT], 
+    prec_rt_table = sort(collect(zip(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:tᵣ], 
     UInt32.(best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:precursor_idx]))), by = x->first(x));
 
     println("Integrating MS1 $ms_file_idx...")
@@ -610,12 +567,17 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                     scan_range = (1, length(MS_TABLE[:scanNumber])));
 
     #Integrate MS1 Chromatograms 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, UInt32(psm[:precursor_idx]), 
-                                        (0.1f0, 
-                                        0.15f0, 
-                                        0.15f0, 
-                                        Float32(psm[:tᵣ]), 
-                                        Float32(1e4)),
+    gx, gw = gausslegendre(100)
+    ms1_chrom_keys = keys(ms1_chroms)
+    time_test = @timed transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, 
+                                        ms1_chrom_keys,
+                                        gx,
+                                        gw,
+                                        UInt32(psm[:precursor_idx]), 
+                                        [Float32(psm[:σ]),
+                                         Float32(psm[:tᵣ]),
+                                         Float32(psm[:τ]), 
+                                         Float32(1e4)],
                                         isplot = false)) => [:peak_area_ms1,
                                         :GOF_ms1,
                                         :FWHM_ms1,
@@ -627,7 +589,7 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
     
     #Get Correlation between MS1 and MS2 train_classes
     pearson_corr!(best_psms, N = 500)
-
+    best_psms[:,:ms1_ms2_diff] = abs.(best_psms[!,:tᵣ] .- best_psms[!,:tᵣ_ms1]);
     #########
     #Quality Filter
     best_psms[isnan.(coalesce.(best_psms[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing

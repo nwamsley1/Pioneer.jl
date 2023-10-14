@@ -179,24 +179,24 @@ best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMs, [:precursor_idx]))
 features = [:hyperscore,:total_ions,:intensity_explained,
             :poisson,:spectral_contrast,:entropy_sim,
             :RT_error,:scribe_score,:RT,:charge,
-            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn,:err_norm,:error]
-append!(features, [:peak_area,:GOF,:asymmetry,:points_above_FWHM_01,:points_above_FWHM,:H,:ρ,:FWHM, :FWHM_01, :y_ladder, :b_ladder, :n_obs,:peak_area_ms1,:prec_mz,:sequence_length,:spectrum_peaks,
-:weight_sum,:hyperscore_sum,:entropy_sum,:scribe_sum,:ions_sum,:data_points,:ratio_sum,:base_width,:prob_over_data,:mean_ratio]);
+            :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn,:err_norm_log2,:error]
+append!(features, [:peak_area,:GOF,:points_above_FWHM_01,:points_above_FWHM,:H,:ρ,:FWHM,:FWHM_01, :y_ladder,:b_ladder,:peak_area_ms1,:prec_mz,:sequence_length,:spectrum_peaks,
+:sum_of_weights,:mean_spectral_contrast,:entropy_sum,:mean_log_probability,:ions_sum,:mean_matched_ratio,:data_points,:base_width_min,:ms1_ms2_diff]);
 
-best_psms[:,:prob_over_data] = best_psms[:,:scribe_sum]./best_psms[:,:data_points]
-best_psms[:,:hyperscore_sum] = best_psms[:,:hyperscore_sum]./best_psms[:,:data_points]
-best_psms[:,:entropy_sum] = best_psms[:,:entropy_sum].*best_psms[:,:data_points]
-best_psms[:,:mean_ratio] = best_psms[:,:ratio_sum]./best_psms[:,:data_points]
+#best_psms[:,:prob_over_data] = best_psms[:,:scribe_sum]./best_psms[:,:data_points]
+#best_psms[:,:hyperscore_sum] = best_psms[:,:hyperscore_sum]./best_psms[:,:data_points]
+#best_psms[:,:entropy_sum] = best_psms[:,:entropy_sum].*best_psms[:,:data_points]
+#best_psms[:,:mean_ratio] = best_psms[:,:ratio_sum]./best_psms[:,:data_points]
 #Train Model 
-best_psms_old = best_psms[:,:]
-best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:]
+#best_psms_old = best_psms[:,:]
+#best_psms = best_psms[(ismissing.(best_psms[:,:peak_area]).==false),:]
 best_psms[:,:q_value] .= 0.0
 for i in range(1, size(best_psms)[1])
     if ismissing(best_psms[i,:ρ])
         continue
     end
     if isnan(best_psms[i,:ρ])
-        best_psms[i,:ρ] = missing
+best_psms[i,:ρ] = missing
     end
 end
 #best_psms[isnan.(best_psms[:,:entropy_sum]).&(ismissing.(best_psms[:,:entropy_sum]).==false),:entropy_sum] .= 0.0;
@@ -418,24 +418,24 @@ end
 
 best_psms_test = DataFrame(best_psms_dict)
 new_cols = [(:peak_area,                   Union{Float32, Missing})
-    (:GOF,                      Union{Float32, Missing})
-    (:FWHM,                     Union{Float32, Missing})
-    (:FWHM_01,                  Union{Float32, Missing})
-    (:asymmetry,                Union{Float32, Missing})
-    (:points_above_FWHM,        Union{Float32, Missing})
-    (:points_above_FWHM_01,     Union{Float32, Missing})
+    (:GOF,                      Union{Float16, Missing})
+    (:FWHM,                     Union{Float16, Missing})
+    (:FWHM_01,                  Union{Float16, Missing})
+    (:points_above_FWHM,        Union{UInt16, Missing})
+    (:points_above_FWHM_01,     Union{UInt16, Missing})
     (:σ,                        Union{Float32, Missing})
-    (:tᵣ,                       Union{Float32, Missing})
+    (:tᵣ,                       Union{Float16, Missing})
     (:τ,                        Union{Float32, Missing})
     (:H,                        Union{Float32, Missing})
     (:sum_of_weights,           Union{Float32, Missing})
     (:mean_spectral_contrast,   Union{Float32, Missing})
     (:entropy_sum,              Union{Float32, Missing})
-    (:mean_log_probability,     Union{Float32, Missing})
-    (:ions_sum,                 Union{Int32, Missing})
-    (:data_points,              Union{Int32, Missing})
+    (:mean_log_probability,     Union{Float16, Missing})
+    (:ions_sum,                 Union{UInt32, Missing})
+    (:data_points,              Union{UInt32, Missing})
     (:mean_matched_ratio,       Union{Float32, Missing})
-    (:base_width_min,           Union{Float32, Missing})]
+    (:base_width_min,           Union{Float16, Missing})
+    (:best_scan, Union{Bool, Missing})]
 
 
 best_psms_dict = Dict{Symbol, AbstractVector}()
@@ -468,7 +468,54 @@ result_df = combine(groupby(test_chroms, :precursor_idx)) do precursor_group
     )
 end
 
+Profile.Allocs.Clear()
+using PProf
 
+gx, gw = gausslegendre(100)
+ms1_chrom_keys = keys(ms1_chroms)
+best_psms_sub = copy(first(best_psms, 100000))
+time_test = @timed transform!(best_psms_sub, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, 
+                                    ms1_chrom_keys,
+                                    gx,
+                                    gw,
+                                    UInt32(psm[:precursor_idx]), 
+                                    [Float32(psm[:σ]),
+                                     Float32(psm[:tᵣ]),
+                                     Float32(psm[:τ]), 
+                                     Float32(1e4)],
+                                    isplot = false)) => [:peak_area_ms1,
+                                    :GOF_ms1,
+                                    :FWHM_ms1,
+                                    :FWHM_01_ms1,
+                                    :asymmetry_ms1,
+                                    :points_above_FWHM_ms1,
+                                    :points_above_FWHM_01_ms1,
+                                    :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
+test_psm = best_psms[10000,:]
+integratePrecursor(ms1_chroms, 
+                                    ms1_chrom_keys,
+                                    gx,
+                                    gw,
+                                    UInt32(test_psm[:precursor_idx]), 
+                                    [Float32(test_psm[:σ]),
+                                     Float32(test_psm[:tᵣ]),
+                                     Float32(test_psm[:τ]), 
+                                     Float32(1e4)],
+                                    isplot = false)
+
+N = 10000
+test_psm = best_psms[N,:]
+integratePrecursor(ms1_chroms, 
+                                           ms1_chrom_keys,
+                                           gx,
+                                           gw,
+                                           UInt32(test_psm[:precursor_idx]), 
+                                           [Float32(test_psm[:σ]),
+                                            Float32(test_psm[:tᵣ]),
+                                            Float32(test_psm[:τ]), 
+                                            Float32(1e4)],
+                                           isplot = true)
+                                           N += 1
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()

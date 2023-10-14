@@ -15,20 +15,22 @@ Moreover, because smoothing can distort peak signals, reducing peak heights, and
  the peak parameters extracted by curve fitting are not distorted and the effect of random noise in the signal is reduced by curve fitting over multiple
   data points in the peak. This technique has been implemented in Matlab/Octave and in spreadsheets.
 """
-function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, precursor_idx::UInt32, p0::NTuple{5, T}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {T<:AbstractFloat}
+function integratePrecursor(chroms::GroupedDataFrame{DataFrame}, chrom_keys::DataFrames.GroupKeys{GroupedDataFrame{DataFrame}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}, precursor_idx::UInt32, p0::Vector{T}; isplot::Bool = false) where {T<:AbstractFloat}
 
-    if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
+    if ((precursor_idx=precursor_idx,) ∉ chrom_keys) #If the precursor is not found
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
     #Chromatogram for the precursor. 
     #Has columns "weight" and "rt". 
-    chrom = chroms[(precursor_idx=precursor_idx,)]
-    return integratePrecursor(chrom, p0, eltype(chrom[:,:weight]), max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, min_scans = min_scans, min_width = min_width, integration_width = integration_width, integration_points = integration_points, isplot = isplot)
+    #chrom = chroms[(precursor_idx=precursor_idx,)]
+    return integratePrecursor(chroms[(precursor_idx=precursor_idx,)], gauss_quad_x, gauss_quad_w, p0, isplot = isplot)
 end
 
-function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, p0::NTuple{5, U}, T::Type; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
+function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}, p0::Vector{U}; LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.25f0, isplot::Bool = false) where {U<:AbstractFloat}
 
+    T = eltype(chrom.weight)
+    #=
     non_zero = BitVector(undef, size(chrom)[1])
     fillNonZero!(non_zero, chrom[:,:weight])
 
@@ -44,27 +46,53 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
             end
         end
     end
-    chrom = chrom[non_zero,:]
+    =#
+    #chrom = chrom[non_zero,:]
     #display(chrom)
     #Scan with the highest score 
     #Too few points to attempt integration
-    if size(chrom)[1] < 3
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
-    end
+    #if size(chrom)[1] < 3
+    #    return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+    #nd
     #########
     #Probably don't need to allocate all of this memory. 
-    rt = chrom[:,:rt]
-    intensity = collect(chrom[:,:weight])
+    rt = collect(chrom[!,:rt])
+    intensity = collect(chrom[!,:weight])
+    lsq_fit_weight = zeros(eltype(intensity), length(intensity))
+    max_intensity = maximum(intensity)
+
+    intensity, rt, lsq_fit_weight = zeros(Float32, (size(chrom)[1] + 2)),  zeros(Float32, (size(chrom)[1] + 2)),  ones(Float32, (size(chrom)[1] + 2))
+    for i in range(1, length(rt) - 2)
+        intensity[i + 1] = chrom.weight[i]
+        rt[i + 1] = chrom.rt[i]
+    end
+
+    rt[1], rt[end] = rt[2] - tail_distance, rt[end-1] + tail_distance
+    intensity[1], intensity[end] = zero(Float32), zero(Float32)
+
+    max_intensity = maximum(intensity)
+    for i in eachindex(intensity)
+        if intensity[i] > max_intensity/100.0
+            lsq_fit_weight[i] = one(eltype(lsq_fit_weight))
+        end
+    end
+
+    #display(chrom)
+    #println("intensity $intensity")
+    #println("lsq_fit_weight $lsq_fit_weight")
+    if sum(iszero.(intensity)) == length(intensity)
+        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+    end
     #intensity[chrom[:,:rank].<2].=0.0
-    frag_counts = collect(chrom[:,:frag_count])
+    #frag_counts = collect(chrom[:,:frag_count])
 
     #########
     #Get Boundaries for fitting EGH curve 
     #Smoothing parameters for first derivative
-    window_size, order = getSmoothingParams(length(rt), max_smoothing_window, min_smoothing_order)
+    #window_size, order = getSmoothingParams(length(rt), max_smoothing_window, min_smoothing_order)
 
     #Use smoothed first derivative crossings to identify peak apex and left/right boundaries
-    start, stop = getIntegrationBounds(frag_counts, rt, intensity, window_size, order, min_width, min_scans)
+    #start, stop = getIntegrationBounds(frag_counts, rt, intensity, window_size, order, min_width, min_scans)
 
     ########
     #Fit EGH Curve 
@@ -73,40 +101,53 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     #filter = MSF(4.0, 5, 1)
     #filter = filtfilt(filter, intensity)
     #println("test filter ", filter)
+    p0[end] = Float32(maximum(intensity))
     try
-        smooth = savitzky_golay(intensity, 3, 1).y
+        #smooth = savitzky_golay(intensity, 3, 1).y
         EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
-                                    JEGH_inplace, 
-                                    rt[start:stop],
+                                    #JEGH_inplace, 
+                                    rt,
                                     #intensity[start:stop],
-                                    Float32.(smooth[start:stop]),
+                                    intensity,
+                                    lsq_fit_weight,
                                     #(chrom[start:stop, :rank] .+ 1)./4,
-                                    getP0(p0);
+                                    p0;
+                                    x_tol = LsqFit_tol,
+                                    maxIter = Lsq_max_iter,
                                     #w = chrom[start:stop, :rank]./4,
                                     inplace = true)
     catch
+        #println("FAILED")
         return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
-    peak_area = Integrate(EGH, Tuple(EGH_FIT.param), n = integration_points)
+    peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
     ##########
     #Plots                                           
     if isplot
         #Plot Data
+        #display(chrom)
         Plots.plot(rt, intensity, show = true, seriestype=:scatter)
 
-        Plots.plot!(rt, savitzky_golay(intensity, 7, 3).y, show = true, seriestype=:scatter)
-        Plots.plot!(rt, filter, show = true, seriestype=:scatter)
+        #Plots.plot!(rt, savitzky_golay(intensity, 7, 3).y, show = true, seriestype=:scatter)
+        #Plots.plot!(rt, filter, show = true, seriestype=:scatter)
         #Plots Fitted EGH Curve
-        X = LinRange(T(EGH_FIT.param[2] - 1.0), T(EGH_FIT.param[2] + 1.0), integration_points)
+        X = LinRange(T(EGH_FIT.param[2] - 0.5), T(EGH_FIT.param[2] + 0.5), length(gauss_quad_x))
         
         Plots.plot!(X,  
                     EGH(T.(collect(X)), Tuple(EGH_FIT.param)), 
-                    fillrange = [0.0 for x in 1:integration_points], 
+                    fillrange = [0.0 for x in 1:length(gauss_quad_x)], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
 
-        Plots.vline!([rt[start]], color = :red);
-        Plots.vline!([rt[stop]], color = :red);
+        Plots.plot!(X,  
+                    EGH(T.(collect(X)), Tuple(p0)), 
+                    fillrange = [0.0 for x in 1:length(gauss_quad_x)], 
+                    alpha = 0.25, color = :blue, show = true
+                    ); 
+
+
+        #Plots.vline!([rt[start]], color = :red);
+        #Plots.vline!([rt[stop]], color = :red);
     end
 
 
@@ -117,13 +158,12 @@ function integratePrecursor(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vec
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)) .& (intensity.>(EGH_FIT.param[end]*0.1))
     GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.0)) .& (intensity.>(EGH_FIT.param[end]*0.0))
 
-    var = std(RESID)/EGH_FIT.param[4]
     GOF = 1 - sum(RESID[GOF_IDX])/sum(intensity[GOF_IDX])
     FWHM = getFWHM(0.5, EGH_FIT.param[3], EGH_FIT.param[1])
     FWHM_01 = getFWHM(0.01, EGH_FIT.param[3], EGH_FIT.param[1])
     asymmetry = atan(abs(EGH_FIT.param[3])/sqrt(abs(EGH_FIT.param[1]/2)))
-    points_above_FWHM = sum(intensity[start:stop].>(EGH_FIT.param[end]*0.5))
-    points_above_FWHM_01 = sum(intensity[start:stop].>(EGH_FIT.param[end]*0.01))
+    points_above_FWHM = sum(intensity.>(EGH_FIT.param[end]*0.5))
+    points_above_FWHM_01 = sum(intensity.>(EGH_FIT.param[end]*0.01))
 
     σ = EGH_FIT.param[1]
     tᵣ = EGH_FIT.param[2]
