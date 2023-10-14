@@ -1,18 +1,6 @@
-function integratePrecursorMS2(chroms::GroupedDataFrame{DataFrame}, gauss_weights::Vector{Float64}, gauss_x::Vector{Float64}, precursor_idx::UInt32, p0::NTuple{5, T}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {T<:AbstractFloat}
-
-    if !((precursor_idx=precursor_idx,) in keys(chroms)) #If the precursor is not found
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
-    end
-
-    #Chromatogram for the precursor. 
-    #Has columns "weight" and "rt". 
-    chrom = chroms[(precursor_idx=precursor_idx,)]
-    return integratePrecursorMS2(chrom, gauss_weights, gauss_x, p0, eltype(chrom[:,:weight]), max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, min_scans = min_scans, min_width = min_width, integration_width = integration_width, integration_points = integration_points, isplot = isplot)
-end
-
-function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, x::Vector{Float64}, w::Vector{Float64}, p0::NTuple{5, U}, T::Type; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, x::Vector{Float64}, w::Vector{Float64}; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {U<:AbstractFloat}
     
-    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{UInt32}, q_values::AbstractVector{<:AbstractFloat})
+    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat})
         best_scan_idx = 1
         best_scan_score = zero(Float32)
         has_reached_fdr = false
@@ -115,15 +103,18 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             end
         end
     end
+   
+    T = eltype(chrom.weight)
+
     #display(chrom)
     #@with chrom begin 
-        filter = falses(size(chrom)[1])
-        setFilter!(filter, chrom.weight, chrom.scan_idx)
-        best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value)
-        best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
-        filterOnRT!(filter, best_rt, chrom.RT)
-        #Needs to be setable parametfer. 1% is currently hard-coded
-        filterLowIntensity!(filter, height/Float32(100), chrom.weight)
+    filter = falses(size(chrom)[1])
+    setFilter!(filter, chrom.weight, chrom.scan_idx)
+    best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value)
+    best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
+    filterOnRT!(filter, best_rt, chrom.RT)
+    #Needs to be setable parametfer. 1% is currently hard-coded
+    filterLowIntensity!(filter, height/Float32(100), chrom.weight)
     #end
     #Filter out samples below intensity threshold. 
     intensity, rt, lsq_fit_weight = zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  ones(Float32, (size(chrom)[1] - sum(filter)) + 2)
@@ -172,7 +163,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Scan with the highest score 
     #Too few points to attempt integration
     if (size(chrom)[1] - sum(filter)) < 2
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+        return best_scan#(missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
     #########
     #Probably don't need to allocate all of this memory. 
@@ -189,6 +180,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     =#
     ########
     #Fit EGH Curve 
+      
     EGH_FIT = nothing
     try
         EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
@@ -225,7 +217,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         println("GAUSS_FIT ", LORENZ_FIT.param)
         =#
     catch
-        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+        return best_scan#(missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
     end
 
     ##########
@@ -250,21 +242,31 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     ############
     #Calculate Features
+    
     MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
-
+    
     peak_area = Integrate(EGH, x, w, Tuple(EGH_FIT.param), n = integration_points)
     #return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+ 
+    sum_of_residuals = zero(Float32)
+    points_above_FWHM = zero(Int32)
+    points_above_FWHM_01 = zero(Int32)
+    for (i, I) in enumerate(intensity)
+        if I  > (EGH_FIT.param[end]*0.5)
+            points_above_FWHM += one(Int32)
+            points_above_FWHM_01 += one(Int32)
+        elseif I > (EGH_FIT.param[end]*0.01)
+            points_above_FWHM_01 += one(Int32)
+        end 
+        sum_of_residuals += abs.(I - MODEL_INTENSITY[i])
+    end
 
-    RESID = abs.(intensity .- MODEL_INTENSITY)
-    GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.1)) .& (intensity.>(EGH_FIT.param[end]*0.1))
-    GOF_IDX = (MODEL_INTENSITY.>(EGH_FIT.param[end]*0.0)) .& (intensity.>(EGH_FIT.param[end]*0.0))
-
-    GOF = 1 - sum(RESID[GOF_IDX])/sum(intensity[GOF_IDX])
+    GOF = 1 - sum_of_residuals/sum(intensity)
     FWHM = getFWHM(0.5, EGH_FIT.param[3], EGH_FIT.param[1])
     FWHM_01 = getFWHM(0.01, EGH_FIT.param[3], EGH_FIT.param[1])
     asymmetry = atan(abs(EGH_FIT.param[3])/sqrt(abs(EGH_FIT.param[1]/2)))
-    points_above_FWHM = sum(intensity.>(EGH_FIT.param[end]*0.5))
-    points_above_FWHM_01 = sum(intensity.>(EGH_FIT.param[end]*0.01))
+
+
 
     ############
     #Model Parameters
@@ -272,17 +274,122 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     tᵣ = EGH_FIT.param[2]
     τ = EGH_FIT.param[3]
     H = EGH_FIT.param[4]
-
+    
     ############
     #Summary Statistics 
-    sum_of_weights = sum(chrom[:,:weight])
-    mean_spectral_contrast = mean(chrom[:,:spectral_contrast])
-    entropy_sum = sum(chrom[:,:entropy_sim])
-    mean_log_probability = mean(log2.(chrom[:,:prob]))
-    ion_sum = sum(chrom[:,:total_ions])
+    sum_of_weights = sum(chrom.weight)
+    mean_spectral_contrast = mean(chrom.spectral_contrast)
+    entropy_sum = sum(chrom.entropy_sim)
+    mean_log_probability = mean(log2.(chrom.prob))
+    ions_sum = sum(chrom.total_ions)
     data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
-    mean_ratio = mean(chrom[:,:matched_ratio])
+    mean_ratio = mean(chrom.matched_ratio)
     base_width = rt[end] - rt[1]
 
-    return peak_area, GOF, FWHM, FWHM_01, asymmetry, points_above_FWHM, points_above_FWHM_01, σ, tᵣ, τ, H, sum_of_weights, mean_spectral_contrast, entropy_sum, mean_log_probability, ion_sum, data_points, mean_ratio, base_width
+    #best_psms[row_idx,:best_scan] = best_scan
+    
+    chrom.peak_area[best_scan] = peak_area
+    chrom.GOF[best_scan] = GOF
+    chrom.FWHM[best_scan] = FWHM
+    chrom.FWHM_01[best_scan] = FWHM_01
+    chrom.asymmetry[best_scan] = asymmetry
+    chrom.points_above_FWHM[best_scan] = points_above_FWHM
+    chrom.points_above_FWHM_01[best_scan] = points_above_FWHM_01
+    chrom.σ[best_scan] = σ
+    chrom.tᵣ[best_scan] = tᵣ
+    chrom.τ[best_scan] = τ
+    chrom.H[best_scan] = H
+    chrom.sum_of_weights[best_scan] = sum_of_weights
+    chrom.mean_spectral_contrast[best_scan] = mean_spectral_contrast
+    chrom.entropy_sum[best_scan] = entropy_sum
+    chrom.mean_log_probability[best_scan] = mean_log_probability
+    chrom.ions_sum[best_scan] = ions_sum
+    chrom.data_points[best_scan] = data_points
+    chrom.mean_matched_ratio[best_scan] = mean_ratio
+    chrom.base_width_min[best_scan] = base_width
+    chrom.best_scan[best_scan] = true
+    
+
+    return best_scan
 end
+
+function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; n_quadrature_nodes::Int64 = 100)
+    ##########
+    #Add New Columsn to best_psms_df. 
+    #=
+    new_cols = [(:peak_area,                   Union{Float32, Missing})
+    (:GOF,                      Union{Float32, Missing})
+    (:FWHM,                     Union{Float32, Missing})
+    (:FWHM_01,                  Union{Float32, Missing})
+    (:asymmetry,                Union{Float32, Missing})
+    (:points_above_FWHM,        Union{Float32, Missing})
+    (:points_above_FWHM_01,     Union{Float32, Missing})
+    (:σ,                        Union{Float32, Missing})
+    (:tᵣ,                       Union{Float32, Missing})
+    (:τ,                        Union{Float32, Missing})
+    (:H,                        Union{Float32, Missing})
+    (:sum_of_weights,           Union{Float32, Missing})
+    (:mean_spectral_contrast,   Union{Float32, Missing})
+    (:entropy_sum,              Union{Float32, Missing})
+    (:mean_log_probability,     Union{Float32, Missing})
+    (:ions_sum,                 Union{Int32, Missing})
+    (:data_points,              Union{Int32, Missing})
+    (:mean_matched_ratio,       Union{Float32, Missing})
+    (:base_width_min,           Union{Float32, Missing})]
+
+    for column in new_cols
+        col_type = last(column)
+        best_psms_df[!,first(column)] = Vector{col_type}(undef, size(best_psms_df)[1])
+    end
+    =#
+    println("TEST")
+    gx, gw = gausslegendre(n_quadrature_nodes)
+    #return combine(sdf -> integratePrecursorMS2(
+   #     sdf,
+   #     gx,
+   #     gw) = grouped_precursor_df
+   # )
+    for i in ProgressBar(range(1, length(grouped_precursor_df)))
+        integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},gx,gw)
+    end
+    #combine(grouped_precursor_df) do sdf
+    #    best_row = integratePrecursorMS2(sdf,gx,gw);
+    #    sdf[best_row, :]
+    #end
+    #=
+        ], grouped_precursor_df)
+        for precursor_group_idx::Int64 in ProgressBar(range(1, length(grouped_precursor_df)))#length(test_chroms)))
+            best_row::Int64, failed::Bool = integratePrecursorMS2(
+                                    grouped_precursor_df[precursor_group_idx]::SubDataFrame,
+                                    gx,
+                                    gw
+                                )
+            if failed
+                #println("failed at $precursor_group_idx")
+                for col_name in new_cols
+                    best_psms_df[precursor_group_idx, first(col_name)] = missing
+                end
+            end
+
+            #=
+            for col_name in names#names([precursor_group_idx])
+                best_psms_df[precursor_group_idx, col_name] = grouped_precursor_df[precursor_group_idx][best_row, col_name]
+            end
+            =#
+        end
+    =#
+
+end
+#=
+function integratePrecursorMS2(chroms::GroupedDataFrame{DataFrame}, chroms_keys::Set{UInt32}, gauss_weights::Vector{Float64}, gauss_x::Vector{Float64}, precursor_idx::UInt32; max_smoothing_window::Int = 15, min_smoothing_order::Int = 3, min_scans::Int = 5, min_width::AbstractFloat = 1.0/6.0, integration_width::AbstractFloat = 4.0, integration_points::Int = 1000, isplot::Bool = false) where {T<:AbstractFloat}
+   
+    if (precursor_idx ∉ chroms_keys) #If the precursor is not found
+        return (missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing, missing)
+    end
+
+    #Chromatogram for the precursor. 
+    #Has columns "weight" and "rt". 
+    #chrom = chroms[(precursor_idx=precursor_idx,)]
+    return integratePrecursorMS2(chroms[(precursor_idx=precursor_idx,)], gauss_weights, gauss_x, max_smoothing_window = max_smoothing_window, min_smoothing_order = min_smoothing_order, min_scans = min_scans, min_width = min_width, integration_width = integration_width, integration_points = integration_points, isplot = isplot)
+end
+=#

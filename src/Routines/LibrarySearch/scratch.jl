@@ -381,6 +381,94 @@ test_time = @timed begin for N in range(5000, 40000)
     end
 end
 N += 1
+
+test_chroms_keys =  Set([key.precursor_idx for key in keys(test_chroms)])
+test_time = @timed transform!(best_psms, AsTable(:) => ByRow(psm -> integratePrecursorMS2(test_chroms, 
+                                                test_chroms_keys,
+                                                gw,
+                                                gx,
+                                                UInt32(psm[:precursor_idx]), 
+                                                isplot = false)) => [:peak_area,
+                                                                                :GOF,
+                                                                                :FWHM,
+                                                                                :FWHM_01,
+                                                                                :asymmetry,
+                                                                                :points_above_FWHM,
+                                                                                :points_above_FWHM_01,
+                                                                                :σ,
+                                                                                :tᵣ,
+                                                                                :τ,
+                                                                                :H,
+                                                                                :sum_of_weights,
+                                                                                :mean_spectral_contrast,
+                                                                                :entropy_sum,
+                                                                                :mean_log_probability,
+                                                                                :ions_sum,
+                                                                                :data_points,
+                                                                                :mean_matched_ratio,
+                                                                                :base_width_min]);
+
+best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMS_SUB, [:precursor_idx]))
+
+best_psms_dict = Dict{Symbol, AbstractVector}()
+for col_name in names(PSMS_SUB)
+    col_type = eltype(PSMS_SUB[!,col_name])
+    best_psms_dict[Symbol(col_name)] = Vector{col_type}(undef, size(test_chroms)[1])
+end
+
+best_psms_test = DataFrame(best_psms_dict)
+new_cols = [(:peak_area,                   Union{Float32, Missing})
+    (:GOF,                      Union{Float32, Missing})
+    (:FWHM,                     Union{Float32, Missing})
+    (:FWHM_01,                  Union{Float32, Missing})
+    (:asymmetry,                Union{Float32, Missing})
+    (:points_above_FWHM,        Union{Float32, Missing})
+    (:points_above_FWHM_01,     Union{Float32, Missing})
+    (:σ,                        Union{Float32, Missing})
+    (:tᵣ,                       Union{Float32, Missing})
+    (:τ,                        Union{Float32, Missing})
+    (:H,                        Union{Float32, Missing})
+    (:sum_of_weights,           Union{Float32, Missing})
+    (:mean_spectral_contrast,   Union{Float32, Missing})
+    (:entropy_sum,              Union{Float32, Missing})
+    (:mean_log_probability,     Union{Float32, Missing})
+    (:ions_sum,                 Union{Int32, Missing})
+    (:data_points,              Union{Int32, Missing})
+    (:mean_matched_ratio,       Union{Float32, Missing})
+    (:base_width_min,           Union{Float32, Missing})]
+
+
+best_psms_dict = Dict{Symbol, AbstractVector}()
+for col_name in names(PSMS_SUB)
+    col_type = eltype(PSMS_SUB[!,col_name])
+    best_psms_dict[Symbol(col_name)] = Vector{col_type}(undef, size(test_chroms)[1])
+end
+
+time_test = @timed integratePrecursors(test_chroms, best_psms_test, names(test_chroms[1]))
+
+[(Symbol(col_name), eltype(PSMs[!, col_name])) for col_name in names(PSMs)]
+#combine(test_chroms, AsTable(:) => ByRow 
+result_df = combine(groupby(test_chroms, :precursor_idx)) do precursor_group
+    #idx_max_c = argmax(group.c)
+    #row_max_c = group[idx_max_c, :]
+    #sum_of_other_entries = sum(row_max_c[!, [:a, :b]])
+    
+    integratePrecursorMS2(precursor_group, 
+                            test_chroms_keys,
+                            gw,
+                            gx
+                        )
+
+
+    return DataFrame(
+        a = row_max_c.a,
+        b = row_max_c.b,
+        c = row_max_c.c,
+        sum_of_other_entries = sum_of_other_entries
+    )
+end
+
+
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()
@@ -470,4 +558,4 @@ N += 1
                 end
                 
                 end
-                =#
+                =(#

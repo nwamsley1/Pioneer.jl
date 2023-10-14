@@ -457,32 +457,44 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
         #filter!(:weight => x -> x<5000.0,PSMs);
         #PSMs = PSMs[PSMs[:,:weight].>0.0,:];
         #PSMs = PSMs[PSMs[:,:total_ions].>3,:];
-        #for i in ProgressBar(size(PSMs)[1])
-        #    prec_id = PSMs[i,:precursor_idx]
-        #    base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
-        #    PSMs[i,:weight] = PSMs[i,:weight]/base_peak_intensity
-        #end
+        for i in ProgressBar(size(PSMs)[1])
+            prec_id = PSMs[i,:precursor_idx]
+            base_peak_intensity = prosit_lib["precursors"][prec_id].base_peak_intensity
+            PSMs[i,:weight] = PSMs[i,:weight]/base_peak_intensity
+        end
+        CSV.write("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101323.csv", PSMs);
+        PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101323.csv"))
         PSMs[:,:q_value] .= 0.0
         #PSMs[isnan.(PSMs[:,:entropy_sim]),:entropy_sim] .= 0.0;
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-        PSMS_SUB = PSMs[PSMs[:,:n_obs].>2,:];
+        filter!(x -> x.n_obs>2, PSMs);#PSMs[PSMs[:,:n_obs].>2,:];
         model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
                                     scribe_score + weight_log2 + topn + spectral_contrast + 
-                                    n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMS_SUB, 
+                                    n_obs + RT_error + missed_cleavage + Mox + intensity_explained + err_log2 + total_ions), PSMs, 
                                     Binomial(), 
                                     ProbitLink())
-        Y′ = GLM.predict(model_fit, PSMS_SUB);
-        getQvalues!(PSMS_SUB, allowmissing(Y′),  allowmissing(PSMS_SUB[:,:decoy]));
-        println("Target PSMs at 25% FDR: ", sum((PSMS_SUB[:,:q_value].<=0.25).&(PSMS_SUB[:,:decoy].==false)))
-        PSMS_SUB[:,:prob] = allowmissing(Y′)
-
-
+        Y′ = GLM.predict(model_fit, PSMs);
+        getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
+        println("Target PSMs at 25% FDR: ", sum((PSMSs.q_value.<=0.25).&(PSMs.decoy.==false)))
+        PSMs[:,:prob] = allowmissing(Y′)
         #PSMS_SUB = PSMS_SUB[(PSMS_SUB[:,:q_value].<=0.25),:]
-        sort!(PSMS_SUB,:RT);
-        test_chroms = groupby(PSMS_SUB[:,[:precursor_idx,:q_value,:prob,:decoy,:scan_idx,:topn,:total_ions,:scribe_score,:spectral_contrast,:entropy_sim,:matched_ratio,:hyperscore,:weight,:RT,:RT_pred]],:precursor_idx);
+        sort!(PSMs,:RT);
+        #test_chroms = groupby(PSMS_SUB[:,[:precursor_idx,:q_value,:prob,:decoy,:scan_idx,:topn,:total_ions,:scribe_score,:spectral_contrast,:entropy_sim,:matched_ratio,:hyperscore,:weight,:RT,:RT_pred]],:precursor_idx);
 
-
-        best_psms = combine(sdf -> getBestPSM(sdf), groupby(PSMS_SUB, [:precursor_idx]))
+        for column in new_cols
+            col_type = last(column)
+            PSMs[!,first(column)] = Vector{col_type}(undef, size(PSMs)[1])
+        end
+        PSMs[!,:best_scan] .= false
+        any(ismissing.(PSMs[:,:GOF]).==false)
+        test_chroms = groupby(PSMs, :precursor_idx);
+        any(ismissing.(test_chroms[1][:,:GOF]).==false)
+        #test_time = @timed best_psms_test = DataFrame(best_psms_dict)
+        time_test = @timed integratePrecursors(test_chroms)
+        any(ismissing.(test_chroms[1][:,:GOF]).==false)
+        any(ismissing.(PSMs[:,:GOF]).==false)
+        #Keep only the best scans
+        time_test = @timed filter!(x -> x.best_scan, PSMs);
         
         #filter!(:total_ions => x -> x<4, PSMs);
         #sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
