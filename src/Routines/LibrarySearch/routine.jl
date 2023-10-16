@@ -458,11 +458,76 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
         
         sort!(PSMs,:RT); #Sorting before grouping is critical. 
         test_chroms = groupby(PSMs, :precursor_idx);
-        #Integrate 
+
+
+        #Integrate MS2 and filter
         time_test = @timed integratePrecursors(test_chroms)
         time_test = @timed filter!(x -> x.best_scan, PSMs);
-        
+        time_test = @timed filter!(x -> x.FWHM.<100, PSMs);
+        time_test = @timed filter!(x -> x.FWHM_01.<100, PSMs);
+        time_test = @timed filter!(x -> x.data_points.>2, PSMs);
+
+        #Get Precursor M/Z's 
+        transform!(PSMs, AsTable(:) => ByRow(psm -> 
+        prosit_lib["precursors"][psm[:precursor_idx]].mz
+        ) => :prec_mz
+        );
+
+        #Correct RT prediction errors 
+        for i in range(1, size(PSMs)[1])
+            if ismissing(PSMs[i,:tᵣ])
+                PSMs[i, :RT_error] = abs.(PSMs[i,:RT_pred] - PSMs[i,:RT])
+                PSMs[i,:tᵣ] = PSMs[i,:RT]
+            else
+                PSMs[i,:RT_error] = abs.(PSMs[i,:tᵣ] .- PSMs[i,:RT_pred]);
+            end
+        end
+
+        isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
+        #lock(lk) do 
+        isotopes = getIsotopes(PSMs[!,:sequence], 
+                                PSMs[!,:precursor_idx], 
+                                PSMs[!,:charge], QRoots(4), 4);
+        #end
+        prec_rt_table = sort(
+                                collect(
+                                        zip(
+                                            PSMs[!,:tᵣ], 
+                                            UInt32.(PSMs[!,:precursor_idx])
+                                    )
+                            ), by = x->first(x));
+    
+        println("Integrating MS1 $ms_file_idx...")
+        ms1_chroms = integrateMS1(MS_TABLE, 
+                                        isotopes, 
+                                        prec_rt_table, 
+                                        UInt32(ms_file_idx), 
+                                        frag_err_dist_dict[ms_file_idx], 
+                                        integrate_ms1_params,
+                                        scan_range = (1, length(MS_TABLE[:scanNumber])));
         #filter!(:total_ions => x -> x<4, PSMs);
+
+        #Integrate MS1 Chromatograms 
+        gx, gw = gausslegendre(100)
+        ms1_chrom_keys = keys(ms1_chroms)
+        time_test = @timed transform!(PSMs, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, 
+                                            ms1_chrom_keys,
+                                            gx,
+                                            gw,
+                                            UInt32(psm[:precursor_idx]), 
+                                            [Float32(psm[:σ]),
+                                            Float32(psm[:tᵣ]),
+                                            Float32(psm[:τ]), 
+                                            Float32(1e4)],
+                                            isplot = false)) => [:peak_area_ms1,
+                                            :GOF_ms1,
+                                            :FWHM_ms1,
+                                            :FWHM_01_ms1,
+                                            :asymmetry_ms1,
+                                            :points_above_FWHM_ms1,
+                                            :points_above_FWHM_01_ms1,
+                                            :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
+
         #sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
         println("Refine PSMs! time for $ms_file_idx ", sub_search_time.time)
 
@@ -595,8 +660,8 @@ integration_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
     best_psms[isnan.(coalesce.(best_psms[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing
     best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.4,:peak_area_ms1].=missing
     best_psms[coalesce.(best_psms[:,:GOF_ms1], -Inf).<=0.4,:ρ].=missing
-    best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:peak_area_ms1].=missing
-    best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:ρ].=missing
+    #best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:peak_area_ms1].=missing
+    #best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:ρ].=missing
     best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
     println("SIZE best_psms $ms_file_idx before filter ", size(best_psms))
     #Peak area is non-zero and non-missing

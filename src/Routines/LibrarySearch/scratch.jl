@@ -181,8 +181,18 @@ features = [:hyperscore,:total_ions,:intensity_explained,
             :RT_error,:scribe_score,:RT,:charge,
             :city_block,:matched_ratio,:weight,:missed_cleavage,:Mox,:best_rank,:topn,:err_norm_log2,:error]
 append!(features, [:peak_area,:GOF,:points_above_FWHM_01,:points_above_FWHM,:H,:ρ,:FWHM,:FWHM_01, :y_ladder,:b_ladder,:peak_area_ms1,:prec_mz,:sequence_length,:spectrum_peaks,
-:sum_of_weights,:mean_spectral_contrast,:entropy_sum,:mean_log_probability,:ions_sum,:mean_matched_ratio,:data_points,:base_width_min,:ms1_ms2_diff]);
-
+:log_sum_of_weights,:mean_log_spectral_contrast,:mean_log_entropy,:mean_log_probability,:mean_scribe_score,:ions_sum,:mean_matched_ratio,:data_points,:base_width_min,:ms1_ms2_diff]);
+for column in names(best_psms)
+    if eltype(best_psms[!,column]) == String
+        continue
+    end
+    if  any(isnan.(skipmissing(best_psms[!,column])))
+        println("$column has NaNs? ", any(isnan.(skipmissing(best_psms[!,column]))))
+    end
+    if any(isinf.(skipmissing(best_psms[!,column])))
+        println("$column has Inf? ", any(isinf.(skipmissing(best_psms[!,column]))))
+    end
+end
 #best_psms[:,:prob_over_data] = best_psms[:,:scribe_sum]./best_psms[:,:data_points]
 #best_psms[:,:hyperscore_sum] = best_psms[:,:hyperscore_sum]./best_psms[:,:data_points]
 #best_psms[:,:entropy_sum] = best_psms[:,:entropy_sum].*best_psms[:,:data_points]
@@ -199,6 +209,13 @@ for i in range(1, size(best_psms)[1])
 best_psms[i,:ρ] = missing
     end
 end
+
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:mean_log_entropy])
+        best_psms[i,:mean_log_entropy] = Float16(-3)
+    end
+end
+
 #best_psms[isnan.(best_psms[:,:entropy_sum]).&(ismissing.(best_psms[:,:entropy_sum]).==false),:entropy_sum] .= 0.0;
 xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
@@ -502,9 +519,9 @@ integratePrecursor(ms1_chroms,
                                      Float32(test_psm[:τ]), 
                                      Float32(1e4)],
                                     isplot = false)
-
+best_psms_passing = best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false).&(ismissing.(best_psms[:,:peak_area]).==false),:]
 N = 10000
-test_psm = best_psms[N,:]
+test_psm = best_psms_passing[N,:]
 integratePrecursor(ms1_chroms, 
                                            ms1_chrom_keys,
                                            gx,

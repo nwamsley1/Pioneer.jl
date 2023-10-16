@@ -206,9 +206,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     
     ############
     #Summary Statistics 
-    sum_of_weights = sum(chrom.weight)
-    mean_spectral_contrast = mean(chrom.spectral_contrast)
-    entropy_sum = sum(chrom.entropy_sim)
+    log_sum_of_weights = log2(sum(chrom.weight))
+    mean_log_spectral_contrast = mean(log2.(chrom.spectral_contrast))
+    mean_log_entropy = mean((max.(log2.(chrom.entropy_sim), Float16(1e-3))))
+    mean_scribe_score = mean(chrom.scribe_score)
     mean_log_probability = mean(log2.(chrom.prob))
     ions_sum = sum(chrom.total_ions)
     data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
@@ -226,9 +227,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     chrom.tᵣ[best_scan] = tᵣ
     chrom.τ[best_scan] = τ
     chrom.H[best_scan] = H
-    chrom.sum_of_weights[best_scan] = sum_of_weights
-    chrom.mean_spectral_contrast[best_scan] = mean_spectral_contrast
-    chrom.entropy_sum[best_scan] = entropy_sum
+    chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
+    chrom.mean_log_spectral_contrast[best_scan] = mean_log_spectral_contrast
+    chrom.mean_log_entropy[best_scan] = mean_log_entropy
+    chrom.mean_scribe_score[best_scan] = mean_scribe_score
     chrom.mean_log_probability[best_scan] = mean_log_probability
     chrom.ions_sum[best_scan] = ions_sum
     chrom.data_points[best_scan] = data_points
@@ -257,6 +259,9 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                                 isplot = isplot
                                 )
     end
+
+    ############
+    #Clean
 
 end
 #=
