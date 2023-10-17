@@ -9,11 +9,14 @@ function SearchRAW(
                     selectIons!::Function,
                     searchScan!::Union{Function, Missing};
                     #keyword args
+                    b_min_ind::Int64 = 3,
+                    y_min_ind::Int64 = 4,
                     chromatograms::Union{Dict{Symbol, Vector}, Missing} = missing,
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
                     frag_ppm_err::Float64 = 0.0,
                     fragment_tolerance::Float64 = 20.0,
+                    huber_δ::Float32 = 1000f0,
                     IonMatchType::DataType = FragmentMatch{Float32},
                     IonTemplateType::DataType = LibraryFragment{Float32},
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
@@ -21,7 +24,9 @@ function SearchRAW(
                     max_peak_width::Float64 = 2.0,
                     max_peaks::Union{Int64,Bool} = false, 
                     min_frag_count::Int64 = 4,
+                    min_frag_count_index_search::Int64 = 0,
                     min_matched_ratio::Float32 = Float32(0.8),
+                    min_matched_ratio_index_search::Float32 = zero(Float32),
                     min_spectral_contrast::Float32 = Float32(0.65),
                     nmf_tol::Float32 = Float32(100.0),
                     precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
@@ -36,6 +41,7 @@ function SearchRAW(
                     scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
                     spec_order::Set{Int64} = Set(2),
                     topN::Int64 = 20,
+                    topN_index_search::Int64 = 1000,
                     λ::Float32 = Float32(1e3),
                     γ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
     println("max_peak_width $max_peak_width")
@@ -75,7 +81,7 @@ function SearchRAW(
         precursor_weights = zeros(Float32, length(ion_list))
     end
 
-    fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
+    #fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
     solve_time = 0.0
     index_search_time = 0.0
     prep_time = 0.0
@@ -114,9 +120,9 @@ function SearchRAW(
                         Float32(fragment_tolerance), 
                         Float32(precursor_tolerance),
                         Float32(quadrupole_isolation_width/2.0),
-                        min_frag_count = 2,#min_frag_count, 
-                        min_ratio = 0.0f0,#Float32(2/3),#Float32(min_matched_ratio),
-                        topN = 1000,#topN
+                        min_frag_count = min_frag_count_index_search, 
+                        min_ratio = Float32(min_matched_ratio_index_search),
+                        topN = topN_index_search,#topN
                         )
             
         end
@@ -173,7 +179,7 @@ function SearchRAW(
                 #Sparse matrix representation of templates written to Hs. 
                 #Hs mask is true for ions that will be used to score and false otherwise (may exclude y1 ions for example)
                 #IDtoCOL maps precursor ids to their corresponding columns. 
-                X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK)
+                X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
                 weights = nothing
                 if ismissing(isotope_dict) 
 
@@ -186,7 +192,7 @@ function SearchRAW(
                         placeholder = zeros(UInt32, Hs.n)
                         #Same length as the number of columns in Hs (number of precursor templates)
                         #Which precursors pass the threshold? 
-                        scores_pass = (scores[:matched_ratio].>Float32(min_matched_ratio)).&(scores[:spectral_contrast].>min_spectral_contrast)
+                        scores_pass = (scores[:matched_ratio].>min_matched_ratio).&(scores[:spectral_contrast].>min_spectral_contrast)
                         for (id, row) in pairs(IDtoCOL)
                             if scores_pass[first(row)] == false
                                 delete!(IDtoCOL, id)
@@ -215,7 +221,7 @@ function SearchRAW(
 
             end
 
-            solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, Float32(1000), max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+            solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
             for (id, row) in pairs(IDtoCOL_weights)
                 precursor_weights[id] = weights[row]# = precursor_weights[id]
@@ -343,6 +349,8 @@ function firstSearch(
         selectTransitions!,
         searchScan!,
         
+        b_min_ind = params[:b_min_ind],
+        y_min_ind = params[:y_min_ind],
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         frag_ppm_err = params[:frag_ppm_err],
@@ -350,7 +358,9 @@ function firstSearch(
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
+        min_frag_count_index_search = params[:min_frag_count_index_search],
         min_matched_ratio = params[:min_matched_ratio],
+        min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
         min_spectral_contrast = params[:min_spectral_contrast],
         nmf_tol = params[:nmf_tol],
         precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
@@ -363,6 +373,7 @@ function firstSearch(
         scan_range = scan_range,
         scored_PSMs = makePSMsDict(XTandem(Float32)),
         topN = params[:topN],
+        topN_index_search = params[:topN_index_search],
         λ = params[:λ],
         γ = params[:γ]
     )
@@ -423,13 +434,18 @@ function mainLibrarySearch(
         selectTransitions!,
         searchScan!,
         
+        b_min_ind = params[:b_min_ind],
+        y_min_ind = params[:y_min_ind],
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
+        huber_δ = params[:huber_δ],
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
+        min_frag_count_index_search = params[:min_frag_count_index_search],
         min_matched_ratio = params[:min_matched_ratio],
+        min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
         min_spectral_contrast = params[:min_spectral_contrast],
         nmf_tol = params[:nmf_tol],
         precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
@@ -442,6 +458,7 @@ function mainLibrarySearch(
         scan_range = scan_range,
         scored_PSMs = makePSMsDict(XTandem(Float32)),
         topN = params[:topN],
+        topN_index_search = params[:topN_index_search],
         λ = params[:λ],
         γ = params[:γ]
     )

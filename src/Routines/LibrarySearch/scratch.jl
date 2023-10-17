@@ -533,6 +533,17 @@ integratePrecursor(ms1_chroms,
                                             Float32(1e4)],
                                            isplot = true)
                                            N += 1
+
+
+PSMs[:,:q_value] .= zero(Float16)
+model_fit = glm(@formula(target ~ entropy_sim +
+                            scribe_score + weight_log2 + spectral_contrast + RT_error + missed_cleavage + Mox + TIC), PSMs, 
+                            Binomial(), 
+                            ProbitLink())
+Y′ = Float16.(GLM.predict(model_fit, PSMs));
+getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
+println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))           
+println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))                                      
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()

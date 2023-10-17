@@ -66,6 +66,8 @@ end
 nnls_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
 
 params_ = (
+    b_min_ind = Int64(params["b_min_ind"]),
+    y_min_ind = Int64(params["y_min_ind"]),
     expected_matches = Int64(params["expected_matches"]),
     frag_ppm_err = Float64(params["frag_ppm_err"]),
     frag_tol_quantile = Float32(params["frag_tol_quantile"]),
@@ -75,8 +77,10 @@ params_ = (
     max_peak_width = Float64(params["max_peak_width"]),
     min_frag_count = Int64(params["min_frag_count"]),
     min_frag_count_presearch = Int64(params["min_frag_count_presearch"]),
+    min_frag_count_index_search = Int64(params["min_frag_count_index_search"]),
     min_matched_ratio = Float32(params["min_matched_ratio"]),
     min_matched_ratio_presearch = Float32(params["min_matched_ratio_presearch"]),
+    min_matched_ratio_index_search = Float32(params["min_matched_ratio_index_search"]),
     min_spectral_contrast = Float32(params["min_spectral_contrast"]),
     min_spectral_contrast_presearch = Float32(params["min_spectral_contrast_presearch"]),
     nnls_tol = Float32(nnls_params["nnls_tol"]),
@@ -88,11 +92,15 @@ params_ = (
     sample_rate = Float64(params["sample_rate"]),
     topN_presearch = Int64(params["topN_presearch"]),
     topN = Int64(params["topN"]),
+    topN_index_search = Int64(params["topN_index_search"]),
+    huber_δ = Float32(nnls_params["huber_delta"]),
     λ = Float32(nnls_params["lambda"]),
     γ = Float32(nnls_params["gamma"]),
 );
 #Search parameters
 first_search_params = Dict(
+    :b_min_ind => params_[:b_min_ind],
+    :y_min_ind => params_[:y_min_ind],
     :collect_frag_errs => true,
     :expected_matches => params_[:expected_matches],
     :frag_ppm_err => params_[:frag_ppm_err],
@@ -100,7 +108,9 @@ first_search_params = Dict(
     :max_iter => params_[:nnls_max_iter],
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count_presearch],
+    :min_frag_count_index_search => params_[:min_frag_count_index_search],
     :min_matched_ratio => params_[:min_matched_ratio_presearch],
+    :min_matched_ratio_index_search => params_[:min_matched_ratio_index_search],
     :min_spectral_contrast => params_[:min_spectral_contrast_presearch],
     :nmf_tol => params_[:nnls_tol],
     :precursor_tolerance => params_[:prec_tolerance],
@@ -110,16 +120,22 @@ first_search_params = Dict(
     :rt_tol => Float64(1000),#params_[:rt_tol],
     :sample_rate => params_[:sample_rate],
     :topN => params_[:topN_presearch],
+    :topN_index_search => params_[:topN_index_search],
     :λ => params_[:λ],
-    :γ => params_[:γ]
+    :γ => params_[:γ],
+    :huber_δ => params_[:huber_δ]
 );
 main_search_params = Dict(
+    :b_min_ind => params_[:b_min_ind],
+    :y_min_ind => params_[:y_min_ind],
     :expected_matches => params_[:expected_matches],
     :frag_tol_quantile => params_[:frag_tol_quantile],
     :max_iter => params_[:nnls_max_iter],
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count],
+    :min_frag_count_index_search => params_[:min_frag_count_index_search],
     :min_matched_ratio => params_[:min_matched_ratio],
+    :min_matched_ratio_index_search => params_[:min_matched_ratio_index_search],
     :min_spectral_contrast => params_[:min_spectral_contrast],
     :nmf_tol => params_[:nnls_tol],
     :precursor_tolerance => params_[:prec_tolerance],
@@ -128,9 +144,12 @@ main_search_params = Dict(
     :rt_bounds => params_[:rt_bounds],
     :rt_tol => params_[:rt_tol],
     :topN => params_[:topN],
+    :topN_index_search => params_[:topN_index_search],
     :λ => params_[:λ],
-    :γ => params_[:γ]
+    :γ => params_[:γ],
+    :huber_δ => params_[:huber_δ]
 );
+#=
 integrate_ms2_params = Dict(
     :expected_matches => params_[:expected_matches],
     :frag_tol_quantile => params_[:frag_tol_quantile],
@@ -151,6 +170,7 @@ integrate_ms2_params = Dict(
     :λ => params_[:λ],
     :γ => params_[:γ]
 );
+=#
 integrate_ms1_params = Dict(
     :expected_matches => params_[:expected_matches],
     :frag_tol_quantile => params_[:frag_tol_quantile],
@@ -240,7 +260,7 @@ spec_load_time = @timed begin
     #const frag_list = load_object(frags_list_path)
     #const precursors_list = load_object(precursors_list_path)
     #const frag_index = load_object(frag_index_path)
-    prosit_lib = load(prosit_lib_path) 
+    prosit_lib = load(prosit_lib_path);
     #prosit_lib = load("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEXED_HumanYeastEcoli_NCE33_corrected_092823.jld2")
     
     #@load "/Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423/precursors_mouse_detailed_33NCEcorrected_start1.jld2" precursors_mouse_detailed_33NCEcorrected_start1
@@ -253,8 +273,9 @@ end
 ###########
 #Load RAW File
 #=
-MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
 MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/PXD028735/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"]
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"]
 =#
 #"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate.arrow",
 #"/Users/n.t.wamsley/RIS_temp/MOUSE_DIA/ThermoRawFileToParquetConverter-main/parquet_out/MA5171_MOC1_DMSO_R01_PZ_DIA_duplicate_2.arrow",
@@ -417,7 +438,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                         f_out = PLOT_PATH );
 
         #Spline mapping RT to iRT
-        RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 7.0);
+        RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 1.0);
         plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map, 
                     f_out = PLOT_PATH);
 
@@ -450,10 +471,14 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 scan_range = (1, length(MS_TABLE[:masses]))
                                             );
 
-        CSV.write("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101423.csv", PSMs);
+        @save "/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101623.jld2" PSMs;
+        @load "/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101623.jld2" PSMs;
         #PSMs = DataFrame(CSV.File("/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101423.csv"))
         #PSMs[isnan.(PSMs[:,:entropy_sim]),:entropy_sim] .= 0.0;
-        time_test = @timed refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        #filter!(x -> x.topn>1, PSMs);
+        #filter!(x -> x.best_rank<3, PSMs);
+        filter!(x -> x.weight>10.0, PSMs);
+        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
         
         
         sort!(PSMs,:RT); #Sorting before grouping is critical. 
@@ -505,11 +530,10 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                         frag_err_dist_dict[ms_file_idx], 
                                         integrate_ms1_params,
                                         scan_range = (1, length(MS_TABLE[:scanNumber])));
-        #filter!(:total_ions => x -> x<4, PSMs);
 
         #Integrate MS1 Chromatograms 
-        gx, gw = gausslegendre(100)
-        ms1_chrom_keys = keys(ms1_chroms)
+        gx, gw = gausslegendre(100);
+        ms1_chrom_keys = keys(ms1_chroms);
         time_test = @timed transform!(PSMs, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, 
                                             ms1_chrom_keys,
                                             gx,
@@ -528,8 +552,16 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                             :points_above_FWHM_01_ms1,
                                             :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
 
-        #sub_search_time = @timed best_psms_02 = refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-        println("Refine PSMs! time for $ms_file_idx ", sub_search_time.time)
+        pearson_corr!(PSMs, N = 500);
+        PSMs[:,:ms1_ms2_diff] = abs.(PSMs[!,:tᵣ] .- PSMs[!,:tᵣ_ms1]);
+        #########
+        #Quality Filter
+        PSMs[isnan.(coalesce.(PSMs[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing;
+        #PSMs[coalesce.(PSMs[:,:GOF_ms1], -Inf).<=0.4,:peak_area_ms1].=missing
+        #PSMs[coalesce.(PSMs[:,:GOF_ms1], -Inf).<=0.4,:ρ].=missing
+        #best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:peak_area_ms1].=missing
+        #best_psms[coalesce.(best_psms[:,:peak_area_ms1], 0.0).<=100.0,:ρ].=missing
+        PSMs[:,"sequence_length"] = length.(replace.(PSMs[:,"sequence"], "M(ox)" => "M"));
 
         sub_search_time = @timed lock(lk) do 
             println("ms_file_idx: $ms_file_idx has ", size(PSMs))
@@ -540,6 +572,103 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+
+best_psms = vcat(values(BPSMS)...)
+
+features = [ :FWHM,
+    :FWHM_01,
+    :GOF,
+    :H,
+    :Mox,
+    :RT,
+    :RT_error,
+    :b_ladder,
+    :base_width_min,
+    :best_rank,
+    :charge,
+    :city_block,
+    :data_points,
+    :entropy_sim,
+    :err_norm_log2,
+    :error,
+    :hyperscore,
+    :intensity_explained,
+    :ions_sum,
+    :log_sum_of_weights,
+    :matched_ratio,
+    :mean_log_entropy,
+    :mean_log_probability,
+    :mean_log_spectral_contrast,
+    :mean_matched_ratio,
+    :mean_scribe_score,
+    :missed_cleavage,
+    :ms1_ms2_diff,
+    :peak_area,
+    :peak_area_ms1,
+    :points_above_FWHM,
+    :points_above_FWHM_01,
+    :poisson,
+    :prec_mz,
+    :scribe_score,
+    :sequence_length,
+    :spectral_contrast,
+    :spectrum_peaks,
+    :topn,
+    :total_ions,
+    :weight,
+    :y_ladder,
+    :ρ,
+
+    :log2_base_peak_intensity,
+    :TIC,
+    :adjusted_intensity_explained
+    ]
+
+for i in range(1, size(best_psms)[1])
+    if ismissing(best_psms[i,:ρ])
+        continue
+    end
+    if isnan(best_psms[i,:ρ])
+best_psms[i,:ρ] = missing
+    end
+end
+#time_test = @timed filter!(x -> x.topn>1, best_psms);
+#time_test = @timed filter!(x -> x.best_rank<3, best_psms);
+       
+time_test = @timed filter!(x -> x.data_points>2, best_psms);
+time_test = @timed filter!(x -> x.points_above_FWHM>0, best_psms);
+
+xgboost_time = @timed bst = rankPSMs!(best_psms, 
+                        features,
+                        colsample_bytree = 1.0, 
+                        min_child_weight = 5, 
+                        gamma = 1, 
+                        subsample = 0.5, 
+                        n_folds = 2, 
+                        num_round = 200, 
+                        max_depth = 10, 
+                        eta = 0.05, 
+                        #eta = 0.0175,
+                        train_fraction = 9.0/9.0,
+                        n_iters = 2);
+
+getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+best_psms_passing = best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false).&(ismissing.(best_psms[:,:peak_area]).==false),:]
+
+points_per_peak = value_counts(best_psms, :data_points)
+bar(points_per_peak[!,:data_points], 
+points_per_peak[!,:nrow]./sum(points_per_peak[!,:nrow]), alpha = 0.5)
+points_per_peak = value_counts(best_psms_passing, :data_points)
+bar!(points_per_peak[!,:data_points], 
+points_per_peak[!,:nrow]./sum(points_per_peak[!,:nrow]), alpha = 0.5)
+
+
+points_per_peak = value_counts(best_psms, :points_above_FWHM)
+bar(points_per_peak[!,:points_above_FWHM], 
+points_per_peak[!,:nrow]./sum(points_per_peak[!,:nrow]), alpha = 0.5)
+points_per_peak = value_counts(best_psms_passing, :points_above_FWHM)
+bar!(points_per_peak[!,:points_above_FWHM], 
+points_per_peak[!,:nrow]./sum(points_per_peak[!,:nrow]), alpha = 0.5)
 
 ##########
 #Regroup PSMs by file id 

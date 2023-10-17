@@ -1,14 +1,18 @@
 {
+    "b_min_ind" : 2,
+    "y_min_ind" : 3,
     "expected_matches": 1000000,
     "frag_ppm_err": 0.0,
     "frag_tol_quantile": 0.975,
     "frag_tol_presearch": 30.0,
     "max_peaks": false,
     "max_peak_width": 2.0,
-    "min_frag_count": 4,
-    "min_frag_count_presearch": 4,
+    "min_frag_count": 1,
+    "min_frag_count_presearch": 7,
+    "min_frag_count_index_search": 2,
     "min_matched_ratio": 0.45,
-    "min_matched_ratio_presearch": 0.6,
+    "min_matched_ratio_presearch": 1.0,
+    "min_matched_ratio_index_search": 0.0,
     "min_spectral_contrast": 0.5,
     "min_spectral_contrast_presearch": 0.90,
     "prec_tolerance": 5.0,
@@ -16,8 +20,9 @@
     "rt_bounds":[-20.0, 200.0],
     "rt_tol": 20.0,
     "sample_rate": 0.05,
-    "topN_presearch": 10,
+    "topN_presearch": 5000,
     "topN": 5000,
+    "topN_index_search": 10000,
 
     "nnls_params":         
     {
@@ -25,6 +30,7 @@
         "nnls_tol": 100,
         "regularize": false,
         "lambda": 0.0,
-        "gamma": 0.0
+        "gamma": 0.0,
+        "huber_delta": 1000
     }
 }

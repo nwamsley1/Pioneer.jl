@@ -84,6 +84,7 @@ getPredictedIntenisty(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predi
 PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Int64), zero(UInt32))
 getRank(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = one(UInt8)
 getFragInd(::PrecursorMatch{Float32}) = Inf
+getIonType(::PrecursorMatch{Float32}) = 'y'
 
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
@@ -137,6 +138,30 @@ function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_hig
     end
     return best_peak
 end
+
+function getMostIntense(masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
+    most_intense = intensities[peak]#smallest_diff = abs(masses[peak]+δ - frag_mz)
+    best_peak = peak
+    i = 0
+
+    #Shorthand to check for BoundsError on `masses`
+   # boundsCheck() = (peak + 1 + i > length(masses))
+    if (peak + 1 + i > length(masses)) return best_peak end
+    #Iterate through peaks in  `masses` until a peak is encountered that is 
+    #greater in m/z than the upper bound of the `transition` tolerance 
+    #or until there are no more masses to check. Keep track of the best peak/transition match. 
+    while (masses[peak + 1 + i]+ δ <= mz_high)
+        intensity = intensities[peak + 1 + i]#abs(masses[peak  + 1 + i]+δ - frag_mz)
+        if intensity > most_intense
+            most_intense = intensity
+            best_peak = peak + 1 + i
+        end
+        i+=1
+        if (peak + 1 + i > length(masses)) break end
+    end
+    return best_peak
+end
+
 export getNearest
 
 """

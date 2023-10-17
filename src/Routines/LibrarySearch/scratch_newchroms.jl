@@ -206,11 +206,37 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     
     ############
     #Summary Statistics 
-    log_sum_of_weights = log2(sum(chrom.weight))
-    mean_log_spectral_contrast = mean(log2.(chrom.spectral_contrast))
-    mean_log_entropy = mean((max.(log2.(chrom.entropy_sim), Float16(1e-3))))
-    mean_scribe_score = mean(chrom.scribe_score)
-    mean_log_probability = mean(log2.(chrom.prob))
+    log_sum_of_weights = 0.0 #og2(sum(chrom.weight))
+    #mean_log_spectral_contrast = sum(log2.(chrom.spectral_contrast))
+    
+    #mean_log_entropy = sum(
+    #                        (log2.(max.(chrom.entropy_sim, 0.001)))
+    #                        )
+
+    mean_scribe_score = 0.0
+    mean_log_entropy = 0.0
+    mean_log_probability = 0.0
+    mean_log_spectral_contrast = 0.0
+    count = 0
+    for i in range(1, length(filter))
+        if !filter[i]
+            mean_scribe_score += chrom.scribe_score[i]
+            mean_log_entropy += log2(max(chrom.entropy_sim[i], 0.001))
+            mean_log_probability += log2(chrom.prob[i])
+            mean_log_spectral_contrast += log2(chrom.spectral_contrast[i])
+            log_sum_of_weights += chrom.weight[i]
+            count += 1
+        end
+    end    
+    log_sum_of_weights = log2(log_sum_of_weights)
+    mean_log_probability = mean_log_probability/count
+   # mean_log_entropy = mean_log_entropy/count
+   # mean_scribe_score = mean_scribe_score/count
+   # mean_log_spectral_contrast = mean_log_spectral_contrast/count
+    #mean_scribe_score = mean_scribe_score/count   
+
+    #mean_scribe_score = sum(chrom.scribe_score)
+    #mean_log_probability = mean(log2.(chrom.prob))
     ions_sum = sum(chrom.total_ions)
     data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     mean_ratio = mean(chrom.matched_ratio)

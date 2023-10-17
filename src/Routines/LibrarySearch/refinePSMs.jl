@@ -15,6 +15,9 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     transform!(PSMs, AsTable(:) => ByRow(psm -> precursors[psm[:precursor_idx]].sequence) => :sequence)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(log2(maximum(MS_TABLE[:intensities][psm[:scan_idx]])))) => :log2_base_peak_intensity)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(log2(sum(MS_TABLE[:intensities][psm[:scan_idx]])))) => :TIC)
+    PSMs[:,:adjusted_intensity_explained] = Float16.(log2.(PSMs[!,:intensity_explained] .* (2 .^ Float32.(PSMs[!,:TIC]))))
     transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(getCharge(precursors[psm[:precursor_idx]]))) => :charge)
 
     ###########################
@@ -72,7 +75,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     transform!(PSMs, AsTable(:) => ByRow(psm -> isinf(psm[:weight_log2]) ? zero(Float16) : psm[:weight_log2]) => [:weight_log2]);
     transform!(PSMs, AsTable(:) => ByRow(psm -> isinf(psm[:matched_ratio]) ? zero(Float16) : psm[:matched_ratio]) => [:matched_ratio]);
 
-    transform!(best_psms, AsTable(:) => ByRow(psm -> isnan(psm[:matched_ratio]) ? zero(Float16) : psm[:matched_ratio]) => [:matched_ratio]);
+    transform!(PSMs, AsTable(:) => ByRow(psm -> isnan(psm[:matched_ratio]) ? zero(Float16) : psm[:matched_ratio]) => [:matched_ratio]);
 
 
     #min_log2_weight = minimum(PSMs[isinf.(PSMs[!,:weight_log2]),:weight_log2])
@@ -86,14 +89,18 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     ########################
     #Rough Target-Decoy discrimination
     PSMs[:,:q_value] .= zero(Float16)
-    model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
-                                scribe_score + weight_log2 + topn + spectral_contrast + 
-                                RT_error + missed_cleavage + Mox + intensity_explained + error + total_ions), PSMs, 
-                                Binomial(), 
-                                ProbitLink())
+    #model_fit = glm(@formula(target ~ entropy_sim + poisson + hyperscore +
+    #                            scribe_score + weight_log2 + topn + spectral_contrast + 
+    #                            RT_error + missed_cleavage + Mox + intensity_explained + error + total_ions), PSMs, 
+    #                            Binomial(), 
+    #                           ProbitLink())
+    model_fit = glm(@formula(target ~ entropy_sim +
+                            scribe_score + weight_log2 + spectral_contrast + RT_error + missed_cleavage + Mox + TIC), PSMs, 
+                            Binomial(), 
+                            ProbitLink())
     Y′ = Float16.(GLM.predict(model_fit, PSMs));
     getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
-    #println("Target PSMs at 25% FDR: ", sum((PSMSs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
     PSMs[:,:prob] = allowmissing(Y′)
 
     ########################
