@@ -28,6 +28,7 @@ function SearchRAW(
                     min_matched_ratio::Float32 = Float32(0.8),
                     min_matched_ratio_index_search::Float32 = zero(Float32),
                     min_spectral_contrast::Float32 = Float32(0.65),
+                    most_intense = false,
                     nmf_tol::Float32 = Float32(100.0),
                     precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
                     precursor_tolerance::Float64 = 5.0,
@@ -88,7 +89,8 @@ function SearchRAW(
     index_ions_time = 0.0
     ##########
     #Iterate through spectra
-    for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    #for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    for i in range(first(scan_range), last(scan_range))
     #for i in range(1, size(spectra[:masses])[1])
 
         ###########
@@ -166,7 +168,8 @@ function SearchRAW(
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
                                     min_intensity = min_intensity, #Ignore peaks below this intensity
-                                    ppm = fragment_tolerance #Fragment match tolerance in ppm
+                                    ppm = fragment_tolerance, #Fragment match tolerance in ppm
+                                    most_intense = most_intense
                                     )
         ##########
         #Spectral Deconvolution and Distance Metrics 
@@ -354,7 +357,7 @@ function firstSearch(
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         frag_ppm_err = params[:frag_ppm_err],
-        fragment_tolerance = params[:fragment_tolerance],
+        fragment_tolerance = params[:frag_tol_presearch],
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
@@ -362,6 +365,7 @@ function firstSearch(
         min_matched_ratio = params[:min_matched_ratio],
         min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
         min_spectral_contrast = params[:min_spectral_contrast],
+        most_intense = false,#params[:most_intense],
         nmf_tol = params[:nmf_tol],
         precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
         precursor_tolerance = params[:precursor_tolerance],
@@ -447,6 +451,7 @@ function mainLibrarySearch(
         min_matched_ratio = params[:min_matched_ratio],
         min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
         min_spectral_contrast = params[:min_spectral_contrast],
+        most_intense = params[:most_intense],
         nmf_tol = params[:nmf_tol],
         precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
         precursor_tolerance = params[:precursor_tolerance],
@@ -540,6 +545,7 @@ function integrateMS2(
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
         min_spectral_contrast = params[:min_spectral_contrast],
+        most_intense = params[:most_intense],
         nmf_tol = params[:nmf_tol],
         precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
@@ -630,6 +636,7 @@ function integrateMS1(
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
         min_spectral_contrast = params[:min_spectral_contrast],
+        most_intense = params[:most_intense],
         nmf_tol = params[:nmf_tol],
         precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],

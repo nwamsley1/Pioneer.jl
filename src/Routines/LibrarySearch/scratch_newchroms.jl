@@ -272,7 +272,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
 
     gx, gw = gausslegendre(n_quadrature_nodes)
 
-    for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    for i in range(1, length(grouped_precursor_df))
         integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 gx::Vector{Float64},
                                 gw::Vector{Float64},

@@ -29,27 +29,58 @@ fixed_mods = [(p=r"C", r="C[Carb]")]
 mods_dict = Dict("Carb" => Float64(57.021464),
                  "Ox" => Float64(15.994915)
                  )
-f_simp, f_det, precursors = parsePrositLib("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/Prosit_HumanYeastEcoli_NCE33_corrected_092823.csv", fixed_mods, mods_dict, start_ion = 1, 
-                                            low_frag_mz = 80.0, high_frag_mz = 2000.0,
-                                            max_rank_index = 3,
-                                            index_start_ion = 3);
+f_simp, f_det, precursors = parsePrositLib("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/Prosit_HumanYeastEcoli_NCE33_corrected_092823.csv", fixed_mods, mods_dict, getMZBounds,
+                                            y_start_index = 4,
+                                            b_start_index = 3,
+                                            y_start = 3,
+                                            b_start = 2, 
+                                            max_rank_index = 3);
 println("SIZE f_smp ", length(f_simp))
 @time begin
-    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositRAW_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart1.jld2" f_simp f_det precursors
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_simp.jld2" f_simp 
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_det.jld2" f_det 
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_precursors.jld2" precursors
 end
 
 @time begin
-    prosit_lib  = load("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositRAW_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart1.jld2")
+    @load "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_simp.jld2" f_simp 
 end
 
-f_index = buildFragmentIndex!(prosit_lib["f_simp"], Float32(5.0), Float32(20.2))
-f_det = prosit_lib["f_det"]
-precursors = prosit_lib["precursors"]
+f_index = buildFragmentIndex!(f_simp , Float32(5.0), Float32(20.2))
+#f_det = prosit_lib["f_det"]
+#precursors = prosit_lib["precursors"]
 @time begin
-    @save  "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart1.jld2" f_index f_det precursors
+    @save  "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_index.jld2" f_index
 end
 
 
+@time begin
+    @load "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy4b3_ally3b2/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_det.jld2" f_det
+end
+
+f_det_new = Vector{Vector{LibraryFragment{Float32}}}(undef, length(f_det))
+
+for i in ProgressBar(range(1, length(f_det)))
+    f_det_new[i] = [frag for frag in f_det[i]]
+end
+
+@time begin
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy4b3_ally3b2/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_det.jld2" f_det_new
+end
+
+@time begin
+    @load "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy4b3_ally2b1/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_det.jld2" f_det
+end
+
+f_det_new = Vector{Vector{LibraryFragment{Float32}}}(undef, length(f_det))
+
+for i in ProgressBar(range(1, length(f_det)))
+    f_det_new[i] = [frag for frag in f_det[i]]
+end
+
+@time begin
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy4b3_ally2b1/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_det.jld2" f_det_new
+end
 
 
 

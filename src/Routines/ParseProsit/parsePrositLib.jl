@@ -122,7 +122,13 @@ function split_array_into_chunks(arr::Vector, num_chunks::Int)
 end
 #CSV.write("outputfile.csv",test_prosit[1000000:1000036,:],delim=',')
 
-function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}; start_ion::Int = 3, low_frag_mz::AbstractFloat = 299.0, high_frag_mz::AbstractFloat = 1351.0, max_rank_index::Int64 = 5, index_start_ion::Int64 = 3) where {T<:AbstractFloat}
+function getMZBounds(mz::T) where {T<:AbstractFloat}
+    low_frag_mz = Float32(((mz - 404.4337)÷8.0037 + 2)*1.667 + 83.667)
+    high_frag_mz = Float32(((mz - 404.4337)÷8.0037 - 2)*25 + 1265.0)
+    return low_frag_mz, high_frag_mz
+end
+
+function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, mods_dict::Dict{String, T}, getMZBounds::Function; max_rank_index::Int64 = 5, y_start_index::Int64 = 3, b_start_index::Int64 = 2, y_start::Int64 = 2, b_start::Int64 = 1) where {T<:AbstractFloat}
     println("START")
     #"/Users/n.t.wamsley/Projects/PROSIT/prosit1/my_prosit/examples/peptidelist.msms"
     prosit_library = CSV.File(prosit_csv_path)
@@ -132,8 +138,8 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #Initialize Containers
     #List of lists. The n'th element of the outer list is indexed by the precursor id.
     #Each inner list contains a list of "LibraryFragment"s. These are a detailed specificaion of a framgent ion
-    frags_detailed = Vector{Vector{LibraryFragment{Float32}}}(undef, length(prosit_library))
-
+    #frags_detailed = Vector{Vector{LibraryFragment{Float32}}}(undef, length(prosit_library))
+    frags_detailed = Vector{AbstractArray{LibraryFragment{Float32}}}(undef, length(prosit_library))
     #Detailed specification for each precursor. 
     precursors = Vector{LibraryPrecursor{Float32}}(undef, length(prosit_library))
 
@@ -142,6 +148,15 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #Loop through rows of prosit library (1-1 correspondence between rows and precursors)
     #lk = ReentrantLock()
     N = split_array_into_chunks(frags_detailed, Threads.nthreads())
+
+    function inScanRange(mass::T, ion_index::UInt8, low_frag_mz::T, high_frag_mz::T, is_y::Bool, y_start_ind::Int64, b_start_ind::Int64) where {T<:AbstractFloat}
+        if is_y
+            return (mass>low_frag_mz)&(mass<high_frag_mz)&(ion_index>=y_start_ind)
+        else
+            return (mass>low_frag_mz)&(mass<high_frag_mz)&(ion_index>=b_start_ind)
+        end
+    end
+
     Threads.@threads for precursor in ProgressBar(collect(prosit_library))
         if N[Threads.threadid()][1]>N[Threads.threadid()][2]
             #sleep(rand())
@@ -153,7 +168,8 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         matches =  split(precursor[:matched_ions],';')
         masses = parse.(Float32, split(precursor[:masses],';'))
         intensities = parse.(Float32, split(precursor[:intensities],';'))
-        intensities = intensities./sum(intensities)
+        base_peak_intensity = maximum(intensities) #Base peak intensity
+        #intensities = intensities./sum(intensities)
         charge = UInt8(precursor[:Charge])
         pep_id =  UInt32(precursor[:pep_id])
         decoy =  precursor[:decoy]
@@ -164,113 +180,76 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
         mz, len_AA, missed_cleavages = parseSequence(String(sequence), charge, fixed_mods, mods_dict)
 
         #pre-allocate library fragments for the n'th precursor
-        nth_precursor_frags = Vector{LibraryFragment{Float32}}()#undef, length(matches))
+        #nth_precursor_frags = Vector{LibraryFragment{Float32}}()#undef, length(matches))
         total_intensity = zero(Float32)
         total_intensity_specific = zero(Float32)
 
         #Changes every m/z bin
-        low_frag_mz = ((mz - 400.4319)/8.0037)*1.667 + 83.667
-        high_frag_mz = ((mz - 404.4337)/8.0037)*25 + 1265.0
-
+        #low_frag_mz = ((mz - 400.4319)/8.0037)*1.667 + 83.667
+        #high_frag_mz = ((mz - 404.4337)/8.0037)*25 + 1265.0
+        low_frag_mz, high_frag_mz = getMZBounds(mz)
         
         intensities_specific = intensities[:]
+
+        n_frags = 0
         for (i, _match) in enumerate(matches)
 
             ion_index = parse(UInt8, match(index_pattern, _match).captures[1]) 
 
-
-            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
-            )&(masses[i]<high_frag_mz
-            )&(ion_index>=index_start_ion)
-
-            if in_frag_index == false
+            if !inScanRange(masses[i], ion_index, low_frag_mz, high_frag_mz, (_match[1] == 'y'), y_start_index, b_start_index)
                 intensities_specific[i] = zero(Float32)
             end
 
-            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
-            )&(masses[i]<high_frag_mz
-            )&(ion_index>=start_ion)
-
-            if in_frag_index == false
+            if !inScanRange(masses[i], ion_index, low_frag_mz, high_frag_mz, (_match[1] == 'y'), y_start, b_start)
                 intensities[i] = zero(Float32)
+            else
+                total_intensity += intensities[i]
+                n_frags += 1
             end
         end
+        
+        nth_precursor_frags = Vector{LibraryFragment{Float32}}(undef, n_frags)
         ranks = ordinalrank(intensities, rev = true)
         ranks_specific = ordinalrank(intensities_specific, rev = true)
         #########
         #Parse each fragment ion 
         for (i, _match) in enumerate(matches)
-
             ion_index = parse(UInt8, match(index_pattern, _match).captures[1]) 
-
-            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
-            )&(masses[i]<high_frag_mz
-            )&(ranks_specific[i]<=max_rank_index #rank does not exceed the max rank
-            )&(ion_index>=index_start_ion)
-
-            if in_frag_index
+            if inScanRange(masses[i],ion_index,low_frag_mz, high_frag_mz, (_match[1] == 'y'),y_start_index, b_start_index)&(ranks_specific[i]<=max_rank_index)
                 total_intensity_specific += intensities[i]
             end
-
-            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
-            )&(masses[i]<high_frag_mz
-            )&(ion_index>=start_ion)
-
-            if in_frag_index
-                total_intensity += intensities[i]
-            end
-            
         end
-
-        #if sum(intensities.>IQ) <=8
-        #    findfirst(x->x>0.8, cumsum(sorted_intensities))
-        #end
-        #Should probably change to denserank. 1223 vs. 1234. 
-        #different way of dealing with ties, although probably ties are very rare if they ever occur
-        #in_frag_index = (intensities.>low_frag_mz).&(intensities.<high_frag_mz).&(ranks.<=max_rank)
-        #sorted_intensities = sort(intensities[(intensities.>low_frag_mz).&(intensities.<high_frag_mz).&(ranks.<=max_rank)], rev = true)
-        #idx = max(findfirst(x->(x/total_intensity)>0.9, cumsum(sorted_intensities)), min(5, length(sorted_intensities)))
-        #IQ = sorted_intensities[idx]
-
-        base_peak_intensity = zero(Float32)
         
+        frag_index = 0
         for i in eachindex(matches)
             fragment_name = matches[i]
             #ion_type = match(pattern, fragment_name)
             ion_index = parse(UInt8, match(index_pattern, fragment_name).captures[1]) #for y1 or b12 this is "1" and "12 respectively
             ion_charge = match(charge_pattern, fragment_name)
             frag_charge = ion_charge === nothing ? one(UInt8) : parse(UInt8, ion_charge.captures[1])
-            if ion_index < start_ion
+
+            if !inScanRange(masses[i], ion_index, low_frag_mz, high_frag_mz, (matches[i][1] == 'y'), y_start, b_start)
                 continue
+            else
+                frag_index += 1
             end
-            if (masses[i] < low_frag_mz) | (masses[i] >high_frag_mz)
-                continue
-            end
-            if intensities[i]./total_intensity > base_peak_intensity
-                base_peak_intensity = intensities[i]./total_intensity
-            end
+
             #Add the n'th fragment 
-            push!(nth_precursor_frags,  LibraryFragment(
+            nth_precursor_frags[frag_index] =  LibraryFragment(
                                                 masses[i], #frag_mz
                                                 frag_charge, #frag_charge
                                                 fragment_name[1] == 'y' ? true : false, #is_y_ion
                                                 ion_index, #ion_position
                                                 UInt8(i), #ion_index
-                                                intensities[i]/total_intensity, #intensity
+                                                intensities[i], #intensity
                                                 charge, #prec_charge
                                                 UInt32(N[Threads.threadid()][1]), #prec_id
-                                                UInt8(ranks[i]) #rank
-            ))
+                                                UInt8(ranks[i]))
 
 
             ###########
             #Only retain most important fragments for the index!
-            #Greater than the intensity quantile
-            in_frag_index = (masses[i]>low_frag_mz #Mass within scan range
-                            )&(masses[i]<high_frag_mz
-                            )&(ranks_specific[i]<=max_rank_index #rank does not exceed the max rank
-                            )&(ion_index>=index_start_ion)
-            if in_frag_index
+            if inScanRange(masses[i],ion_index,low_frag_mz, high_frag_mz, (matches[i][1] == 'y'),y_start_index, b_start_index)&(ranks_specific[i]<=max_rank_index)
                 push!(frags_simple[Threads.threadid()],
                         FragmentIon(
                             masses[i], #frag_mz
@@ -300,7 +279,9 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
                                             len_AA, #length
                                         )
 
-        frags_detailed[N[Threads.threadid()][1]] = nth_precursor_frags
+        #Might need a thread lock here. 
+        NF = length(nth_precursor_frags)
+        frags_detailed[N[Threads.threadid()][1]] = SVector{NF, LibraryFragment{Float32}}(nth_precursor_frags)#nth_precursor_frags#@SVector [frag for frag in nth_precursor_frags]
 
         N[Threads.threadid()][1] += 1
 

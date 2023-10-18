@@ -1,6 +1,6 @@
 {
-    "b_min_ind" : 2,
-    "y_min_ind" : 3,
+    "b_min_ind" : 3,
+    "y_min_ind" : 4,
     "expected_matches": 1000000,
     "frag_ppm_err": 0.0,
     "frag_tol_quantile": 0.975,

@@ -116,7 +116,7 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
+function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T,U<:AbstractFloat}
     smallest_diff = abs(masses[peak]+δ - frag_mz)
     best_peak = peak
     i = 0
@@ -139,7 +139,7 @@ function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_hig
     return best_peak
 end
 
-function getMostIntense(masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
+function getMostIntense(masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T<:AbstractFloat}
     most_intense = intensities[peak]#smallest_diff = abs(masses[peak]+δ - frag_mz)
     best_peak = peak
     i = 0
@@ -275,7 +275,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, ion_idx::Int64, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0)) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, ion_idx::Int64, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0), most_intense::Bool = false) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
@@ -305,7 +305,7 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, Ions::Vector{I}, 
         if (masses[peak]+ δ >= low)
             if (masses[peak]+ δ <= high)
                 #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
-                best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
+                best_peak = most_intense ? getMostIntense(masses, intensities, high, peak, δ=δ) : getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
                 matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]+δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
                 ion += 1
                 if ion > ion_idx#length(Ions)
@@ -430,11 +430,11 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{M}, unmatched::Vector{M}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks(Ions::Vector{I}, ion_idx::Int64, matches::Vector{M}, unmatched::Vector{M}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}; count_unmatched::Bool = false, δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0, most_intense = false) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
     if count_unmatched
         nmatches, nmisses = 0, 0
         for δ in δs
-            nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm)
+            nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm, most_intense = most_intense)
         end
         return nmatches, nmisses#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
     else
