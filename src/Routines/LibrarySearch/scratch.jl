@@ -84,6 +84,25 @@ end
 
 
 
+@load "/Users/n.t.wamsley/TEST_DATA/mzXML/LibrarySearch_indy4b3_scorey4b3_ally3b2/Search/RESULTS/best_psms.jld2" best_psms
+
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
+MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+IDtoName = Dict(zip([x for x in 1:18], MS_TABLE_PATHS));
+best_psms[!,:file_path] .= " ";
+
+for i in range(1, size(best_psms)[1])
+    best_psms[i,:file_path] = IDtoName[best_psms[i,:ms_file_idx]]
+end
+
+best_psms[!,:accession_numbers] .= " "
+
+for i in range(1, size(best_psms)[1])
+    best_psms[i,:accession_numbers] = precursors["precursors"][best_psms[i,:precursor_idx]].accession_numbers
+end
+
+@save "/Users/n.t.wamsley/TEST_DATA/mzXML/LibrarySearch_indy4b3_scorey4b3_ally3b2/Search/RESULTS/best_psms.jld2" best_psms
+
 
 
 println("Loaded spectral libraries in ", spec_load_time.time, " seconds")

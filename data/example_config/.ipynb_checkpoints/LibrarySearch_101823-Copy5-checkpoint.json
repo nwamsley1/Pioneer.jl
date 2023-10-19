@@ -5,7 +5,7 @@
     "frag_ppm_err": 0.0,
     "frag_tol_quantile": 0.975,
     "frag_tol_presearch": 40.0,
-    "intensity_filter_fraction": 0.01,
+    "intensity_filter_fraction": 0.00,
     "LsqFit_tol": 0.001,
     "Lsq_max_iter": 100,
     "max_peaks": false,
@@ -27,8 +27,8 @@
     "sample_rate": 0.01,
     "tail_distance": 0.25,
     "topN_presearch": 5000,
-    "topN": 5000,
-    "topN_index_search": 10000,
+    "topN": 50000,
+    "topN_index_search": 50000,
 
     "nnls_params":         
     {

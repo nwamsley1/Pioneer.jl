@@ -25,10 +25,10 @@
     "rt_bounds":[-20.0, 200.0],
     "rt_tol": 20.0,
     "sample_rate": 0.01,
-    "tail_distance": 0.25,
+    "tail_distance": 0.05,
     "topN_presearch": 5000,
-    "topN": 5000,
-    "topN_index_search": 10000,
+    "topN": 50000,
+    "topN_index_search": 50000,
 
     "nnls_params":         
     {

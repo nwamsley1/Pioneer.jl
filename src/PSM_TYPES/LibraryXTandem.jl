@@ -109,9 +109,8 @@ function Score!(PSMs_dict::Dict,
                 #entropy_sim::Vector{Float32}, 
                 scores::NamedTuple,
                 weight::Vector{Float32}, 
-                IDtoROW::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}},
-                IDtoROW_weights::UnorderedDictionary{UInt32, UInt32}; 
-                scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6, min_frag_count::Int = 4) where {T,U<:Real}
+                IDtoROW::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}; 
+                scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6f0, min_matched_ratio::Float32 = 0.5f0, min_frag_count::Int = 4) where {T,U<:Real}
 
     scribe_score = scores[:scribe]::Vector{Float32}
     city_block = scores[:city_block]::Vector{Float32}
@@ -186,9 +185,9 @@ function Score!(PSMs_dict::Dict,
         if (unscored_PSMs[key].y_count + unscored_PSMs[key].b_count) < min_frag_count
             continue
         end
-        #if matched_ratio[index]<0.5
-        #    continue
-        #end
+        if matched_ratio[index]<min_matched_ratio
+            continue
+        end
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], Float16(HyperScore(unscored_PSMs[key])))
         append!(PSMs_dict[:y_ladder], UInt8(getLongestSet(unscored_PSMs[key].y_ions)))
@@ -209,7 +208,7 @@ function Score!(PSMs_dict::Dict,
         append!(PSMs_dict[:city_block], Float16(city_block[index]))
         append!(PSMs_dict[:matched_ratio], Float16(matched_ratio[index]))
         append!(PSMs_dict[:entropy_sim], Float16(entropy_sim[index]))
-        append!(PSMs_dict[:weight], Float32(weight[IDtoROW_weights[unscored_PSMs[key].precursor_idx]]))
+        append!(PSMs_dict[:weight], Float32(weight[index]))
 
         append!(PSMs_dict[:scan_idx], UInt32(scan_idx))
         append!(PSMs_dict[:precursor_idx], UInt32(unscored_PSMs[key].precursor_idx))

@@ -12,10 +12,10 @@
     "max_peak_width": 2.0,
     "min_frag_count": 1,
     "min_frag_count_presearch": 7,
-    "min_frag_count_index_search": 1,
+    "min_frag_count_index_search": 2,
     "min_matched_ratio": 0.45,
     "min_matched_ratio_presearch": 1.0,
-    "min_matched_ratio_index_search": 0.75,
+    "min_matched_ratio_index_search": 0.0,
     "min_spectral_contrast": 0.5,
     "min_spectral_contrast_presearch": 0.90,
     "most_intense": false,
@@ -27,8 +27,8 @@
     "sample_rate": 0.01,
     "tail_distance": 0.25,
     "topN_presearch": 5000,
-    "topN": 5000,
-    "topN_index_search": 10000,
+    "topN": 50000,
+    "topN_index_search": 50000,
 
     "nnls_params":         
     {

@@ -176,14 +176,17 @@ function SearchRAW(
         if nmatches < 2 #Few matches to do not perform de-convolution 
             IDtoCOL = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
-            IDtoCOL_weights = UnorderedDictionary{UInt32, UInt32}()
-            prep_time += @elapsed begin
+            #IDtoCOL_weights = UnorderedDictionary{UInt32, UInt32}()
+            #prep_time += @elapsed begin
 
                 #Sparse matrix representation of templates written to Hs. 
                 #Hs mask is true for ions that will be used to score and false otherwise (may exclude y1 ions for example)
                 #IDtoCOL maps precursor ids to their corresponding columns. 
-                X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
-                weights = nothing
+                #X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
+            X, Hs, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            scores = getDistanceMetrics(X, Hs, last_matched_col)
+            weights = Vector{Float32}(undef, Hs.n)
+                #=
                 if ismissing(isotope_dict) 
 
                     #Get spectral distance metrics for each of the seed precursors, excluding masked ions
@@ -221,14 +224,22 @@ function SearchRAW(
                 else
                     weights = zeros(eltype(Hs), Hs.n)
                 end
+                =#
+            #end
 
+            for (id, row) in pairs(IDtoCOL)
+                weights[first(row)] = precursor_weights[id]
             end
 
             solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
-            for (id, row) in pairs(IDtoCOL_weights)
-                precursor_weights[id] = weights[row]# = precursor_weights[id]
+            for (id, row) in pairs(IDtoCOL)
+                precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
             end
+
+            #for (id, row) in pairs(IDtoCOL_weights)
+            #    precursor_weights[id] = weights[row]# = precursor_weights[id]
+            #end
             #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
             ##########
             #Scoring and recording data
@@ -246,9 +257,9 @@ function SearchRAW(
                         scores, #Named Tuple of spectrum simmilarity/distance measures 
                         weights, #Coefficients for each precursor in the spectral deconvolution
                         IDtoCOL,
-                        IDtoCOL_weights, 
                         scan_idx = i,
                         min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
+                        min_matched_ratio = min_matched_ratio,
                         min_frag_count = min_frag_count #Remove precursors with fewer fragments 
                         )
             end

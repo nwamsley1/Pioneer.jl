@@ -79,7 +79,6 @@ if !isdir(out_folder)
     mkpath(out_folder)
 end
 
-
 nnls_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
 
 params_ = (
@@ -89,6 +88,9 @@ params_ = (
     frag_ppm_err = Float64(params["frag_ppm_err"]),
     frag_tol_quantile = Float32(params["frag_tol_quantile"]),
     frag_tol_presearch = Float64(params["frag_tol_presearch"]),
+    intensity_filter_fraction = Float32(params["intensity_filter_fraction"]),
+    LsqFit_tol = Float64(params["LsqFit_tol"]),
+    Lsq_max_iter = Int64(params["Lsq_max_iter"]),
     nnls_max_iter = Int64(nnls_params["nnls_max_iter"]),
     max_peaks = typeof(params["max_peaks"]) == Bool ? params["max_peaks"] : Int64(params["max_peaks"]),
     max_peak_width = Float64(params["max_peak_width"]),
@@ -101,6 +103,7 @@ params_ = (
     min_spectral_contrast = Float32(params["min_spectral_contrast"]),
     min_spectral_contrast_presearch = Float32(params["min_spectral_contrast_presearch"]),
     most_intense = Bool(params["most_intense"]),
+    n_quadrature_nodes = Int64(params["n_quadrature_nodes"]),
     nnls_tol = Float32(nnls_params["nnls_tol"]),
     prec_tolerance = Float64(params["prec_tolerance"]),
     quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
@@ -108,6 +111,7 @@ params_ = (
     rt_bounds = Tuple([Float64(rt) for rt in params["rt_bounds"]]),
     rt_tol = Float64(params["rt_tol"]),
     sample_rate = Float64(params["sample_rate"]),
+    tail_distance = Float32(params["tail_distance"]),
     topN_presearch = Int64(params["topN_presearch"]),
     topN = Int64(params["topN"]),
     topN_index_search = Int64(params["topN_index_search"]),
@@ -368,7 +372,7 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 scan_range = (1, length(MS_TABLE[:masses]))
                                             );
 
-        println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
+        #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
         #@save "/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101623.jld2" PSMs;=
         filter!(x -> x.weight>10.0, PSMs);
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
@@ -377,12 +381,25 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
         test_chroms = groupby(PSMs, :precursor_idx);
 
         #Integrate MS2 and filter
-        time_test = @timed integratePrecursors(test_chroms)
+        time_test = @timed integratePrecursors(test_chroms, 
+                                                n_quadrature_nodes = params_[:n_quadrature_nodes],
+                                                intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                                LsqFit_tol = params_[:LsqFit_tol],
+                                                Lsq_max_iter = params_[:Lsq_max_iter],
+                                                tail_distance = params_[:tail_distance])
         time_test = @timed filter!(x -> x.best_scan, PSMs);
         time_test = @timed filter!(x -> x.FWHM.<100, PSMs);
         time_test = @timed filter!(x -> x.FWHM_01.<100, PSMs);
         time_test = @timed filter!(x -> x.data_points.>2, PSMs);
 
+        #Add file path 
+        PSMs[!,:file_path] .= MS_TABLE_PATH
+
+        #Add Accession numbers
+        transform!(PSMs, AsTable(:) => ByRow(psm -> 
+        prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
+        ) => :accession_numbers
+        );
         #Get Precursor M/Z's 
         transform!(PSMs, AsTable(:) => ByRow(psm -> 
         prosit_lib["precursors"][psm[:precursor_idx]].mz
@@ -413,7 +430,7 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                     )
                             ), by = x->first(x));
     
-        println("Integrating MS1 $ms_file_idx...")
+        #println("Integrating MS1 $ms_file_idx...")
         ms1_chroms = integrateMS1(MS_TABLE, 
                                         isotopes, 
                                         prec_rt_table, 
@@ -468,7 +485,7 @@ println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored.jld2"); best_psms)
 
 open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "meta.txt"), "w") do f
     write(f, "Main Search Time $main_search_time \n")
@@ -477,6 +494,295 @@ end
 open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
     write(f, JSON.json(JSON.parse(read(ARGS["params_json"], String))))
 end
+
+features = [ :FWHM,
+    :FWHM_01,
+    :GOF,
+    :H,
+    :Mox,
+    :RT,
+    :RT_error,
+    :b_ladder,
+    :base_width_min,
+    :best_rank,
+    :charge,
+    :city_block,
+    :data_points,
+    :entropy_sim,
+    :err_norm_log2,
+    :error,
+    :hyperscore,
+    :intensity_explained,
+    :ions_sum,
+    :log_sum_of_weights,
+    :matched_ratio,
+    :mean_log_entropy,
+    :mean_log_probability,
+    :mean_log_spectral_contrast,
+    :mean_matched_ratio,
+    :mean_scribe_score,
+    :missed_cleavage,
+    :ms1_ms2_diff,
+    :peak_area,
+    :peak_area_ms1,
+    :points_above_FWHM,
+    :points_above_FWHM_01,
+    :poisson,
+    :prec_mz,
+    :scribe_score,
+    :sequence_length,
+    :spectral_contrast,
+    :spectrum_peaks,
+    :topn,
+    :total_ions,
+    :weight,
+    :y_ladder,
+    :ρ,
+
+    :log2_base_peak_intensity,
+    :TIC,
+    :adjusted_intensity_explained
+    ]
+
+
+xgboost_time = @timed bst = rankPSMs!(best_psms, 
+                        features,
+                        colsample_bytree = 1.0, 
+                        min_child_weight = 5, 
+                        gamma = 1, 
+                        subsample = 0.5, 
+                        n_folds = 2, 
+                        num_round = 200, 
+                        max_depth = 10, 
+                        eta = 0.05, 
+                        #eta = 0.0175,
+                        train_fraction = 2.0/9.0,
+                        n_iters = 2);
+
+getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored.jld2"); best_psms)
+
+using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
+
+function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
+
+    function getReader(fasta_path::String)
+        if endswith(fasta_path, ".fasta.gz")
+            return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
+        elseif endswith(fasta_path, ".fasta")
+            return FASTA.Reader(open(fasta_path))
+        else
+            throw(ErrorException("fasta_path \"$fasta_path\" did not end with `.fasta` or `.fasta.gz`"))
+        end
+    end
+
+    #I/O for Fasta
+    reader = getReader(fasta_path)
+
+    #In memory representation of FastaFile
+    #fasta = Vector{FastaEntry}()
+    fasta = Vector{Tuple{String, String}}()
+    @time begin
+        for record in reader
+                push!(fasta, 
+                        (parse_identifier(FASTA.identifier(record)),
+                         split(split(split(FASTA.description(record), ' ')[1], '|')[end], '_')[end],
+                                #FASTA.sequence(record),
+                                #false
+                        )
+                )
+        end
+    end
+
+    return fasta
+end
+
+PIONEER = best_psms;
+PIONEER = PIONEER[(iszero.(PIONEER[:,:peak_area]).==false),:];
+MEANS = combine(prec_group -> (mean_log2 = mean(log2.(prec_group[:,:peak_area])),
+                               median_log2 = median(log2.(prec_group[:,:peak_area])),
+                               CV = std(prec_group[:,:peak_area])/mean(prec_group[:,:peak_area])
+                            ),
+                groupby(PIONEER[:,[:precursor_idx,:peak_area]], 
+                        [:precursor_idx])
+    );
+#Exclude precursors without enough data to calculate a global CV
+MEANS = MEANS[isnan.(MEANS[:,:CV]).==false,:];
+
+#Use only precursors with CV in the bottom 25%
+MEANS = MEANS[MEANS[:,:CV].<quantile(MEANS[:,:CV], 0.25),:];
+
+#Dictionary mapping precursor id's to named tuple with global log2_mean, log2_median, and CV
+mean_dict = Dict(zip(MEANS[:,:precursor_idx], [NamedTuple(x) for x in eachrow(MEANS[:,[:mean_log2,:median_log2,:CV]])]));
+
+PIONEER[:,:CV] = allowmissing(zeros(Float64, size(PIONEER)[1]));
+#Apply precursor group CVs to the rows of the data
+for i in range(1,size(PIONEER)[1])
+    #if PIONEER[i,:file_path]=="/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01.arrow"
+    if haskey(mean_dict, PIONEER[i,:precursor_idx])
+        PIONEER[i,:CV] = mean_dict[PIONEER[i,:precursor_idx]][:CV]
+    else
+        PIONEER[i,:CV] = missing
+    end
+end
+
+PIONEER[:,:peak_area_norm] = PIONEER[:,:peak_area];
+PIONEER[:,:peak_area_log2] = log2.(PIONEER[:,:peak_area]);
+
+PIONEER_BEST = PIONEER[(PIONEER[:,:q_value].<=0.01).&( #1% FDR
+                        PIONEER[:,:decoy].==false).&(
+                        coalesce.(PIONEER[:,:CV], Inf).<median(skipmissing(PIONEER[:,:CV]))), #CV less than median
+    :]
+
+INTENSITIES = combine(file -> (median = median(file[:,:peak_area_log2]),mean = mean(file[:,:peak_area_log2])), groupby(PIONEER_BEST[:,[:file_path,:peak_area_log2]], :file_path));
+
+#INTENSITIES = combine(file -> (median = median(file[:,:peak_area_log2]),mean = mean(file[:,:peak_area_log2])), groupby(PIONEER_BEST[:,[:file_path,:peak_area_log2]], :file_path));
+
+INTENSITIES[:,:correction] = (INTENSITIES[:,:median] .- median(INTENSITIES[:,:median]));
+
+NORM_CORRECTIONS = Dict(zip(INTENSITIES[:,:file_path],INTENSITIES[:,:correction]));
+
+transform!(PIONEER, AsTable(:) => ByRow(precursor -> 2^(precursor[:peak_area_log2] .- NORM_CORRECTIONS[precursor[:file_path]])) => [:peak_area_norm]);
+PIONEER[:,:peak_area_log2_norm] .= log2.(PIONEER[:,:peak_area_norm]);
+
+p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Original Response",
+topmargin=5mm)
+
+@df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
+             PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true)
+savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "RAW_INTENSITIES.pdf"))
+
+p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Normalized Response",
+topmargin=5mm)
+@df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
+            PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
+savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
+            
+ACC_TO_SPEC = Dict(vcat([parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000000625_83333_Escherichia_coli.fasta.gz"),
+            parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000002311_559292_Saccharomyces_cerevisiae.fasta.gz"),
+            parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000005640_9606_human.fasta.gz")]...));
+
+PIONEER[:,:species_set] = [Set([ACC_TO_SPEC[id] for id in ids]) for ids in split.(PIONEER[:,:accession_numbers],';')];
+            PIONEER = PIONEER[length.(PIONEER[:,:species_set]).==1,:];
+            PIONEER[:,:species] = first.(PIONEER[:,:species_set]);
+value_counts(df, col) = combine(groupby(df, col), nrow)
+IDs_PER_FILE = value_counts(PIONEER[(PIONEER[:,:q_value].<=0.01) .& (PIONEER[:,:decoy].==false),:], [:file_path])
+
+CSV.write(joinpath(MS_DATA_DIR, "Search", "RESULTS", "id_per_file.csv"), IDs_PER_FILE)
+
+
+function getCondition(row)
+    file_name = split(split(row[:file_path], '/')[end], '.')[1]
+    file_name_split = split(file_name, '_')
+    condition, biological, technical = file_name_split[end - 3], file_name_split[end - 1], file_name_split[end]
+    return condition, biological, technical
+end
+
+transform!(PIONEER, AsTable(:) => ByRow(precursor -> getCondition(precursor)) => [:condition, :biological, :technical]);
+
+PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
+PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(prec_group[:,:peak_area_norm])), 
+                                        CV = 100*std(prec_group[:,:peak_area_norm])/mean(prec_group[:,:peak_area_norm]),
+                                        non_missing = length(prec_group[:,:peak_area_norm]),
+                                        min_q_value = minimum(prec_group[:,:q_value])), 
+    PIONEER_GROUPED );
+
+
+#=
+PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(trim(prec_group[:,:peak_area_norm], prop = 0.2))), 
+                                        CV = 100*std(trim(prec_group[:,:peak_area_norm], prop = 0.2))/mean(trim(prec_group[:,:peak_area_norm], prop = 0.2)),
+                                        non_missing = length(prec_group[:,:peak_area_norm]),
+                                        min_q_value = minimum(prec_group[:,:q_value])), 
+    PIONEER_GROUPED );
+=#
+
+
+filter!(:min_q_value => x -> x<=0.01, PIONEER_LOG2MEAN);
+
+function getLog2Diff(prec_group)
+    #println(size(prec_group))
+    if size(prec_group)[1].!=2
+        return (log2_diff = zeros(Float64, 1),
+                 log2_mean = zeros(Float64, 1),
+                 log2_a = zeros(Float64, 1),
+                 log2_b = zeros(Float64, 1),
+                 CV_a = zeros(Float64, 1),
+                 CV_b = zeros(Float64, 1),
+                 nonMissing_a = zeros(Int64, 1),
+                 nonMissing_b = zeros(Int64, 1))
+    end
+    group_A = occursin.("A", prec_group[:,:condition])
+    group_B = group_A.==false
+    log2_diff = prec_group[:,:log2_mean][group_B] - prec_group[:,:log2_mean][group_A]
+    out = (
+     log2_diff = log2_diff, 
+     log2_mean = (prec_group[:,:log2_mean][group_A] + prec_group[:,:log2_mean][group_B])/2,
+     log2_a = prec_group[:,:log2_mean][group_A],
+     log2_b = prec_group[:,:log2_mean][group_B],
+     CV_a = prec_group[:,:CV][group_A],
+     CV_b = prec_group[:,:CV][group_B],
+     nonMissing_a = prec_group[:,:non_missing][group_A],
+     nonMissing_b = prec_group[:,:non_missing][group_B]
+        )
+    return out
+end
+
+PIONEER_COMBINED = combine(prec_group -> getLog2Diff(prec_group), groupby(PIONEER_LOG2MEAN, [:species, :accession_numbers, :sequence, :charge]));
+PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:nonMissing_a].>6).&(PIONEER_COMBINED[:,:nonMissing_b].>6),:];
+PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:CV_a].<30).&(PIONEER_COMBINED[:,:CV_b].<30),:];
+
+open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "passing_benchmark.txt"), "w") do f
+    #size = "size(PIONEER_COMBINED) "*string(size(PIONEER_COMBINED))
+    write(f, "size(PIONEER_COMBINED) "*string(size(PIONEER_COMBINED)))
+end
+
+gdf = groupby(PIONEER_COMBINED , [:species])
+nt = NamedTuple.(keys(gdf))
+p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
+topmargin=5mm)
+i = 1
+SPECIES_TO_LOG2FC = Dict("HUMAN" => 0.0,
+                         "YEAST" => -1.0,
+                         "ECOLI" => 2.0)
+for (k,v) in pairs(gdf)
+    density!(p, gdf[k][:,:log2_diff], label=nothing, color = i, bins = LinRange(-3, 3, 100), show = true, normalize = :pdf, alpha = 0.5)
+    vline!([SPECIES_TO_LOG2FC[nt[i][:species]]], color = i, label = label="$(nt[i][:species])")
+    i += 1
+end
+
+savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "HIST.pdf"))
+
+gdf = groupby(PIONEER_COMBINED , [:species])
+nt = NamedTuple.(keys(gdf))
+p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
+topmargin=5mm)
+i = 1
+
+for (k,v) in pairs(gdf)
+    violin!(p, gdf[k][:,:log2_diff], label="$(nt[i])", ylim = (-3, 4), span = [10.0])
+    i += 1
+end
+
+savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "VIOLIN.pdf"))
+
+gdf = groupby(PIONEER_COMBINED , [:species])
+nt = NamedTuple.(keys(gdf))
+p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
+topmargin=5mm)
+i = 1
+for (k,v) in pairs(gdf)
+    plot!(p, gdf[k][:,:log2_mean], gdf[k][:,:log2_diff], color = i, label=nothing, xlim = (10, 30), ylim = (-3, 4), alpha = 0.1, seriestype=:scatter)
+    hline!([SPECIES_TO_LOG2FC[nt[i][:species]]], color = i, label = label="$(nt[i][:species])")
+  
+    i += 1
+end
+
+savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "SCATTER.pdf"))
+
+
+
+####################
+#Get Differential Expression/Benchmark
 
 #=
 features = [ :FWHM,

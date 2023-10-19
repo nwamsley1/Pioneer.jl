@@ -1,3 +1,80 @@
+function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}; block_size = 10000) where {m<:Match}
+    T = Float32
+    #Number of rows equals the number of unique matched peaks
+    #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
+    M = 1
+    for i in range(2, nmatches)
+        if getPeakInd(matches[i])!= getPeakInd(matches[i - 1])
+            M += 1
+        end
+    end
+    M += nmisses
+
+    #If M exceeds pre-allocated size
+    if (nmatches + nmisses) >= length(H_COLS) - 1
+        H_COLS = zeros(Int64, length(H_COLS) + block_size)
+        H_ROWS = zeros(Int64, length(H_ROWS) + block_size)
+        H_VALS = zeros(Float32, length(H_VALS) + block_size)
+    end
+    #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
+    X = zeros(T, M)
+    #Maps a precursor id to a row of H. 
+    precID_to_row = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
+
+    #Current highest row encountered
+    prec_row = zero(UInt32)
+    col = 0
+    #Number of unique peaks encountered. 
+    last_peak_ind = 0
+    for i in range(1, nmatches)#matches)
+        match = matches[i]
+        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
+        if !haskey(precID_to_row,  getPrecID(match))
+            prec_row += one(UInt32)
+            insert!(precID_to_row, getPrecID(match), (prec_row, zero(UInt8)))
+        end
+        if getRank(match) < 3
+            precID_to_row[getPrecID(match)] = (precID_to_row[getPrecID(match)][1], precID_to_row[getPrecID(match)][2] + one(UInt8))
+        end
+        #If this peak has not been encountered yet, then start filling a new column
+        if getPeakInd(match) != last_peak_ind
+            col += 1
+            last_peak_ind = getPeakInd(match)
+            X[col] = getIntensity(match)
+        end
+        row = precID_to_row[getPrecID(match)][1]
+        H_COLS[i] = col
+        H_ROWS[i] = row
+        H_VALS[i] = getPredictedIntenisty(match)
+            #println("i ", i)
+    end
+    H_ncol = col
+    #col = 0
+    last_peak_ind = 0
+    for i in range(nmatches + 1, nmatches + nmisses)
+        miss = misses[i - nmatches]
+        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
+        if !haskey(precID_to_row,  getPrecID(miss))
+            prec_row  += UInt8(1)
+            insert!(precID_to_row, getPrecID(miss), (prec_row, false))
+        end
+       # if getPeakInd(miss) != last_peak_ind
+            col += 1
+            last_peak_ind = getPeakInd(miss)
+        #end
+        row = precID_to_row[getPrecID(miss)][1]
+        H_COLS[i] = col
+        H_ROWS[i] = row
+        H_VALS[i] = getPredictedIntenisty(miss)
+    end
+    #if i >= (nmatches - 1)
+    #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
+    #end
+    #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
+    return X, sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_VALS[1:(nmatches + nmisses)])), precID_to_row, H_ncol
+    
+end
+#=
 function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}, H_MASK::Vector{Float32}; y_min_ind::Int64 = 4, b_min_ind::Int64 = 3, block_size = 10000) where {m<:Match}
     T = Float32
     #Number of rows equals the number of unique matched peaks
@@ -77,8 +154,6 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     return X, sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_VALS[1:(nmatches + nmisses)])), sparse(@view(H_COLS[1:(nmatches + nmisses)]), @view(H_ROWS[1:(nmatches + nmisses)]), @view(H_MASK[1:(nmatches + nmisses)])) , precID_to_row, H_ncol
     
 end
-#=
-
 function buildDesignMatrix(matches::Vector{FragmentMatch{Float32}},  misses::Vector{FragmentMatch{Float32}}, seed_size::Int) #where {T<:AbstractFloat}
 
     #Number of unique matched peaks.
