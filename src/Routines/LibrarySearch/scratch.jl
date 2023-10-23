@@ -30,27 +30,28 @@ mods_dict = Dict("Carb" => Float64(57.021464),
                  "Ox" => Float64(15.994915)
                  )
 f_simp, f_det, precursors = parsePrositLib("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/Prosit_HumanYeastEcoli_NCE33_corrected_092823.csv", fixed_mods, mods_dict, getMZBounds,
-                                            y_start_index = 4,
-                                            b_start_index = 3,
+                                            y_start_index = 5,
+                                            b_start_index = 4,
                                             y_start = 3,
                                             b_start = 2, 
                                             max_rank_index = 3);
 println("SIZE f_smp ", length(f_simp))
+
 @time begin
-    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_simp.jld2" f_simp 
-    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_f_det.jld2" f_det 
-    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally3b2_precursors.jld2" precursors
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy5b4_ally3b2_f_simp.jld2" f_simp 
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy5b4_ally3b2_f_det.jld2" f_det 
+    @save "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy5b4_ally3b2_precursors.jld2" precursors
 end
 
 @time begin
-    @load "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_simp.jld2" f_simp 
+    @load "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy5b4_ally3b2/HumanYeastEcoli_NCE33COR_101723_nOf3_indy5b4_ally3b2_f_simp.jld2" f_simp 
 end
 
 f_index = buildFragmentIndex!(f_simp , Float32(5.0), Float32(20.2))
 #f_det = prosit_lib["f_det"]
 #precursors = prosit_lib["precursors"]
 @time begin
-    @save  "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/HumanYeastEcoli_NCE33COR_101723_nOf3_indy4b3_ally2b1_f_index.jld2" f_index
+    @save  "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy5b4_ally3b2/HumanYeastEcoli_NCE33COR_101723_nOf3_indy5b4_ally3b2_f_index.jld2" f_index
 end
 
 
@@ -593,7 +594,185 @@ model_fit = glm(@formula(target ~ entropy_sim +
 Y′ = Float16.(GLM.predict(model_fit, PSMs));
 getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))           
-println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))                                      
+println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+
+id_to_seq_df = unique(PSMs[:,[:precursor_idx,:sequence]])
+
+seq_to_id = Dict(zip(id_to_seq_df[!,:sequence], id_to_seq_df[!,:precursor_idx]))
+
+gx, gw = gausslegendre(100)
+integratePrecursorMS2(test_chroms[(precursor_idx = 0x007bff06,)],gx, gw, isplot = true)
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["KPGMFFNPEESELDLTYGNR"],)],gx, gw, isplot = true)
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["IIVEKPFGR"],)],gx, gw, isplot = true)
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["IFTPLLHQIELEK"],)],gx, gw, isplot = true)
+prosit_lib["f_det"][seq_to_id["IFTPLLHQIELEK"]]
+for (i, prec) in ProgressBar(enumerate(prosit_lib["precursors"]))
+    if prec.sequence == "IFTPLLHQIELEKPK"
+        println("i $i")
+    end
+end
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["LFYLALPPTVYEAVTK"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["LFYLALPPTVYEAVTK"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["LNSHMNALHLGSQANR"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["LNSHMNALHLGSQANR"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["LSNHISSLFR"],)],gx, gw, isplot = true)
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["AVAPIDTDDVLLGQYGK"],)],gx, gw, isplot = true)
+
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["DALLGDHSNFVR"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["DALLGDHSNFVR"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+integratePrecursorMS2(test_chroms[(precursor_idx = 1177969,)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = 1177969,)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["DIPNNELVIR"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["DIPNNELVIR"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["DNIQSVQISFK"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["DNIQSVQISFK"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["NSYVAGQYDDAASYQR"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["NSYVAGQYDDAASYQR"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+combined_set = load("/Users/n.t.wamsley/Desktop/good_precursors_a.jld2")
+combined_set  = combined_set["combined_set"]
+combined_set = Set(replace.(combined_set, "[Carbamidomethyl (C)]" => ""))
+pioneer_seed = Set("_".*PSMs[!,:sequence].*"_.".*string.(PSMs[!,:charge]))
+
+length(combined_set) - length(combined_set ∩ pioneer_seed)
+
+lost_precursors = setdiff(combined_set, pioneer_seed)
+
+seq_to_id = Vector{Tuple{String, UInt32}}()
+for (id, prec) in ProgressBar(enumerate(prosit_lib["precursors"]))
+    sequence = prec.sequence
+    sequence = "_"*sequence*"_."*string(prec.charge)
+    push!(seq_to_id, (sequence, UInt32(id)))
+end
+seq_to_id = Dict(seq_to_id)
+
+
+prosit_lib["precursors"][seq_to_id["PKPGDGEFVEVISLPK"]]
+
+pioneer_passing = Set("_".*PSMs[!,:sequence].*"_.".*string.(PSMs[!,:charge]))
+
+lost_in_integration_thresholds = setdiff(setdiff(combined_set, lost_precursors), pioneer_passing)
+setdiff(combined_set, pioneer_passing_fdr)
+best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
+pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+bins = LinRange(0, 20, 21)
+
+histogram(best_psms_passing[best_psms_passing[!,:total_ions].>5,:total_ions], alpha = 0.5, normalize = :pdf, bins = bins)
+histogram!(best_psms[(best_psms[!,:total_ions].>5).&(best_psms[!,:decoy].==true),:total_ions], alpha = 0.5, normalize = :pdf, bins = bins)
+
+setdiff(combined_set, pioneer_passing_fdr)
+setdiff(combined_set, pioneer_passing_fdr)
+
+pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id[ "_YLSLHDNK_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id[ "_YLSLHDNK_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+sort(collect(lost_in_integration_thresholds))
+#Need y4 ion?
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_QSIEEGNYIGHVYAR_.3"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_QSIEEGNYIGHVYAR_.3"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_QSIEEGNYIGHVYAR_.3"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_QSIEEGNYIGHVYAR_.3"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AAALEACLDVTK_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AAALEACLDVTK_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AAASTPEPNLK_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id[ "_AAASTPEPNLK_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AAAVALFNLDIR_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AAAVALFNLDIR_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AADHLKPFLDDSTLR_.3"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AADHLKPFLDDSTLR_.3"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AADSLQQNLQR_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AADSLQQNLQR_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AAEAEVELSAR_.2"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AAEAEVELSAR_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_AAEALHGEADSSGVLAAVDATVNK_.3"],)],gx, gw, isplot = true)
+test_chroms[(precursor_idx = seq_to_id["_AAEALHGEADSSGVLAAVDATVNK_.3"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+test_chroms[(precursor_idx = seq_to_id["_AAEAEVELSAR_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+test_chroms[(precursor_idx = seq_to_id["_AADSLQQNLQR_.2"],)][:,[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
+
+@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_102023.jld2" PSMs
+       
+
+setdiff(combined_set, pioneer_passing_fdr)
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_YLSLHDNK_.2"],)],gx, gw, isplot = true)
+best_psms[best_psms[!,:sequence] .=="YLSLHDNK",[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight,:q_value,:prob]]
+test_chroms[(precursor_idx = seq_to_id["_YLSLHDNK_.2"],)][:,[:precursor_idx,:prob,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+pep =  "_ISDLGLFR_.2"
+pep = "_AAAGLLPGGK_.2"
+pep =  "_AAALCNACELSGK_.2"
+#setdiff(combined_set, pioneer_passing_fdr)
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id[pep],)],gx, gw, isplot = true)
+best_psms[best_psms[!,:sequence] .=="AAALCNACELSGK",[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight,:q_value,:prob]]
+test_chroms[(precursor_idx = seq_to_id[pep],)][:,[:precursor_idx,:prob,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+prosit_lib["pf_det"][seq_to_id["YLSLHDNK"]]
+sort(collect(setdiff(combined_set, pioneer_passing_fdr)))
+
+PSMs
+filter!(x->x.weight > 1000.0, PSMs)
+PSMs[PSMs[!,:precursor_idx] .== 12373128,: ]
+
+
+IDtoCOL, weights, Hs, X, r = mainLibrarySearch(
+    MS_TABLE,
+    prosit_lib["f_index"],
+    prosit_lib["f_det"],
+    RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+    UInt32(ms_file_idx), #MS_FILE_IDX
+    frag_err_dist_dict[ms_file_idx],
+    main_search_params,
+    #scan_range = (201389, 204389),
+    scan_range = (55710, 55710)
+    #scan_range = (1, length(MS_TABLE[:masses]))
+);
+IDtoCOL[12373128]
+weights[first(IDtoCOL[12373128])]
+Hs[:,first(IDtoCOL[12373128])]
+X[Hs[:,first(IDtoCOL[12373128])].!=0.0]
+r[Hs[:,first(IDtoCOL[12373128])].!=0.0]
+
+a = X[Hs[:,first(IDtoCOL[12373128])].!=0.0]
+b = (Hs*weights)[Hs[:,first(IDtoCOL[12373128])].!=0.0]
+dot(a, b)/(norm(a)*norm(b))
+c = collect(Hs[:,first(IDtoCOL[12373128])])[Hs[:,first(IDtoCOL[12373128])].!=0.0]
+
+dot(a, c)/(norm(a)*norm(c))
 #Hs_new[:,1]
  #=
             IDtoMatchedRatio = UnorderedDictionary{UInt32, Float32}()

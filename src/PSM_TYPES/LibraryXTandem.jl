@@ -85,10 +85,13 @@ function makePSMsDict(::XTandem{T}) where {T<:Real}
 
         #Spectral Distrance Metrics
         :spectral_contrast => Float16[],
+        :spectral_contrast_corrected => Float16[],
         :scribe_score => Float16[],
+        :scribe_score_corrected => Float16[],
         :city_block => Float16[],
         :matched_ratio => Float16[],
         :entropy_sim => Float16[],
+        :entropy_sim_corrected => Float16[],
 
         :weight => Float32[],
         :scan_idx => UInt32[],
@@ -113,10 +116,13 @@ function Score!(PSMs_dict::Dict,
                 scan_idx::Int64 = 0, min_spectral_contrast::Float32 = 0.6f0, min_matched_ratio::Float32 = 0.5f0, min_frag_count::Int = 4) where {T,U<:Real}
 
     scribe_score = scores[:scribe]::Vector{Float32}
+    scribe_score_corrected = scores[:scribe_corrected]::Vector{Float32}
     city_block = scores[:city_block]::Vector{Float32}
     matched_ratio = scores[:matched_ratio]::Vector{Float32}
     spectral_contrast = scores[:spectral_contrast]::Vector{Float32}
+    spectral_contrast_corrected = scores[:spectral_contrast_corrected]::Vector{Float32}
     entropy_sim = scores[:entropy_sim]::Vector{Float32}
+    entropy_sim_corrected = scores[:entropy_sim_corrected]::Vector{Float32}
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256
     #log(Nb!Ny!∑Ib∑Iy)
     function HyperScore(score::XTandem)
@@ -188,6 +194,7 @@ function Score!(PSMs_dict::Dict,
         if matched_ratio[index]<min_matched_ratio
             continue
         end
+        
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], Float16(HyperScore(unscored_PSMs[key])))
         append!(PSMs_dict[:y_ladder], UInt8(getLongestSet(unscored_PSMs[key].y_ions)))
@@ -204,10 +211,13 @@ function Score!(PSMs_dict::Dict,
         append!(PSMs_dict[:topn], UInt8(unscored_PSMs[key].topn))
 
         append!(PSMs_dict[:spectral_contrast], Float16(spectral_contrast[index]))
+        append!(PSMs_dict[:spectral_contrast_corrected], Float16(spectral_contrast_corrected[index]))
         append!(PSMs_dict[:scribe_score], Float16(scribe_score[index]))
+        append!(PSMs_dict[:scribe_score_corrected], Float16(scribe_score_corrected[index]))
         append!(PSMs_dict[:city_block], Float16(city_block[index]))
         append!(PSMs_dict[:matched_ratio], Float16(matched_ratio[index]))
         append!(PSMs_dict[:entropy_sim], Float16(entropy_sim[index]))
+        append!(PSMs_dict[:entropy_sim_corrected], Float16(entropy_sim_corrected[index]))
         append!(PSMs_dict[:weight], Float32(weight[index]))
 
         append!(PSMs_dict[:scan_idx], UInt32(scan_idx))

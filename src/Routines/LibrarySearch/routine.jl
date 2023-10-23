@@ -48,11 +48,12 @@ ARGS = parse_commandline();
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_indy4b3_ally2b1/"
-MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123/"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
-EXPERIMENT_NAME = "TEST_2"
+EXPERIMENT_NAME = "TEST_y4b3_corrected"
 =#
 println("ARGS ", ARGS)
 MS_DATA_DIR = ARGS["data_dir"];
@@ -259,7 +260,7 @@ spec_load_time = @timed begin
     f_index = load(f_index_path);
     prosit_lib["f_index"] = f_index["f_index"]
     f_det = load(f_det_path)
-    prosit_lib["f_det"] = f_det["f_det_new"];
+    prosit_lib["f_det"] = f_det["f_det"];
     precursors = load(precursors_path)
     prosit_lib["precursors"] = precursors["precursors"];
 end
@@ -310,6 +311,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_lib["precursors"][psm[:precursor_idx]])) => :decoy);
     filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
+    #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
     rtPSMs[:,:target] =  rtPSMs[:,:decoy].==false
 
     model_fit = glm(@formula(target ~ poisson + hyperscore + topn +
@@ -368,15 +370,21 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
-                                                
-                                                scan_range = (1, length(MS_TABLE[:masses]))
+                                                scan_range = (55710, 55710),
+                                                #scan_range = (50426, 51000),
+                                                #scan_range = (1, length(MS_TABLE[:masses]))
                                             );
 
         #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
-        #@save "/Users/n.t.wamsley/TEST_DATA/PSMs_TEST_101623.jld2" PSMs;=
-        filter!(x -> x.weight>10.0, PSMs);
+        @save "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" PSMs
+        #filter!(x -> x.weight>10.0, PSMs);
+        filter!(x -> x.topn > 1, PSMs);
+        filter!(x -> x.best_rank == 1, PSMs);
+        filter!(x -> x.weight>1000.0, PSMs);
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
     
+        #filter!(x -> x.topn > 1, PSMs);
+        #filter!(x -> x.best_rank == 1, PSMs);
         sort!(PSMs,:RT); #Sorting before grouping is critical. 
         test_chroms = groupby(PSMs, :precursor_idx);
 
@@ -388,10 +396,33 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 Lsq_max_iter = params_[:Lsq_max_iter],
                                                 tail_distance = params_[:tail_distance])
         time_test = @timed filter!(x -> x.best_scan, PSMs);
-        time_test = @timed filter!(x -> x.FWHM.<100, PSMs);
-        time_test = @timed filter!(x -> x.FWHM_01.<100, PSMs);
-        time_test = @timed filter!(x -> x.data_points.>2, PSMs);
+        time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
+        time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
 
+        PSMs[:,:n_obs] .= zero(UInt16)
+        sort!(PSMs, [:sequence]);
+        grouped_df = groupby(PSMs, :sequence);
+        PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
+           repeat([size(sub_df)[1]], size(sub_df)[1])
+        end)[:,:x1]
+
+        PSMs[:,:best_over_precs] .= zero(Float16)
+        PSMs[:,:stripped_sequence] = replace.(PSMs[:,:sequence], "M(ox)" => "M");
+
+        sort!(PSMs, [:stripped_sequence]);
+
+        grouped_df = groupby(PSMs, :stripped_sequence);
+        PSMs[:,:best_over_precs] = (combine(grouped_df) do sub_df
+           repeat([maximum(sub_df.entropy_sim)], size(sub_df)[1])
+        end)[:,:x1]
+
+
+        #time_test = @timed filter!(x -> x.data_points.>2, PSMs);
+        sort!(PSMs_old,:RT); 
+
+        #@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_in16ppm_102123.jld2" PSMs
+    
+        test_chroms = groupby(PSMs_old, :precursor_idx);
         #Add file path 
         PSMs[!,:file_path] .= MS_TABLE_PATH
 
@@ -495,6 +526,8 @@ open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
     write(f, JSON.json(JSON.parse(read(ARGS["params_json"], String))))
 end
 
+filter!(x -> x.total_ions > 2, best_psms)
+filter!(x -> x.matched_ratio > -1, best_psms)
 features = [ :FWHM,
     :FWHM_01,
     :GOF,
@@ -505,10 +538,12 @@ features = [ :FWHM,
     :b_ladder,
     :base_width_min,
     :best_rank,
+    :best_over_precs,
     :charge,
     :city_block,
     :data_points,
     :entropy_sim,
+    :entropy_sim_corrected,
     :err_norm_log2,
     :error,
     :hyperscore,
@@ -523,6 +558,7 @@ features = [ :FWHM,
     :mean_scribe_score,
     :missed_cleavage,
     :ms1_ms2_diff,
+    :n_obs,
     :peak_area,
     :peak_area_ms1,
     :points_above_FWHM,
@@ -530,15 +566,16 @@ features = [ :FWHM,
     :poisson,
     :prec_mz,
     :scribe_score,
+    :scribe_score_corrected,
     :sequence_length,
     :spectral_contrast,
+    :spectral_contrast_corrected,
     :spectrum_peaks,
     :topn,
     :total_ions,
     :weight,
     :y_ladder,
     :ρ,
-
     :log2_base_peak_intensity,
     :TIC,
     :adjusted_intensity_explained
@@ -556,10 +593,19 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 2.0/9.0,
+                        train_fraction = 9.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+
+best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
+pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+
+
+@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
+       
+
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored.jld2"); best_psms)
 
 using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations

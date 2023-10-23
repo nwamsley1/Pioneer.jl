@@ -89,8 +89,8 @@ function SearchRAW(
     index_ions_time = 0.0
     ##########
     #Iterate through spectra
-    #for i in ProgressBar(range(first(scan_range), last(scan_range)))
-    for i in range(first(scan_range), last(scan_range))
+    for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    #for i in range(first(scan_range), last(scan_range))
     #for i in range(1, size(spectra[:masses])[1])
 
         ###########
@@ -142,7 +142,7 @@ function SearchRAW(
                                                Float32(max_peak_width/2.0), #rt_tol
                                                spectra[:precursorMZ][i], #prec_mz
                                                Float32(quadrupole_isolation_width/2.0) #prec_tol
-                                               )::Tuple{Int64, Int64}
+                                               )::Tuple{Int64, Bool}
         else
             ion_idx, prec_idx = selectIons!(
                                             ionTemplates,
@@ -171,11 +171,20 @@ function SearchRAW(
                                     ppm = fragment_tolerance, #Fragment match tolerance in ppm
                                     most_intense = most_intense
                                     )
+        #if prec_idx
+        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
+        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
+        #end
+
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches < 2 #Few matches to do not perform de-convolution 
             IDtoCOL = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
         else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
+            #if prec_idx
+            #    println("PASSED scan_idx $i")
+            #    println("PASSED scan_idx $i")
+            #end
             #IDtoCOL_weights = UnorderedDictionary{UInt32, UInt32}()
             #prep_time += @elapsed begin
 
@@ -184,47 +193,10 @@ function SearchRAW(
                 #IDtoCOL maps precursor ids to their corresponding columns. 
                 #X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
             X, Hs, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-            scores = getDistanceMetrics(X, Hs, last_matched_col)
+            #println("Hs.n ", Hs.n)
+            #println("Hs.m ", Hs.m)
+            
             weights = Vector{Float32}(undef, Hs.n)
-                #=
-                if ismissing(isotope_dict) 
-
-                    #Get spectral distance metrics for each of the seed precursors, excluding masked ions
-                    scores = getDistanceMetrics(X, Hs, Hs_mask, last_matched_col)
-
-
-                    #########
-                    #Remove Templates that do not pass the threshold
-                        placeholder = zeros(UInt32, Hs.n)
-                        #Same length as the number of columns in Hs (number of precursor templates)
-                        #Which precursors pass the threshold? 
-                        scores_pass = (scores[:matched_ratio].>min_matched_ratio).&(scores[:spectral_contrast].>min_spectral_contrast)
-                        for (id, row) in pairs(IDtoCOL)
-                            if scores_pass[first(row)] == false
-                                delete!(IDtoCOL, id)
-                            else
-                                placeholder[first(row)] = id
-                            end
-                        end
-
-                        n = one(UInt32)
-                        for id in placeholder
-                            if !iszero(id)
-                                insert!(IDtoCOL_weights, id, n)
-                                n += one(UInt32)
-                            end
-                        end
-
-                        Hs = Hs[:,scores_pass]
-                        weights = zeros(eltype(Hs), Hs.n)
-        
-                        for (id, row) in pairs(IDtoCOL_weights)
-                            weights[row] = precursor_weights[id]# = precursor_weights[id]
-                        end
-                else
-                    weights = zeros(eltype(Hs), Hs.n)
-                end
-                =#
             #end
 
             for (id, row) in pairs(IDtoCOL)
@@ -237,6 +209,10 @@ function SearchRAW(
                 precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
             end
 
+            #return IDtoCOL, weights, Hs, X, r, last_matched_col
+            #return Hs
+   
+            scores = getDistanceMetrics(X, weights, Hs, last_matched_col)
             #for (id, row) in pairs(IDtoCOL_weights)
             #    precursor_weights[id] = weights[row]# = precursor_weights[id]
             #end
@@ -249,6 +225,11 @@ function SearchRAW(
                 ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
                 #Score unscored_PSMs and write them to scored_PSMs
                 #return scores
+                #if prec_idx
+                #    println("SCORED scan_idx $i")
+                #    println("SCORED scan_idx $i")
+                #    println("unscored_PSMs ", unscored_PSMs)
+                #end
                 Score!(scored_PSMs, 
                         unscored_PSMs, 
                         length(spectra[:intensities][i]), 

@@ -90,7 +90,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
                             min_child_weight = min_child_weight, 
                             subsample = subsample, 
                             objective="binary:logistic",
-                            watchlist=(;)
+                            #watchlist=(;)
                             )
 
             ###################

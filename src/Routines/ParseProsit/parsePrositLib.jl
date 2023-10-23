@@ -139,7 +139,7 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
     #List of lists. The n'th element of the outer list is indexed by the precursor id.
     #Each inner list contains a list of "LibraryFragment"s. These are a detailed specificaion of a framgent ion
     #frags_detailed = Vector{Vector{LibraryFragment{Float32}}}(undef, length(prosit_library))
-    frags_detailed = Vector{AbstractArray{LibraryFragment{Float32}}}(undef, length(prosit_library))
+    frags_detailed = Vector{Vector{LibraryFragment{Float32}}}(undef, length(prosit_library))
     #Detailed specification for each precursor. 
     precursors = Vector{LibraryPrecursor{Float32}}(undef, length(prosit_library))
 
@@ -280,8 +280,7 @@ function parsePrositLib(prosit_csv_path::String, fixed_mods::Vector{NamedTuple{(
                                         )
 
         #Might need a thread lock here. 
-        NF = length(nth_precursor_frags)
-        frags_detailed[N[Threads.threadid()][1]] = SVector{NF, LibraryFragment{Float32}}(nth_precursor_frags)#nth_precursor_frags#@SVector [frag for frag in nth_precursor_frags]
+        frags_detailed[N[Threads.threadid()][1]] = nth_precursor_frags#nth_precursor_frags#@SVector [frag for frag in nth_precursor_frags]
 
         N[Threads.threadid()][1] += 1
 

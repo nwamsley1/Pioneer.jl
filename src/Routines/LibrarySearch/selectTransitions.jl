@@ -17,13 +17,24 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
     #transitions = Vector{LibraryFragment{T}}()
     i = 1
     transition_idx = 0
+    prec_idx = false
     while i <= min(topN, counter.matches)
+        #if getID(counter, i) == 0x00003a7c
+        #    println("!!!!!!!!")
+        #    println("@@@@@@@@")
+        #    prec_idx = true
+        #end
+        #if getID(counter, i)  ∉ (0x00003a7c,0x00003625,0x000039e6)
+        #    i += 1
+        #    continue
+        #end
         for frag in fragment_list[getID(counter, i)]
-            if !iszero(frag.intensity)
-                transition_idx += 1
-                transitions[transition_idx] = frag
-            end
-            
+            #if !iszero(frag.intensity)
+             #   transition_idx += 1
+             #   transitions[transition_idx] = frag
+            #end
+            transition_idx += 1
+            transitions[transition_idx] = frag
             #Grow array if exceeds length
             if transition_idx > length(transitions)
                 append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
@@ -39,7 +50,8 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
 
     reset!(counter)
 
-    return transition_idx, 0#sort!(transitions, by = x->getFragMZ(x))
+    #return transition_idx, 0#sort!(transitions, by = x->getFragMZ(x))
+    return transition_idx, false
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object

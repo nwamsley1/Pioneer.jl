@@ -13,8 +13,8 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     transform!(PSMs, AsTable(:) => ByRow(psm -> isDecoy(precursors[psm[:precursor_idx]])) => :decoy)
     transform!(PSMs, AsTable(:) => ByRow(psm -> precursors[psm[:precursor_idx]].missed_cleavages) => :missed_cleavage)
     transform!(PSMs, AsTable(:) => ByRow(psm -> precursors[psm[:precursor_idx]].sequence) => :sequence)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
-    transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> Float32(getIRT(precursors[psm[:precursor_idx]]))) => :iRT)
+    transform!(PSMs, AsTable(:) => ByRow(psm -> Float32(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(log2(maximum(MS_TABLE[:intensities][psm[:scan_idx]])))) => :log2_base_peak_intensity)
     transform!(PSMs, AsTable(:) => ByRow(psm -> Float16(log2(sum(MS_TABLE[:intensities][psm[:scan_idx]])))) => :TIC)
     PSMs[:,:adjusted_intensity_explained] = Float16.(log2.(PSMs[!,:intensity_explained] .* (2 .^ Float32.(PSMs[!,:TIC]))))
@@ -25,9 +25,11 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     ###########################
     #Estimate RT Prediction Error
     #best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[!,spectral_contrast].>min_spectral_contrast) .& (PSMs[!,:decoy].==false),:], [:scan_idx]))
-    linear_spline = KDEmapping(PSMs[(PSMs[!,:spectral_contrast].>0.5) .& (PSMs[!,:decoy].==false),:iRT],
-                                        PSMs[(PSMs[!,:spectral_contrast].>0.5) .& (PSMs[!,:decoy].==false),:RT]
+    println("TEST")
+    linear_spline = KDEmapping(PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false).& (PSMs[!,:entropy_sim].>0.9),:iRT],
+                                        PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false).& (PSMs[!,:entropy_sim].>0.9),:RT]
                                     )
+                                    println("TEST2")
     PSMs[:,:RT_pred] = Float16.(linear_spline(PSMs[:,:iRT]))
     PSMs[:,:RT_error] = Float16.(abs.(PSMs[!,:RT_pred] .- PSMs[!,:RT]))
     ############################

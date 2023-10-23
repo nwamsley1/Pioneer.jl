@@ -1,13 +1,13 @@
-function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.01f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.25f0, isplot::Bool = false)
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false)
     
-    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat})
+    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat}, RT_error::AbstractVector{<:AbstractFloat})
         best_scan_idx = 1
         best_scan_score = zero(Float32)
         has_reached_fdr = false
         for i in range(1, length(weights))
 
             #Could be a better hueristic?
-            score = weights[i]*total_ions[i]
+            score = weights[i]*total_ions[i]/RT_error[i]
             #Don't consider because deconvolusion set weights to zero
             #Or because it is filtered out 
             if iszero(score) | filter[i]
@@ -108,7 +108,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     filter = falses(size(chrom)[1])
     setFilter!(filter, chrom.weight, chrom.scan_idx)
-    best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value)
+    best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
     best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
     filterOnRT!(filter, best_rt, chrom.RT)
     #Needs to be setable parametfer. 1% is currently hard-coded
@@ -122,12 +122,15 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     intensity[1], intensity[end] = zero(Float32), zero(Float32)
     fillLsqFitWeights!(lsq_fit_weight, intensity)
 
+    data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     #Scan with the highest score 
     #Too few points to attempt integration
     if (size(chrom)[1] - sum(filter)) < 2
         return nothing
     end
-
+    if isplot
+        display(chrom)
+    end
     ########
     #Fit EGH Curve 
     EGH_FIT = nothing
@@ -158,12 +161,18 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         Plots.plot!(rt[lsq_fit_weight.!=0.0], intensity[lsq_fit_weight.!=0.0], show = true, alpha = 0.5, color = :green, seriestype=:scatter)
         #Plots.plot!(chrom[:,:RT], chrom[:,:weight], show = true, alpha = 0.5, seriestype=:scatter)
 
-        X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), integration_points)
+        if data_points > 0
+        X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), length(gauss_quad_w))
         Plots.plot!(X,  
                     EGH(T.(collect(X)), Tuple(EGH_FIT.param)), 
-                    fillrange = [0.0 for x in 1:length(x)], 
+                    fillrange = [0.0 for x in 1:length(gauss_quad_w)], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
+        else
+            Plots.plot!(rt, intensity, 
+                        fillrange = [0.0 for x in 1:length(intensity)], 
+                        color=:grey, alpha = 0.25, show = true)
+        end
     
         Plots.vline!([best_rt], color = :blue);
         Plots.vline!([rt[1]], color = :red);
@@ -174,8 +183,14 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Calculate Features
     
     MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
-    
-    peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
+    peak_area = nothing
+    if data_points > 0
+        peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
+    else
+        println("rt $rt")
+        println("intensity $intensity")
+        peak_area = integrate(rt, intensity)
+    end
    
     sum_of_residuals = zero(Float32)
     points_above_FWHM = zero(Int32)
@@ -214,17 +229,36 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #                        )
 
     mean_scribe_score = 0.0
-    mean_log_entropy = 0.0
+    mean_log_entropy = -10.0
     mean_log_probability = 0.0
-    mean_log_spectral_contrast = 0.0
+    mean_log_spectral_contrast = -10.0
     count = 0
+    ions_sum = 0
     for i in range(1, length(filter))
         if !filter[i]
-            mean_scribe_score += chrom.scribe_score[i]
-            mean_log_entropy += log2(max(chrom.entropy_sim[i], 0.001))
+            if chrom.scribe_score[i]>mean_scribe_score
+                mean_scribe_score = chrom.scribe_score[i]
+            end
+            if log2(max(chrom.entropy_sim[i], 0.001))>mean_log_entropy
+                mean_log_entropy=log2(max(chrom.entropy_sim[i], 0.001))
+            end
+            if chrom.scribe_score[i]>mean_scribe_score
+                mean_scribe_score = chrom.scribe_score[i]
+            end
+            if log2(chrom.spectral_contrast[i])>mean_log_spectral_contrast
+                mean_log_spectral_contrast= log2(chrom.spectral_contrast[i])
+            end
+            if chrom.weight[i]>log_sum_of_weights 
+                log_sum_of_weights  = chrom.weight[i]
+            end
+            if chrom.total_ions[i] > ions_sum
+                ions_sum = chrom.total_ions[i]
+            end
+            #mean_scribe_score += chrom.scribe_score[i]
+            #mean_log_entropy += log2(max(chrom.entropy_sim[i], 0.001))
             mean_log_probability += log2(chrom.prob[i])
-            mean_log_spectral_contrast += log2(chrom.spectral_contrast[i])
-            log_sum_of_weights += chrom.weight[i]
+            #mean_log_spectral_contrast += log2(chrom.spectral_contrast[i])
+            #log_sum_of_weights += chrom.weight[i]
             count += 1
         end
     end    
@@ -237,8 +271,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     #mean_scribe_score = sum(chrom.scribe_score)
     #mean_log_probability = mean(log2.(chrom.prob))
-    ions_sum = sum(chrom.total_ions)
-    data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
+    #ions_sum = sum(chrom.total_ions)
+    #data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     mean_ratio = mean(chrom.matched_ratio)
     base_width = rt[end] - rt[1]
     
@@ -272,7 +306,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
 
     gx, gw = gausslegendre(n_quadrature_nodes)
 
-    for i in range(1, length(grouped_precursor_df))
+    for i in ProgressBar(range(1, length(grouped_precursor_df)))
         integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 gx::Vector{Float64},
                                 gw::Vector{Float64},

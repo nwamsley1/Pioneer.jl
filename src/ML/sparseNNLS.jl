@@ -227,6 +227,7 @@ function newton_bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Ve
 
         #First and second derivatives 
         L1, L2 = getDerivatives!(Hs, r, col, δ)
+        #update_rule = (L1 + 1000.0*X₁[col])/L2
         update_rule = L1/L2
 
         #Switch to bisection method
@@ -341,7 +342,7 @@ function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T
 
        i += 1
     end
-    return i
+    return
 end
 
 #mean(X.*sum(Hs_mat.>0, dims = 1)[:])*200*200
