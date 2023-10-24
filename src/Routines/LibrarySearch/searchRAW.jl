@@ -58,6 +58,7 @@ function SearchRAW(
     cycle_idx = 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
 
+    fragment_tolerance = Float64(16.1)
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
     all_fmatches = Vector{IonMatchType}()
@@ -89,8 +90,8 @@ function SearchRAW(
     index_ions_time = 0.0
     ##########
     #Iterate through spectra
-    for i in ProgressBar(range(first(scan_range), last(scan_range)))
-    #for i in range(first(scan_range), last(scan_range))
+    #for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    for i in range(first(scan_range), last(scan_range))
     #for i in range(1, size(spectra[:masses])[1])
 
         ###########

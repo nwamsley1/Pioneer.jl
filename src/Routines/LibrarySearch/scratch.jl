@@ -682,6 +682,14 @@ bins = LinRange(0, 20, 21)
 histogram(best_psms_passing[best_psms_passing[!,:total_ions].>5,:total_ions], alpha = 0.5, normalize = :pdf, bins = bins)
 histogram!(best_psms[(best_psms[!,:total_ions].>5).&(best_psms[!,:decoy].==true),:total_ions], alpha = 0.5, normalize = :pdf, bins = bins)
 
+bins = LinRange(0, 1, 100)
+histogram((best_psms_passing[:,:spectral_contrast_corrected]), alpha = 0.5, normalize = :pdf)
+histogram!((best_psms[(best_psms[!,:total_ions].>5).&(best_psms[!,:decoy].==true),:spectral_contrast_corrected]), alpha = 0.5, normalize = :pdf)
+
+histogram((best_psms_passing[:,:entropy_sim]), alpha = 0.5, normalize = :pdf)
+histogram!((best_psms[(best_psms[!,:total_ions].>5).&(best_psms[!,:decoy].==true),:entropy_sim]), alpha = 0.5, normalize = :pdf)
+
+
 setdiff(combined_set, pioneer_passing_fdr)
 setdiff(combined_set, pioneer_passing_fdr)
 
@@ -733,6 +741,14 @@ integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id["_YLSLHDNK_.2"],)],
 best_psms[best_psms[!,:sequence] .=="YLSLHDNK",[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight,:q_value,:prob]]
 test_chroms[(precursor_idx = seq_to_id["_YLSLHDNK_.2"],)][:,[:precursor_idx,:prob,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
 
+
+pep = collect(setdiff(combined_set, pioneer_passing_fdr))[5]
+pep
+integratePrecursorMS2(test_chroms[(precursor_idx = seq_to_id[pep],)],gx, gw, isplot = true)
+best_psms[best_psms[!,:sequence] .==pep[2:end - 3],[:precursor_idx,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:entropy_sim_corrected, :spectral_contrast_corrected,:charge,:RT,:RT_pred,:weight,:q_value,:prob,:data_points]]
+test_chroms[(precursor_idx = seq_to_id[pep],)][:,[:precursor_idx,:prob,:total_ions,:matched_ratio,:entropy_sim,:spectral_contrast,:charge,:RT,:RT_pred,:weight]]
+
+
 pep =  "_ISDLGLFR_.2"
 pep = "_AAAGLLPGGK_.2"
 pep =  "_AAALCNACELSGK_.2"
@@ -745,7 +761,7 @@ prosit_lib["pf_det"][seq_to_id["YLSLHDNK"]]
 sort(collect(setdiff(combined_set, pioneer_passing_fdr)))
 
 PSMs
-filter!(x->x.weight > 1000.0, PSMs)
+filter!(x->x.weight > 100.0, PSMs)
 PSMs[PSMs[!,:precursor_idx] .== 12373128,: ]
 
 

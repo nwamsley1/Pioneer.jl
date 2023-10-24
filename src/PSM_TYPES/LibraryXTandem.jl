@@ -195,6 +195,15 @@ function Score!(PSMs_dict::Dict,
             continue
         end
         
+        if weight[index] < 1000.0
+            continue
+        end
+        if UInt8(unscored_PSMs[key].topn) < 2
+            continue
+        end
+        if UInt8(unscored_PSMs[key].best_rank) != 1
+            continue
+        end
         #index = IDtoROW[unscored_PSMs[key].precursor_idx]
         append!(PSMs_dict[:hyperscore], Float16(HyperScore(unscored_PSMs[key])))
         append!(PSMs_dict[:y_ladder], UInt8(getLongestSet(unscored_PSMs[key].y_ions)))

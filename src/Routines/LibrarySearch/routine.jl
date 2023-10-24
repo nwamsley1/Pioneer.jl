@@ -356,8 +356,7 @@ println("Finished presearch in ", presearch_time.time, " seconds")
 #Main PSM Search
 ###########
 println("Begining Main Search...")
-BPSMS = Dict{Int64, DataFrame}()
-
+BPSMS_FP = Dict{Int64, String}()
 main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
@@ -370,83 +369,105 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
-                                                scan_range = (55710, 55710),
+                                                #scan_range = (55710, 55710),
                                                 #scan_range = (50426, 51000),
-                                                #scan_range = (1, length(MS_TABLE[:masses]))
+                                                scan_range = (1, length(MS_TABLE[:masses]))
                                             );
 
         #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
-        @save "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" PSMs
+        #@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" PSMs
         #filter!(x -> x.weight>10.0, PSMs);
-        filter!(x -> x.topn > 1, PSMs);
-        filter!(x -> x.best_rank == 1, PSMs);
-        filter!(x -> x.weight>1000.0, PSMs);
-        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-    
         #filter!(x -> x.topn > 1, PSMs);
         #filter!(x -> x.best_rank == 1, PSMs);
-        sort!(PSMs,:RT); #Sorting before grouping is critical. 
-        test_chroms = groupby(PSMs, :precursor_idx);
-
-        #Integrate MS2 and filter
-        time_test = @timed integratePrecursors(test_chroms, 
-                                                n_quadrature_nodes = params_[:n_quadrature_nodes],
-                                                intensity_filter_fraction = params_[:intensity_filter_fraction],
-                                                LsqFit_tol = params_[:LsqFit_tol],
-                                                Lsq_max_iter = params_[:Lsq_max_iter],
-                                                tail_distance = params_[:tail_distance])
-        time_test = @timed filter!(x -> x.best_scan, PSMs);
-        time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
-        time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
-
-        PSMs[:,:n_obs] .= zero(UInt16)
-        sort!(PSMs, [:sequence]);
-        grouped_df = groupby(PSMs, :sequence);
-        PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
-           repeat([size(sub_df)[1]], size(sub_df)[1])
-        end)[:,:x1]
-
-        PSMs[:,:best_over_precs] .= zero(Float16)
-        PSMs[:,:stripped_sequence] = replace.(PSMs[:,:sequence], "M(ox)" => "M");
-
-        sort!(PSMs, [:stripped_sequence]);
-
-        grouped_df = groupby(PSMs, :stripped_sequence);
-        PSMs[:,:best_over_precs] = (combine(grouped_df) do sub_df
-           repeat([maximum(sub_df.entropy_sim)], size(sub_df)[1])
-        end)[:,:x1]
-
-
-        #time_test = @timed filter!(x -> x.data_points.>2, PSMs);
-        sort!(PSMs_old,:RT); 
-
-        #@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_in16ppm_102123.jld2" PSMs
-    
-        test_chroms = groupby(PSMs_old, :precursor_idx);
-        #Add file path 
-        PSMs[!,:file_path] .= MS_TABLE_PATH
-
-        #Add Accession numbers
-        transform!(PSMs, AsTable(:) => ByRow(psm -> 
-        prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
-        ) => :accession_numbers
-        );
-        #Get Precursor M/Z's 
-        transform!(PSMs, AsTable(:) => ByRow(psm -> 
-        prosit_lib["precursors"][psm[:precursor_idx]].mz
-        ) => :prec_mz
-        );
-
-        #Correct RT prediction errors 
-        for i in range(1, size(PSMs)[1])
-            if ismissing(PSMs[i,:tᵣ])
-                PSMs[i, :RT_error] = abs.(PSMs[i,:RT_pred] - PSMs[i,:RT])
-                PSMs[i,:tᵣ] = PSMs[i,:RT]
-            else
-                PSMs[i,:RT_error] = abs.(PSMs[i,:tᵣ] .- PSMs[i,:RT_pred]);
-            end
+        #filter!(x -> x.weight>1000.0, PSMs);
+        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        #@save "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_refined_102323.jld2" PSMs
+        psms_file_name = "PSMS_"*string(ms_file_idx)*".jld2";
+        lock(lk) do 
+            BPSMS_FP[ms_file_idx] = joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
         end
+        jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
+        #Free up memory
+        PSMs = nothing;
+end
+println("Finished main search in ", main_search_time.time, "seconds")
+println("Finished main search in ", main_search_time, "seconds")
 
+BPSMS = Dict{Int64, String}()
+quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+
+    @load BPSMS_FP[ms_file_idx] = PSMs
+
+    sort!(PSMs,:RT); #Sorting before grouping is critical. 
+    test_chroms = groupby(PSMs, :precursor_idx);
+
+    #Integrate MS2 and filter
+    time_test = @timed integratePrecursors(test_chroms, 
+                                            n_quadrature_nodes = params_[:n_quadrature_nodes],
+                                            intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                            LsqFit_tol = params_[:LsqFit_tol],
+                                            Lsq_max_iter = params_[:Lsq_max_iter],
+                                            tail_distance = params_[:tail_distance])
+    println("time_test.time ", time_test.time , " for $ms_file_idx")
+
+    time_test = @timed filter!(x -> x.best_scan, PSMs);
+    time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
+    time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
+    filter!(x -> x.total_ions > 2, PSMs)
+    filter!(x -> x.matched_ratio > -1, PSMs)
+
+    PSMs[:,:n_obs] .= zero(UInt16)
+    sort!(PSMs, [:sequence]);
+    grouped_df = groupby(PSMs, :sequence);
+    PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
+        repeat([size(sub_df)[1]], size(sub_df)[1])
+    end)[:,:x1]
+
+    PSMs[:,:best_over_precs] .= zero(Float16)
+    PSMs[:,:stripped_sequence] = replace.(PSMs[:,:sequence], "M(ox)" => "M");
+
+    sort!(PSMs, [:stripped_sequence]);
+
+    grouped_df = groupby(PSMs, :stripped_sequence);
+    PSMs[:,:best_over_precs] = (combine(grouped_df) do sub_df
+        repeat([maximum(sub_df.entropy_sim)], size(sub_df)[1])
+    end)[:,:x1]
+
+    #Add file path 
+    PSMs[!,:file_path] .= MS_TABLE_PATH
+
+    #Add Accession numbers
+    transform!(PSMs, AsTable(:) => ByRow(psm -> 
+    prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
+    ) => :accession_numbers
+    );
+    #Get Precursor M/Z's 
+    transform!(PSMs, AsTable(:) => ByRow(psm -> 
+    prosit_lib["precursors"][psm[:precursor_idx]].mz
+    ) => :prec_mz
+    );
+
+    #Correct RT prediction errors 
+    for i in range(1, size(PSMs)[1])
+        if ismissing(PSMs[i,:tᵣ])
+            PSMs[i, :RT_error] = abs.(PSMs[i,:RT_pred] - PSMs[i,:RT])
+            PSMs[i,:tᵣ] = PSMs[i,:RT]
+        else
+            PSMs[i,:RT_error] = abs.(PSMs[i,:tᵣ] .- PSMs[i,:RT_pred]);
+        end
+    end
+
+    lock(lk) do 
+        println("ms_file_idx: $ms_file_idx has ", size(PSMs))
+        BPSMS[ms_file_idx] = PSMs;
+    end
+end
+println("Finished quantitation in ", quantitation_time.time, "seconds")
+println("Finished quantitation in ", quantitation_time, "seconds")
+
+main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
+        PSMs = BPSMS[ms_file_idx];
         isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
         lock(lk) do 
             isotopes = getIsotopes(PSMs[!,:sequence], 
@@ -506,14 +527,8 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                 PSMs[i,:ρ] = missing
             end
         end
-
-        lock(lk) do 
-            println("ms_file_idx: $ms_file_idx has ", size(PSMs))
-            BPSMS[ms_file_idx] = PSMs
-        end
 end
-println("Finished main search in ", main_search_time.time, "seconds")
-println("Finished main search in ", main_search_time, "seconds")
+
 
 best_psms = vcat(values(BPSMS)...)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored.jld2"); best_psms)
@@ -526,8 +541,7 @@ open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
     write(f, JSON.json(JSON.parse(read(ARGS["params_json"], String))))
 end
 
-filter!(x -> x.total_ions > 2, best_psms)
-filter!(x -> x.matched_ratio > -1, best_psms)
+filter!(x -> x.data_points > 2, best_psms)
 features = [ :FWHM,
     :FWHM_01,
     :GOF,
@@ -593,7 +607,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 9.0/9.0,
+                        train_fraction = 2.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
@@ -603,7 +617,7 @@ pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*st
 setdiff(combined_set, pioneer_passing_fdr)
 
 
-@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
+#@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
        
 
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored.jld2"); best_psms)
@@ -690,7 +704,7 @@ NORM_CORRECTIONS = Dict(zip(INTENSITIES[:,:file_path],INTENSITIES[:,:correction]
 
 transform!(PIONEER, AsTable(:) => ByRow(precursor -> 2^(precursor[:peak_area_log2] .- NORM_CORRECTIONS[precursor[:file_path]])) => [:peak_area_norm]);
 PIONEER[:,:peak_area_log2_norm] .= log2.(PIONEER[:,:peak_area_norm]);
-
+try
 p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Original Response",
 topmargin=5mm)
 
@@ -703,7 +717,9 @@ topmargin=5mm)
 @df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
             PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
 savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
-            
+catch
+    println("couldn't printn normalization plots")
+end 
 ACC_TO_SPEC = Dict(vcat([parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000000625_83333_Escherichia_coli.fasta.gz"),
             parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000002311_559292_Saccharomyces_cerevisiae.fasta.gz"),
             parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000005640_9606_human.fasta.gz")]...));

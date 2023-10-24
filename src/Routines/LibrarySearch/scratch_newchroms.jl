@@ -1,13 +1,13 @@
 function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false)
     
-    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat}, RT_error::AbstractVector{<:AbstractFloat})
+    function getBestPSM(filter::BitVector, weights::AbstractVector{<:AbstractFloat}, hyperscore::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat}, RT_error::AbstractVector{<:AbstractFloat})
         best_scan_idx = 1
         best_scan_score = zero(Float32)
         has_reached_fdr = false
         for i in range(1, length(weights))
 
             #Could be a better hueristic?
-            score = weights[i]*total_ions[i]/RT_error[i]
+            score = hyperscore[i]#weights[i]*total_ions[i]/RT_error[i]
             #Don't consider because deconvolusion set weights to zero
             #Or because it is filtered out 
             if iszero(score) | filter[i]
@@ -108,7 +108,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     filter = falses(size(chrom)[1])
     setFilter!(filter, chrom.weight, chrom.scan_idx)
-    best_scan = getBestPSM(filter, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
+    best_scan = getBestPSM(filter, chrom.hyperscore, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
     best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
     filterOnRT!(filter, best_rt, chrom.RT)
     #Needs to be setable parametfer. 1% is currently hard-coded
@@ -125,9 +125,11 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     #Scan with the highest score 
     #Too few points to attempt integration
+    #println("TEST")
     if (size(chrom)[1] - sum(filter)) < 2
         return nothing
     end
+    #println("TEST2")
     if isplot
         display(chrom)
     end
@@ -306,7 +308,8 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
 
     gx, gw = gausslegendre(n_quadrature_nodes)
 
-    for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    #for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    for i in range(1, length(grouped_precursor_df))
         integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 gx::Vector{Float64},
                                 gw::Vector{Float64},

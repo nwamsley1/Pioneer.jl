@@ -217,6 +217,8 @@ function newton_bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Ve
     n = 0
     X_init = X₁[col] #Estimate prior to optimiztion
     X0 = X₁[col] #Keeps track of previous etimate at each iteration
+    #λ = Float32(5e-3)
+    #sum_X = sum(X₁)
     #Maximum Estimates X₁[col] and L1. Used as uper bound if newton-raphson fails to converge
     #And bisection method is neede. 
     max_l1, max_x1 = typemax(T), typemax(T)
@@ -227,8 +229,8 @@ function newton_bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Ve
 
         #First and second derivatives 
         L1, L2 = getDerivatives!(Hs, r, col, δ)
-        #update_rule = (L1 + 1000.0*X₁[col])/L2
-        update_rule = L1/L2
+        update_rule = (L1)/L2
+        #update_rule = L1/L2
 
         #Switch to bisection method
         if isnan(update_rule)
@@ -246,7 +248,7 @@ function newton_bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Ve
 
         #Newton-Raphson update. Contrain X₁[col] to be non-negative
         @fastmath X₁[col] = max(X₁[col] - update_rule, zero(T))
-
+       # sum_X = sum_X - X0 + X₁[col]
         n += 1
 
         #Update residuals given new estimate, X₁[col], and prior estimate, X0
@@ -264,9 +266,10 @@ function newton_bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Ve
         #Lower bound is always X₁[col] == 0
         X0 = X₁[col]
         X₁[col] = zero(T)
+        #sum_X = sum_X - X0 + X₁[col]
         updateResiduals!(Hs, r, col, X₁[col], X0)
-        L1 = getL1(Hs, r, col, δ)
-
+       # L1 = getL1(Hs, r, col, δ)
+        L1 = getL1(Hs, r, col, δ) #+ λ*sum_X
         if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
             bisection!(Hs, r, X₁, col, δ, zero(T), 
                         min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
@@ -285,18 +288,18 @@ end
 function bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, a::T, b::T, fa::T, fb::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {T<:AbstractFloat}
     n = 0
     c = (a + b)/2
-
     #Since first guess for X₁[col] will change to "c"
     #Need to update the residuals accordingly. 
     updateResiduals!(Hs, r, col, c, X₁[col])
 
     X₁[col] = c
+   # sum_X  = sum(X₁)
     X_init, X0 = X₁[col],  X₁[col]
-
+    #λ = Float32(5e-3)
     while (n < max_iter_inner)
 
         #Evaluate first partial derivative
-        fc = getL1(Hs, r, col, δ)
+        fc = getL1(Hs, r, col, δ) #+ λ*sum_X
         #Bisection Rule
         if (sign(fc) != sign(fa))
             b, fb = c, fc
@@ -306,7 +309,7 @@ function bisection!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T}
 
         c, X0 = (a + b)/2, X₁[col]
         X₁[col] = c
-
+        #sum_X = sum_X - X0 + X₁[col]
         #Update residuals given new estimate, X₁[col], and prior estimate, X0
         updateResiduals!(Hs, r, col, X₁[col], X0)
 
