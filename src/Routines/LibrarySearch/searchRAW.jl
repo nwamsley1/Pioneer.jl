@@ -194,6 +194,12 @@ function SearchRAW(
                 #IDtoCOL maps precursor ids to their corresponding columns. 
                 #X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
             X, Hs, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            #if (Hs.n > 5000)
+            #    println("Hs.n ", Hs.n)
+            #    println("Hs.n ", Hs.n)
+            #    println("scan_id $i")
+            #    println("scan_id $i")
+            #end
             #println("Hs.n ", Hs.n)
             #println("Hs.m ", Hs.m)
             

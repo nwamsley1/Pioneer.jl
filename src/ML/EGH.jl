@@ -203,7 +203,23 @@ function getP0(α::T, B::T, A::T, tᵣ::T, H::T) where {T<:AbstractFloat}
              H]
 end
 
+function getP0(α::T, B::T, A::T, tᵣ::T, H::T,lower::Vector{T},upper::Vector{T}) where {T<:AbstractFloat}
+    p0 = T[(-1/(2*log(α)))*(B*A),
+             tᵣ,
+             (-1/log(α))*(B - A),
+             H]
+    for (i, v) in enumerate(p0)
+        if (v < lower[i]) | (v > upper[i]) 
+            p0[i] = (lower[i] + upper[i])/2
+        end
+    end
+    return p0
+        
+end
+
+
 getP0(p0::NTuple{5, T}) where {T<:AbstractFloat} = getP0(p0[1], p0[2],p0[3],p0[4],p0[5])
+getP0(p0::NTuple{5, T},lower::Vector{T},upper::Vector{T}) where {T<:AbstractFloat} = getP0(p0[1], p0[2],p0[3],p0[4],p0[5], lower, upper)
 
 function getFWHM(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
     #FWHM given parameters for EGH function 
