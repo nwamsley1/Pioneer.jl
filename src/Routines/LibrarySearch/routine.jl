@@ -46,14 +46,14 @@ println("Parsing Arguments...")
 ARGS = parse_commandline();
 
 params = JSON.parse(read(ARGS["params_json"], String));
-#=joinpath("..","data","example_config","LibrarySearch.json)
-params = JSON.parse(read(joinpath("C:\\Users","n.t.wamsley","PROJECTS","Titus.jl","data","example_config","LibrarySearch.json"), String));
-SPEC_LIB_DIR = joinpath("C:\\Users","n.t.wamsley","PROJECTS","LIBS","nOf5_ally3b2") #"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123/"
+#=
+params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
+SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
-MS_DATA_DIR = joinpath("C:\\Users","n.t.wamsley","PROJECTS","PXD") 
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 #MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
-EXPERIMENT_NAME = "TEST_y4b3_corrected"
+EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 println("ARGS ", ARGS)
 MS_DATA_DIR = ARGS["data_dir"];
@@ -312,16 +312,20 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_lib["precursors"][psm[:precursor_idx]])) => :decoy);
     filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
     #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
-    rtPSMs[:,:target] = (rtPSMs[:,:decoy].==false);
+    rtPSMs[:,:target] =  rtPSMs[:,:decoy].==false
 
     model_fit = glm(@formula(target ~ poisson + hyperscore + topn +
     scribe_score + topn + spectral_contrast + intensity_explained + total_ions), rtPSMs, 
     Binomial(), 
     ProbitLink())
     Y′ = GLM.predict(model_fit, rtPSMs);
-    rtPSMs = rtPSMs[Y′.>0.75,:];
+    println(size(rtPSMs))
+    rtPSMs = rtPSMs[Y′.>0.75,:]
+    println(size(rtPSMs))
     #Retain only targets
-    rtPSMs = rtPSMs[rtPSMs[!,:decoy].==false,:];
+    rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
+
+
     ####################
     #Use best_psms to estimate 
     #1) RT to iRT curve and 
@@ -334,7 +338,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     lock(lk) do 
         PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
         frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH);
+                        f_out = PLOT_PATH );
 
         #Spline mapping RT to iRT
         RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 4.0);
@@ -345,7 +349,6 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
         frag_err_dist_dict[ms_file_idx] = frag_err_dist
     end
 end
-
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
 
@@ -390,15 +393,17 @@ end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
 
-BPSMS = Dict{Int64, String}()
+BPSMS = Dict{Int64, DataFrame}()
+PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
+PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 
-    @load BPSMS_FP[ms_file_idx] = PSMs
-    @load "C:\\Users\\n.t.wamsley\\PROJECTS\\PXD\\TEST_y4b3_corrected\\Search\\RESULTS\\PSMS_1.jld2"
+    #@load BPSMS_FP[ms_file_idx] = PSMs
+    PSMs = load(PSM_PATHS[ms_file_idx])["PSMs"]
     sort!(PSMs,:RT); #Sorting before grouping is critical. 
-    PSMs[:,:max_weight] .= Float32(0.0)
-    #PSMs = PSMs[PSMs[!,:RT_error].<=15,:];
+    PSMs[!,:max_weight] .= zero(Float32)
     test_chroms = groupby(PSMs, :precursor_idx);
+
     #Integrate MS2 and filter
     time_test = @timed integratePrecursors(test_chroms, 
                                             n_quadrature_nodes = params_[:n_quadrature_nodes],
@@ -409,11 +414,15 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     println("time_test.time ", time_test.time , " for $ms_file_idx")
 
     time_test = @timed filter!(x -> x.best_scan, PSMs);
-    #time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
-    #time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
+    time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
+    time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
     filter!(x -> x.total_ions > 2, PSMs)
     filter!(x -> x.matched_ratio > -1, PSMs)
+    BPSMS[ms_file_idx] = PSMs;
+end
 
+Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+    PSMs = BPSMS[ms_file_idx]
     PSMs[:,:n_obs] .= zero(UInt16)
     sort!(PSMs, [:sequence]);
     grouped_df = groupby(PSMs, :sequence);
@@ -455,23 +464,23 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
         end
     end
 
-    lock(lk) do 
-        println("ms_file_idx: $ms_file_idx has ", size(PSMs))
-        BPSMS[ms_file_idx] = PSMs;
-    end
+    #lock(lk) do 
+    #    println("ms_file_idx: $ms_file_idx has ", size(PSMs))
+    #    BPSMS[ms_file_idx] = PSMs;
+    #end
 end
 println("Finished quantitation in ", quantitation_time.time, "seconds")
 println("Finished quantitation in ", quantitation_time, "seconds")
-
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS.jld2"); BPSMS);
 main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
         PSMs = BPSMS[ms_file_idx];
         isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
-        lock(lk) do 
+        #lock(lk) do 
             isotopes = getIsotopes(PSMs[!,:sequence], 
                                     PSMs[!,:precursor_idx], 
                                     PSMs[!,:charge], QRoots(4), 4);
-        end
+        #end
         prec_rt_table = sort(
                                 collect(
                                         zip(
@@ -485,7 +494,8 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                         isotopes, 
                                         prec_rt_table, 
                                         UInt32(ms_file_idx), 
-                                        frag_err_dist_dict[ms_file_idx], 
+                                        Laplace(-1.0, 4.0),
+                                        #frag_err_dist_dict[ms_file_idx], 
                                         integrate_ms1_params,
                                         scan_range = (1, length(MS_TABLE[:scanNumber])));
 
@@ -539,10 +549,7 @@ open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
     write(f, JSON.json(JSON.parse(read(ARGS["params_json"], String))))
 end
 
-#filter!(x -> x.data_points > 2, best_psms)
-
-PSMs[isinf.(PSMs[:,:FWHM]),:FWHM] .= maximum(PSMs[isinf.(PSMs[:,:FWHM]).!=true,:FWHM]);
-PSMs[isinf.(PSMs[:,:FWHM_01]),:FWHM_01] .= maximum(PSMs[isinf.(PSMs[:,:FWHM_01]).!=true,:FWHM_01]);
+filter!(x -> x.data_points > 2, best_psms)
 features = [ :FWHM,
     :FWHM_01,
     :GOF,
@@ -608,32 +615,15 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 9.0/9.0,
+                        train_fraction = 2.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
 
-best_topn = best_psms_passing[best_psms_passing[:,:data_points].>6,:]
-bins_τ = LinRange(-0.2, 0.2, 100)
-histogram(best_topn[!,:τ], bins = bins_τ)
-bins_σ = LinRange(0, 0.1, 100)
-histogram(best_topn[!,:σ], bins = bins_σ)
-
-histogram2d(best_topn[!,:τ], best_topn[!,:σ], bins = (bins_τ, bins_σ))
-hline!([median(best_topn[!,:σ])])
-vline!([median(best_topn[!,:τ])])
-
-best_topn[best_topn[:,:τ] .> 0.3,:precursor_idx]
-
 best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
 pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
-combined_set = load("C:\\Users\\n.t.wamsley\\Desktop\\good_precursors_a.jld2")
-combined_set  = combined_set["combined_set"]
-combined_set = Set(replace.(combined_set, "[Carbamidomethyl (C)]" => ""))
 setdiff(combined_set, pioneer_passing_fdr)
-combined_set = Set([x[2:end-3] for x in collect(combined_set)])
-pioneer_passing_fdr = Set(best_psms_passing[!,:stripped_sequence])
-setdiff(combined_set, pioneer_passing_fdr)
+
 
 #@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
        

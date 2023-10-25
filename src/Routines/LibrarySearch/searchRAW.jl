@@ -58,7 +58,7 @@ function SearchRAW(
     cycle_idx = 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
 
-    fragment_tolerance = Float64(16.1)
+    fragment_tolerance = Float64(8.1)
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
     all_fmatches = Vector{IonMatchType}()
@@ -218,8 +218,9 @@ function SearchRAW(
 
             #return IDtoCOL, weights, Hs, X, r, last_matched_col
             #return Hs
-   
-            scores = getDistanceMetrics(X, weights, Hs, last_matched_col)
+            if ismissing(isotope_dict) 
+                scores = getDistanceMetrics(X, weights, Hs, last_matched_col)
+            end
             #for (id, row) in pairs(IDtoCOL_weights)
             #    precursor_weights[id] = weights[row]# = precursor_weights[id]
             #end
