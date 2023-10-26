@@ -52,7 +52,7 @@ SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-#MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
+MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
 EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 println("ARGS ", ARGS)
@@ -369,9 +369,9 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
-                                                #scan_range = (55710, 55710),
+                                                scan_range = (55710, 55710),
                                                 #scan_range = (50426, 51000),
-                                                scan_range = (1, length(MS_TABLE[:masses]))
+                                                #scan_range = (1, length(MS_TABLE[:masses]))
                                             );
 
         #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
@@ -416,8 +416,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     time_test = @timed filter!(x -> x.best_scan, PSMs);
     time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
     time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
-    filter!(x -> x.total_ions > 2, PSMs)
-    filter!(x -> x.matched_ratio > -1, PSMs)
+    filter!(x -> x.total_ions > 2, PSMs);
+    filter!(x -> x.matched_ratio > -1, PSMs);
     BPSMS[ms_file_idx] = PSMs;
 end
 
@@ -472,7 +472,8 @@ end
 println("Finished quantitation in ", quantitation_time.time, "seconds")
 println("Finished quantitation in ", quantitation_time, "seconds")
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS.jld2"); BPSMS);
-main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+#main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
         PSMs = BPSMS[ms_file_idx];
         isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
@@ -539,8 +540,11 @@ end
 
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored.jld2"); best_psms)
+BPSMS = nothing
+GC.gc()
 
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored.jld2"); best_psms)
+#=
 open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "meta.txt"), "w") do f
     write(f, "Main Search Time $main_search_time \n")
 end
@@ -550,6 +554,7 @@ open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
 end
 
 filter!(x -> x.data_points > 2, best_psms)
+=#
 features = [ :FWHM,
     :FWHM_01,
     :GOF,
@@ -579,10 +584,10 @@ features = [ :FWHM,
     :mean_matched_ratio,
     :mean_scribe_score,
     :missed_cleavage,
-    :ms1_ms2_diff,
+    #:ms1_ms2_diff,
     :n_obs,
     :peak_area,
-    :peak_area_ms1,
+    #:peak_area_ms1,
     :points_above_FWHM,
     :points_above_FWHM_01,
     :poisson,
@@ -597,12 +602,12 @@ features = [ :FWHM,
     :total_ions,
     :weight,
     :y_ladder,
-    :ρ,
+    #:ρ,
     :log2_base_peak_intensity,
     :TIC,
     :adjusted_intensity_explained
     ]
-
+best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
 
 xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
@@ -665,7 +670,7 @@ function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(
     return fasta
 end
 
-PIONEER = best_psms;
+PIONEER = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false).&(best_psms[!,:data_points].>2),:];
 PIONEER = PIONEER[(iszero.(PIONEER[:,:peak_area]).==false),:];
 MEANS = combine(prec_group -> (mean_log2 = mean(log2.(prec_group[:,:peak_area])),
                                median_log2 = median(log2.(prec_group[:,:peak_area])),
@@ -718,13 +723,14 @@ topmargin=5mm)
 
 @df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
              PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true)
-savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "RAW_INTENSITIES.pdf"))
+#savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "RAW_INTENSITIES.pdf"))
 
 p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Normalized Response",
 topmargin=5mm)
 @df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
             PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
-savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
+
+#savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
 catch
     println("couldn't printn normalization plots")
 end 
@@ -750,7 +756,7 @@ end
 
 transform!(PIONEER, AsTable(:) => ByRow(precursor -> getCondition(precursor)) => [:condition, :biological, :technical]);
 
-PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
+PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0).&(PIONEER[:,:data_points].>3),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
 PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(prec_group[:,:peak_area_norm])), 
                                         CV = 100*std(prec_group[:,:peak_area_norm])/mean(prec_group[:,:peak_area_norm]),
                                         non_missing = length(prec_group[:,:peak_area_norm]),

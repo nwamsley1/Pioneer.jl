@@ -879,3 +879,200 @@ dot(a, c)/(norm(a)*norm(c))
                 
                 end
                 =(#
+
+                =#
+
+
+@inline function selectpivot!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
+    @inbounds begin
+        mi = Base.midpoint(lo, hi)
+
+        # sort v[mi] <= v[lo] <= v[hi] such that the pivot is immediately in place
+        if lt(o, v.colval[lo], v.colval[mi])
+            v.colval[mi], v.colval[lo] = v.colval[lo], v.colval[mi]
+            v.rowval[mi], v.rowval[lo] = v.rowval[lo], v.rowval[mi]
+            v.nzval[mi], v.nzval[lo] = v.nzval[lo], v.nzval[mi]
+            v.x[mi], v.x[lo] = v.x[lo], v.x[mi]
+        end
+
+        if lt(o, v.colval[hi], v.colval[lo])
+            if lt(o, v.colval[hi], v.colval[mi])
+                #v[hi], v[lo], v[mi] = v[lo], v[mi], v[hi]
+
+                v.colval[hi], v.colval[lo], v.colval[mi] = v.colval[lo], v.colval[mi], v.colval[hi]
+                v.rowval[hi], v.rowval[lo], v.rowval[mi] = v.rowval[lo], v.rowval[mi], v.rowval[hi]
+                v.nzval[hi], v.nzval[lo], v.nzval[mi] = v.nzval[lo], v.nzval[mi], v.nzval[hi]
+                v.x[hi], v.x[lo], v.x[mi] = v.x[lo], v.x[mi], v.x[hi]
+
+            else
+                #v[hi], v[lo] = v[lo], v[hi]
+
+                v.colval[hi], v.colval[lo] = v.colval[lo], v.colval[hi]
+                v.rowval[hi], v.rowval[lo] = v.rowval[lo], v.rowval[hi]
+                v.nzval[hi], v.nzval[lo] = v.nzval[lo], v.nzval[hi] 
+                v.x[hi], v.x[lo] = v.x[hi], v.x[lo] 
+            end
+        end
+
+        # return the pivot
+        return v.colval[lo], v.rowval[lo], v.nzval[lo], v.x[lo]
+    end
+end
+
+function partition!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
+    pivot = selectpivot!(v, lo, hi, o)
+    # pivot == v[lo], v[hi] > pivot
+    i, j = lo, hi
+    @inbounds while true
+        i += 1; j -= 1
+        while lt(o, v.colval[i], pivot[1]); i += 1; end;
+        while lt(o, pivot[1], v.colval[j]); j -= 1; end;
+        i >= j && break
+        v.colval[i], v.colval[j] = v.colval[j], v.colval[i]
+        v.rowval[i], v.rowval[j] = v.rowval[j], v.rowval[i]
+        v.nzval[i], v.nzval[j] = v.nzval[j], v.nzval[i]
+        v.x[i], v.x[j] = v.x[j], v.x[i]
+    end
+    v.colval[j], v.colval[lo] = pivot[1], v.colval[j]
+    v.rowval[j], v.rowval[lo] = pivot[2], v.rowval[j]
+    v.nzval[j], v.nzval[lo] = pivot[3], v.nzval[j]
+    v.x[j], v.x[lo] = pivot[4], v.x[j]
+
+    # v[j] == pivot
+    # v[k] >= pivot for k > j
+    # v[i] <= pivot for i < j
+    return j
+end
+
+function specialsort!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
+    @inbounds while lo < hi
+        hi-lo <= 20 && return smallsort!(v, lo, hi, o)
+        j = partition!(v, lo, hi, o)
+        if j-lo < hi-j
+            # recurse on the smaller chunk
+            # this is necessary to preserve O(log(n))
+            # stack space in the worst case (rather than O(n))
+            lo < (j-1) && specialsort!(v, lo, j-1, o)
+            lo = j+1
+        else
+            j+1 < hi && specialsort!(v, j+1, hi, o)
+            hi = j-1
+        end
+    end
+    return v
+end
+
+function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
+    #getkw lo hi scratch
+    lo_plus_1 = (lo + 1)::Int64
+    @inbounds for i = lo_plus_1:hi
+        j = i
+        col_x = v.colval[i]
+        row_x = v.rowval[i]
+        nzval_x = v.nzval[i]
+        x_x = v.x[i]
+        while j > lo
+            #y = v[j-1]
+            col_y = v.colval[j - 1]
+            row_y = v.rowval[j - 1]
+            nzval_y = v.nzval[j - 1]
+            x_y = v.x[j - 1]
+            if !(lt(o, col_x, col_y)::Bool)
+                break
+            end
+            v.colval[j] = col_y
+            v.rowval[j] = row_y
+            v.nzval[j] = nzval_y
+            v.x[j] = x_y
+            j -= 1
+        end
+        v.colval[j] = col_x
+        v.rowval[j] = row_x
+        v.nzval[j] = nzval_x
+        v.x[j] = x_x
+    end
+    #scratch
+end
+
+This implementation uses the Lomuto partition scheme, which is slightly simpler than the Hoare partition scheme and is often easier to understand. The quicksort_inplace function is a non-recursive implementation using a while loop and chooses the pivot element for each subarray. It then partitions the subarray into elements less than the pivot and elements greater than the pivot.
+
+This code does not allocate additional memory for the sorting process, making it memory-efficient while sorting in-place.
+
+
+    @inline function selectpivot!(v::AbstractVector, lo::Integer, hi::Integer, o::Ordering)
+        @inbounds begin
+            mi = Base.midpoint(lo, hi)
+    
+            # sort v[mi] <= v[lo] <= v[hi] such that the pivot is immediately in place
+            if lt(o, v[lo], v[mi])
+                v[mi], v[lo] = v[lo], v[mi]
+            end
+    
+            if lt(o, v[hi], v[lo])
+                if lt(o, v[hi], v[mi])
+                    v[hi], v[lo], v[mi] = v[lo], v[mi], v[hi]
+                else
+                    v[hi], v[lo] = v[lo], v[hi]
+                end
+            end
+    
+            # return the pivot
+            return v[lo]
+        end
+    end
+    
+    function partition!(v::AbstractVector, lo::Integer, hi::Integer, o::Ordering)
+        pivot = selectpivot!(v, lo, hi, o)
+        # pivot == v[lo], v[hi] > pivot
+        i, j = lo, hi
+        @inbounds while true
+            i += 1; j -= 1
+            while lt(o, v[i], pivot); i += 1; end;
+            while lt(o, pivot, v[j]); j -= 1; end;
+            i >= j && break
+            v[i], v[j] = v[j], v[i]
+        end
+        v[j], v[lo] = pivot, v[j]
+    
+        # v[j] == pivot
+        # v[k] >= pivot for k > j
+        # v[i] <= pivot for i < j
+        return j
+    end
+    
+    function specialsort!(v::AbstractVector, lo::Integer, hi::Integer, o::Ordering)
+        @inbounds while lo < hi
+            hi-lo <= 20 && return smallsort!(v, lo, hi, o)
+            j = partition!(v, lo, hi, o)
+            if j-lo < hi-j
+                # recurse on the smaller chunk
+                # this is necessary to preserve O(log(n))
+                # stack space in the worst case (rather than O(n))
+                lo < (j-1) && specialsort!(v, lo, j-1, o)
+                lo = j+1
+            else
+                j+1 < hi && specialsort!(v, j+1, hi, o)
+                hi = j-1
+            end
+        end
+        return v
+    end
+    
+    function smallsort!(v::SparseArray, lo::Int64, hi::Int64, o::Ordering)
+        #getkw lo hi scratch
+        lo_plus_1 = (lo + 1)::Int64
+        @inbounds for i = lo_plus_1:hi
+            j = i
+            x = v.colval[i]
+            while j > lo
+                y = v[j-1]
+                if !(lt(o, x, y)::Bool)
+                    break
+                end
+                v.colval[j] = y
+                j -= 1
+            end
+            v[j] = x
+        end
+        #scratch
+    end
