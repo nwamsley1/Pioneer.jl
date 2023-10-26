@@ -19,20 +19,7 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
     transition_idx = 0
     prec_idx = false
     while i <= min(topN, counter.matches)
-        #if getID(counter, i) == 0x00003a7c
-        #    println("!!!!!!!!")
-        #    println("@@@@@@@@")
-        #    prec_idx = true
-        #end
-        #if getID(counter, i)  ∉ (0x00003a7c,0x00003625,0x000039e6)
-        #    i += 1
-        #    continue
-        #end
         for frag in fragment_list[getID(counter, i)]
-            #if !iszero(frag.intensity)
-             #   transition_idx += 1
-             #   transitions[transition_idx] = frag
-            #end
             transition_idx += 1
             transitions[transition_idx] = frag
             #Grow array if exceeds length

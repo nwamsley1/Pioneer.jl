@@ -544,7 +544,7 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
         end
        i += 1
     end
-
+    println(i)
     return
 end
 
@@ -578,6 +578,7 @@ function solveHuber!(Hs::SparseMatrixCSC{T, Int64}, r::Vector{T}, X₁::Vector{T
         end
        i += 1
     end
+    println(i)
     return
 end
 

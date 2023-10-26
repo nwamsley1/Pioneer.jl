@@ -1,4 +1,4 @@
-function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H::SparseArray{Ti,U}; block_size = 10000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
+function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -16,12 +16,15 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         append!(H.rowval, zeros(eltype(H.rowval), block_size))
         append!(H.nzval, zeros(eltype(H.nzval), block_size))
         append!(H.x, zeros(eltype(H.x), block_size))
+        append!(H.matched, zeros(eltype(H.matched), block_size))
+        #MUST BE ONES!!!
+        append!(H.mask, ones(eltype(H.mask), block_size))
+
         append!(H.colptr, Vector{Ti}(undef, block_size))
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
     X = zeros(T, M)
     #Maps a precursor id to a row of H. 
-    precID_to_col = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
 
     #Current highest row encountered
     prec_col = zero(UInt32)
@@ -31,14 +34,11 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     for i in range(1, nmatches)#matches)
         match = matches[i]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
-        if !haskey(precID_to_col,  getPrecID(match))
+        if iszero(precID_to_col[getPrecID(match)])
             prec_col += one(UInt32)
-            insert!(precID_to_col, getPrecID(match), (prec_col, zero(UInt8)))
+            update!(precID_to_col, getPrecID(match), UInt16(prec_col))
         end
 
-        if getRank(match) < 3
-            precID_to_col[getPrecID(match)] = (precID_to_col[getPrecID(match)][1], precID_to_col[getPrecID(match)][2] + one(UInt8))
-        end
         #If this peak has not been encountered yet, then start filling a new 
         if getPeakInd(match) != last_peak_ind
             row += 1
@@ -47,10 +47,11 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
         end
 
         #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(match)])), getPredictedIntenisty(match), X[row])
-        H.colval[i] = Int64(first(precID_to_col[getPrecID(match)]))
+        H.colval[i] = Int64(precID_to_col[getPrecID(match)])
         H.rowval[i] = row
         H.nzval[i] = getPredictedIntenisty(match)
         H.x[i] = X[row]
+        H.matched[i] = true
         H.n_vals += 1
             #println("i ", i)
     end
@@ -60,19 +61,21 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     for i in range(nmatches + 1, nmatches + nmisses)
         miss = misses[i - nmatches]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
-        if !haskey(precID_to_col,  getPrecID(miss))
-            prec_col  += UInt8(1)
-            insert!(precID_to_col, getPrecID(miss), (prec_col, false))
+        if iszero(precID_to_col[getPrecID(miss)])
+            prec_col += one(UInt32)
+            update!(precID_to_col, getPrecID(miss), UInt16(prec_col))
         end
+
         # if getPeakInd(miss) != last_peak_ind
         row += 1
         last_peak_ind = getPeakInd(miss)
         #end
         #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(miss)])), getPredictedIntenisty(miss), zero(U))
-        H.colval[i] = Int64(first(precID_to_col[getPrecID(miss)]))
+        H.colval[i] = Int64(precID_to_col[getPrecID(miss)])
         H.rowval[i] = row
         H.nzval[i] = getPredictedIntenisty(miss)
         H.x[i] = zero(U)
+        H.matched[i] = false
 
         H.n_vals += 1
     end
@@ -82,8 +85,6 @@ function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
     #sortSparse!(H)
     sortSparse!(H)
-    return X, precID_to_col, H_nrow
-    
 end
 
 function buildDesignMatrix(matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, H_COLS::Vector{Int64}, H_ROWS::Vector{Int64}, H_VALS::Vector{Float32}; block_size = 10000) where {m<:Match}

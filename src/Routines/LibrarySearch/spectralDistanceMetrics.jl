@@ -1,3 +1,147 @@
+function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScores{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+    #=
+    scribe_scores = zeros(T, H.n)
+    scribe_scores_corrected = zeros(T, H.n)
+    city_block_scores = zeros(T, H.n)
+    spectral_contrast_scores = zeros(T, H.n)
+    spectral_contrast_scores_corrected = zeros(T, H.n)
+    matched_ratio = zeros(T, H.n)
+    =#
+    #matched= ones(Int64, H.m)
+   # mask = SparseMatr54ixCSC(H.m, H.n, copy(H.colptr), copy(H.rowval), ones(Float32, length(H.nzval)))
+
+    #for i in range(last_matched_col, H.m)
+    #    matched[i] = 0
+    #end
+    #matched = [x>0 ? 1 : 0 for x in X]
+
+    for col in range(1, H.n)
+        H_sqrt_sum = zero(T)
+        X_sqrt_sum = zero(T)
+
+        H_sqrt_sum_corrected = zero(T)
+        X_sqrt_sum_corrected = zero(T)
+
+        H2_norm = zero(T)
+        X2_norm = zero(T)
+
+        H2_norm_corrected = zero(T)
+        X2_norm_corrected = zero(T)
+
+        dot_product = zero(T)
+        dot_product_corrected = zero(T)
+
+        scribe_score = zero(T)
+        scribe_score_corrected = zero(T)
+
+        city_block_dist = zero(T)
+        matched_sum = zero(T)
+        unmatched_sum = zero(T)
+    
+        
+        max_residual = zero(T)
+        max_residual_int = 0
+
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            if abs(w[col]*H.nzval[i] - H.x[i]) > max_residual
+                max_residual = abs(w[col]*H.nzval[i] - H.x[i])
+                max_residual_int = i
+            end
+        end
+
+        if !iszero(max_residual_int)
+            setMask!(H, max_residual_int, false)
+            #mask.nzval[max_residual_int] = zero(Float32)
+        end
+    
+        N = 0
+        N_corrected = 0
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            H_sqrt_sum += sqrt(H.nzval[i])
+            X_sqrt_sum += sqrt(H.x[i] + 1e-10)#/Xsum
+
+            H_sqrt_sum_corrected += sqrt(H.nzval[i]*H.mask[i])
+            X_sqrt_sum_corrected += sqrt(H.x[i]*H.mask[i] + 1e-10)#/Xsum
+
+            H2_norm += (H.nzval[i])^2 + 1e-10
+            X2_norm += (H.x[i])^2 + 1e-10
+            dot_product += H.nzval[i]*H.x[i]
+
+            H2_norm_corrected += (H.nzval[i]*H.mask[i])^2 + 1e-10
+            X2_norm_corrected += (H.x[i]*H.mask[i])^2 + 1e-10
+            dot_product_corrected += H.nzval[i]*H.x[i]*H.mask[i]
+
+            matched_sum += H.nzval[i]*H.matched[i]
+            unmatched_sum += H.nzval[i]*(1 - H.matched[i])
+
+            N += 1
+            N_corrected += H.mask[i]
+        end
+          
+        #Sqrt of sum of squares
+        H2_norm = sqrt(H2_norm)
+        X2_norm = sqrt(X2_norm)
+        H2_norm_corrected = sqrt(H2_norm_corrected)
+        X2_norm_corrected = sqrt(X2_norm_corrected)
+
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            scribe_score +=  (
+                                (sqrt(H.nzval[i])/H_sqrt_sum) - 
+                                (sqrt(H.x[i])/X_sqrt_sum)
+                                )^2  
+
+            scribe_score_corrected +=  (
+                (sqrt(H.nzval[i]*H.mask[i])/H_sqrt_sum) - 
+                (sqrt(H.x[i]*H.mask[i])/X_sqrt_sum)
+                )^2  
+
+            city_block_dist += abs(
+                (H.nzval[i]/H2_norm) -
+                (H.x[i]/X2_norm)
+            )        
+        end
+        #=
+        scribe_scores[col] = -log((scribe_score)/N)
+        scribe_scores_corrected[col] = -log((scribe_score_corrected)/N_corrected)
+        city_block_scores[col] = -log((city_block_dist)/N)
+        spectral_contrast_scores[col] = dot_product/(H2_norm*X2_norm)
+        spectral_contrast_scores_corrected[col] = dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)
+        matched_ratio[col] = matched_sum/unmatched_sum
+        =#
+
+        spectral_scores[col] = SpectralScores(
+            Float16(-log((scribe_score)/N)), #scribe_score
+            Float16(-log((scribe_score_corrected)/N_corrected)), #scribe_score_corrected
+            Float16(-log((city_block_dist)/N)), #city_block
+            Float16(dot_product/(H2_norm*X2_norm)), #dot_p
+            Float16(dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)), #spectral_contrast_corrected
+            Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
+            Float16(getEntropy(H, col)) #entropy
+        )
+    end
+
+    #entropy_scores = getEntropy(H)
+    #H = SparseMatrixCSC(Hs.m, Hs.n, H.colptr, H.rowval, H.nzval.*mask.nzval);
+    #entropy_scores_corrected = getEntropy(X, H, mask)
+
+    #=
+    return (scribe = scribe_scores, 
+            scribe_corrected = scribe_scores_corrected,
+            city_block = city_block_scores, 
+            spectral_contrast = spectral_contrast_scores, 
+            spectral_contrast_corrected = spectral_contrast_scores_corrected,
+            matched_ratio = matched_ratio,
+            entropy_sim = entropy_scores
+            )
+    =#
+            #entropy_sim_corrected = entropy_scores_corrected)
+
+end
+
 function getDistanceMetrics(X::Vector{T}, w::Vector{T}, H::SparseMatrixCSC{T, Int64}, last_matched_col::Int) where {T<:AbstractFloat}
     scribe_scores = zeros(T, H.n)
     scribe_scores_corrected = zeros(T, H.n)
@@ -126,6 +270,180 @@ function getDistanceMetrics(X::Vector{T}, w::Vector{T}, H::SparseMatrixCSC{T, In
 
 end
     
+function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:AbstractFloat}
+
+    Hsum = zero(T)
+    Xsum = zero(T)
+    HXsum = zero(T)
+
+    Hentropy = zero(T)
+    Xentropy = zero(T)
+    HXentropy = zero(T)
+
+    @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #MASK is true for selected ions and false otherwise
+        hp = H.nzval[i]#/Hsum
+        xp = H.x[i]#/Xsum
+        Hentropy += hp*log(hp + 1e-10)
+        #HXentropy += (hp + xp)*log(hp + xp)
+        Xentropy += xp*log(xp + 1e-10)
+        Xsum += xp
+        Hsum += hp
+        #HXsum += xp + hp
+    end
+
+    @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #MASK is true for selected ions and false otherwise
+        hp = H.nzval[i]/Hsum
+        xp = H.x[i]/Xsum
+        HXentropy += (hp + xp)*log(hp + xp + 1e-10)
+        HXsum += xp + hp
+    end
+    Xentropy = log(Xsum) - Xentropy/Xsum
+    HXentropy = log(HXsum) - HXentropy/HXsum
+    Hentropy = log(Hsum) - Hentropy/Hsum
+    
+    if (Xentropy < 3) | (Hentropy < 3)
+
+        Xw = Xentropy < 3 ? 0.25*(1 + Xentropy) : 1.0
+        Hw = Hentropy < 3 ? 0.25*(1 + Hentropy) :  1.0
+        HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
+
+        Hentropy = zero(T)
+        Xentropy = zero(T)
+        HXentropy = zero(T)
+        Hsum = zero(T)
+        Xsum = zero(T)
+        HXsum = zero(T)
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            hp = H.nzval[i]^Hw#/Hsum
+            xp = H.x[i]^Xw#/Xsum
+            Hentropy += hp*log(hp + 1e-10)
+            Xentropy += xp*log(xp + 1e-10)
+            Xsum += xp
+            Hsum += hp
+        end
+
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            hp = (H.nzval[i]^Hw)/Hsum
+            xp = (H.x[i]^Xw)/Xsum
+            hxp = (hp + xp)^HXw
+            HXentropy += (hxp)*log(hxp + 1e-10)
+            HXsum += hxp
+        end
+
+        Xentropy = log(Xsum) - Xentropy/Xsum
+        HXentropy = log(HXsum) - HXentropy/HXsum 
+        Hentropy = log(Hsum) - Hentropy/Hsum
+        HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
+        HXentropy = zero(Float32)
+        HXsum = zero(Float32)
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            hp = (H.nzval[i]^Hw)/Hsum
+            xp = (H.x[i]^Xw)/Xsum
+            hxp = (hp + xp)^HXw
+            HXentropy += (hxp)*log(hxp + 1e-10)
+            HXsum += hxp
+        end
+
+        HXentropy = log(HXsum) - HXentropy/HXsum
+    end
+
+    return Float32(1 - (2*HXentropy - Xentropy - Hentropy)/(log(4)))
+end
+
+function getEntropy(H::SparseArray{Ti, T}) where {Ti<:Integer,T<:AbstractFloat}
+    entropy_sim = zeros(T, H.n)
+    for col in range(1, H.n)
+
+        Hsum = zero(T)
+        Xsum = zero(T)
+        HXsum = zero(T)
+
+        Hentropy = zero(T)
+        Xentropy = zero(T)
+        HXentropy = zero(T)
+
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            hp = H.nzval[i]#/Hsum
+            xp = H.x[i]#/Xsum
+            Hentropy += hp*log(hp + 1e-10)
+            #HXentropy += (hp + xp)*log(hp + xp)
+            Xentropy += xp*log(xp + 1e-10)
+            Xsum += xp
+            Hsum += hp
+            #HXsum += xp + hp
+        end
+
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            #MASK is true for selected ions and false otherwise
+            hp = H.nzval[i]/Hsum
+            xp = H.x[i]/Xsum
+            HXentropy += (hp + xp)*log(hp + xp + 1e-10)
+            HXsum += xp + hp
+        end
+        Xentropy = log(Xsum) - Xentropy/Xsum
+        HXentropy = log(HXsum) - HXentropy/HXsum
+        Hentropy = log(Hsum) - Hentropy/Hsum
+        
+        if (Xentropy < 3) | (Hentropy < 3)
+
+            Xw = Xentropy < 3 ? 0.25*(1 + Xentropy) : 1.0
+            Hw = Hentropy < 3 ? 0.25*(1 + Hentropy) :  1.0
+            HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
+
+            Hentropy = zero(T)
+            Xentropy = zero(T)
+            HXentropy = zero(T)
+            Hsum = zero(T)
+            Xsum = zero(T)
+            HXsum = zero(T)
+            @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+                #MASK is true for selected ions and false otherwise
+                hp = H.nzval[i]^Hw#/Hsum
+                xp = H.x[i]^Xw#/Xsum
+                Hentropy += hp*log(hp + 1e-10)
+                Xentropy += xp*log(xp + 1e-10)
+                Xsum += xp
+                Hsum += hp
+            end
+
+            @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+                #MASK is true for selected ions and false otherwise
+                hp = (H.nzval[i]^Hw)/Hsum
+                xp = (H.x[i]^Xw)/Xsum
+                hxp = (hp + xp)^HXw
+                HXentropy += (hxp)*log(hxp + 1e-10)
+                HXsum += hxp
+            end
+
+            Xentropy = log(Xsum) - Xentropy/Xsum
+            HXentropy = log(HXsum) - HXentropy/HXsum 
+            Hentropy = log(Hsum) - Hentropy/Hsum
+            HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
+            HXentropy = zero(Float32)
+            HXsum = zero(Float32)
+            @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+                #MASK is true for selected ions and false otherwise
+                hp = (H.nzval[i]^Hw)/Hsum
+                xp = (H.x[i]^Xw)/Xsum
+                hxp = (hp + xp)^HXw
+                HXentropy += (hxp)*log(hxp + 1e-10)
+                HXsum += hxp
+            end
+
+            HXentropy = log(HXsum) - HXentropy/HXsum
+        end
+
+        entropy_sim[col] = (1 - (2*HXentropy - Xentropy - Hentropy)/(log(4)))
+    end
+    return entropy_sim
+end
+
 function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# where {T<:AbstractFloat}
     T = Float32
     entropy_sim = zeros(T, H.n)
@@ -215,6 +533,7 @@ function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64})# whe
     end
     return entropy_sim
 end
+
 function getEntropy(X::Vector{Float32}, H::SparseMatrixCSC{Float32, Int64}, MASK::SparseMatrixCSC{Float32, Int64})# where {T<:AbstractFloat}
     T = Float32
     entropy_sim = zeros(T, H.n)

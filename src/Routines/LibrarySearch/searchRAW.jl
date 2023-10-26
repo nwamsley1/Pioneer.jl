@@ -72,7 +72,9 @@ function SearchRAW(
     ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
-    H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
+
+    IDtoCOL = ArrayDict(UInt32, UInt16, length(precs.ids))
+    #H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
     
 
     #weights
@@ -82,7 +84,8 @@ function SearchRAW(
     else
         precursor_weights = zeros(Float32, length(ion_list))
     end
-
+    _weights_ = zeros(Float32, 5000);
+    _residuals_ = zeros(Float32, 5000);
     #fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
     solve_time = 0.0
     index_search_time = 0.0
@@ -172,86 +175,68 @@ function SearchRAW(
                                     ppm = fragment_tolerance, #Fragment match tolerance in ppm
                                     most_intense = most_intense
                                     )
-        #if prec_idx
-        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
-        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
-        #end
 
         ##########
         #Spectral Deconvolution and Distance Metrics 
-        if nmatches < 2 #Few matches to do not perform de-convolution 
-            IDtoCOL = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
-        else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
-            #if prec_idx
-            #    println("PASSED scan_idx $i")
-            #    println("PASSED scan_idx $i")
-            #end
-            #IDtoCOL_weights = UnorderedDictionary{UInt32, UInt32}()
-            #prep_time += @elapsed begin
-
-                #Sparse matrix representation of templates written to Hs. 
-                #Hs mask is true for ions that will be used to score and false otherwise (may exclude y1 ions for example)
-                #IDtoCOL maps precursor ids to their corresponding columns. 
-                #X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
-            X, Hs, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
-            return X, Hs, IDtoCOL, last_matched_col, ionMatches, ionMisses, nmatches, nmisses
-            #if (Hs.n > 5000)
-            #    println("Hs.n ", Hs.n)
-            #    println("Hs.n ", Hs.n)
-            #    println("scan_id $i")
-            #    println("scan_id $i")
-            #end
-            #println("Hs.n ", Hs.n)
-            #println("Hs.m ", Hs.m)
+        if nmatches > 2 #Few matches to do not perform de-convolution 
             
-            weights = Vector{Float32}(undef, Hs.n)
+            #Spectral deconvolution. Build sparse design/template matrix for regression 
+            #Sparse matrix representation of templates written to Hs. 
+            #IDtoCOL maps precursor ids to their corresponding columns. 
+            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
+        
+            #weights = Vector{Float32}(undef, Hs.n)
             #end
-
-            for (id, row) in pairs(IDtoCOL)
-                weights[first(row)] = precursor_weights[id]
+            if IDtoCOL.size > length(_weights_)
+                append!(weights, zeros(eltype(weights), 1000))
+            end
+            #Get most recently determined weights for eahc precursors
+            #"Hot" start
+            for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
+                _weights_[IDtoCOL[i]] = precursor_weights[IDtoCOL.keys[i]]
             end
 
-            solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+            #Get initial residuals
+            initResiduals!(_residuals_, sa_test, _weights_);
 
-            for (id, row) in pairs(IDtoCOL)
-                precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
+            #Spectral deconvolution.
+            solve_time += @elapsed solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+
+            #Remember determined weights for eahc precursors
+            for (i, col) in pairs(IDtoCOL)
+                precursor_weights[i] = _weights_[col]# = precursor_weights[id]
             end
 
             #return IDtoCOL, weights, Hs, X, r, last_matched_col
             #return Hs
             if ismissing(isotope_dict) 
-                scores = getDistanceMetrics(X, weights, Hs, last_matched_col)
+                spectral_scores = getDistanceMetrics(weights, Hs, spectral_scores)
             end
-            #for (id, row) in pairs(IDtoCOL_weights)
-            #    precursor_weights[id] = weights[row]# = precursor_weights[id]
-            #end
-            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+
             ##########
             #Scoring and recording data
             if !ismissing(scored_PSMs)
-                unscored_PSMs = UnorderedDictionary{UInt32, XTandem{Float32}}()
 
-                ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
-                #Score unscored_PSMs and write them to scored_PSMs
-                #return scores
-                #if prec_idx
-                #    println("SCORED scan_idx $i")
-                #    println("SCORED scan_idx $i")
-                #    println("unscored_PSMs ", unscored_PSMs)
-                #end
+                ScoreFragmentMatches!(unscored_PSMs, 
+                                      ionMatches, 
+                                      nmatches, 
+                                      err_dist)
+
                 Score!(scored_PSMs, 
-                        unscored_PSMs, 
-                        length(spectra[:intensities][i]), 
-                        Float64(sum(spectra[:intensities][i])), 
-                        match_count/prec_count, 
-                        scores, #Named Tuple of spectrum simmilarity/distance measures 
-                        weights, #Coefficients for each precursor in the spectral deconvolution
-                        IDtoCOL,
-                        scan_idx = i,
-                        min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-                        min_matched_ratio = min_matched_ratio,
-                        min_frag_count = min_frag_count #Remove precursors with fewer fragments 
-                        )
+                      unscored_PSMs,
+                      spectral_scores,
+                      _weights_,
+                      match_count/prec_count,
+                      Hs.n,
+                      Float64(sum(spectra[:intensities][i])), 
+                    scan_idx = i,
+                    min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
+                    min_matched_ratio = min_matched_ratio,
+                    min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
+                    min_weight = 1000f0,
+                    min_topn = 2,
+                    block_size = 500000,
+                    )
             end
         end
         #Add fragment matches to all_fmatches 
@@ -273,6 +258,9 @@ function SearchRAW(
         reset!(ionTemplates, ion_idx)
         reset!(ionMatches, nmatches), reset!(ionMisses, nmisses)
         fill!(prec_ids, zero(UInt32))
+        #### RESET IDtoCOL
+        reset!(IDtoCOL);
+        ##### RESET Hs
 
     end
 
@@ -302,6 +290,7 @@ function SearchRAW(
     end
 
 end
+
 function firstSearch(
     #Mandatory Args
     spectra::Arrow.Table, 
@@ -742,3 +731,309 @@ function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatc
     return n
 end
 
+#=
+function SearchRAW(
+                    #Mandatory Args
+                    spectra::Arrow.Table, 
+                    frag_index::Union{FragmentIndex{Float32}, Missing},
+                    ion_list::Union{Vector{Vector{LibraryFragment{Float32}}}, Missing},
+                    iRT_to_RT_spline::Any,
+                    ms_file_idx::UInt32,
+                    err_dist::Laplace{Float64},
+                    selectIons!::Function,
+                    searchScan!::Union{Function, Missing};
+                    #keyword args
+                    b_min_ind::Int64 = 3,
+                    y_min_ind::Int64 = 4,
+                    chromatograms::Union{Dict{Symbol, Vector}, Missing} = missing,
+                    collect_fmatches = false,
+                    expected_matches::Int64 = 100000,
+                    frag_ppm_err::Float64 = 0.0,
+                    fragment_tolerance::Float64 = 20.0,
+                    huber_δ::Float32 = 1000f0,
+                    IonMatchType::DataType = FragmentMatch{Float32},
+                    IonTemplateType::DataType = LibraryFragment{Float32},
+                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
+                    max_iter::Int = 1000,
+                    max_peak_width::Float64 = 2.0,
+                    max_peaks::Union{Int64,Bool} = false, 
+                    min_frag_count::Int64 = 4,
+                    min_frag_count_index_search::Int64 = 0,
+                    min_matched_ratio::Float32 = Float32(0.8),
+                    min_matched_ratio_index_search::Float32 = zero(Float32),
+                    min_spectral_contrast::Float32 = Float32(0.65),
+                    most_intense = false,
+                    nmf_tol::Float32 = Float32(100.0),
+                    precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
+                    precursor_tolerance::Float64 = 5.0,
+                    quadrupole_isolation_width::Float64 = 8.5,
+                    regularize::Bool = false,
+                    rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
+                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
+                    rt_tol::Float64 = 30.0,
+                    sample_rate::Float64 = 1.0,
+                    scan_range::Tuple{Int64, Int64} = (0, 0),
+                    scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
+                    spec_order::Set{Int64} = Set(2),
+                    topN::Int64 = 20,
+                    topN_index_search::Int64 = 1000,
+                    λ::Float32 = Float32(1e3),
+                    γ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
+    println("max_peak_width $max_peak_width")
+
+    ##########
+    #Initialize 
+    weights = Float32[]
+    msms_counts = Dict{Int64, Int64}()
+    frag_err_idx = 1
+    chrom_idx = 1
+    prec_idx = 0
+    ion_idx = 0
+    cycle_idx = 0
+    minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
+
+    fragment_tolerance = Float64(8.1)
+    ###########
+    #Pre-allocate Arrays to save (lots) of time in garbage collection. 
+    all_fmatches = Vector{IonMatchType}()
+    collect_fmatches ? all_fmatches = [IonMatchType() for x in range(1, expected_matches)] : nothing
+
+    #These are overwritten for every searched spectrum. "expected_matches"
+    #is a guess for the largest array size that would be needed for any spectrum. 
+    #If the guess is too small, the arrays will simply be increased in size as needed
+    #by a pre-determined block-size. 
+    ionMatches = [IonMatchType() for _ in range(1, expected_matches)] #IonMatchType is something that inherits from the "Match" class. 
+    ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
+    ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
+    prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
+    H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
+    
+
+    #weights
+    precursor_weights = ""
+    if ismissing(ion_list)
+        precursor_weights = zeros(Float32, maximum(keys(isotope_dict)))
+    else
+        precursor_weights = zeros(Float32, length(ion_list))
+    end
+
+    #fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
+    solve_time = 0.0
+    index_search_time = 0.0
+    prep_time = 0.0
+    index_ions_time = 0.0
+    ##########
+    #Iterate through spectra
+    #for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    for i in range(first(scan_range), last(scan_range))
+    #for i in range(1, size(spectra[:masses])[1])
+
+        ###########
+        #Scan Filtering
+        #(i%10000) == 0 ? println(i) : nothing
+        msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
+        if msn == 1
+            cycle_idx += 1
+        end
+        msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
+        msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
+
+        (i >= first(scan_range)) & (i <= last(scan_range)) ? nothing : continue #Skip if outside the scan range
+        first(rand(1)) <= sample_rate ? nothing : continue #dice-roll. Usefull for random sampling of scans. 
+
+        min_intensity = getMinIntensity(spectra[:intensities][i], max_peaks) #Ignore peaks in the spectrum below this minimum intensity
+
+        iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
+
+        ##########
+        #Ion Template Selection
+        #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
+        if !ismissing(searchScan!) | !ismissing(frag_index)
+            index_search_time += @elapsed prec_count, match_count = searchScan!(
+                        precs, #counter which keeps track of plausible matches 
+                        frag_index, 
+                        min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
+                        iRT_low, iRT_high,
+                        Float32(fragment_tolerance), 
+                        Float32(precursor_tolerance),
+                        Float32(quadrupole_isolation_width/2.0),
+                        min_frag_count = min_frag_count_index_search, 
+                        min_ratio = Float32(min_matched_ratio_index_search),
+                        topN = topN_index_search,#topN
+                        )
+            
+        end
+        #selectIons! 
+        #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
+        if ismissing(isotope_dict) 
+            
+            index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
+                                               ion_list,
+                                               precs,
+                                               topN,
+                                               prec_ids,
+                                               rt_index,
+                                               spectra[:retentionTime][i],
+                                               Float32(max_peak_width/2.0), #rt_tol
+                                               spectra[:precursorMZ][i], #prec_mz
+                                               Float32(quadrupole_isolation_width/2.0) #prec_tol
+                                               )::Tuple{Int64, Bool}
+        else
+            ion_idx, prec_idx = selectIons!(
+                                            ionTemplates,
+                                            rt_index,
+                                            isotope_dict,
+                                            prec_ids,
+                                            spectra[:retentionTime][i],
+                                            Float32(max_peak_width/2.0)
+                                            )
+        end
+        ion_idx < 2 ? continue : nothing 
+
+        ##########
+        #Match sorted list of plausible ions to the observed spectra
+        prep_time += @elapsed nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
+                                    ion_idx, #search ionTemplates[1:ion_idx]
+                                    ionMatches, #Fill with matched ions 
+                                    ionMisses, #Fill with unmatched ions 
+                                    spectra[:masses][i], 
+                                    spectra[:intensities][i], 
+                                    count_unmatched=true, #Should we fill "ionMisses"?
+                                    δs = [frag_ppm_err], #Mass offsets 
+                                    scan_idx = UInt32(i),
+                                    ms_file_idx = ms_file_idx,
+                                    min_intensity = min_intensity, #Ignore peaks below this intensity
+                                    ppm = fragment_tolerance, #Fragment match tolerance in ppm
+                                    most_intense = most_intense
+                                    )
+        #if prec_idx
+        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
+        #    println("nmatches $nmatches, nmisses $nmisses, scan_idx $i")
+        #end
+
+        ##########
+        #Spectral Deconvolution and Distance Metrics 
+        if nmatches < 2 #Few matches to do not perform de-convolution 
+            IDtoCOL = UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}()
+        else #Spectral deconvolution. Build sparse design/template matrix for nnls regression 
+            #if prec_idx
+            #    println("PASSED scan_idx $i")
+            #    println("PASSED scan_idx $i")
+            #end
+            #IDtoCOL_weights = UnorderedDictionary{UInt32, UInt32}()
+            #prep_time += @elapsed begin
+
+                #Sparse matrix representation of templates written to Hs. 
+                #Hs mask is true for ions that will be used to score and false otherwise (may exclude y1 ions for example)
+                #IDtoCOL maps precursor ids to their corresponding columns. 
+                #X, Hs, Hs_mask, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS, H_MASK, y_min_ind = y_min_ind, b_min_ind = b_min_ind)
+            X, Hs, IDtoCOL, last_matched_col = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, H_COLS, H_ROWS, H_VALS)
+            return X, Hs, IDtoCOL, last_matched_col, ionMatches, ionMisses, nmatches, nmisses
+            #if (Hs.n > 5000)
+            #    println("Hs.n ", Hs.n)
+            #    println("Hs.n ", Hs.n)
+            #    println("scan_id $i")
+            #    println("scan_id $i")
+            #end
+            #println("Hs.n ", Hs.n)
+            #println("Hs.m ", Hs.m)
+            
+            weights = Vector{Float32}(undef, Hs.n)
+            #end
+
+            for (id, row) in pairs(IDtoCOL)
+                weights[first(row)] = precursor_weights[id]
+            end
+
+            solve_time += @elapsed solveHuber!(Hs, Hs*weights .- X, weights, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+
+            for (id, row) in pairs(IDtoCOL)
+                precursor_weights[id] = weights[first(row)]# = precursor_weights[id]
+            end
+
+            #return IDtoCOL, weights, Hs, X, r, last_matched_col
+            #return Hs
+            if ismissing(isotope_dict) 
+                scores = getDistanceMetrics(X, weights, Hs, last_matched_col)
+            end
+            #for (id, row) in pairs(IDtoCOL_weights)
+            #    precursor_weights[id] = weights[row]# = precursor_weights[id]
+            #end
+            #weights = sparseNMF(Hs, X, λ, γ, regularize, max_iter=max_iter, tol=nmf_tol)[:]
+            ##########
+            #Scoring and recording data
+            if !ismissing(scored_PSMs)
+                unscored_PSMs = UnorderedDictionary{UInt32, XTandem{Float32}}()
+
+                ScoreFragmentMatches!(unscored_PSMs, ionMatches, nmatches, err_dist)
+                #Score unscored_PSMs and write them to scored_PSMs
+                #return scores
+                #if prec_idx
+                #    println("SCORED scan_idx $i")
+                #    println("SCORED scan_idx $i")
+                #    println("unscored_PSMs ", unscored_PSMs)
+                #end
+                Score!(scored_PSMs, 
+                        unscored_PSMs, 
+                        length(spectra[:intensities][i]), 
+                        Float64(sum(spectra[:intensities][i])), 
+                        match_count/prec_count, 
+                        scores, #Named Tuple of spectrum simmilarity/distance measures 
+                        weights, #Coefficients for each precursor in the spectral deconvolution
+                        IDtoCOL,
+                        scan_idx = i,
+                        min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
+                        min_matched_ratio = min_matched_ratio,
+                        min_frag_count = min_frag_count #Remove precursors with fewer fragments 
+                        )
+            end
+        end
+        #Add fragment matches to all_fmatches 
+        frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx, collect_fmatches)
+        
+        ##########
+        #Update Chromatograms 
+        if !ismissing(chromatograms)
+            frag_counts = counter(UInt32) #Basically a Dictionary that counts the number of matched ions (values) for each precursor (keys)
+            for match_idx in range(1, nmatches) #fragmentMatches
+                DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
+            end
+            #Add precursor templates with their weights and retention times to the chromatogram table 
+            chrom_idx = fillChroms!(chromatograms, IDtoCOL, chrom_idx, i, cycle_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
+        end
+
+        ##########
+        #Reset pre-allocated arrays 
+        reset!(ionTemplates, ion_idx)
+        reset!(ionMatches, nmatches), reset!(ionMisses, nmisses)
+        fill!(prec_ids, zero(UInt32))
+
+    end
+
+    println("solve_time $solve_time")
+    println("prep_time $prep_time")
+    println("index_search_time $index_search_time")
+    println("index_ions_time $index_ions_time")
+    #return fragment_intensities
+    ############
+    #Return Chromatograms and Score/Feature Table
+    #return all_fmatches
+    if collect_fmatches
+        return DataFrame(scored_PSMs), all_fmatches
+    else
+        if ismissing(chromatograms)
+            #return all_fmatches
+            return DataFrame(scored_PSMs)
+        elseif ismissing(scored_PSMs)
+            chromatograms = DataFrame(chromatograms)
+            sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
+            return groupby(DataFrame(chromatograms), :precursor_idx)
+        else
+            chromatograms = DataFrame(chromatograms)
+            sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
+            return DataFrame(scored_PSMs), groupby(DataFrame(chromatograms), :precursor_idx)
+        end
+    end
+
+end
+=#
