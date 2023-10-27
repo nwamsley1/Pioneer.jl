@@ -1,4 +1,4 @@
-function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
+function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 1000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.

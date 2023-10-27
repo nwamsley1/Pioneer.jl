@@ -68,6 +68,7 @@ function SearchRAW(
     #is a guess for the largest array size that would be needed for any spectrum. 
     #If the guess is too small, the arrays will simply be increased in size as needed
     #by a pre-determined block-size. 
+    println("START")
     ionMatches = [IonMatchType() for _ in range(1, expected_matches)] #IonMatchType is something that inherits from the "Match" class. 
     ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
@@ -75,7 +76,11 @@ function SearchRAW(
 
     IDtoCOL = ArrayDict(UInt32, UInt16, length(precs.ids))
     #H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
-    
+    scored_PSMs = Vector{LibPSM{Float32, Float16}}(undef, 5000);
+    unscored_PSMs = [LXTandem(Float32) for _ in 1:5000];
+    spectral_scores = Vector{SpectralScores{Float16}}(undef, 5000);
+    Hs = SparseArray(50000);
+    println("STOP")
 
     #weights
     precursor_weights = ""
@@ -100,6 +105,9 @@ function SearchRAW(
         ###########
         #Scan Filtering
         #(i%10000) == 0 ? println(i) : nothing
+        #println("i $i")
+        #println(" length(scored_PSMs) ", length(scored_PSMs))
+        #println("length(Hs.x) ", length(Hs.x))
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
         if msn == 1
             cycle_idx += 1
@@ -184,7 +192,8 @@ function SearchRAW(
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-        
+            
+            #println("IDtoCOL.size ", IDtoCOL.size)
             #weights = Vector{Float32}(undef, Hs.n)
             #end
             if IDtoCOL.size > length(_weights_)
@@ -193,31 +202,30 @@ function SearchRAW(
             #Get most recently determined weights for eahc precursors
             #"Hot" start
             for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
-                _weights_[IDtoCOL[i]] = precursor_weights[IDtoCOL.keys[i]]
+                _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
 
             #Get initial residuals
-            initResiduals!(_residuals_, sa_test, _weights_);
+            initResiduals!(_residuals_, Hs, _weights_);
 
             #Spectral deconvolution.
             solve_time += @elapsed solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
 
             #Remember determined weights for eahc precursors
-            for (i, col) in pairs(IDtoCOL)
-                precursor_weights[i] = _weights_[col]# = precursor_weights[id]
+            for i in range(1, IDtoCOL.size)
+                precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
 
-            #return IDtoCOL, weights, Hs, X, r, last_matched_col
-            #return Hs
             if ismissing(isotope_dict) 
-                spectral_scores = getDistanceMetrics(weights, Hs, spectral_scores)
+                getDistanceMetrics(_weights_, Hs, spectral_scores)
             end
 
             ##########
             #Scoring and recording data
             if !ismissing(scored_PSMs)
 
-                ScoreFragmentMatches!(unscored_PSMs, 
+                ScoreFragmentMatches!(unscored_PSMs,
+                                      IDtoCOL,
                                       ionMatches, 
                                       nmatches, 
                                       err_dist)
@@ -228,7 +236,7 @@ function SearchRAW(
                       _weights_,
                       match_count/prec_count,
                       Hs.n,
-                      Float64(sum(spectra[:intensities][i])), 
+                      Float32(sum(spectra[:intensities][i])), 
                     scan_idx = i,
                     min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
                     min_matched_ratio = min_matched_ratio,
@@ -256,12 +264,14 @@ function SearchRAW(
         ##########
         #Reset pre-allocated arrays 
         reset!(ionTemplates, ion_idx)
-        reset!(ionMatches, nmatches), reset!(ionMisses, nmisses)
+        reset!(ionMatches, nmatches)
+        reset!(ionMisses, nmisses)
         fill!(prec_ids, zero(UInt32))
-        #### RESET IDtoCOL
+        for i in range(1, Hs.n)
+            unscored_PSMs[i] = LXTandem(Float32)
+        end
         reset!(IDtoCOL);
-        ##### RESET Hs
-
+        reset!(Hs);
     end
 
     println("solve_time $solve_time")
@@ -273,11 +283,14 @@ function SearchRAW(
     #Return Chromatograms and Score/Feature Table
     #return all_fmatches
     if collect_fmatches
-        return DataFrame(scored_PSMs), all_fmatches
+        println("entered")
+        #return DataFrame(scored_PSMs), all_fmatches
+        return scored_PSMs, all_fmatches
     else
         if ismissing(chromatograms)
             #return all_fmatches
-            return DataFrame(scored_PSMs)
+            #return DataFrame(scored_PSMs)
+            scored_PSMs
         elseif ismissing(scored_PSMs)
             chromatograms = DataFrame(chromatograms)
             sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);

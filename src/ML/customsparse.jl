@@ -212,7 +212,6 @@ function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     sa.m = max_row
 end
 
-
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}
     #resize if necessary
     if length(r) < length(sa.n_vals)
@@ -262,6 +261,7 @@ struct SpectralScores{T<:AbstractFloat}
     entropy_score::T
 end
 
+#=
 Vector{SpectralScores{Float16}}(undef, 10)
 sa_test = SparseArray(1000)
 X_test, precID_to_col, H_ncol = buildDesignMatrix(ionMatches, ionMisses, nmatches, nmisses, sa_test)
@@ -480,3 +480,4 @@ struct LibPSM{H,L<:Real} <: PSM
     scan_idx::UInt32
 end
 
+=#

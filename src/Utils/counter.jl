@@ -3,7 +3,7 @@ mutable struct ArrayDict{I<:Unsigned,C<:Real}
     vals::Vector{C}
     size::Int64
     function ArrayDict(I::DataType, C::DataType, size::Int) #where {I,C<:Unsigned}
-        new{I, C}(zeros(I, size), zeros(C, size), 1)
+        new{I, C}(zeros(I, size), zeros(C, size), 0)
     end
 end
 
@@ -24,6 +24,7 @@ end
 function Base.getindex(c::ArrayDict{I,C}, i::Ti) where {I,C<:Unsigned, Ti<:Integer}
     c.vals[i]
 end
+
 mutable struct Counter{I,C<:Unsigned,T<:AbstractFloat}
     ids::Vector{I}
     counts::Vector{Tuple{C, T}}

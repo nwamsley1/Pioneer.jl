@@ -18,10 +18,10 @@ LXTandem(::Type{Float32}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(
 LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 LXTandem() = LXTandem(Float64)
 
-function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::Vector{UInt16}, matches::Vector{FragmentMatch{U}}, nmatches::Int64, errdist::Laplace{Float64}) where {T,U<:AbstractFloat}
+function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{UInt32, UInt16}, matches::Vector{FragmentMatch{U}}, nmatches::Int64, errdist::Laplace{Float64}) where {T,U<:AbstractFloat}
     for i in range(1, nmatches)
         match = matches[i]
-        col = IDtoCOL[getPrecID(match)]
+        col = IDtoCOL.vals[getPrecID(match)]
         ModifyFeatures!(results[col], match, errdist)
     end
 end
@@ -93,7 +93,7 @@ struct LibPSM{H,L<:Real} <: PSM
 end
 
 function growScoredPSMs!(scored_psms::Vector{LibPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
-    append!(scored_psms, Vector{LibPSM{H,L}}(undef, block_size))
+    scored_psms = append!(scored_psms, Vector{LibPSM{H,L}}(undef, block_size))
 end
 
 function Score!(scored_psms::Vector{LibPSM{H, L}}, 
@@ -109,7 +109,7 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
                 min_frag_count::Int64 = 4,
                 min_weight::H = 100f0,
                 min_topn::Int64 = 2,
-                block_size::Int64 = 500000
+                block_size::Int64 = 10000
                 ) where {L,H<:AbstractFloat}
 
     #Get Hyperscore. Kong, Leprevost, and Avtonomov https://doi.org/10.1038/nmeth.4256

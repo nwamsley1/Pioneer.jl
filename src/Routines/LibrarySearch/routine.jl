@@ -11,6 +11,7 @@ using Plots, PrettyPrinting
 using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
 #Algorithms 
 using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
+using Base.Order
 ##########
 #Parse Arguments 
 ##########
@@ -217,7 +218,7 @@ end
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","isotopes.jl"]];
 
 #ML/Math Routines                                                                                    
-[include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in ["sparseNNLS.jl",
+[include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in ["customsparse.jl","sparseNNLS.jl",
                                                                                             "percolatorSortOf.jl",
                                                                                             "kdeRTAlignment.jl",
                                                                                             "entropySimilarity.jl",
@@ -228,7 +229,8 @@ end
                                                                     "massErrorEstimation.jl"]];
 
 #Files needed for PRM routines
-[include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in ["buildFragmentIndex.jl",
+[include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
+                                                                                        "buildFragmentIndex.jl",
                                                                                     "matchpeaksLib.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "spectralDistanceMetrics.jl",
@@ -244,7 +246,7 @@ end
 
                                                                                                                                  
 #Files needed for PSM scoring
-[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl"]]
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]]
 
 [include(joinpath(pwd(), "src", "Routines", "PRM","IS-PRM",jl_file)) for jl_file in ["getScanPairs.jl"]]
 
@@ -287,6 +289,10 @@ presearch_time = @timed begin
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,Laplace{Float64}}()
 lk = ReentrantLock()
+#=
+ms_file_idx = 1
+MS_TABLE_PATH = MS_TABLE_PATHS[1]
+=#
 Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
@@ -299,7 +305,8 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                         UInt32(ms_file_idx), #MS_FILE_IDX
                                         Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
                                         first_search_params,
-                                        scan_range = (1, length(MS_TABLE[:masses]))
+                                        scan_range = (100000, 110000)
+                                        #scan_range = (1, length(MS_TABLE[:masses]))
                                         );
 
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
