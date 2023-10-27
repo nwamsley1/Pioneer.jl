@@ -13,13 +13,13 @@ getSize(c::Counter{I,T}) where {I<:Unsigned,T<:AbstractFloat} = c.size
 incSize!(c::Counter{I,T}) where {I<:Unsigned,T<:AbstractFloat} = c.size += 1
 getID(c::Counter{I,T}, idx::Int) where {I<:Unsigned,T<:AbstractFloat} = c.ids[idx]
 
-function update!(c::Counter{I,C,T}, id::I, pred_intensity::T) where {C,I<:Unsigned,T<:AbstractFloat}
+function update!(c::Counter{I,T}, id::I, pred_intensity::T) where {I<:Unsigned,T<:AbstractFloat}
     @inbounds @fastmath c.counts[id] += pred_intensity;
     return nothing
 end
 
-function reset!(c::Counter{I,C,T}, id::I) where {C,I<:Unsigned,T<:AbstractFloat}
-    c.counts[id] = (zero(C), zero(T));
+function reset!(c::Counter{I,T}, id::I) where {I<:Unsigned,T<:AbstractFloat}
+    c.counts[id] = zero(T);
     return nothing
 end
 
@@ -54,4 +54,17 @@ function reset!(c::Counter{I,T}) where {I<:Unsigned,T<:AbstractFloat}
     end
     c.size, c.matches = 1, 0
     return nothing
+end
+
+function countFragMatches(c::Counter{I,T}, min_count::T) where {I<:Unsigned,T<:AbstractFloat} 
+    matched_frags = 0
+    @inbounds for i in 1:(getSize(c) - 1)
+        id = c.ids[i]
+        if getCount(c, id)>=min_count
+                c.ids[c.matches + 1] = c.ids[i]
+                c.matches += 1
+        end
+        c.counts[id] = zero(Float32);
+    end
+    return matched_frags
 end

@@ -5,7 +5,8 @@
 
 function selectTransitions!(transitions::Vector{LibraryFragment{V}},
                             fragment_list::Vector{Vector{LibraryFragment{V}}}, 
-                            counter::Counter{I,C}, 
+                            #precursors::Vector{LibraryPrecursor{Float32}}
+                            counter::Counter{I,Float32}, 
                             topN::Int, 
                             prec_ids::Vector{UInt32}, 
                             rt_index::Union{retentionTimeIndex{T, U}, Missing}, 
@@ -13,13 +14,16 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
                             rt_tol::U, 
                             prec_mz::U, 
                             prec_tol::U;
-                            block_size = 10000) where {T,V,U<:AbstractFloat, I,C<:Unsigned}
+                            block_size = 10000) where {T,V,U<:AbstractFloat, I<:Unsigned}
     #transitions = Vector{LibraryFragment{T}}()
     i = 1
     transition_idx = 0
     prec_idx = false
     while i <= min(topN, counter.matches)
         for frag in fragment_list[getID(counter, i)]
+            #if abs((getiRT(precursors[getPrecID(frag)]) - rt)) > 5.0
+            #    continue
+            #end
             transition_idx += 1
             transitions[transition_idx] = frag
             #Grow array if exceeds length
@@ -33,7 +37,9 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
 
     sort!(@view(transitions[1:transition_idx]), 
             by = x->getFragMZ(x),
-            alg=PartialQuickSort(1:transition_idx))
+            alg=PartialQuickSort(1:transition_idx)
+            #alg = TimSort)
+    )
 
     reset!(counter)
 

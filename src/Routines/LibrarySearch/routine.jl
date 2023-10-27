@@ -381,20 +381,6 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 #scan_range = (50426, 51000),
                                                 scan_range = (1, length(MS_TABLE[:masses]))
                                             );
-                                            @profview PSMs = mainLibrarySearch(
-                                                MS_TABLE,
-                                                prosit_lib["f_index"],
-                                                prosit_lib["f_det"],
-                                                RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-                                                UInt32(ms_file_idx), #MS_FILE_IDX
-                                                frag_err_dist_dict[ms_file_idx],
-                                                main_search_params,
-                                                scan_range = (201389, 211389),
-                                                #scan_range = (55710, 55710),
-                                                #scan_range = (50426, 51000),
-                                                #scan_range = (1, length(MS_TABLE[:masses]))
-                                            );
-
         #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
         #@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" PSMs
         #filter!(x -> x.weight>10.0, PSMs);
