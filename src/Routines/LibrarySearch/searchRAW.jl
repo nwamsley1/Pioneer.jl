@@ -55,10 +55,10 @@ function SearchRAW(
     chrom_idx = 1
     prec_idx = 0
     ion_idx = 0
-    cycle_idx = 0
+    cycle_idx = 0 
+    last_val = 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
 
-    fragment_tolerance = Float64(8.1)
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
     all_fmatches = Vector{IonMatchType}()
@@ -98,8 +98,8 @@ function SearchRAW(
     index_ions_time = 0.0
     ##########
     #Iterate through spectra
-    #for i in ProgressBar(range(first(scan_range), last(scan_range)))
-    for i in range(first(scan_range), last(scan_range))
+    for i in ProgressBar(range(first(scan_range), last(scan_range)))
+    #for i in range(first(scan_range), last(scan_range))
     #for i in range(1, size(spectra[:masses])[1])
 
         ###########
@@ -230,14 +230,15 @@ function SearchRAW(
                                       nmatches, 
                                       err_dist)
 
-                Score!(scored_PSMs, 
+                last_val = Score!(scored_PSMs, 
                       unscored_PSMs,
                       spectral_scores,
                       _weights_,
                       match_count/prec_count,
+                      last_val,
                       Hs.n,
                       Float32(sum(spectra[:intensities][i])), 
-                    scan_idx = i,
+                      i,
                     min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
                     min_matched_ratio = min_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
@@ -285,12 +286,12 @@ function SearchRAW(
     if collect_fmatches
         println("entered")
         #return DataFrame(scored_PSMs), all_fmatches
-        return scored_PSMs, all_fmatches
+        return  DataFrame(@view(scored_PSMs[1:last_val])), all_fmatches
     else
         if ismissing(chromatograms)
             #return all_fmatches
             #return DataFrame(scored_PSMs)
-            scored_PSMs
+            DataFrame(@view(scored_PSMs[1:last_val]))
         elseif ismissing(scored_PSMs)
             chromatograms = DataFrame(chromatograms)
             sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);

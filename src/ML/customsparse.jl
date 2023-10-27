@@ -214,8 +214,8 @@ end
 
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}
     #resize if necessary
-    if length(r) < length(sa.n_vals)
-        append!(r, zeros(T, length(sa.n_vals) - length(r)))
+    if length(r) < sa.n_vals
+        append!(r, zeros(T, sa.n_vals - length(r)))
     end
 
 

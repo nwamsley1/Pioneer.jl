@@ -297,7 +297,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    rtPSMs, all_matches =  firstSearch(
+    sub_search_time = @timed rtPSMs, all_matches =  firstSearch(
                                         MS_TABLE,
                                         prosit_lib["f_index"],
                                         prosit_lib["f_det"],
@@ -305,8 +305,8 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
                                         UInt32(ms_file_idx), #MS_FILE_IDX
                                         Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
                                         first_search_params,
-                                        scan_range = (100000, 110000)
-                                        #scan_range = (1, length(MS_TABLE[:masses]))
+                                        #scan_range = (100000, 110000)
+                                        scan_range = (1, length(MS_TABLE[:masses]))
                                         );
 
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
@@ -317,12 +317,13 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_lib["precursors"][psm[:precursor_idx]]))) => :iRT);
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
     transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_lib["precursors"][psm[:precursor_idx]])) => :decoy);
-    filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
+    filter!(:entropy_score => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
+    rtPSMs[!,:total_ions] = rtPSMs[!,:y_count] .+ rtPSMs[!,:b_count]
     #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
     rtPSMs[:,:target] =  rtPSMs[:,:decoy].==false
 
     model_fit = glm(@formula(target ~ poisson + hyperscore + topn +
-    scribe_score + topn + spectral_contrast + intensity_explained + total_ions), rtPSMs, 
+    scribe + topn + spectral_contrast + log2_intensity_explained + total_ions), rtPSMs, 
     Binomial(), 
     ProbitLink())
     Y′ = GLM.predict(model_fit, rtPSMs);
@@ -376,7 +377,20 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 frag_err_dist_dict[ms_file_idx],
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
-                                                scan_range = (55710, 55710),
+                                                #scan_range = (55710, 55710),
+                                                #scan_range = (50426, 51000),
+                                                scan_range = (1, length(MS_TABLE[:masses]))
+                                            );
+                                            @profview PSMs = mainLibrarySearch(
+                                                MS_TABLE,
+                                                prosit_lib["f_index"],
+                                                prosit_lib["f_det"],
+                                                RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+                                                UInt32(ms_file_idx), #MS_FILE_IDX
+                                                frag_err_dist_dict[ms_file_idx],
+                                                main_search_params,
+                                                scan_range = (201389, 211389),
+                                                #scan_range = (55710, 55710),
                                                 #scan_range = (50426, 51000),
                                                 #scan_range = (1, length(MS_TABLE[:masses]))
                                             );

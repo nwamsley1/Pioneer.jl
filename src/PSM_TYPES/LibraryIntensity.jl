@@ -101,9 +101,10 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
                 spectral_scores::Vector{SpectralScores{L}},
                 weight::Vector{H}, 
                 expected_matches::Float64,
+                last_val::Int64,
                 n_vals::Int64,
-                spectrum_intensity::H; 
-                scan_idx::Int64 = 0, 
+                spectrum_intensity::H,
+                scan_idx::Int64;
                 min_spectral_contrast::H = 0.6f0, 
                 min_matched_ratio::H = -1f0,
                 min_frag_count::Int64 = 4,
@@ -132,6 +133,8 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
         log((lam^observed)*exp(-lam)) - logfac(observed)
     end
 
+    start_idx = last_val
+    skipped = 0
     for i in range(1, n_vals)
 
         passing_filter = ( #Filter Bad PSMs and don't add them to the DataFrame
@@ -147,17 +150,19 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )
-        passing_filter = true
+
         if !passing_filter #Skip this scan
+            skipped += 1
             continue
         end
-        if i > length(scored_psms)
+
+        if start_idx + i - skipped > length(scored_psms)
             growScoredPSMs!(scored_psms, block_size);
         end
 
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
 
-        scored_psms[i] = LibPSM(
+        scored_psms[start_idx + i - skipped] = LibPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].topn,
             unscored_PSMs[i].longest_y,
@@ -179,9 +184,12 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
             spectral_scores[i].entropy_score,
             weight[i],
 
-            UInt32(scan_idx),
+            
             UInt32(unscored_PSMs[i].precursor_idx),
-            UInt32(unscored_PSMs[i].ms_file_idx)
+            UInt32(unscored_PSMs[i].ms_file_idx),
+            UInt32(scan_idx)
         )
+        last_val += 1
     end
+    return last_val
 end

@@ -1,4 +1,4 @@
-function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 1000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
+function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -12,6 +12,7 @@ function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::V
 
     #If M exceeds pre-allocated size
     if (nmatches + nmisses) >= length(H.colval) - 1
+        block_size = max(block_size,nmatches + nmisses - length(H.colval))
         append!(H.colval, zeros(eltype(H.colval), block_size))
         append!(H.rowval, zeros(eltype(H.rowval), block_size))
         append!(H.nzval, zeros(eltype(H.nzval), block_size))
@@ -19,7 +20,6 @@ function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::V
         append!(H.matched, zeros(eltype(H.matched), block_size))
         #MUST BE ONES!!!
         append!(H.mask, ones(eltype(H.mask), block_size))
-
         append!(H.colptr, Vector{Ti}(undef, block_size))
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
