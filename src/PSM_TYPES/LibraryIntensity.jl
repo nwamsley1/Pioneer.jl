@@ -140,13 +140,13 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
         passing_filter = ( #Filter Bad PSMs and don't add them to the DataFrame
           spectral_scores[i].spectral_contrast > min_spectral_contrast
         )&(
-            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) > min_frag_count
+            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
         )&(
             spectral_scores[i].matched_ratio > min_matched_ratio
         )&(
             weight[i] > min_weight
         )&(
-            UInt8(unscored_PSMs[i].topn) > min_topn
+            UInt8(unscored_PSMs[i].topn) >= min_topn
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )

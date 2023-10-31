@@ -322,8 +322,18 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
     rtPSMs[:,:target] =  rtPSMs[:,:decoy].==false
 
-    model_fit = glm(@formula(target ~ poisson + hyperscore + topn +
-    scribe + topn + spectral_contrast + log2_intensity_explained + total_ions), rtPSMs, 
+
+    FORM = FormulaTerm(
+        (Term(:target),),
+        (Term(:poisson),
+         Term(:hyperscore),
+         Term(:topn),
+         Term(:scribe),
+         Term(:spectral_contrast),
+         Term(:total_ions))
+    )
+
+    model_fit = glm(FORM, rtPSMs, 
     Binomial(), 
     ProbitLink())
     Y′ = GLM.predict(model_fit, rtPSMs);
@@ -375,6 +385,7 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
                                                 RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
                                                 UInt32(ms_file_idx), #MS_FILE_IDX
                                                 frag_err_dist_dict[ms_file_idx],
+                                                16.1,
                                                 main_search_params,
                                                 #scan_range = (201389, 204389),
                                                 #scan_range = (55710, 55710),
@@ -388,6 +399,16 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
         #filter!(x -> x.best_rank == 1, PSMs);
         #filter!(x -> x.weight>1000.0, PSMs);
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+
+        FormulaTerm(
+            (Term(:target),),
+            (Term(:poisson),
+             Term(:hyperscore),
+             Term(:topn),
+             Term(:scribe),
+             Term(:spectral_contrast),
+             Term(:total_ions))
+        )
         #@save "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_refined_102323.jld2" PSMs
         psms_file_name = "PSMS_"*string(ms_file_idx)*".jld2";
         lock(lk) do 

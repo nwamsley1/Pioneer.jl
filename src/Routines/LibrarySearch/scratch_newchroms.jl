@@ -306,14 +306,14 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     ions_sum = 0
     for i in range(1, length(filter))
         if !filter[i]
-            if chrom.scribe_score[i]>mean_scribe_score
-                mean_scribe_score = chrom.scribe_score[i]
+            if chrom.scribe[i]>mean_scribe_score
+                mean_scribe_score = chrom.scribe[i]
             end
-            if log2(max(chrom.entropy_sim[i], 0.001))>mean_log_entropy
-                mean_log_entropy=log2(max(chrom.entropy_sim[i], 0.001))
+            if log2(max(chrom.entropy_score[i], 0.001))>mean_log_entropy
+                mean_log_entropy=log2(max(chrom.entropy_score[i], 0.001))
             end
-            if chrom.scribe_score[i]>mean_scribe_score
-                mean_scribe_score = chrom.scribe_score[i]
+            if chrom.scribe[i]>mean_scribe_score
+                mean_scribe_score = chrom.scribe[i]
             end
             if log2(chrom.spectral_contrast[i])>mean_log_spectral_contrast
                 mean_log_spectral_contrast= log2(chrom.spectral_contrast[i])
