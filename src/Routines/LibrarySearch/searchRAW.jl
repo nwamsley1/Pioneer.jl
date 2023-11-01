@@ -10,8 +10,6 @@ function SearchRAW(
                     selectIons!::Function,
                     searchScan!::Union{Function, Missing};
                     #keyword args
-                    b_min_ind::Int64 = 3,
-                    y_min_ind::Int64 = 4,
                     chromatograms::Union{Dict{Symbol, Vector}, Missing} = missing,
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
@@ -32,7 +30,7 @@ function SearchRAW(
                     most_intense = false,
                     nmf_tol::Float32 = Float32(100.0),
                     #precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
-                    precs::Counter{UInt32, Float32} = Counter(UInt32, Float32, 0),
+                    precs::Union{Counter{UInt32, Float32}, Missing} = missing,
                     precursor_tolerance::Float64 = 5.0,
                     quadrupole_isolation_width::Float64 = 8.5,
                     regularize::Bool = false,
@@ -76,7 +74,12 @@ function SearchRAW(
     ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
 
-    IDtoCOL = ArrayDict(UInt32, UInt16, max(length(precs.ids), length(precursors)))
+    IDtoCOL = nothing
+    if ismissing(precs)
+        IDtoCOL = ArrayDict(UInt32, UInt16, length(precursors))
+    else
+        IDtoCOL = ArrayDict(UInt32, UInt16, length(precs.ids))
+    end
     #H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
     scored_PSMs = Vector{LibPSM{Float32, Float16}}(undef, 5000);
     unscored_PSMs = [LXTandem(Float32) for _ in 1:5000];
@@ -106,10 +109,6 @@ function SearchRAW(
 
         ###########
         #Scan Filtering
-        #(i%10000) == 0 ? println(i) : nothing
-        #println("i $i")
-        #println(" length(scored_PSMs) ", length(scored_PSMs))
-        #println("length(Hs.x) ", length(Hs.x))
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
         if msn == 1
             cycle_idx += 1
@@ -144,19 +143,14 @@ function SearchRAW(
         end
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
-        if false#ismissing(isotope_dict) 
-            
+        if !ismissing(precs) 
             index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,
                                                ion_list,
                                                precs,
                                                topN,
-                                               #prec_ids,
-                                               #rt_index,
                                                iRT_to_RT_spline(spectra[:retentionTime][i]),
                                                rt_tol, #rt_tol
-                                               #spectra[:precursorMZ][i], #prec_mz
-                                               #Float32(quadrupole_isolation_width/2.0), #prec_tol
                                                (
                                                spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
@@ -205,15 +199,8 @@ function SearchRAW(
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
-            #println(ionMatches[1:nmatches])
-            #return Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-            #println("Hs.n ", Hs.n)
-            #println("Hs.m ", Hs.m)
-            #println("Hs.n_vals ", Hs.n_vals)
-            #println("IDtoCOL.size ", IDtoCOL.size)
-            #weights = Vector{Float32}(undef, Hs.n)
-            #end
+
             if IDtoCOL.size > length(_weights_)
                 append!(_weights_, zeros(eltype(_weights_), IDtoCOL.size - length(_weights_) + 1000 ))
                 append!(spectral_scores, Vector{SpectralScores{Float16}}(undef, IDtoCOL.size - length(spectral_scores) + 1000 ))
@@ -310,6 +297,9 @@ function SearchRAW(
         #return DataFrame(scored_PSMs), all_fmatches
         return  DataFrame(@view(scored_PSMs[1:last_val])), all_fmatches
     else
+        return DataFrame(@view(scored_PSMs[1:last_val]))
+    end
+    #=
         if ismissing(chromatograms)
             #return all_fmatches
             #return DataFrame(scored_PSMs)
@@ -323,8 +313,7 @@ function SearchRAW(
             sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
             return DataFrame(scored_PSMs), groupby(DataFrame(chromatograms), :precursor_idx)
         end
-    end
-
+    =#
 end
 
 function firstSearch(
@@ -338,48 +327,17 @@ function firstSearch(
     params::Dict;
     scan_range = (0, 0))
 
-    #=
-    main_search_params = (
-    expected_matches = 1000000,
-    frag_err_dist = frag_err_dist_dict[1],
-    frag_tol_quantile = 0.975,
-    max_iter = 1000,
-    max_peaks = false,
-    min_frag_count = 4,
-    min_matched_ratio = Float32(0.45),
-    min_spectral_contrast = Float32(0.5),
-    nmf_tol = Float32(100),
-    precursor_tolerance = 5.0,
-    quadrupole_isolation_width = 4.25,
-    regularize = false,
-    rt_tol = 20.0,
-    sample_rate = 1.0,
-    scan_range = (0, 3000000),
-    topN = 100,
-    λ = zero(Float32),
-    γ = zero(Float32)
-    )
-    mainLibrarySearch(
-           Arrow.Table(MS_TABLE_PATHS[1]),
-           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-           frags_mouse_detailed_33NCEcorrected_start1, 
-           RT_to_iRT_map_dict[1], #RT to iRT map'
-           UInt32(1), #MS_FILE_IDX
-           frag_err_dist_dict[1],
-           main_search_params
-       );
-    =#
     return SearchRAW(
         spectra, 
-        frag_index, ion_list,
+        frag_index,
+        missing, 
+        ion_list,
         iRT_to_RT_spline,
         ms_file_idx,
         err_dist,
         selectTransitions!,
         searchScan!,
         
-        b_min_ind = params[:b_min_ind],
-        y_min_ind = params[:y_min_ind],
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         frag_ppm_err = params[:frag_ppm_err],
@@ -424,39 +382,7 @@ function mainLibrarySearch(
     scan_range::Tuple{Int64, Int64} = (0, 0))
 
     frag_ppm_err = err_dist.μ
-    #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
 
-    #=
-    main_search_params = (
-    expected_matches = 1000000,
-    frag_err_dist = frag_err_dist_dict[1],
-    frag_tol_quantile = 0.975,
-    max_iter = 1000,
-    max_peaks = false,
-    min_frag_count = 4,
-    min_matched_ratio = Float32(0.45),
-    min_spectral_contrast = Float32(0.5),
-    nmf_tol = Float32(100),
-    precursor_tolerance = 5.0,
-    quadrupole_isolation_width = 4.25,
-    regularize = false,
-    rt_tol = 20.0,
-    sample_rate = 1.0,
-    scan_range = (0, 3000000),
-    topN = 100,
-    λ = zero(Float32),
-    γ = zero(Float32)
-    )
-    mainLibrarySearch(
-           Arrow.Table(MS_TABLE_PATHS[1]),
-           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-           frags_mouse_detailed_33NCEcorrected_start1, 
-           RT_to_iRT_map_dict[1], #RT to iRT map'
-           UInt32(1), #MS_FILE_IDX
-           frag_err_dist_dict[1],
-           main_search_params
-       );
-    =#
     return SearchRAW(
         spectra, 
         frag_index, 
@@ -467,9 +393,7 @@ function mainLibrarySearch(
         err_dist,
         selectTransitions!,
         searchScan!,
-        
-        b_min_ind = params[:b_min_ind],
-        y_min_ind = params[:y_min_ind],
+
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
@@ -506,48 +430,13 @@ function integrateMS2(
     rt_index::retentionTimeIndex{U, T},
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
+    fragment_tolerance::Float64,
     params::Dict; 
     N = 600000*10,
     scan_range =  (0, 0)) where {U,T<:AbstractFloat}
 
     frag_ppm_err = err_dist.μ
-    fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-
-
-    #=integrate_ms2_params = (
-    
-    expected_matches = 1000000,
-    frag_err_dist = frag_err_dist_dict[1],
-    frag_tol_quantile = 0.975,
-    max_iter = 1000,
-    max_peak_width = 2.0,
-    max_peaks = false,
-    min_frag_count = 4,
-    min_matched_ratio = Float32(0.45),
-    min_spectral_contrast = Float32(0.5),
-    nmf_tol = Float32(100),
-    precursor_tolerance = 5.0,
-    quadrupole_isolation_width = 4.25,
-    regularize = false,
-    rt_tol = 20.0,
-    sample_rate = 1.0,
-    scan_range = (0, 3000000),
-    topN = 100,
-    λ = zero(Float32),
-    γ = zero(Float32)
-    )
-    
-    integrateMS2(
-           Arrow.Table(MS_TABLE_PATHS[1]), 
-           prosit_mouse_33NCEcorrected_start1_5ppm_15irt,  
-           frags_mouse_detailed_33NCEcorrected_start1, 
-           rt_index, 
-           RT_to_iRT_map_dict[1], #RT to iRT map'
-           UInt32(1), #MS_FILE_IDX
-           frag_err_dist_dict[1],
-           integrate_ms2_params
-       )
-    =#
+    #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
 
     return SearchRAW(
         spectra, 

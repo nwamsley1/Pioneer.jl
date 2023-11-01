@@ -7,7 +7,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         for i in range(1, length(weights))
 
             #Could be a better hueristic?
-            score = hyperscore[i]*sqrt(weights[i])#weights[i]*total_ions[i]/RT_error[i]
+            score = #hyperscore[i]*sqrt(weights[i])#weights[i]*total_ions[i]/RT_error[i]
             #Don't consider because deconvolusion set weights to zero
             #Or because it is filtered out 
             if iszero(weights[i]) #| filter[i]
@@ -128,7 +128,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     T = eltype(chrom.weight)
 
     filter = falses(size(chrom)[1])
-    best_scan = getBestPSM(filter, chrom.matched_ratio, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
+    #best_scan = getBestPSM(filter, chrom.matched_ratio, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
+    best_scan = argmax(chrom.weight)
     truncateAfterSkip!(filter, best_scan, chrom.RT)
 
     setFilter!(filter, chrom.weight, chrom.scan_idx)

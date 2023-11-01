@@ -185,6 +185,16 @@ filter!(x->x.best_scan, PSMs)
 bins = LinRange(0, 1, 100)
 histogram(PSMs[PSMs[!,:decoy].==false,:prob], bins = bins, alpha = 0.5, norm =:probability)
 histogram!(PSMs[PSMs[!,:decoy].==true,:prob], bins = bins, alpha = 0.5, norm =:probability)
+
+sort!(PSMs,:RT); #Sorting before grouping is critical. 
+PSMs[!,:max_weight] .= zero(Float32)
+test_chroms = groupby(PSMs, :precursor_idx);
+Threads.@threads for i in ProgressBar(range(1, length(test_chroms)))
+    #for i in range(1, length(grouped_precursor_df))
+    best_scan = argmax(test_chroms[i].matched_ratio)
+    test_chroms[i].best_scan[best_scan] = true
+end
+filter!(x->x.best_scan, PSMs)
 transform!(PSMs, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][psm[:precursor_idx]].mz
 ) => :prec_mz
@@ -313,11 +323,186 @@ for name in names(test)
     end
 end
 
+
 best_psms = test
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
-best_psms[:,:stripped_sequence] = replace.(best_psms[:,:sequence], "M(ox)" => "M");
 best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
+best_psms[:,:stripped_sequence] = replace.(best_psms[:,:sequence], "M(ox)" => "M");
 pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
 setdiff(combined_set, pioneer_passing_fdr)
 
+pioneer_passing_fdr = Set("_".*best_psms[!,:stripped_sequence].*"_.".*string.(best_psms[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+
+
 selectRTIndexedTransitions!
+
+MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
+
+main_search_params[:min_spectral_contrast] = Float32(-Inf)
+main_search_params[:min_matched_ratio] = Float32(0.0)
+
+combined_set = load("/Users/n.t.wamsley/Desktop/good_precursors_a.jld2")
+combined_set = collect(combined_set["combined_set"])
+combined_set = Set(replace.(combined_set, "[Carbamidomethyl (C)]" => ""))
+
+
+################
+###############3
+#filter!(x->x.matched_ratio>0, PSMs)
+sub_search_time = @timed PSMs = mainLibrarySearch(
+    MS_TABLE,
+    prosit_lib["f_index"],
+    prosit_lib["f_det"],
+    RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+    UInt32(ms_file_idx), #MS_FILE_IDX
+    frag_err_dist_dict[ms_file_idx],
+    16.1,
+    main_search_params,
+    #scan_range = (201389, 204389),
+    #scan_range = (55710, 55710),
+    #scan_range = (50426, 51000),
+    scan_range = (1, length(MS_TABLE[:masses]))
+);
+
+refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
+filter!(x->x.q_value<=0.25, PSMs);
+pioneer_passing = Set("_".*PSMs[!,:stripped_sequence].*"_.".*string.(PSMs[!,:charge]))
+setdiff(combined_set, pioneer_passing) #8102
+
+sort!(PSMs,:RT); #Sorting before grouping is critical. 
+PSMs[!,:max_weight] .= zero(Float32)
+test_chroms = groupby(PSMs, :precursor_idx);
+Threads.@threads for i in ProgressBar(range(1, length(test_chroms)))
+    #for i in range(1, length(grouped_precursor_df))
+    best_scan = argmax(test_chroms[i].matched_ratio)
+    test_chroms[i].best_scan[best_scan] = true
+end
+filter!(x->x.best_scan, PSMs)
+transform!(PSMs, AsTable(:) => ByRow(psm -> 
+prosit_lib["precursors"][psm[:precursor_idx]].mz
+) => :prec_mz
+);
+sort!(PSMs,:RT, rev = false);
+#Build RT index of precursors to integrate
+rt_index = buildRTIndex(PSMs);
+
+
+
+ms2_params = copy(main_search_params)
+ms2_params[:min_frag_count] = 1
+ms2_params[:min_spectral_contrast] = Float32(-Inf)
+ms2_params[:min_matched_ratio] = Float32(-Inf)
+ms2_params[:min_topn] = 0
+ms2_params[:max_peak_width] = 0.75
+MS2_CHROMS = integrateMS2(MS_TABLE, 
+                    prosit_lib["f_det"],
+                    rt_index,
+                    UInt32(ms_file_idx), 
+                    frag_err_dist_dict[ms_file_idx],
+                    16.1,
+                    ms2_params, 
+                    scan_range = (1, length(MS_TABLE[:scanNumber]))
+                    #scan_range = (101357, 110357)
+                    );
+
+_refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
+sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
+MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, :precursor_idx);
+
+time_test = @timed integratePrecursors(MS2_CHROMS_GROUPED, 
+                                        n_quadrature_nodes = params_[:n_quadrature_nodes],
+                                        intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                        LsqFit_tol = params_[:LsqFit_tol],
+                                        Lsq_max_iter = params_[:Lsq_max_iter],
+                                        tail_distance = params_[:tail_distance])
+filter!(x -> x.best_scan, MS2_CHROMS);
+
+filter!(x->x.weight>0, MS2_CHROMS);
+for i in range(1, size(MS2_CHROMS)[1])
+    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
+        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
+    end
+end
+transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
+prosit_lib["precursors"][psm[:precursor_idx]].mz
+) => :prec_mz
+);
+features = [ :FWHM,
+    :FWHM_01,
+    :GOF,
+    :H,
+    :Mox,
+    :RT,
+    :RT_error,
+    :longest_y,
+    :y_count,
+    :b_count,
+    #:b_ladder,
+    :base_width_min,
+    :best_rank,
+    #:best_over_precs,
+    :charge,
+    :city_block,
+    :data_points,
+    :entropy_score,
+    :err_norm,
+    :error,
+    :hyperscore,
+    #:intensity_explained,
+    :ions_sum,
+    :log_sum_of_weights,
+    :matched_ratio,
+    :mean_log_entropy,
+    :mean_log_probability,
+    :mean_log_spectral_contrast,
+    :mean_matched_ratio,
+    :mean_scribe_score,
+    :missed_cleavage,
+    #:ms1_ms2_diff,
+    :peak_area,
+    #:peak_area_ms1,
+    :points_above_FWHM,
+    :points_above_FWHM_01,
+    :poisson,
+    :prec_mz,
+    :scribe,
+    :scribe_corrected,
+    :sequence_length,
+    :spectral_contrast,
+    :spectral_contrast_corrected,
+    #:spectrum_peaks,
+    :topn,
+    :total_ions,
+    :weight,
+    #:y_ladder,
+    #:ρ,
+    :log2_intensity_explained,
+    :TIC,
+    :adjusted_intensity_explained
+    ]
+
+xgboost_time = @timed bst = rankPSMs!(MS2_CHROMS, 
+                        features,
+                        colsample_bytree = 1.0, 
+                        min_child_weight = 5, 
+                        gamma = 1, 
+                        subsample = 0.5, 
+                        n_folds = 2, 
+                        num_round = 200, 
+                        max_depth = 10, 
+                        eta = 0.05, 
+                        #eta = 0.0175,
+                        train_fraction = 9.0/9.0,
+                        n_iters = 2);
+
+getQvalues!(MS2_CHROMS, allowmissing(MS2_CHROMS[:,:prob]), allowmissing(MS2_CHROMS[:,:decoy]));
+MS2_CHROMS[:,:stripped_sequence] = replace.(MS2_CHROMS[:,:sequence], "M(ox)" => "M");
+best_psms_passing = MS2_CHROMS[(MS2_CHROMS[!,:q_value].<=0.01).&(MS2_CHROMS[!,:decoy].==false),:]
+pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+
+best_psms_passing = MS2_CHROMS[(MS2_CHROMS[!,:q_value].<=0.01).&(MS2_CHROMS[!,:decoy].==false).&(MS2_CHROMS[!,:data_points].>4),:]
+pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+
