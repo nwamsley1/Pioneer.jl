@@ -1,6 +1,4 @@
 {
-    "b_min_ind" : 2,
-    "y_min_ind" : 3,
     "expected_matches": 1000000,
     "frag_ppm_err": 0.0,
     "frag_tol_quantile": 0.975,
@@ -9,18 +7,28 @@
     "LsqFit_tol": 0.001,
     "Lsq_max_iter": 100,
     "max_peaks": false,
-    "max_peak_width": 2.0,
+    "max_peak_width": 1.5,
+
+    "min_index_search_score": 1.5,
+
     "min_frag_count": 2,
     "min_frag_count_presearch": 7,
+    "min_frag_count_integration": 1,
     "min_frag_count_index_search": 0,
-    "min_matched_ratio": -1.7,
     "min_matched_ratio_presearch": 0.0,
-    "min_matched_ratio_index_search": 1.75,
+    
+    "min_matched_ratio_integration": -1.7,
+    "min_matched_ratio_main_search": -1.7,
     "min_spectral_contrast": 0.0,
     "min_spectral_contrast_presearch": 0.9,
+    "min_spectral_contrast_integration": 0.0,
+
+    "min_topnOf3": 2,
+    "min_topnOf3_integration": 1,
+    "min_weight": -1,
+
     "most_intense": false,
     "n_quadrature_nodes": 100,
-    "prec_tolerance": 5.0,
     "quadrupole_isolation_width": 8.0036, 
     "rt_bounds":[-20.0, 200.0],
     "rt_tol": 20.0,
@@ -37,6 +45,6 @@
         "regularize": false,
         "lambda": 0.0,
         "gamma": 0.0,
-        "huber_delta": 10000
+        "huber_delta": 1000
     }
 }

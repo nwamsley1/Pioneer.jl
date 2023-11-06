@@ -69,6 +69,7 @@ struct LibPSM{H,L<:Real} <: PSM
     longest_b::UInt8
     b_count::UInt8
     y_count::UInt8
+    prec_mz_offset::Float32
 
     #Basic Metrics 
     poisson::L
@@ -79,7 +80,9 @@ struct LibPSM{H,L<:Real} <: PSM
     #Spectral Simmilarity
     scribe::L
     scribe_corrected::L
+    scribe_fitted::L
     city_block::L
+    city_block_fitted::L
     spectral_contrast::L
     spectral_contrast_corrected::L
     matched_ratio::L
@@ -144,11 +147,11 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
         )&(
             spectral_scores[i].matched_ratio > min_matched_ratio
         )&(
-            weight[i] > min_weight
+            weight[i] >= min_weight
         )&(
-            UInt8(unscored_PSMs[i].topn) >= min_topn
+            UInt8(unscored_PSMs[i].topn) >= 0#min_topn
         )&(
-            UInt8(unscored_PSMs[i].best_rank) == 1
+            true#UInt8(unscored_PSMs[i].best_rank) == #1
         )
 
         if !passing_filter #Skip this scan
@@ -169,6 +172,7 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
             unscored_PSMs[i].longest_b,
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
+            zero(Float32),
 
             Float16(getPoisson(expected_matches, total_ions)),
             Float16(HyperScore(unscored_PSMs[i])),
@@ -177,7 +181,9 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
             
             spectral_scores[i].scribe,
             spectral_scores[i].scribe_corrected,
+            spectral_scores[i].scribe_fitted,
             spectral_scores[i].city_block,
+            spectral_scores[i].city_block_fitted,
             spectral_scores[i].spectral_contrast,
             spectral_scores[i].spectral_contrast_corrected,
             spectral_scores[i].matched_ratio,

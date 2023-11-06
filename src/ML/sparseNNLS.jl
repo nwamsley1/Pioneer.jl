@@ -527,7 +527,8 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
             #    continue
             #end
             #δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = (min(1 + i*2, max_iter_inner)), accuracy = T(100)))
-            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, max_iter = max_iter_inner, accuracy = T(100)))
+            #δx = abs(newton_bisection!(Hs, r, X₁, col, δ, max_iter = max_iter_inner, accuracy = T(100)))
+            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, max_iter = 100, accuracy = T(100)))
             if !iszero(X₁) 
                 if δx/X₁[col] > max_diff
                     max_diff =  δx/X₁[col]

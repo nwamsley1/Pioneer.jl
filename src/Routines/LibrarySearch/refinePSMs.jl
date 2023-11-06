@@ -26,7 +26,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[!,:spectrum_peak_count] .= zero(UInt16);
     PSMs[!,:stripped_sequence] .= "";
     #SMs[!,:sequence_length] .= false
-    Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
+    for i in range(1, size(PSMs)[1])
         PSMs[i,:decoy] = isDecoy(precursors[PSMs[i,:precursor_idx]]);
         PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
     #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
@@ -35,15 +35,17 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
         PSMs[i,:iRT] = Float32(getIRT(precursors[PSMs[i,:precursor_idx]]));
         PSMs[i,:RT] = Float32(MS_TABLE[:retentionTime][PSMs[i,:scan_idx]]);
         PSMs[i,:TIC] = Float16(log2(MS_TABLE[:TIC][PSMs[i,:scan_idx]]));
-        PSMs[i,:adjusted_intensity_explained] = Float16(log2(MS_TABLE[:TIC][PSMs[i,:scan_idx]]*Float32(2^PSMs[i,:log2_intensity_explained])));
+        PSMs[i,:adjusted_intensity_explained] = min(Float16(log2(MS_TABLE[:TIC][PSMs[i,:scan_idx]]*Float32(2^PSMs[i,:log2_intensity_explained]))), 
+                                                    Float16(60000));
+        if isinf(PSMs[i,:adjusted_intensity_explained])
+            PSMs[i,:adjusted_intensity_explained] = Float16(6000)
+        end
         PSMs[i,:charge] = UInt8(getCharge(precursors[PSMs[i,:precursor_idx]]));
         PSMs[i,:total_ions] = UInt16(PSMs[i,:y_count])+UInt16(PSMs[i,:b_count]);
-        PSMs[i,:err_norm] = PSMs[i,:error]/PSMs[i,:total_ions]
+        PSMs[i,:err_norm] = Float16(min(PSMs[i,:error]/PSMs[i,:total_ions], 60000))
         PSMs[i,:target] = PSMs[i,:decoy] == false
         PSMs[i,:spectrum_peak_count] = length(MS_TABLE[:masses][PSMs[i,:scan_idx]])
-        if isinf(PSMs[i,:matched_ratio])
-            PSMs[i,:matched_ratio] = Float16(60000)
-        end
+        PSMs[i,:matched_ratio] = min( PSMs[i,:matched_ratio], Float16(60000))
         PSMs[i,:stripped_sequence] = replace.(PSMs[i,:sequence], "M(ox)" => "M");
 
     end
@@ -58,10 +60,11 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[:,:RT_pred] = Float16.(linear_spline(PSMs[:,:iRT]))
     PSMs[:,:RT_error] = Float16.(abs.(PSMs[!,:RT_pred] .- PSMs[!,:RT]))
     ############################
-
+    return 
     ###########################
     #Filter on Rank and Topn
-    filter!(x->x.RT_error<max_rt_error, PSMs);
+    #filter!(x->x.RT_error<max_rt_error, PSMs);
+    #filter!(x->isnan(x.entropy_score)==false, PSMs);
     #filter!(:best_rank => x -> x<2, PSMs);
     #filter!(:topn => x -> x>1, PSMs);
     ############################
@@ -73,7 +76,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     FORM = FormulaTerm(
         (Term(:target),),
         (
-         Term(:scribe_corrected),
+        # Term(:scribe_corrected),
          Term(:spectral_contrast_corrected),
          Term(:spectral_contrast),
          Term(:scribe),
@@ -88,6 +91,17 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:charge),
          Term(:spectrum_peak_count)
     ))
+
+    for name in names(PSMs)
+        if eltype(PSMs[!,name]) == String
+            continue
+        else
+            if any(isinf.(PSMs[!,name]))
+                println(name)
+                println(argmax(isinf.(PSMs[!,name])))
+            end
+        end
+    end
 
   model_fit = glm(FORM, PSMs, 
                             Binomial(), 
@@ -136,7 +150,7 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:stripped_sequence] .= "";
     PSMs[!,:spectrum_peak_count] .= zero(UInt16);
     #SMs[!,:sequence_length] .= false
-    Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
+    for i in range(1, size(PSMs)[1])
         PSMs[i,:decoy] = isDecoy(precursors[PSMs[i,:precursor_idx]]);
         PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
     #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
@@ -154,6 +168,9 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         PSMs[i,:target] = PSMs[i,:decoy] == false
         PSMs[i,:weight_log2] = max(Float16(0.0), Float16(log2(PSMs[i,:weight])))
         PSMs[i,:spectrum_peak_count] = length(MS_TABLE[:masses][PSMs[i,:scan_idx]])
+        if isinf(PSMs[i,:adjusted_intensity_explained])
+            PSMs[i,:adjusted_intensity_explained] = Float16(6000)
+        end
         if isinf(PSMs[i,:matched_ratio])
             PSMs[i,:matched_ratio] = Float16(60000)
         end
@@ -191,9 +208,13 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
          Term(:total_ions),
          Term(:err_norm),
          Term(:charge),
-         Term(:spectrum_peak_count)
+         Term(:weight_log2),
+         Term(:spectrum_peak_count),
+         Term(:city_block_fitted),
+         Term(:scribe_fitted)
     ))
 
+    filter!(x->isnan(x.entropy_score)==false, PSMs);
     model_fit = glm(FORM, PSMs, 
                             Binomial(), 
                             ProbitLink())

@@ -49,9 +49,11 @@ ARGS = parse_commandline();
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
+SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
 EXPERIMENT_NAME = "TEST_y4b3_nOf5"
@@ -84,8 +86,6 @@ end
 nnls_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
 
 params_ = (
-    b_min_ind = Int64(params["b_min_ind"]),
-    y_min_ind = Int64(params["y_min_ind"]),
     expected_matches = Int64(params["expected_matches"]),
     frag_ppm_err = Float64(params["frag_ppm_err"]),
     frag_tol_quantile = Float32(params["frag_tol_quantile"]),
@@ -96,18 +96,30 @@ params_ = (
     nnls_max_iter = Int64(nnls_params["nnls_max_iter"]),
     max_peaks = typeof(params["max_peaks"]) == Bool ? params["max_peaks"] : Int64(params["max_peaks"]),
     max_peak_width = Float64(params["max_peak_width"]),
+
+    min_index_search_score = Float32(params["min_index_search_score"]),
+
     min_frag_count = Int64(params["min_frag_count"]),
     min_frag_count_presearch = Int64(params["min_frag_count_presearch"]),
+    min_frag_count_integration = Int64(params["min_frag_count_integration"]),
     min_frag_count_index_search = Int64(params["min_frag_count_index_search"]),
-    min_matched_ratio = Float32(params["min_matched_ratio"]),
+
     min_matched_ratio_presearch = Float32(params["min_matched_ratio_presearch"]),
-    min_matched_ratio_index_search = Float32(params["min_matched_ratio_index_search"]),
+  
+    min_matched_ratio_main_search = Float32(params["min_matched_ratio_main_search"]),
+    min_matched_ratio_integration = Float32(params["min_matched_ratio_integration"]),
+
     min_spectral_contrast = Float32(params["min_spectral_contrast"]),
     min_spectral_contrast_presearch = Float32(params["min_spectral_contrast_presearch"]),
+    min_spectral_contrast_integration = Float32(params["min_spectral_contrast_integration"]),
+
+    min_topnOf3 = Int64(params["min_topnOf3"]),
+    min_topnOf3_integration = Int64(params["min_topnOf3_integration"]),
+    min_weight = Float32(params["min_weight"]),
+
     most_intense = Bool(params["most_intense"]),
     n_quadrature_nodes = Int64(params["n_quadrature_nodes"]),
     nnls_tol = Float32(nnls_params["nnls_tol"]),
-    prec_tolerance = Float64(params["prec_tolerance"]),
     quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
     regularize = Bool(nnls_params["regularize"]),
     rt_bounds = Tuple([Float64(rt) for rt in params["rt_bounds"]]),
@@ -123,8 +135,6 @@ params_ = (
 );
 #Search parameters
 first_search_params = Dict(
-    :b_min_ind => params_[:b_min_ind],
-    :y_min_ind => params_[:y_min_ind],
     :collect_frag_errs => true,
     :expected_matches => params_[:expected_matches],
     :frag_ppm_err => params_[:frag_ppm_err],
@@ -134,11 +144,11 @@ first_search_params = Dict(
     :min_frag_count => params_[:min_frag_count_presearch],
     :min_frag_count_index_search => params_[:min_frag_count_index_search],
     :min_matched_ratio => params_[:min_matched_ratio_presearch],
-    :min_matched_ratio_index_search => params_[:min_matched_ratio_index_search],
+    :min_index_search_score => params_[:min_index_search_score],
     :min_spectral_contrast => params_[:min_spectral_contrast_presearch],
+    :min_topnOf3 => params_[:min_topnOf3],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
-    :precursor_tolerance => params_[:prec_tolerance],
     :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
     :regularize => params_[:regularize],
     :rt_bounds => params_[:rt_bounds],
@@ -151,20 +161,40 @@ first_search_params = Dict(
     :huber_δ => params_[:huber_δ]
 );
 main_search_params = Dict(
-    :b_min_ind => params_[:b_min_ind],
-    :y_min_ind => params_[:y_min_ind],
     :expected_matches => params_[:expected_matches],
     :frag_tol_quantile => params_[:frag_tol_quantile],
     :max_iter => params_[:nnls_max_iter],
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count],
     :min_frag_count_index_search => params_[:min_frag_count_index_search],
-    :min_matched_ratio => params_[:min_matched_ratio],
-    :min_matched_ratio_index_search => params_[:min_matched_ratio_index_search],
+    :min_matched_ratio_main_search => params_[:min_matched_ratio_main_search],
+    :min_index_search_score => params_[:min_index_search_score],
     :min_spectral_contrast => params_[:min_spectral_contrast],
+    :min_topnOf3 => params_[:min_topnOf3],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
-    :precursor_tolerance => params_[:prec_tolerance],
+    :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
+    :regularize => params_[:regularize],
+    :rt_bounds => params_[:rt_bounds],
+    :rt_tol => params_[:rt_tol],
+    :topN => params_[:topN],
+    :topN_index_search => params_[:topN_index_search],
+    :λ => params_[:λ],
+    :γ => params_[:γ],
+    :huber_δ => params_[:huber_δ]
+);
+ms2_integration_params = Dict(
+    :frag_tol_quantile => params_[:frag_tol_quantile],
+    :max_iter => params_[:nnls_max_iter],
+    :max_peaks => params_[:max_peaks],
+    :max_peak_width => params_[:max_peak_width],
+    :min_frag_count => params_[:min_frag_count_integration],
+    :min_matched_ratio => params_[:min_matched_ratio_integration],
+    :min_spectral_contrast => params_[:min_spectral_contrast_integration],
+    :min_topnOf3 => params_[:min_topnOf3_integration],
+    :min_weight => params_[:min_weight],
+    :most_intense => params_[:most_intense],
+    :nmf_tol => params_[:nnls_tol],
     :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
     :regularize => params_[:regularize],
     :rt_bounds => params_[:rt_bounds],
@@ -300,6 +330,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     sub_search_time = @timed rtPSMs, all_matches =  firstSearch(
                                         MS_TABLE,
                                         prosit_lib["f_index"],
+                                        prosit_lib["precursors"],
                                         prosit_lib["f_det"],
                                         x->x, #RT to iRT map'
                                         UInt32(ms_file_idx), #MS_FILE_IDX
@@ -374,133 +405,108 @@ println("Finished presearch in ", presearch_time.time, " seconds")
 #Main PSM Search
 ###########
 println("Begining Main Search...")
-BPSMS_FP = Dict{Int64, String}()
+RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
 main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
         sub_search_time = @timed PSMs = mainLibrarySearch(
-                                                MS_TABLE,
-                                                prosit_lib["f_index"],
-                                                prosit_lib["f_det"],
-                                                RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-                                                UInt32(ms_file_idx), #MS_FILE_IDX
-                                                frag_err_dist_dict[ms_file_idx],
-                                                16.1,
-                                                main_search_params,
-                                                #scan_range = (201389, 204389),
-                                                #scan_range = (55710, 55710),
-                                                #scan_range = (50426, 51000),
-                                                scan_range = (1, length(MS_TABLE[:masses]))
-                                            );
-        #println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
-        #@load "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" PSMs
-        #filter!(x -> x.weight>10.0, PSMs);
-        #filter!(x -> x.topn > 1, PSMs);
-        #filter!(x -> x.best_rank == 1, PSMs);
-        #filter!(x -> x.weight>1000.0, PSMs);
-        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+            MS_TABLE,
+            prosit_lib["f_index"],
+            prosit_lib["precursors"],
+            prosit_lib["f_det"],
+            RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+            UInt32(ms_file_idx), #MS_FILE_IDX
+            frag_err_dist_dict[ms_file_idx],
+            16.1,
+            main_search_params,
+            scan_range = (1, length(MS_TABLE[:masses]))
+            #scan_range = (100000, 100010)
+        );
+        println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
 
-        FormulaTerm(
-            (Term(:target),),
-            (Term(:poisson),
-             Term(:hyperscore),
-             Term(:topn),
-             Term(:scribe),
-             Term(:spectral_contrast),
-             Term(:total_ions))
-        )
-        #@save "/Users/n.t.wamsley/TEST_DATA/PSMs_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_refined_102323.jld2" PSMs
-        psms_file_name = "PSMS_"*string(ms_file_idx)*".jld2";
-        lock(lk) do 
-            BPSMS_FP[ms_file_idx] = joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
+        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
+        filter!(x->x.q_value<=0.25, PSMs);
+
+        #############
+        #Get best scan for every precursor
+        sort!(PSMs,:RT); #Sorting before grouping is critical. 
+        PSMs[!,:max_weight] .= zero(Float32)
+        grouped_PSMs = groupby(PSMs, :precursor_idx);
+        for i in range(1, length(grouped_PSMs))
+            best_scan = argmax(grouped_PSMs[i].matched_ratio)
+            grouped_PSMs[i].best_scan[best_scan] = true
         end
-        jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
+        filter!(x->x.best_scan, PSMs);
+
+        transform!(PSMs, AsTable(:) => ByRow(psm -> 
+        prosit_lib["precursors"][psm[:precursor_idx]].mz
+        ) => :prec_mz
+        );
+
+        sort!(PSMs,:RT, rev = false);
+        #Build RT index of precursors to integrate
+        rt_index = buildRTIndex(PSMs);
+
+        lock(lk) do 
+            insert!(RT_INDICES, MS_TABLE_PATH, rt_index)#joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
+        end
+        #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
         #Free up memory
         PSMs = nothing;
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_110223.jld2"); RT_INDICES)
+RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_110223.jld2"));
+RT_INDICES = RT_INDICES["RT_INDICES"]
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
-quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 
-    #@load BPSMS_FP[ms_file_idx] = PSMs
-    PSMs = load(PSM_PATHS[ms_file_idx])["PSMs"]
-    sort!(PSMs,:RT); #Sorting before grouping is critical. 
-    PSMs[!,:max_weight] .= zero(Float32)
-    test_chroms = groupby(PSMs, :precursor_idx);
+quantitation_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+    MS2_CHROMS = integrateMS2(MS_TABLE, 
+                    prosit_lib["precursors"],
+                    prosit_lib["f_det"],
+                    RT_INDICES[MS_TABLE_PATH],
+                    UInt32(ms_file_idx), 
+                    frag_err_dist_dict[ms_file_idx],
+                    16.1,
+                    ms2_integration_params, 
+                    scan_range = (1, length(MS_TABLE[:scanNumber])),
+                    #scan_range = (101357, 110357)
+                    );
 
-    #Integrate MS2 and filter
-    time_test = @timed integratePrecursors(test_chroms, 
-                                            n_quadrature_nodes = params_[:n_quadrature_nodes],
-                                            intensity_filter_fraction = params_[:intensity_filter_fraction],
-                                            LsqFit_tol = params_[:LsqFit_tol],
-                                            Lsq_max_iter = params_[:Lsq_max_iter],
-                                            tail_distance = params_[:tail_distance])
-    println("time_test.time ", time_test.time , " for $ms_file_idx")
+    _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
+    sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
+    MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, :precursor_idx);
 
-    time_test = @timed filter!(x -> x.best_scan, PSMs);
-    time_test = @timed filter!(x -> x.FWHM.<5, PSMs);
-    time_test = @timed filter!(x -> x.FWHM_01.<10, PSMs);
-    filter!(x -> x.total_ions > 2, PSMs);
-    filter!(x -> x.matched_ratio > -1, PSMs);
-    BPSMS[ms_file_idx] = PSMs;
-end
+    integratePrecursors(MS2_CHROMS_GROUPED, 
+                                        n_quadrature_nodes = params_[:n_quadrature_nodes],
+                                        intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                        LsqFit_tol = params_[:LsqFit_tol],
+                                        Lsq_max_iter = params_[:Lsq_max_iter],
+                                        tail_distance = params_[:tail_distance])
 
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
-    PSMs = BPSMS[ms_file_idx]
-    PSMs[:,:n_obs] .= zero(UInt16)
-    sort!(PSMs, [:sequence]);
-    grouped_df = groupby(PSMs, :sequence);
-    PSMs[:,:n_obs] = (combine(grouped_df) do sub_df
-        repeat([size(sub_df)[1]], size(sub_df)[1])
-    end)[:,:x1]
+    filter!(x -> x.best_scan, MS2_CHROMS);
+    filter!(x->x.weight>0, MS2_CHROMS);
 
-    PSMs[:,:best_over_precs] .= zero(Float16)
-    PSMs[:,:stripped_sequence] = replace.(PSMs[:,:sequence], "M(ox)" => "M");
-
-    sort!(PSMs, [:stripped_sequence]);
-
-    grouped_df = groupby(PSMs, :stripped_sequence);
-    PSMs[:,:best_over_precs] = (combine(grouped_df) do sub_df
-        repeat([maximum(sub_df.entropy_sim)], size(sub_df)[1])
-    end)[:,:x1]
-
-    #Add file path 
-    PSMs[!,:file_path] .= MS_TABLE_PATH
-
-    #Add Accession numbers
-    transform!(PSMs, AsTable(:) => ByRow(psm -> 
-    prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
-    ) => :accession_numbers
-    );
-    #Get Precursor M/Z's 
-    transform!(PSMs, AsTable(:) => ByRow(psm -> 
-    prosit_lib["precursors"][psm[:precursor_idx]].mz
-    ) => :prec_mz
-    );
-
-    #Correct RT prediction errors 
-    for i in range(1, size(PSMs)[1])
-        if ismissing(PSMs[i,:tᵣ])
-            PSMs[i, :RT_error] = abs.(PSMs[i,:RT_pred] - PSMs[i,:RT])
-            PSMs[i,:tᵣ] = PSMs[i,:RT]
-        else
-            PSMs[i,:RT_error] = abs.(PSMs[i,:tᵣ] .- PSMs[i,:RT_pred]);
+    for i in range(1, size(MS2_CHROMS)[1])
+        if isinf(MS2_CHROMS[i,:mean_matched_ratio])
+            MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
         end
     end
 
-    #lock(lk) do 
-    #    println("ms_file_idx: $ms_file_idx has ", size(PSMs))
-    #    BPSMS[ms_file_idx] = PSMs;
-    #end
+    transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
+    prosit_lib["precursors"][psm[:precursor_idx]].mz
+    ) => :prec_mz
+    );
+    MS2_CHROMS[:,:file_path].=MS_TABLE_PATH
+    BPSMS[ms_file_idx] = MS2_CHROMS;
 end
-println("Finished quantitation in ", quantitation_time.time, "seconds")
-println("Finished quantitation in ", quantitation_time, "seconds")
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS.jld2"); BPSMS);
-#main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+
+#=
 for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
         PSMs = BPSMS[ms_file_idx];
@@ -565,13 +571,82 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
             end
         end
 end
-
+=#
 
 best_psms = vcat(values(BPSMS)...)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_02_mzXML.jld2"); best_psms)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
+
+#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
+#RT_INDICES = RT_INDICES["RT_INDICES"]
+#MS2_CHROMS = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110123.jld2"));
 BPSMS = nothing
 GC.gc()
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored.jld2"); best_psms)
+filter!(x -> x.best_scan, best_psms);
+filter!(x->x.weight>0, best_psms );
+
+    #for i in range(1, size(MS2_CHROMS)[1])
+    #    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
+    #        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
+    #    end
+    #end
+
+    #transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
+    #prosit_lib["precursors"][psm[:precursor_idx]].mz
+    #) => :prec_mz
+    #);
+
+#=
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:mean_log_probability])
+        println(i)
+        best_psms[i,:mean_log_probability] = Float16(-6000)
+    end
+end
+for name in names(best_psms)
+    if eltype(best_psms[!,name]) == String
+        continue
+    else
+        if any(isinf.(best_psms[!,name]))
+            println(name)
+            println(argmax(isinf.(best_psms[!,name])))
+        end
+    end
+end
+=#
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:mean_log_probability])
+        println(i)
+        best_psms[i,:mean_log_probability] = Float16(-6000)
+    end
+end
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:GOF])
+        println(i)
+        best_psms[i,:GOF] = Float16(-6000)
+    end
+end
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:mean_matched_ratio])
+        println(i)
+        best_psms[i,:mean_matched_ratio] = Float16(6000)
+    end
+end
+transform!(best_psms, AsTable(:) => ByRow(psm -> 
+prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
+) => :accession_numbers
+);
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"); best_psms)
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"));
+for i in range(1, size(best_psms)[1])
+    if isinf(best_psms[i,:mean_log_probability])
+        println(i)
+        best_psms[i,:mean_log_probability] = Float16(-6000)
+    end
+end
 #=
 open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "meta.txt"), "w") do f
     write(f, "Main Search Time $main_search_time \n")
@@ -590,19 +665,22 @@ features = [ :FWHM,
     :Mox,
     :RT,
     :RT_error,
-    :b_ladder,
+    :longest_y,
+    :y_count,
+    :b_count,
+    #:b_ladder,
     :base_width_min,
     :best_rank,
-    :best_over_precs,
+    #:best_over_precs,
     :charge,
     :city_block,
+    :city_block_fitted,
     :data_points,
-    :entropy_sim,
-    :entropy_sim_corrected,
-    :err_norm_log2,
+    :entropy_score,
+    :err_norm,
     :error,
     :hyperscore,
-    :intensity_explained,
+    #:intensity_explained,
     :ions_sum,
     :log_sum_of_weights,
     :matched_ratio,
@@ -613,30 +691,30 @@ features = [ :FWHM,
     :mean_scribe_score,
     :missed_cleavage,
     #:ms1_ms2_diff,
-    :n_obs,
     :peak_area,
     #:peak_area_ms1,
     :points_above_FWHM,
     :points_above_FWHM_01,
     :poisson,
     :prec_mz,
-    :scribe_score,
-    :scribe_score_corrected,
+    :scribe,
+    :scribe_corrected,
+    :scribe_fitted,
     :sequence_length,
     :spectral_contrast,
     :spectral_contrast_corrected,
-    :spectrum_peaks,
+    #:spectrum_peaks,
     :topn,
     :total_ions,
     :weight,
-    :y_ladder,
+    #:y_ladder,
     #:ρ,
-    :log2_base_peak_intensity,
+    :log2_intensity_explained,
     :TIC,
     :adjusted_intensity_explained
     ]
 best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
-
+#best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
 xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
                         colsample_bytree = 1.0, 
@@ -648,7 +726,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 2.0/9.0,
+                        train_fraction = 9.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
@@ -657,12 +735,19 @@ best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:deco
 pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
 setdiff(combined_set, pioneer_passing_fdr)
 
+pioneer_passing_fdr = Set("_".*best_psms[!,:stripped_sequence].*"_.".*string.(best_psms[!,:charge]))
+setdiff(combined_set, pioneer_passing_fdr)
+
 
 #@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
        
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored.jld2"); best_psms)
-
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_nOf5_110223_mzXML_02.jld2"); best_psms)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_nOf5_110123.jld2"); best_psms)
+transform!(best_psms, AsTable(:) => ByRow(psm -> 
+prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
+) => :accession_numbers
+);
 using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
 
 function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
@@ -698,7 +783,7 @@ function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(
     return fasta
 end
 
-PIONEER = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false).&(best_psms[!,:data_points].>2),:];
+PIONEER = best_psms[(best_psms[!,:q_value].<=0.1).&(best_psms[!,:decoy].==false).&(best_psms[!,:data_points].>2),:];
 PIONEER = PIONEER[(iszero.(PIONEER[:,:peak_area]).==false),:];
 MEANS = combine(prec_group -> (mean_log2 = mean(log2.(prec_group[:,:peak_area])),
                                median_log2 = median(log2.(prec_group[:,:peak_area])),
@@ -745,23 +830,23 @@ NORM_CORRECTIONS = Dict(zip(INTENSITIES[:,:file_path],INTENSITIES[:,:correction]
 
 transform!(PIONEER, AsTable(:) => ByRow(precursor -> 2^(precursor[:peak_area_log2] .- NORM_CORRECTIONS[precursor[:file_path]])) => [:peak_area_norm]);
 PIONEER[:,:peak_area_log2_norm] .= log2.(PIONEER[:,:peak_area_norm]);
-try
+#try
 p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Original Response",
 topmargin=5mm)
 
 @df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
-             PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true)
+             PIONEER[:,:decoy].==false),:] boxplot(p, (:file_path), :peak_area_log2, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true)
 #savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "RAW_INTENSITIES.pdf"))
 
 p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Normalized Response",
 topmargin=5mm)
 @df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
-            PIONEER[:,:decoy].==false),:] boxplot(p, (:ms_file_idx), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
+            PIONEER[:,:decoy].==false),:] boxplot(p, (:file_path), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
 
 #savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
-catch
-    println("couldn't printn normalization plots")
-end 
+##catch
+#    println("couldn't printn normalization plots")
+#end 
 ACC_TO_SPEC = Dict(vcat([parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000000625_83333_Escherichia_coli.fasta.gz"),
             parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000002311_559292_Saccharomyces_cerevisiae.fasta.gz"),
             parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000005640_9606_human.fasta.gz")]...));
@@ -784,7 +869,7 @@ end
 
 transform!(PIONEER, AsTable(:) => ByRow(precursor -> getCondition(precursor)) => [:condition, :biological, :technical]);
 
-PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0).&(PIONEER[:,:data_points].>3),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
+PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0).&(PIONEER[:,:data_points].>2),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
 PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(prec_group[:,:peak_area_norm])), 
                                         CV = 100*std(prec_group[:,:peak_area_norm])/mean(prec_group[:,:peak_area_norm]),
                                         non_missing = length(prec_group[:,:peak_area_norm]),
@@ -832,7 +917,7 @@ function getLog2Diff(prec_group)
 end
 
 PIONEER_COMBINED = combine(prec_group -> getLog2Diff(prec_group), groupby(PIONEER_LOG2MEAN, [:species, :accession_numbers, :sequence, :charge]));
-PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:nonMissing_a].>6).&(PIONEER_COMBINED[:,:nonMissing_b].>6),:];
+PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:nonMissing_a].>3).&(PIONEER_COMBINED[:,:nonMissing_b].>3),:];
 PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:CV_a].<30).&(PIONEER_COMBINED[:,:CV_b].<30),:];
 
 open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "passing_benchmark.txt"), "w") do f

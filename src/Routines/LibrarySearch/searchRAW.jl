@@ -25,8 +25,10 @@ function SearchRAW(
                     min_frag_count::Int64 = 4,
                     min_frag_count_index_search::Int64 = 0,
                     min_matched_ratio::Float32 = Float32(0.8),
-                    min_matched_ratio_index_search::Float32 = zero(Float32),
+                    min_index_search_score::Float32 = zero(Float32),
                     min_spectral_contrast::Float32 = Float32(0.65),
+                    min_topn::Int64 = 2,
+                    min_weight::Float32 = zero(Float32),
                     most_intense = false,
                     nmf_tol::Float32 = Float32(100.0),
                     #precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
@@ -49,10 +51,8 @@ function SearchRAW(
 
     ##########
     #Initialize 
-    weights = Float32[]
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
-    chrom_idx = 1
     prec_idx = 0
     ion_idx = 0
     cycle_idx = 0 
@@ -136,7 +136,7 @@ function SearchRAW(
                         Float32(precursor_tolerance),
                         Float32(quadrupole_isolation_width/2.0),
                         min_frag_count = min_frag_count_index_search, 
-                        min_ratio = Float32(min_matched_ratio_index_search),
+                        min_ratio = Float32(min_index_search_score),
                         topN = topN_index_search,#topN
                         )
             
@@ -149,8 +149,8 @@ function SearchRAW(
                                                ion_list,
                                                precs,
                                                topN,
-                                               iRT_to_RT_spline(spectra[:retentionTime][i]),
-                                               rt_tol, #rt_tol
+                                               Float32(iRT_to_RT_spline(spectra[:retentionTime][i])),
+                                               Float32(rt_tol), #rt_tol
                                                (
                                                spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
@@ -214,10 +214,10 @@ function SearchRAW(
 
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
-
-            #Spectral deconvolution.
-            solve_time += @elapsed solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
-
+            if ismissing(precs) 
+                #Spectral deconvolution.
+                solve_time += @elapsed solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+            end
             #Remember determined weights for eahc precursors
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
@@ -250,8 +250,8 @@ function SearchRAW(
                     min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
                     min_matched_ratio = min_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
-                    min_weight = -1f0,
-                    min_topn = 2,
+                    min_weight = min_weight,
+                    min_topn = min_topn,
                     block_size = 500000,
                     )
             end
@@ -293,7 +293,6 @@ function SearchRAW(
     #Return Chromatograms and Score/Feature Table
     #return all_fmatches
     if collect_fmatches
-        println("entered")
         #return DataFrame(scored_PSMs), all_fmatches
         return  DataFrame(@view(scored_PSMs[1:last_val])), all_fmatches
     else
@@ -320,6 +319,7 @@ function firstSearch(
     #Mandatory Args
     spectra::Arrow.Table, 
     frag_index::FragmentIndex{Float32},
+    precursors::Vector{LibraryPrecursor{Float32}},
     ion_list::Vector{Vector{LibraryFragment{Float32}}},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
@@ -330,14 +330,14 @@ function firstSearch(
     return SearchRAW(
         spectra, 
         frag_index,
-        missing, 
+        precursors, 
         ion_list,
         iRT_to_RT_spline,
         ms_file_idx,
         err_dist,
         selectTransitions!,
         searchScan!,
-        
+
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         frag_ppm_err = params[:frag_ppm_err],
@@ -347,13 +347,14 @@ function firstSearch(
         min_frag_count = params[:min_frag_count],
         min_frag_count_index_search = params[:min_frag_count_index_search],
         min_matched_ratio = params[:min_matched_ratio],
-        min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
+        min_index_search_score = params[:min_index_search_score],
         min_spectral_contrast = params[:min_spectral_contrast],
+        min_topn = params[:min_topnOf3],
+
         most_intense = false,#params[:most_intense],
         nmf_tol = params[:nmf_tol],
         #precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
         precs = Counter(UInt32, Float32, length(ion_list)),
-        precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         regularize = params[:regularize],
         rt_bounds = params[:rt_bounds],
@@ -402,13 +403,14 @@ function mainLibrarySearch(
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
         min_frag_count_index_search = params[:min_frag_count_index_search],
-        min_matched_ratio = params[:min_matched_ratio],
-        min_matched_ratio_index_search = params[:min_matched_ratio_index_search],
+        min_matched_ratio = params[:min_matched_ratio_main_search],
+        min_index_search_score = params[:min_index_search_score],
         min_spectral_contrast = params[:min_spectral_contrast],
+        min_topn = params[:min_topnOf3],
         most_intense = params[:most_intense],
         nmf_tol = params[:nmf_tol],
         precs = Counter(UInt32, Float32, length(ion_list)),
-        precursor_tolerance = params[:precursor_tolerance],
+        #precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         regularize = params[:regularize],
         rt_bounds = params[:rt_bounds],
@@ -426,6 +428,7 @@ end
 function integrateMS2(
     #Mandatory Args
     spectra::Arrow.Table,
+    precursors::Vector{LibraryPrecursor{Float32}},
     ion_list::Vector{Vector{LibraryFragment{Float32}}},
     rt_index::retentionTimeIndex{U, T},
     ms_file_idx::UInt32,
@@ -440,9 +443,9 @@ function integrateMS2(
 
     return SearchRAW(
         spectra, 
-        missing, 
+        missing,
         precursors,
-        ion_list,
+        ion_list, 
         x->x,
         ms_file_idx,
         err_dist,
@@ -456,7 +459,7 @@ function integrateMS2(
         #                        :frag_count => zeros(Int64, N),
         #                        :rank => zeros(UInt8, N),
         #                        :cycle_idx => zeros(UInt32, N)),
-        expected_matches = params[:expected_matches],
+        #expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
         max_iter = params[:max_iter],
@@ -465,9 +468,11 @@ function integrateMS2(
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
         min_spectral_contrast = params[:min_spectral_contrast],
+        min_topn = params[:min_topnOf3],
+        min_weight = params[:min_weight],
         most_intense = params[:most_intense],
         nmf_tol = params[:nmf_tol],
-        precursor_tolerance = params[:precursor_tolerance],
+        #precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         regularize = params[:regularize],
         rt_index = rt_index,

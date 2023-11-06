@@ -1,30 +1,17 @@
 function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScores{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
-    #=
-    scribe_scores = zeros(T, H.n)
-    scribe_scores_corrected = zeros(T, H.n)
-    city_block_scores = zeros(T, H.n)
-    spectral_contrast_scores = zeros(T, H.n)
-    spectral_contrast_scores_corrected = zeros(T, H.n)
-    matched_ratio = zeros(T, H.n)
-    =#
-    #matched= ones(Int64, H.m)
-   # mask = SparseMatr54ixCSC(H.m, H.n, copy(H.colptr), copy(H.rowval), ones(Float32, length(H.nzval)))
-
-    #for i in range(last_matched_col, H.m)
-    #    matched[i] = 0
-    #end
-    #matched = [x>0 ? 1 : 0 for x in X]
 
     for col in range(1, H.n)
         H_sqrt_sum = zero(T)
+        H_sqrt_sum_fitted = zero(T)
         X_sqrt_sum = zero(T)
 
         H_sqrt_sum_corrected = zero(T)
         X_sqrt_sum_corrected = zero(T)
 
         H2_norm = zero(T)
+        H2_norm_fitted = zero(T)
         X2_norm = zero(T)
-
+        X_sum = zero(T)
         H2_norm_corrected = zero(T)
         X2_norm_corrected = zero(T)
 
@@ -33,8 +20,11 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
 
         scribe_score = zero(T)
         scribe_score_corrected = zero(T)
+        scribe_score_fitted = zero(T)
 
         city_block_dist = zero(T)
+        city_block_fitted = zero(T)
+
         matched_sum = zero(T)
         unmatched_sum = zero(T)
     
@@ -59,13 +49,17 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
         #for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
+            X_sum += H.x[i]
             H_sqrt_sum += sqrt(H.nzval[i])
+            #H_sqrt_sum_fitted += sqrt(w[col]*H.nzval[i])
             X_sqrt_sum += sqrt(H.x[i] + 1e-10)#/Xsum
-
+            scribe_score_fitted += (w[col]*H.nzval[i] - H.x[i])^2
+            city_block_fitted += abs(w[col]*H.nzval[i] - H.x[i])
             H_sqrt_sum_corrected += sqrt(H.nzval[i]*H.mask[i])
             X_sqrt_sum_corrected += sqrt(H.x[i]*H.mask[i] + 1e-10)#/Xsum
 
             H2_norm += (H.nzval[i])^2 + 1e-10
+            #H2_norm_fitted += (w[col]*H.nzval[i])^2 + 1e-10
             X2_norm += (H.x[i])^2 + 1e-10
             dot_product += H.nzval[i]*H.x[i]
 
@@ -82,6 +76,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
           
         #Sqrt of sum of squares
         H2_norm = sqrt(H2_norm)
+        #H2_norm_fitted = sqrt(H2_norm_fitted)
         X2_norm = sqrt(X2_norm)
         H2_norm_corrected = sqrt(H2_norm_corrected)
         X2_norm_corrected = sqrt(X2_norm_corrected)
@@ -99,10 +94,21 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
                 (sqrt(H.x[i]*H.mask[i])/X_sqrt_sum)
                 )^2  
 
+            #scribe_score_fitted +=  (
+            #    (sqrt(w[col]*H.nzval[i])/H_sqrt_sum_fitted) - 
+            #    (sqrt(H.x[i])/X_sqrt_sum)
+            #    )^2  
+
             city_block_dist += abs(
                 (H.nzval[i]/H2_norm) -
                 (H.x[i]/X2_norm)
             )        
+
+            #city_block_fitted += abs(
+            #    (H.nzval[i]*w[col]/H2_norm_fitted) -
+            #    (H.x[i]/X2_norm)
+            #)   
+
         end
         #=
         scribe_scores[col] = -log((scribe_score)/N)
@@ -116,7 +122,9 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         spectral_scores[col] = SpectralScores(
             Float16(-log((scribe_score)/N)), #scribe_score
             Float16(-log((scribe_score_corrected)/N_corrected)), #scribe_score_corrected
+            Float16(-log((scribe_score_fitted)/(X2_norm^2))), #scribe_score_corrected
             Float16(-log((city_block_dist)/N)), #city_block
+            Float16(-log((city_block_fitted)/X_sum)), #city_block
             Float16(dot_product/(H2_norm*X2_norm)), #dot_p
             Float16(dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)), #spectral_contrast_corrected
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
@@ -891,3 +899,7 @@ function getDistanceMetrics(H::SparseMatrixCSC{T, Int64}, X::Vector{T}, unmatche
     return scribe_squared_errors, city_block_dist, matched_ratio, spectral_contrast_matched, spectral_contrast_all
 end
 =#
+
+
+
+

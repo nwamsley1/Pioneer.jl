@@ -84,6 +84,8 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
             prec = precursors[first(precs[i])]
             mz_low = - first(mz_bounds) - 3*NEUTRON/getCharge(prec)
             mz_high = last(mz_bounds) + NEUTRON/getCharge(prec)
+            #$mz_low = - first(mz_bounds) #- 3*NEUTRON/getCharge(prec)
+            #mz_high = last(mz_bounds) #+ NEUTRON/getCharge(prec)
             if (getMz(prec) < mz_low) | (getMz(prec) > mz_high)
                 continue
             end

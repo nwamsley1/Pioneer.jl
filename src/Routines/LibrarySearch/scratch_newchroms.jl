@@ -175,7 +175,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Fit EGH Curve 
     EGH_FIT = nothing
     lower, upper, p0 = nothing, nothing, nothing
-    if data_points < 4
+    if data_points < 10
         lower = Float32[0.015, 0, 0.023, height];
         upper = Float32[0.015, Inf, 0.023, height];
         p0 = getP0((α, 
@@ -221,7 +221,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     if isplot
         println("PLOT")
         #Plot Data
-        p = Plots.plot(rt, intensity, show = true, seriestype=:scatter)
+        p = Plots.plot(rt, intensity, show = true, seriestype=:scatter, reuse = false)
         Plots.plot!(p, rt[lsq_fit_weight.!=0.0], intensity[lsq_fit_weight.!=0.0], show = true, alpha = 0.5, color = :green, seriestype=:scatter)
         #Plots.plot!(chrom[:,:RT], chrom[:,:weight], show = true, alpha = 0.5, seriestype=:scatter)
         println(EGH_FIT.param)
@@ -249,6 +249,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         Plots.vline!(p,[rt[1]], color = :red);
         Plots.vline!(p, [rt[end]], color = :red);
         display(p)
+        peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
+        println("peak_area $peak_area")
     end
 
     ############
@@ -347,7 +349,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
     mean_ratio = mean(chrom.matched_ratio)
     base_width = rt[end] - rt[1]
-    
+
+    best_scan = argmax(chrom.weight)#argmax(chrom.prob.*(chrom.weight.!=0.0))
     chrom.peak_area[best_scan] = peak_area
     chrom.GOF[best_scan] = GOF
     chrom.FWHM[best_scan] = FWHM
@@ -379,8 +382,8 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
 
     gx, gw = gausslegendre(n_quadrature_nodes)
 
-    Threads.@threads for i in ProgressBar(range(1, length(grouped_precursor_df)))
-    #for i in range(1, length(grouped_precursor_df))
+    #Threads.@threads for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    for i in range(1, length(grouped_precursor_df))
         integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 gx::Vector{Float64},
                                 gw::Vector{Float64},
