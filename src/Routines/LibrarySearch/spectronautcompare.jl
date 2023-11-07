@@ -1,3 +1,4 @@
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_54M_110623.jld2"); PSMs)
 combined_set = load("/Users/n.t.wamsley/Desktop/good_precursors_a.jld2")
 combined_set  = combined_set["combined_set"]
 combined_set = Set(replace.(combined_set, "[Carbamidomethyl (C)]" => ""))
@@ -9,6 +10,7 @@ for i in ProgressBar(range(1, size(PSMs)[1]))
     PSMs[i,:charge] = UInt8(getCharge(prosit_lib["precursors"][PSMs[i,:precursor_idx]]));
 end
 PSMs[:,:stripped_sequence] = replace.(PSMs[:,:sequence], "M(ox)" => "M");
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_54M_110623.jld2"); PSMs)
 pioneer_passing = Set("_".*PSMs[!,:stripped_sequence].*"_.".*string.(PSMs[!,:charge]))
 setdiff(combined_set, pioneer_passing)
 
@@ -96,9 +98,11 @@ PSMs_SUB[:,:q_value] .= zero(Float16);
 FORM = FormulaTerm(
     (Term(:target),),
     (
-    # Term(:scribe_corrected),
-     #Term(:spectral_contrast_corrected),
+     Term(:scribe_corrected),
+     Term(:spectral_contrast_corrected),
      Term(:spectral_contrast),
+     Term(:hyperscore),
+     Term(:poisson),
      Term(:scribe),
      Term(:RT_error),
      Term(:missed_cleavage),
@@ -106,12 +110,15 @@ FORM = FormulaTerm(
      Term(:TIC),
      Term(:city_block),
      Term(:entropy_score),
+     #Term(:entropy_score) & Term(:adjusted_intensity_explained),
      Term(:total_ions),
      Term(:err_norm),
      Term(:charge),
-     Term(:spectrum_peak_count) & Term(:total_ions)
+     Term(:spectrum_peak_count),
+     Term(:adjusted_intensity_explained)
 ))
 
+#=
 for name in names(PSMs_SUB)
     if eltype(PSMs_SUB[!,name]) == String
         continue
@@ -122,13 +129,40 @@ for name in names(PSMs_SUB)
         end
     end
 end
+=#
 model_fit = glm(FORM,PSMs_SUB, 
+                        Binomial(), 
+                        ProbitLink())
+Y′ = Float16.(GLM.predict(model_fit, PSMs_SUB));
+getQvalues!(PSMs_SUB, allowmissing(Y′),  allowmissing(PSMs_SUB[:,:decoy]));
+model_fit = glm(FORM,PSMs_SUB[(PSMs_SUB.decoy) .| ((PSMs_SUB.q_value.<=0.01)),:], 
+                        Binomial(), 
+                        ProbitLink())
+Y′ = Float16.(GLM.predict(model_fit, PSMs_SUB));
+getQvalues!(PSMs_SUB, allowmissing(Y′),  allowmissing(PSMs_SUB[:,:decoy]));
+model_fit = glm(FORM,PSMs_SUB[(PSMs_SUB.decoy) .| ((PSMs_SUB.q_value.<=0.01)),:], 
                         Binomial(), 
                         ProbitLink())
 Y′ = Float16.(GLM.predict(model_fit, PSMs_SUB));
 getQvalues!(PSMs_SUB, allowmissing(Y′),  allowmissing(PSMs_SUB[:,:decoy]));
 println("Target PSMs at 25% FDR: ", sum((PSMs_SUB.q_value.<=0.25).&(PSMs_SUB.decoy.==false)))
 println("Target PSMs at 1% FDR: ", sum((PSMs_SUB.q_value.<=0.01).&(PSMs_SUB.decoy.==false)))
+pioneer_passing = Set("_".*PSMs_SUB[(PSMs_SUB.q_value.<=0.25).&(PSMs_SUB.decoy.==false),:stripped_sequence].*"_.".*string.(PSMs_SUB[(PSMs_SUB.q_value.<=0.25).&(PSMs_SUB.decoy.==false),:charge]))
+setdiff(combined_set, pioneer_passing)
+
+features = [:RT_error,:entropy_score]
+lda = fit(MulticlassLDA, Float32.(Matrix(PSMs_SUB[!,features]))', PSMs_SUB[!,:decoy]; outdim = 2)
+Ylda = MultivariateStats.predict(lda,  Matrix(PSMs_SUB[!,features])')[2,:]
+getQvalues!(PSMs_SUB, allowmissing(Ylda),  allowmissing(PSMs_SUB[:,:decoy]));
+
+X = Float32.(Matrix(PSMs_SUB[1:1:end,features]))'
+X_labels = Vector(PSMs_SUB[1:1:end,:decoy]).==false
+#X_labels = [Dict(false=>0.0, true=>1.0)[x] for x in X_labels]
+lda = fit(MulticlassLDA, X, X_labels; outdim=2)
+Ylda =  MultivariateStats.predict(lda, X)
+
+
+
 filter!(x->x.q_value<=0.25, PSMs_SUB);
 sort!(PSMs_SUB,:RT); #Sorting before grouping is critical. 
 PSMs_SUB[!,:max_weight] .= zero(Float32)
