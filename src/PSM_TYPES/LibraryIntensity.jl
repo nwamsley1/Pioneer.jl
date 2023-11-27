@@ -149,9 +149,9 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
         )&(
             weight[i] >= min_weight
         )&(
-            UInt8(unscored_PSMs[i].topn) >= 0#min_topn
+            UInt8(unscored_PSMs[i].topn) >= min_topn
         )&(
-            true#UInt8(unscored_PSMs[i].best_rank) == #1
+            UInt8(unscored_PSMs[i].best_rank) == 1
         )
 
         if !passing_filter #Skip this scan

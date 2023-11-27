@@ -58,7 +58,11 @@ function SearchRAW(
     cycle_idx = 0 
     last_val = 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
-
+    println("min_spectral_contrast ", min_spectral_contrast) #Remove precursors with spectral contrast lower than this ammount
+    println("min_matched_ratio ", min_matched_ratio) 
+    println("min_frag_count ", min_frag_count) 
+    println("min_weight ", min_weight) 
+    println("min_topn ", min_topn) 
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
     all_fmatches = Vector{IonMatchType}()
