@@ -46,8 +46,8 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
     
         N = 0
         N_corrected = 0
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             X_sum += H.x[i]
             H_sqrt_sum += sqrt(H.nzval[i])
@@ -81,8 +81,8 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         H2_norm_corrected = sqrt(H2_norm_corrected)
         X2_norm_corrected = sqrt(X2_norm_corrected)
 
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
@@ -288,7 +288,8 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
     Xentropy = zero(T)
     HXentropy = zero(T)
 
-    @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+    #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+    for i in range(H.colptr[col], H.colptr[col + 1]-1)
         #MASK is true for selected ions and false otherwise
         hp = H.nzval[i]#/Hsum
         xp = H.x[i]#/Xsum
@@ -300,7 +301,8 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
         #HXsum += xp + hp
     end
 
-    @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+    #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+    for i in range(H.colptr[col], H.colptr[col + 1]-1)
         #MASK is true for selected ions and false otherwise
         hp = H.nzval[i]/Hsum
         xp = H.x[i]/Xsum
@@ -323,7 +325,8 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
         Hsum = zero(T)
         Xsum = zero(T)
         HXsum = zero(T)
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             hp = H.nzval[i]^Hw#/Hsum
             xp = H.x[i]^Xw#/Xsum
@@ -333,7 +336,8 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
             Hsum += hp
         end
 
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             hp = (H.nzval[i]^Hw)/Hsum
             xp = (H.x[i]^Xw)/Xsum
@@ -348,7 +352,8 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
         HXw = HXentropy < 3 ? 0.25*(1 + HXentropy) : 1.0
         HXentropy = zero(Float32)
         HXsum = zero(Float32)
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             hp = (H.nzval[i]^Hw)/Hsum
             xp = (H.x[i]^Xw)/Xsum

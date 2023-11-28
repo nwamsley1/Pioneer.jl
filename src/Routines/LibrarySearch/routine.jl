@@ -4,6 +4,7 @@
 ##########
 #Data Parsing/Printing
 println("Importing Libraries...")
+
 using ArgParse
 using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
 using Plots, PrettyPrinting
@@ -12,6 +13,7 @@ using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, Lin
 #Algorithms 
 using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
 using Base.Order
+
 ##########
 #Parse Arguments 
 ##########
@@ -239,6 +241,7 @@ end
 #Load Dependencies 
 ##########
 #Fragment Library Parsing
+
 [include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl","parseFasta.jl","PrecursorDatabase.jl"]];
 
 [include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["buildPrositCSV.jl",
@@ -268,13 +271,13 @@ end
                                                                                     "buildRTIndex.jl",
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
-                                                                                   "integrateChroms.jl",
-                                                                                   "getCrossCorr.jl",
+                                                                                "integrateChroms.jl",
+                                                                                "getCrossCorr.jl",
                                                                                     "queryFragmentIndex.jl",
                                                                                     "scratch_newchroms.jl"]];
 
 
-                                                                                                                                 
+                                                                                                                                
 #Files needed for PSM scoring
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]]
 
@@ -289,14 +292,13 @@ precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfil
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
 spec_load_time = @timed begin
-    f_index = load(f_index_path);
-    prosit_lib["f_index"] = f_index["f_index"]
-    f_det = load(f_det_path)
-    prosit_lib["f_det"] = f_det["f_det"];
-    precursors = load(precursors_path)
-    prosit_lib["precursors"] = precursors["precursors"];
+    const f_index = load(f_index_path)["f_index"];
+    prosit_lib["f_index"] = f_index#["f_index"]
+    const f_det = load(f_det_path)["f_det"]
+    prosit_lib["f_det"] = f_det#["f_det"];
+    const precursors = load(precursors_path)["precursors"]
+    prosit_lib["precursors"] = precursors#["precursors"];
 end
-
 ###########
 #Load RAW File
 #=
