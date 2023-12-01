@@ -325,23 +325,25 @@ lk = ReentrantLock()
 ms_file_idx = 1
 MS_TABLE_PATH = MS_TABLE_PATHS[1]
 =#
-Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    sub_search_time = @timed rtPSMs, all_matches =  firstSearch(
-                                        MS_TABLE,
-                                        prosit_lib["f_index"],
-                                        prosit_lib["precursors"],
-                                        prosit_lib["f_det"],
-                                        x->x, #RT to iRT map'
-                                        UInt32(ms_file_idx), #MS_FILE_IDX
-                                        Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
-                                        first_search_params,
-                                        #scan_range = (100000, 110000)
-                                        scan_range = (1, length(MS_TABLE[:masses]))
-                                        );
 
+    sub_search_time = @timed RESULT =  firstSearch(
+                                            MS_TABLE,
+                                            prosit_lib["f_index"],
+                                            prosit_lib["precursors"],
+                                            prosit_lib["f_det"],
+                                            x->x, #RT to iRT map'
+                                            UInt32(ms_file_idx), #MS_FILE_IDX
+                                            Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
+                                            first_search_params,
+                                            #scan_range = (100000, 110000)
+                                            scan_range = (1, length(MS_TABLE[:masses]))
+                                            );
+    rtPSMs = vcat([first(result) for result in RESULT]...)
+    all_matches = vcat([last(result) for result in RESULT]...)
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
         (a-b)/(a/1e6)
     end
@@ -382,8 +384,10 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
     #1) RT to iRT curve and 
     #2) mass error (ppm) distribution 
     best_precursors = Set(rtPSMs[:,:precursor_idx]);
+
     best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
+
 
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     lock(lk) do 
@@ -400,6 +404,7 @@ Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_
         frag_err_dist_dict[ms_file_idx] = frag_err_dist
     end
 end
+
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
 
@@ -407,11 +412,13 @@ println("Finished presearch in ", presearch_time.time, " seconds")
 #Main PSM Search
 ###########
 println("Begining Main Search...")
+
+PSMs_Dict = Dictionary{String, DataFrame}()
 RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
-main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
-        sub_search_time = @timed PSMs = mainLibrarySearch(
+        PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
@@ -423,10 +430,10 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
             main_search_params,
             scan_range = (1, length(MS_TABLE[:masses]))
             #scan_range = (100000, 100010)
-        );
-        println("Finished main search for $ms_file_idx in ", sub_search_time.time, " seconds")
+        )...);
 
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
+        
         filter!(x->x.q_value<=0.25, PSMs);
 
         #############
@@ -449,16 +456,16 @@ main_search_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in c
         #Build RT index of precursors to integrate
         rt_index = buildRTIndex(PSMs);
 
-        lock(lk) do 
-            insert!(RT_INDICES, MS_TABLE_PATH, rt_index)#joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
-        end
+         
+        #insert!(RT_INDICES, MS_TABLE_PATH, rt_index)#joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
         #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
         #Free up memory
-        PSMs = nothing;
+        insert!(PSMs_Dict, MS_TABLE_PATH, PSMs);
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_110223.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_112923.jld2"); PSMs_Dict)
 RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_110223.jld2"));
 RT_INDICES = RT_INDICES["RT_INDICES"]
 

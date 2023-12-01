@@ -26,7 +26,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[!,:spectrum_peak_count] .= zero(UInt16);
     PSMs[!,:stripped_sequence] .= "";
     #SMs[!,:sequence_length] .= false
-    for i in range(1, size(PSMs)[1])
+    Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
         PSMs[i,:decoy] = isDecoy(precursors[PSMs[i,:precursor_idx]]);
         PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
     #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
@@ -60,7 +60,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[:,:RT_pred] = Float16.(linear_spline(PSMs[:,:iRT]))
     PSMs[:,:RT_error] = Float16.(abs.(PSMs[!,:RT_pred] .- PSMs[!,:RT]))
     ############################
-    return 
+    #return 
     ###########################
     #Filter on Rank and Topn
     #filter!(x->x.RT_error<max_rt_error, PSMs);
@@ -92,6 +92,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:spectrum_peak_count)
     ))
 
+    #=
     for name in names(PSMs)
         if eltype(PSMs[!,name]) == String
             continue
@@ -102,8 +103,9 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
             end
         end
     end
+    =#
 
-  model_fit = glm(FORM, PSMs, 
+   model_fit = glm(FORM, PSMs, 
                             Binomial(), 
                             ProbitLink())
     Y′ = Float16.(GLM.predict(model_fit, PSMs));

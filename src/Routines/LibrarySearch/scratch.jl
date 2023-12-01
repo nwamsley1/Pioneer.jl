@@ -1,363 +1,444 @@
-pbar = ProgressBar(total=100)
-       update(pbar)     # Advances pbar count by 1
-       update(pbar, 2) # Can giv
+abstract type Params end
 
-
-function distributeScans(N::Int64, m::Int64)
-scan_idx = 0
-scans = Vector{NamedTuple{(:first_scan, :last_scan, :thread_id), Tuple{Int64, Int64, Int64}}}()
-proc = 0
-i = 1
-first_scan = 1
-last_scan = 1
-while scan_idx <= N
-if (i > m) | (scan_idx == N)
-i = 0
-proc += 1
-push!(scans, (first_scan = first_scan, 
-              last_scan = scan_idx,
-              thread_id = proc%Threads.nthreads() + 1)
-      )
-scan_idx += 1
-first_scan = scan_idx
-continue
-end
-scan_idx += 1
-i += 1
-end
-return scans
+struct HuberParams{T<:AbstractFloat} <: Params
+    σ::T
+    tᵣ::T
+    τ::T
+    H::T
 end
 
-
-
-precs = [Counter(UInt32, Float32, length(ion_list)) for _ in range(1, Threads.nthreads())]
-println(length(precs))
-##########
-#Initialize 
-
-println("min_spectral_contrast ", min_spectral_contrast) #Remove precursors with spectral contrast lower than this ammount
-println("min_matched_ratio ", min_matched_ratio) 
-println("min_frag_count ", min_frag_count) 
-println("min_weight ", min_weight) 
-println("min_topn ", min_topn) 
-###########
-#Pre-allocate Arrays to save (lots) of time in garbage collection. 
-all_fmatches = Vector{IonMatchType}()
-collect_fmatches ? all_fmatches = [[IonMatchType() for x in range(1, expected_matches)] for _ in range(1, Threads.nthreads())] : nothing
-
-#These are overwritten for every searched spectrum. "expected_matches"
-#is a guess for the largest array size that would be needed for any spectrum. 
-#If the guess is too small, the arrays will simply be increased in size as needed
-#by a pre-determined block-size. 
-println("START")
-ionMatches = [[IonMatchType() for _ in range(1, expected_matches)]  for _ in range(1, Threads.nthreads())]#IonMatchType is something that inherits from the "Match" class. 
-ionMisses = [[IonMatchType() for _ in range(1, expected_matches)] for _ in range(1, Threads.nthreads())]
-ionTemplates = [[IonTemplateType() for _ in range(1, expected_matches)]  for _ in range(1, Threads.nthreads())]
-prec_ids = [[zero(UInt32) for _ in range(1, expected_matches)] for _ in range(1, Threads.nthreads())]
-
-IDtoCOL = nothing
-if ismissing(precs)
-IDtoCOL = [ArrayDict(UInt32, UInt16, length(precursors)) for _ in range(1, Threads.nthreads())]
-else
-IDtoCOL = [ArrayDict(UInt32, UInt16, length(first(precs).ids)) for _ in range(1, Threads.nthreads())]
-end
-#H_COLS, H_ROWS, H_VALS, H_MASK = zeros(Int64, expected_matches), zeros(Int64, expected_matches), zeros(Float32, expected_matches), zeros(Float32, expected_matches)
-scored_PSMs = [Vector{LibPSM{Float32, Float16}}(undef, 5000) for _ in range(1, Threads.nthreads())];
-unscored_PSMs = [[LXTandem(Float32) for _ in 1:5000] for _ in range(1, Threads.nthreads())];
-spectral_scores = [Vector{SpectralScores{Float16}}(undef, 5000) for _ in range(1, Threads.nthreads())];
-Hs = [SparseArray(50000) for _ in range(1, Threads.nthreads())];
-println("STOP")
-
-#weights
-precursor_weights = ""
-if ismissing(ion_list)
-precursor_weights = [zeros(Float32, maximum(keys(isotope_dict))) for _ in range(1, Threads.nthreads())]
-else
-precursor_weights = [zeros(Float32, length(ion_list)) for _ in range(1, Threads.nthreads())]
-end
-_weights_ = [zeros(Float32, 5000) for _ in range(1, Threads.nthreads())];
-_residuals_ = [zeros(Float32, 5000) for _ in range(1, Threads.nthreads())];
-last_vals = [0 for _ in range(1, Threads.nthreads())];
-#fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
-##########
-#Iterate through spectra
-scan_batches = distributeScans(length(spectra[:masses]), 10000)
-Threads.@threads :static for i in ProgressBar(1:length(scan_batches))
-ThreadID = scan_batches[i][:thread_id] 
-scan_range = (scan_batches[i][:first_scan], scan_batches[i][:last_scan])
-msms_counts = Dict{Int64, Int64}()
-frag_err_idx = 1
-prec_idx = 0
-ion_idx = 0
-cycle_idx = 0 
-minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
-println("scan range ", scan_range, " assigned to thread ", ThreadID)
-for i in range(scan_batches[i][:first_scan], scan_batches[i][:last_scan])
-###########
-#Scan Filtering
-msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
-if msn == 1
-cycle_idx += 1
-end
-msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-
-(i >= first(scan_range)) & (i <= last(scan_range)) ? nothing : continue #Skip if outside the scan range
-first(rand(1)) <= sample_rate ? nothing : continue #dice-roll. Usefull for random sampling of scans. 
-
-min_intensity = getMinIntensity(spectra[:intensities][i], max_peaks) #Ignore peaks in the spectrum below this minimum intensity
-
-iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
-
-##########
-#Ion Template Selection
-#SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
-if !ismissing(searchScan!) | !ismissing(frag_index)
-prec_count, match_count = searchScan!(
-            precs[ThreadID], #counter which keeps track of plausible matches 
-            frag_index, 
-            min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
-            iRT_low, iRT_high,
-            Float32(fragment_tolerance), 
-            Float32(precursor_tolerance),
-            Float32(quadrupole_isolation_width/2.0),
-            min_frag_count = min_frag_count_index_search, 
-            min_ratio = Float32(min_index_search_score),
-            topN = topN_index_search,#topN
-            )
-
-end
-#selectIons! 
-#Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
-if !ismissing(precs) 
-ion_idx, prec_idx = selectIons!(ionTemplates[ThreadID], 
-                                                            precursors,
-                                                            ion_list,
-                                                            precs[ThreadID],
-                                                            topN,
-                                                            Float32(iRT_to_RT_spline(spectra[:retentionTime][i])),
-                                                            Float32(rt_tol), #rt_tol
-                                                            (
-                                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                                            )
-                                                            )::Tuple{Int64, Bool}
-else
-ion_idx, prec_idx = selectIons!(
-                                ionTemplates[ThreadID],
-                                precursors,
-                                ion_list,
-                                prec_ids[ThreadID],
-                                rt_index,
-                                spectra[:retentionTime][i],
-                                Float32(max_peak_width/2),
-                                spectra[:precursorMZ][i],
-                                Float32(quadrupole_isolation_width/2.0),
-                                (
-                                    spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                    spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                    )
-                                )
-end
-ion_idx < 2 ? continue : nothing 
-
-##########
-#Match sorted list of plausible ions to the observed spectra
-nmatches, nmisses = matchPeaks(ionTemplates[ThreadID], #Search the spectra for these ions 
-                                                ion_idx, #search ionTemplates[1:ion_idx]
-                                                ionMatches[ThreadID], #Fill with matched ions 
-                                                ionMisses[ThreadID], #Fill with unmatched ions 
-                                                spectra[:masses][i], 
-                                                spectra[:intensities][i], 
-                                                count_unmatched=true, #Should we fill "ionMisses"?
-                                                δs = [frag_ppm_err], #Mass offsets 
-                                                scan_idx = UInt32(i),
-                                                ms_file_idx = ms_file_idx,
-                                                min_intensity = min_intensity, #Ignore peaks below this intensity
-                                                ppm = fragment_tolerance, #Fragment match tolerance in ppm
-                                                most_intense = most_intense
-                                                )
-
-##########
-#Spectral Deconvolution and Distance Metrics 
-if nmatches > 2 #Few matches to do not perform de-convolution 
-
-#Spectral deconvolution. Build sparse design/template matrix for regression 
-#Sparse matrix representation of templates written to Hs. 
-#IDtoCOL maps precursor ids to their corresponding columns. 
-buildDesignMatrix!(Hs[ThreadID], ionMatches[ThreadID], ionMisses[ThreadID], nmatches, nmisses, IDtoCOL[ThreadID])
-
-if IDtoCOL[ThreadID].size > length(_weights_[ThreadID])
-    append!(_weights_[ThreadID], zeros(eltype(_weights_[ThreadID]), IDtoCOL[ThreadID].size - length(_weights_[ThreadID]) + 1000 ))
-    append!(spectral_scores[ThreadID], Vector{SpectralScores{Float16}}(undef, IDtoCOL[ThreadID].size - length(spectral_scores[ThreadID]) + 1000 ))
-    append!(unscored_PSMs[ThreadID], [LXTandem(Float32) for _ in 1:(IDtoCOL[ThreadID].size - length(unscored_PSMs[ThreadID]) + 1000)]);
-end
-#Get most recently determined weights for eahc precursors
-#"Hot" start
-for i in range(1, IDtoCOL[ThreadID].size)#pairs(IDtoCOL)
-    _weights_[ThreadID][IDtoCOL[ThreadID][IDtoCOL[ThreadID].keys[i]]] = precursor_weights[ThreadID][IDtoCOL[ThreadID].keys[i]]
+import Base.-
+function -(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ - b.σ, 
+                        a.tᵣ - b.tᵣ, 
+                        a.τ - b.τ,
+                        a.H - b.H)
 end
 
-#Get initial residuals
-initResiduals!(_residuals_[ThreadID], Hs[ThreadID], _weights_[ThreadID]);
-if ismissing(precs) 
-    #Spectral deconvolution.
-    solveHuber!(Hs[ThreadID], _residuals_[ThreadID], _weights_[ThreadID], 
-                                        huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs[ThreadID].n);
-end
-#Remember determined weights for eahc precursors
-for i in range(1, IDtoCOL[ThreadID].size)
-    precursor_weights[ThreadID][IDtoCOL[ThreadID].keys[i]] = _weights_[ThreadID][IDtoCOL[ThreadID][IDtoCOL[ThreadID].keys[i]]]# = precursor_weights[id]
+import Base./
+function /(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ/d, 
+                        a.tᵣ/d, 
+                        a.τ/d,
+                        a.H/d)
 end
 
-if ismissing(isotope_dict) 
-    getDistanceMetrics(_weights_[ThreadID], Hs[ThreadID], spectral_scores[ThreadID])
+function norm(a::HuberParams{T}) where {T<:AbstractFloat}
+    return sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
 end
 
-##########
-#Scoring and recording data
-if !ismissing(scored_PSMs)
-
-    ScoreFragmentMatches!(unscored_PSMs[ThreadID],
-                        IDtoCOL[ThreadID],
-                        ionMatches[ThreadID], 
-                        nmatches, 
-                        err_dist)
-
-    last_vals[ThreadID] = Score!(scored_PSMs[ThreadID], 
-        unscored_PSMs[ThreadID],
-        spectral_scores[ThreadID],
-        _weights_[ThreadID],
-        #match_count/prec_count,
-        nmatches/(nmatches + nmisses),
-        last_vals[ThreadID],
-        Hs[ThreadID].n,
-        Float32(sum(spectra[:intensities][i])), 
-        i,
-        min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-        min_matched_ratio = min_matched_ratio,
-        min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
-        min_weight = min_weight,
-        min_topn = min_topn,
-        block_size = 500000,
-        )
-end
-end
-#Add fragment matches to all_fmatches 
-frag_err_idx = collectFragErrs(all_fmatches[ThreadID], ionMatches[ThreadID], nmatches, frag_err_idx, collect_fmatches)
-
-##########
-#Update Chromatograms 
-#=
-if !ismissing(chromatograms)
-frag_counts = counter(UInt32) #Basically a Dictionary that counts the number of matched ions (values) for each precursor (keys)
-for match_idx in range(1, nmatches) #fragmentMatches
-    DataStructures.inc!(frag_counts, ionMatches[match_idx].prec_id)
-end
-#Add precursor templates with their weights and retention times to the chromatogram table 
-chrom_idx = fillChroms!(chromatograms, IDtoCOL, chrom_idx, i, cycle_idx, prec_ids, prec_idx, frag_counts, weights, spectra[:retentionTime][i])
-end
-=#
-##########
-#Reset pre-allocated arrays 
-reset!(ionTemplates[ThreadID], ion_idx)
-reset!(ionMatches[ThreadID], nmatches)
-reset!(ionMisses[ThreadID], nmisses)
-fill!(prec_ids[ThreadID], zero(UInt32))
-for i in range(1, Hs[ThreadID].n)
-unscored_PSMs[ThreadID][i] = LXTandem(Float32)
-end
-reset!(IDtoCOL[ThreadID]);
-reset!(Hs[ThreadID]);
-end
-end
-#return fragment_intensities
-############
-#Return Chromatograms and Score/Feature Table
-#return all_fmatches
-if collect_fmatches
-#return DataFrame(scored_PSMs), all_fmatches
-return  DataFrame(@view(scored_PSMs[1][1:last_vals[1]])), all_fmatches[1]
-else
-return DataFrame(@view(scored_PSMs[1][1:last_vals[1]]))
-end
-#=
-if ismissing(chromatograms)
-#return all_fmatches
-#return DataFrame(scored_PSMs)
-DataFrame(@view(scored_PSMs[1:last_val]))
-elseif ismissing(scored_PSMs)
-chromatograms = DataFrame(chromatograms)
-sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
-return groupby(DataFrame(chromatograms), :precursor_idx)
-else
-chromatograms = DataFrame(chromatograms)
-sort!(chromatograms, [:precursor_idx,:rt], alg=QuickSort);
-return DataFrame(scored_PSMs), groupby(DataFrame(chromatograms), :precursor_idx)
-end
-=#
+function max_norm(a::HuberParams{T}) where {T<:AbstractFloat}
+    return maximum((a.σ, a.tᵣ, a.τ, a.H))
 end
 
-@everywhere begin 
-    function testParallel(spectra::Arrow.Table, scan_idxs::Vector{Int64}, f_det::Vector{Vector{LibraryFragment{Float32}}})
-        scan_sum = 0.0
-        for scan_idx in scan_idxs
-            for i in 1:1
-                scan_sum += log2(sum(log2.(spectra[:intensities][scan_idx])))
-            end
+function updateParams(params::HuberParams{T}, ∇params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}, n::Int64) where {T<:AbstractFloat}
+    new_params = params - ∇params/(norm(∇params)*n)
+    return HuberParams(
+        max(min(new_params.σ, upper.σ), lower.σ),
+        max(min(new_params.tᵣ, upper.tᵣ), lower.tᵣ),
+        max(min(new_params.τ, upper.τ), lower.τ),
+        max(min(new_params.H, upper.H), lower.H)
+    )
+end
+
+#state.params = state.params - ∇params/(norm(∇params)*state.n) #Update parameters
+
+
+mutable struct GD_state{P<:Params, T<:Real, I,J<:Integer}
+    params::P
+    t::Vector{T}
+    y::Vector{T}
+    mask::BitVector
+    n::I
+    max_index::J
+end
+#σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+function F!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+    #for (i, tᵢ) in enumerate(x)
+    for i in range(1, state.max_index)
+        state.mask[i] ? continue : nothing
+        tᵢ = state.t[i]
+        d = 2*state.params.σ + state.params.τ*(tᵢ - state.params.tᵣ)
+        if real(d) > 0
+            state.y[i] = state.params.H*exp((-(tᵢ - state.params.tᵣ)^2)/d)
+        else
+            state.y[i] = zero(T)
         end
-        return scan_sum, f_det[1][1].frag_mz
     end
 end
 
-function distributeScans(N::Int64, m::Int64)
-    scan_idx = 1
-    scans = [ones(Int64, 1) for _ in range(1, Threads.nthreads())]
-    proc = 0
+function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, y::Vector{T}, δ::T) where {T,U<:AbstractFloat, I,J<:Integer}
+
+    H = state.params.H
+    τ = state.params.τ
+    σ = state.params.σ
+    tᵣ = state.params.tᵣ
+    J_σ, J_tᵣ, J_τ, J_H = 0.0, 0.0, 0.0, 0.0
+    #=
+    Jacobian of exponential guassian hybrid with huber Loss
+    using Symbolics, Latexify
+    @variables tᵣ, σ, τ, H, t, δ, y
+    EGH = H*exp( (-(t - tᵣ)^2)/(2*σ + τ*(t - tᵣ)))
+    latexify(EGH)
+    HUBER_EGH = (δ^2)*(sqrt(1 + ((EGH - y)/δ)^2) - 1)
+    latexify(HUBER_EGH)
+    latexify(Symbolics.jacobian([HUBER_EGH], [σ, tᵣ, τ, H]))
+    =#
+    for i in range(1, state.max_index)
+        state.mask[i] ? continue : nothing
+        tᵢ = state.t[i]
+        DT = tᵢ - tᵣ
+        T2 = DT^2
+        D = 2*σ + DT*τ
+        T2D2 = (T2/D^2)
+        EXP = exp(-1.0*T2/D)
+        N = H*EXP - y[i]
+        Denom = sqrt(1 + (N/δ)^2)
+        Common = N*EXP/Denom
+        if 2*σ + τ*(DT) <= 0.0
+            continue
+        end
+        J_σ += -2.0*H*Common*(-1.0*T2D2)
+        J_tᵣ += H*(2*DT/D + τ*T2D2)*Common
+        J_τ += -1.0*H*Common*DT*(-1.0*T2D2)
+        J_H += Common
+    end
+    return HuberParams(J_σ, J_tᵣ, J_τ, J_H)
+end
+
+function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Integer} 
+    for i in range(1, state.max_index)
+        state.t[i], state.y[i] = zero(T), zero(T)
+    end
+    state.max_index = 0
+    state.n = 0
+    return 
+end
+
+function GD(state::GD_state{P,T,I,J}, lower::P, upper::P, data::Vector{T}; tol::Float64 = 1e-3, max_iter::Int64 = 1000, δ::Float64 = 1000.0) where {P<:Params, T<:Real, I,J<:Integer} 
+    
+    #Set initial parameters
+    old_params = state.params
+    state.n = 1
+
+    #Gradient descent until maximum iterations or stopping condition
+    while state.n <= max_iter
+        F!(state) #Evaluate function 
+        ∇params = Jacobian(state, data, δ)
+        #state.params = state.params - ∇params/(norm(∇params)*state.n) #Update parameters
+        updateParams(state.params, 
+                        ∇params, 
+                        lower, upper, #Enforce lower and upper bounds on parameter values 
+                        state.n)
+        #If change in parameters less than a threshold
+        if (max_norm(old_params - state.params) <= tol) & (state.n > 10)
+            return
+        end
+        old_params = state.params #Update latest parameters
+        state.n += 1
+    end    
+end
+
+######
+N = 15
+t = collect(LinRange(-2.0, 5.0, N))
+y = zeros(Float64, length(t))
+TRUE_STATE = GD_state(
+    HuberParams(1.0, 0.0, 1.0, 10000.0),
+    t,
+    y,
+    falses(length(t)),
+    0, 
+    length(t)
+)
+F!(TRUE_STATE)
+data = max.(0.0, TRUE_STATE.y .+ 1000*randn(length(TRUE_STATE.y)))
+plot(TRUE_STATE.t, data, seriestype=:scatter)
+######
+t = collect(LinRange(-2.0, 5.0, 500))
+y = zeros(Float64, length(t))
+TRUE_STATE = GD_state(
+    HuberParams(1.0, 0.0, 1.0, 10000.0),
+    t,
+    y,
+    falses(length(t)),
+    0, 
+    length(t)
+)
+F!(TRUE_STATE)
+plot!(TRUE_STATE.t, TRUE_STATE.y)
+##########
+mask = falses(N)
+STATE = GD_state(#HuberParams(1.0, 0.0, 1.0, 10000.0),
+                HuberParams(0.1, 0.0, 0.001, 10000.0),
+                collect(LinRange(-2.0, 5.0, N)),
+                zeros(Float64, N),
+                mask,
+                0,N)
+GD(STATE, data, tol = 1e-4, max_iter = 10000, δ = 10000.0)
+##########
+STATE_ =GD_state(STATE.params, 
+            collect(LinRange(-2.0, 5.0, 500)),
+            zeros(Float64, 500),
+            falses(length(t)),
+            0,
+            500)
+F!(STATE_
+    )
+plot!(STATE_.t, STATE_.y)
+
+
+STATE_ =GD_state( HuberParams(0.1, 0.0, 0.001, 10000.0), 
+            collect(LinRange(-2.0, 5.0, 500)),
+            zeros(Float64, 500),
+            falses(length(t)),
+            0,
+            500)
+F!(STATE_
+    )
+plot!(STATE_.t, STATE_.y)
+
+
+reset!(STATE)
+
+@time begin 
+    for i in range(1, 1000)
+        STATE.params = HuberParams(0.01, 0.5, 0.001, 10000.0)
+        STATE.n = 0
+        GD(STATE, data, tol = 1e-4, max_iter = 10000)
+    end
+end
+
+
+t = collect(LinRange(-2.0, 5.0, 5))
+y = zeros(Float64, length(t))
+EGH_inplace(y, t, [1, 0.0, 1, 10000])
+plot(t, y)
+data = copy(y .+ 100*randn(length(y)))
+plot!(t, max.(0.0, data), seriestype=:scatter)
+#σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+test = HuberParams(1.0, 0.0, 1.0, 10000.0)
+
+H = HuberParams(0.001, 0.5, 0.01, maximum(data))
+
+t2 = collect(LinRange(-2.0, 5.0, 500))
+y = zeros(Float64, length(t2))
+EGH_inplace(y, t, [1, 0.0, 1, 10000])
+
+for i in range(1, 30)
+    EGH_inplace(y, t2, H)
+    #println("H $H")
+    plot!(t2, y, show = true)
+    H_new = Jacobian(H, t, data, 100.0)
+    #println("H_new ", H_new/(1000000*i))
+    #H = H - H_new/(100000000*i)
+    H = H - H_new/(norm(H_new)*i)
+    sleep(0.2)
+end
+
+
+
+function updateGrad(p::QuadParams{T}, x::Vector{T}, r::Vector{T}) where {T<:Real}
+    return  QuadParams(
+                        sum((x.^3).*sign.(r)),
+                        sum(((-1.0).*x).*sign.(r)),
+                        sum((-1.0).*sign.(r))
+                        )
+end
+
+mutable struct SGD_state{T <: Params, I <: Integer, U,V <: Real} # contains information regarding one iterattion sequence
+    
+    θ::T # iterate x_n
+    θ_best::T #best parameters so far
+    ∇θ::T # one gradient ∇f(x_n)
+    f_best::V 
+    γ::U # stepsize
+    n::I # iteration counter
+    t::Vector{V} #Independent variable
+    y::Vector{V} #Dependent variable
+    r::Vector{V} #Residuals
+ 
+end
+
+function gradientStep(state::SGD_state{QuadParams{T}}) where {T<:Real}
+    θ = (state.θ.θ1 - state.γ*state.∇θ.θ1,
+        state.θ.θ2 - state.γ*state.∇θ.θ2,
+        state.θ.θ3 - state.γ*state.∇θ.θ3)
+    return QuadParams(θ[1], θ[2], θ[3]), sqrt(sum(θ.^2))
+end
+
+function SGD(state::SGD_state, data::T, max_iter::Int64) where {T <: AbstractVecOrMat{<: Real}}
+    θ_best = state.θ
+    evalInplace(state.y, state.t, state.θ)
+    state.r = state.y .- data
+    state.∇θ = updateGrad(state.θ, state.t, state.r)
+    state.f_best = sum(abs.(state.r))
+    γ = state.γ
     i = 1
-    while scan_idx <= N
-        push!(scans[proc%Threads.nthreads() + 1], scan_idx)
-        if i > m
-            i = 0
-            proc += 1
+    last_L = Inf64
+    while i < max_iter
+        new_state, norm = gradientStep(state)#state.θ - state.γ*state.∇θ
+        evalInplace(state.y, state.t, new_state)
+        state.r = state.y .- data
+        state.∇θ = updateGrad(state.θ, state.t, state.r)
+        #if (maxNorm(state.θ, new_state) < 0.001) & (i > 100)
+        #    break
+        #end
+        sum_of_abs_residuals = sum(abs.(state.r))
+        if sum_of_abs_residuals < state.f_best
+            state.f_best = sum_of_abs_residuals
+            #println("last_L $last_L")
+            #println("sum_of_abs_residuals $sum_of_abs_residuals")
+            #if abs(abs((last_L - sum_of_abs_residuals))/sum_of_abs_residuals) < 0.001
+            #    break
+            #end
+            state.θ = new_state
+            θ_best = state.θ
         end
+  
+        last_L = sum_of_abs_residuals
+        #println(γ/norm)
+        #println("norm $norm")
+        #println("∇θ ", state.∇θ)
+        state.γ = (γ/norm)/(i + 1)
+        state.n = i
         i += 1
-        scan_idx += 1
     end
-    return scans
+    state.θ = θ_best
+    println("number of iterations to convergence ", state.n)
+    return state#, L, states
 end
 
-MS_TABLE = Arrow.Table(MS_TABLE_PATHS[1])   
-distributed_scans = distributeScans(length(MS_TABLE[:masses]), 10000)
-proc_sums = Vector{Float64}(undef, nprocs())
+x = collect(LinRange(-10, 10, 150))
+ŷ = zeros(Float64, length(x))
+evalInplace(ŷ, x, QuadParams(5.0, 100.0, 0.0))
+y = copy(ŷ) .+ 100*randn(length(ŷ))
+plot(x, y, seriestype=:scatter)
+plot!(x, ŷ)
+state = SGD(
+    SGD_state(
+    QuadParams(5.0, 1.0, 1.0),
+    QuadParams(5.0, 1.0, 1.0),
+    QuadParams(5.0, 1.0, 1.0),
+    Float64(Inf),
+    0.01/length(x),
+    1,
+    x, 
+    zeros(Float64, length(x)),
+    zeros(Float64, length(x))
+    ),
+    y,
+    200000
+);
+plot!(x, state.y)
 
-Threads.@threads for i in 1:length(distributed_scans)
-    println(testParallel(MS_TABLE, distributed_scans[i], f_det), " + ", Threads.threadid())
+
+
+
+plot(x, y, seriestype=:scatter)
+plot!(x, ŷ)
+println(sum(abs.(y .- ŷ)))
+θ = (1.0, 1.0, 0.0)
+quadfunc!(x, ŷ, θ)
+∇θ = zeros(Float64, 3)
+for i in range(1, 100)
+    quadfunc!(x, ŷ, θ)
+    residuals = ŷ .- y
+    signs = sign.(residuals)
+    ∇θ = ∇quadfunc(x, θ, signs)
+    println(sum(abs.(residuals)))
+    new_theta = θ .- (0.001).*∇θ
+    println(sum(abs.(new_theta .- θ)))
+    θ = new_theta
+end
+println(θ)
+plot!(x, ŷ)
+
+quadfunc(x::T)
+
+
+
+
+t = collect(LinRange(-2.0, 5.0, 100))
+y = zeros(Float64, length(t))
+EGH_inplace(y, t, [1, 0.0, 1, 10000])
+plot(t, y)
+plot!(t, max.(0.0, y .+ 1000*randn(length(y))), seriestype=:scatter)
+
+
+@variables tᵣ, σ, τ, H, t, δ, y
+
+EGH = H*exp( (-(t - tᵣ)^2)/(2*σ + τ*(t - tᵣ)))
+D_tᵣ = Differential(tᵣ)
+D_σ = Differential(σ)
+D_H = Differential(H)
+D_τ = Differential(τ)
+
+expand_derivatives(D_tᵣ(EGH))
+latexify(expand_derivatives(D_τ(EGH)))
+latexify(expand_derivatives(D_H(EGH)))
+latexify(expand_derivatives(D_σ(EGH)))
+
+HUBER_EGH = (δ^2)*(sqrt(1 + ((EGH - y)/δ)^2) - 1)
+
+latexify(HUBER_EGH)
+latexify(expand_derivatives(D_tᵣ(HUBER_EGH)))
+latexify(expand_derivatives(D_τ(HUBER_EGH)))
+latexify(expand_derivatives(D_H(HUBER_EGH)))
+latexify(expand_derivatives(D_σ(HUBER_EGH)))
+
+latexify(Symbolics.jacobian([HUBER_EGH], [tᵣ, τ, σ, H]))
+
+function GD(problem::GD_problem, x::T, y::T) where {T <: AbstractVecOrMat{<: Real}}
+    state = GD_state(
+        problem.x0,
+        problem.∇f(problem.x0),
+        problem.γ,
+        1)
+
+    problem.∇f.(data) problem.f.(state.x0, data) .- data
+    for i in range(1, 10)
+        new_state = state.x - state.γ*state.∇f_x
+        println(new_state .- state.x)
+        state.x = new_state
+        state.γ = 1/(i + 1)
+        state.∇f_x = problem.∇f(state.x, data)
+    end
+    return state
 end
 
+GD(GD_problem(quadfunc, ∇quadfunc, Float64[1, 1], 0.1))
 
-pmap((distributed_scans)->testParallel(MS_TABLE, distributed_scans, f_det_flat_shared), [distributed_scans[i] for i in 1:4])
+function gradientDesc(x, y, learn_rate, conv_threshold, n, max_iter)
+    β = rand(Float64, 1)[1]
+    α = rand(Float64, 1)[1]
+    ŷ = α .+ β .* x
+    MSE = sum((y .- ŷ).^2)/n
+    converged = false
+    iterations = 0
 
-
-@distributed (append!) for i in 1:4
-    testParallel(MS_TABLE, distributed_scans[i], f_det)
-end
-
-status = pmap(1:nprocs()) do i
-    testParallel(MS_TABLE, distributed_scans[i])
-end
-
-f_det_sub = f_det[1:1000000]
-
-pmap((distributed_scans)->testParallel(MS_TABLE, distributed_scans, f_det_flat_shared), [distributed_scans[i] for i in 1:4])
-
-test_f_det_shared = [SharedArray(_) for _ in f_det]
-
-test_f_det_shared = SharedArray(test_f_det_shared)
-
-
-f_det_shared = SharedArray([SharedArray(sub_array) for sub_array in f_det])
-
-status = pmap(1:nprocs()) do i
-    testParallel(MS_TABLE, distributed_scans[i])
+    while converged == false
+        # Implement the gradient descent algorithm
+        β_new = β - learn_rate*((1/n)*(sum((ŷ .- y) .* x)))
+        α_new = α - learn_rate*((1/n)*(sum(ŷ .- y)))
+        α = α_new
+        β = β_new
+        ŷ = β.*x .+ α
+        MSE_new = sum((y.-ŷ).^2)/n
+        # decide on whether it is converged or not
+        if (MSE - MSE_new) <= conv_threshold
+            converged = true
+            println("Optimal intercept: $α; Optimal slope: $β")
+        end
+        iterations += 1
+        if iterations > max_iter
+            converged = true
+            println("Optimal intercept: $α; Optimal slope: $β")
+        end
+    end
 end
