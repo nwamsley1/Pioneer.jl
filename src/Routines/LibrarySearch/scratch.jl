@@ -120,7 +120,7 @@ function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Intege
     return 
 end
 
-function GD(state::GD_state{P,T,I,J}, lower::P, upper::P, data::Vector{T}; tol::Float64 = 1e-3, max_iter::Int64 = 1000, δ::Float64 = 1000.0) where {P<:Params, T<:Real, I,J<:Integer} 
+function GD(state::GD_state{P,T,I,J}, data::Vector{T}, lower::P, upper::P; tol::Float64 = 1e-3, max_iter::Int64 = 1000, δ::Float64 = 1000.0) where {P<:Params, T<:Real, I,J<:Integer} 
     
     #Set initial parameters
     old_params = state.params
@@ -129,12 +129,10 @@ function GD(state::GD_state{P,T,I,J}, lower::P, upper::P, data::Vector{T}; tol::
     #Gradient descent until maximum iterations or stopping condition
     while state.n <= max_iter
         F!(state) #Evaluate function 
-        ∇params = Jacobian(state, data, δ)
-        #state.params = state.params - ∇params/(norm(∇params)*state.n) #Update parameters
-        updateParams(state.params, 
-                        ∇params, 
-                        lower, upper, #Enforce lower and upper bounds on parameter values 
-                        state.n)
+        state.params = updateParams(state.params, 
+                                    Jacobian(state, data, δ), 
+                                    lower, upper, #Enforce lower and upper bounds on parameter values 
+                                    state.n)
         #If change in parameters less than a threshold
         if (max_norm(old_params - state.params) <= tol) & (state.n > 10)
             return
@@ -145,6 +143,10 @@ function GD(state::GD_state{P,T,I,J}, lower::P, upper::P, data::Vector{T}; tol::
 end
 
 ######
+lower = HuberParams(0.001, -Inf64, -1.0, 0.0);
+upper = HuberParams(1.0, Inf64, 1.0, Inf64);
+
+
 N = 15
 t = collect(LinRange(-2.0, 5.0, N))
 y = zeros(Float64, length(t))
@@ -180,7 +182,7 @@ STATE = GD_state(#HuberParams(1.0, 0.0, 1.0, 10000.0),
                 zeros(Float64, N),
                 mask,
                 0,N)
-GD(STATE, data, tol = 1e-4, max_iter = 10000, δ = 10000.0)
+GD(STATE, data, lower, upper, tol = 1e-4, max_iter = 10000, δ = 100.0)
 ##########
 STATE_ =GD_state(STATE.params, 
             collect(LinRange(-2.0, 5.0, 500)),
