@@ -16,6 +16,45 @@ function -(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
                         a.H - b.H)
 end
 
+import Base.+
+function +(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ + b.σ, 
+                        a.tᵣ + b.tᵣ, 
+                        a.τ + b.τ,
+                        a.H + b.H)
+end
+
+
+import Base.*
+function *(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ*b.σ, 
+                        a.tᵣ*b.tᵣ, 
+                        a.τ*b.τ,
+                        a.H*b.H)
+end
+
+
+import Base./
+function /(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ/b.σ, 
+                        a.tᵣ/b.tᵣ, 
+                        a.τ/b.τ,
+                        a.H/b.H)
+end
+
+
+import Base.+
+function +(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ+b.σ, 
+                        a.tᵣ+b.tᵣ, 
+                        a.τ+b.τ,
+                        a.H+b.H)
+end
+
 import Base./
 function /(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
     return HuberParams(
@@ -25,23 +64,53 @@ function /(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
                         a.H/d)
 end
 
-function norm(a::HuberParams{T}) where {T<:AbstractFloat}
-    return sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
+
+import Base.+
+function +(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ+d, 
+                        a.tᵣ+d, 
+                        a.τ+d,
+                        a.H+d)
 end
+
+import Base.*
+function *(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ*d, 
+                        a.tᵣ*d, 
+                        a.τ*d,
+                        a.H*d)
+end
+
+*(d::R, a::HuberParams{T}) where {T<:AbstractFloat,R<:Real} = *(a, d)
+
+function norm(a::HuberParams{T}) where {T<:AbstractFloat}
+    return sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2)#sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
+end
+
+import Base.sqrt
+function sqrt(a::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+        sqrt(a.σ),sqrt(a.tᵣ),sqrt(a.τ),sqrt(a.H))#sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
+end
+
 
 function max_norm(a::HuberParams{T}) where {T<:AbstractFloat}
-    return maximum((a.σ, a.tᵣ, a.τ, a.H))
+    return maximum(abs.((a.σ, a.tᵣ, a.τ, a.H)))
 end
 
-function updateParams(params::HuberParams{T}, ∇params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}, n::Int64) where {T<:AbstractFloat}
-    new_params = params - ∇params/(norm(∇params)*n)
-    return HuberParams(
-        max(min(new_params.σ, upper.σ), lower.σ),
-        max(min(new_params.tᵣ, upper.tᵣ), lower.tᵣ),
-        max(min(new_params.τ, upper.τ), lower.τ),
-        max(min(new_params.H, upper.H), lower.H)
-    )
+function max_norm(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return maximum(abs.(
+                        (
+                        (a.σ - b.σ)/b.σ, 
+                        (a.tᵣ - b.tᵣ)/b.tᵣ, 
+                        (a.τ - b.τ)/b.τ, 
+                        (a.H - b.H)/b.H
+                        )
+                        ))
 end
+
 
 #state.params = state.params - ∇params/(norm(∇params)*state.n) #Update parameters
 
@@ -61,11 +130,28 @@ function F!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat,
     #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
     #for (i, tᵢ) in enumerate(x)
     for i in range(1, state.max_index)
-        state.mask[i] ? continue : nothing
+        #state.mask[i] ? continue : nothing
         tᵢ = state.t[i]
         d = 2*state.params.σ + state.params.τ*(tᵢ - state.params.tᵣ)
         if real(d) > 0
             state.y[i] = state.params.H*exp((-(tᵢ - state.params.tᵣ)^2)/d)
+        else
+            state.y[i] = zero(T)
+        end
+    end
+end
+
+function F!(params::HuberParams{T}, state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+    #for (i, tᵢ) in enumerate(x)
+    for i in range(1, state.max_index)
+        #state.mask[i] ? continue : nothing
+        tᵢ = state.t[i]
+        d = 2*params.σ + params.τ*(tᵢ - params.tᵣ)
+        if real(d) > 0
+            state.y[i] = params.H*exp((-(tᵢ - params.tᵣ)^2)/d)
         else
             state.y[i] = zero(T)
         end
@@ -79,18 +165,8 @@ function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, y::Vector{T}, δ::T)
     σ = state.params.σ
     tᵣ = state.params.tᵣ
     J_σ, J_tᵣ, J_τ, J_H = 0.0, 0.0, 0.0, 0.0
-    #=
-    Jacobian of exponential guassian hybrid with huber Loss
-    using Symbolics, Latexify
-    @variables tᵣ, σ, τ, H, t, δ, y
-    EGH = H*exp( (-(t - tᵣ)^2)/(2*σ + τ*(t - tᵣ)))
-    latexify(EGH)
-    HUBER_EGH = (δ^2)*(sqrt(1 + ((EGH - y)/δ)^2) - 1)
-    latexify(HUBER_EGH)
-    latexify(Symbolics.jacobian([HUBER_EGH], [σ, tᵣ, τ, H]))
-    =#
     for i in range(1, state.max_index)
-        state.mask[i] ? continue : nothing
+        #state.mask[i] ? continue : nothing
         tᵢ = state.t[i]
         DT = tᵢ - tᵣ
         T2 = DT^2
@@ -106,8 +182,10 @@ function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, y::Vector{T}, δ::T)
         J_σ += -2.0*H*Common*(-1.0*T2D2)
         J_tᵣ += H*(2*DT/D + τ*T2D2)*Common
         J_τ += -1.0*H*Common*DT*(-1.0*T2D2)
-        J_H += Common
+        J_H += Common#(1e6)*Common
+
     end
+    #println("params ", HuberParams(J_σ, J_tᵣ, J_τ, J_H))
     return HuberParams(J_σ, J_tᵣ, J_τ, J_H)
 end
 
@@ -120,38 +198,64 @@ function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Intege
     return 
 end
 
+function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
+     return HuberParams(
+         max(min(params.σ, upper.σ), lower.σ),
+         max(min(params.tᵣ, upper.tᵣ), lower.tᵣ),
+         max(min(params.τ, upper.τ), lower.τ),
+         max(min(params.H, upper.H), lower.H)
+     )
+ end
+
 function GD(state::GD_state{P,T,I,J}, data::Vector{T}, lower::P, upper::P; tol::Float64 = 1e-3, max_iter::Int64 = 1000, δ::Float64 = 1000.0) where {P<:Params, T<:Real, I,J<:Integer} 
     
     #Set initial parameters
-    old_params = state.params
     state.n = 1
+    old_params = lower
+    new_params = lower
 
-    #Gradient descent until maximum iterations or stopping condition
+    β1 = 0.9
+    β2 = 0.999
+    m1 = HuberParams(0.0, 0.0, 0.0, 0.0)
+    m2 = HuberParams(0.0, 0.0, 0.0, 0.0)
+    Δt = 0.001
     while state.n <= max_iter
         F!(state) #Evaluate function 
-        state.params = updateParams(state.params, 
-                                    Jacobian(state, data, δ), 
-                                    lower, upper, #Enforce lower and upper bounds on parameter values 
-                                    state.n)
-        #If change in parameters less than a threshold
-        if (max_norm(old_params - state.params) <= tol) & (state.n > 10)
-            return
+        grad = Jacobian(state, data, δ)
+      
+        #new_params = state.params - grad/(state.n*norm(grad))
+        m1 = β1*m1 + (1 - β1)*grad
+        m2 = β2*m2 + (1 - β2)*grad*grad
+        m1_c = m1/(1 - β1^(state.n*Δt))
+        m2_c = m2/(1 - β2^(state.n*Δt))
+
+        diff = 0.005*m1_c/(sqrt(m2_c) + 1e-8)
+        println("norm(diff) ", norm(diff))
+        new_params = state.params - diff
+
+        state.params = updateParams(new_params, lower, upper)
+
+        if norm(diff) <= tol
+            return 
         end
-        old_params = state.params #Update latest parameters
+        #if (max_norm(state.params, old_params) <= tol) & (state.n > 10)
+        #    return
+        #end
+
+        old_params = state.params
         state.n += 1
     end    
 end
-
 ######
-lower = HuberParams(0.001, -Inf64, -1.0, 0.0);
-upper = HuberParams(1.0, Inf64, 1.0, Inf64);
+lower = HuberParams(0.001, -Inf64, -1.0, 0.05);
+upper = HuberParams(1.0, Inf64, 1.0, 2.0);
 
 
-N = 15
+N = 8
 t = collect(LinRange(-2.0, 5.0, N))
 y = zeros(Float64, length(t))
 TRUE_STATE = GD_state(
-    HuberParams(1.0, 0.0, 1.0, 10000.0),
+    HuberParams(1.0, 0.0, 0.5, 1.0),
     t,
     y,
     falses(length(t)),
@@ -159,13 +263,14 @@ TRUE_STATE = GD_state(
     length(t)
 )
 F!(TRUE_STATE)
-data = max.(0.0, TRUE_STATE.y .+ 1000*randn(length(TRUE_STATE.y)))
+data = max.(0.0, TRUE_STATE.y .+ 0.1*randn(length(TRUE_STATE.y)))
+data[5] += 1.0
 plot(TRUE_STATE.t, data, seriestype=:scatter)
 ######
 t = collect(LinRange(-2.0, 5.0, 500))
 y = zeros(Float64, length(t))
 TRUE_STATE = GD_state(
-    HuberParams(1.0, 0.0, 1.0, 10000.0),
+    HuberParams(1.0, 0.0, 0.5, 1.0),
     t,
     y,
     falses(length(t)),
@@ -177,12 +282,13 @@ plot!(TRUE_STATE.t, TRUE_STATE.y)
 ##########
 mask = falses(N)
 STATE = GD_state(#HuberParams(1.0, 0.0, 1.0, 10000.0),
-                HuberParams(0.1, 0.0, 0.001, 10000.0),
+                HuberParams(0.1, 0.5, 0.001, 0.6),
                 collect(LinRange(-2.0, 5.0, N)),
                 zeros(Float64, N),
                 mask,
-                0,N)
-GD(STATE, data, lower, upper, tol = 1e-4, max_iter = 10000, δ = 100.0)
+                0,
+                N)
+GD(STATE, data, lower, upper, tol = 1e-3, max_iter = 1000, δ = 1e-2)
 ##########
 STATE_ =GD_state(STATE.params, 
             collect(LinRange(-2.0, 5.0, 500)),
@@ -190,12 +296,11 @@ STATE_ =GD_state(STATE.params,
             falses(length(t)),
             0,
             500)
-F!(STATE_
-    )
+F!(STATE_)
 plot!(STATE_.t, STATE_.y)
+STATE.n
 
-
-STATE_ =GD_state( HuberParams(0.1, 0.0, 0.001, 10000.0), 
+STATE_ =GD_state( HuberParams(0.1, 0.5, 0.001, 0.6), 
             collect(LinRange(-2.0, 5.0, 500)),
             zeros(Float64, 500),
             falses(length(t)),
@@ -205,6 +310,72 @@ F!(STATE_
     )
 plot!(STATE_.t, STATE_.y)
 
+
+
+
+H_ = []
+loss_square = []
+loss_huber = []
+δ = 100.0
+for i in LinRange(-10*1000, 20*1000, 1000)
+    STATE.params = HuberParams(0.1, 0.5, 0.001, 6000.0 + i)
+    F!(STATE)
+    push!(loss_square, sum((data .- STATE.y).^2))
+    push!(loss_huber, sum((δ^2).*(sqrt.((1 .+ ((data .- STATE.y)/δ).^2)) .- 1)))
+    push!(H_, 6000.0 + i)
+end
+plot(H_, loss_square)
+plot(H_, loss_huber)
+
+
+H_ = []
+loss_square = []
+loss_huber = []
+δ = 100.0
+for i in LinRange(-1, 2, 1000)
+    STATE.params = HuberParams(0.1, 0.5 + i, 0.001, 10000.0)
+    F!(STATE)
+    push!(loss_square, sum((data .- STATE.y).^2))
+    push!(loss_huber, sum((δ^2).*(sqrt.((1 .+ ((data .- STATE.y)/δ).^2)) .- 1)))
+    push!(H_, 6000.0 + i)
+end
+plot(H_, loss_square)
+plot(H_, loss_huber)
+
+
+H_ = []
+x = []
+y = []
+loss_square = []
+loss_huber = []
+δ = 100.0
+for i in LinRange(-1, 3, 100)
+    for j in LinRange(-10*1000, 20*1000, 100)
+    STATE.params = HuberParams(0.1+ i, 0.5, 0.001, 6000.0 + j)
+    F!(STATE)
+    push!(loss_square, sum((data .- STATE.y).^2))
+    push!(loss_huber, sum((δ^2).*(sqrt.((1 .+ ((data .- STATE.y)/δ).^2)) .- 1)))
+    push!(x,  0.1 + i)
+    push!(y, 6000.0 + j)
+    end
+end
+
+surface(x, y, loss_huber)
+layout = Layout(
+
+    title="Mt Bruno Elevation", autosize=false,
+
+    width=500, height=500,
+
+    margin=attr(l=65, r=50, b=65, t=90)
+
+)
+trace1 =  PlotlyJS.surface(z = loss_huber, x = x, y = y)
+PlotlyJS.plot(trace1, layout)
+
+
+plot(H_, loss_square)
+plot(H_, loss_huber)
 
 reset!(STATE)
 
