@@ -1,4 +1,4 @@
-function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false)
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, state::GD_state{HuberParams{T}, U, I, J}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false) where {T,U<:AbstractFloat, I,J<:Integer}
     
     function getBestPSM(filter::BitVector,  hyperscore::AbstractVector{<:AbstractFloat}, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat}, RT_error::AbstractVector{<:AbstractFloat})
         best_scan_idx = 1
@@ -48,25 +48,25 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     #Same precursor may be isolated multiple times within a single cycle_idx
     #Retain only most abundant within each cycle .
-    function setFilter!(filter::BitVector, weights::AbstractVector{T}, scan_idxs::AbstractVector{I}) where {T<:AbstractFloat, I<:Integer}
+    function setFilter!(state::GD_state{HuberParams{T}, U, I, J}, weights::AbstractVector{T}, scan_idxs::AbstractVector{I}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in range(1, length(weights)-1)
             if abs(scan_idxs[i]-scan_idxs[i + 1]) == 1
                 #May not be appropriate criterion to choose between competing scans
                 if weights[i] > weights[i + 1]
-                    if filter[i] == false
-                        filter[i + 1] = true
+                    if state.mask[i] == false
+                        state.mask[i + 1] = true
                     end
                 else
-                    filter[i] = true
+                    state.mask[i] = true
                 end
             end
         end
     end
 
-    function filterLowIntensity!(filter::BitVector, min_intensity::T, weights::AbstractVector{T}) where {T<:AbstractFloat}
+    function filterLowIntensity!(state::GD_state{HuberParams{T}, U, I, J}, min_intensity::T, weights::AbstractVector{T}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in range(1, length(weights))
             if weights[i] <= min_intensity
-                filter[i] = true
+                state.mask[i] = true
             end
         end
     end
@@ -82,35 +82,37 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         end 
     end
 
-    function fillLsqFitWeights!(lsq_fit_weight::Vector{T}, intensity::Vector{T}) where {T<:AbstractFloat}
+    function fillLsqFitWeights!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+
+        intensity = state.data
         for i in range(1, length(intensity) - 2)
             if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[i + 2])
-                lsq_fit_weight[i + 1] = zero(Float32)
+                state.mask[i + 1] = true
             end
             if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[min(i + 3, length(intensity))])
-                lsq_fit_weight[i + 1] = zero(Float32)
+                state.mask[i + 1] = true
                 if (intensity[i + 2] < intensity[i]) & (intensity[i + 2] < intensity[min(i + 3, length(intensity))])#intensity[min(i + 1, length(intensity))])
-                    lsq_fit_weight[i + 2] = zero(Float32)
+                    state.mask[i + 2] = true
                 end
             end
         end
     end
 
-    function filterOnRT!(filter::BitVector, best_rt::T, rts::AbstractVector{T}) where {T<:AbstractFloat}
+    function filterOnRT!(state::GD_state{HuberParams{T}, U, I, J}, best_rt::T, rts::AbstractVector{T}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in eachindex(rts)
             if (rts[i] > (best_rt - 1.0)) & (rts[i] < (best_rt + 1.0))
                 continue
             else
-                filter[i] = true
+                state.mask[i] = true
             end
         end
     end
    
-    function truncateAfterSkip!(filter::BitVector, best_scan::Int64, rts::AbstractVector{<:AbstractFloat})
+    function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, best_scan::Int64, rts::AbstractVector{<:AbstractFloat}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in range(best_scan, length(rts)-1)
             if (rts[i+ 1] - rts[i]) > 0.3
                 for n in range(i + 1, length(rts))
-                    filter[n] = true
+                    state.mask[n] = true
                 end
             end
         end
@@ -118,7 +120,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         for i in range(1, best_scan - 1)
             if (rts[best_scan - i + 1] - rts[best_scan - i]) > 0.3
                 for n in range(1, best_scan-i)
-                    filter[n] = true
+                    state.mask[n] = true
                 end
             end
         end
@@ -127,54 +129,66 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     T = eltype(chrom.weight)
 
-    filter = falses(size(chrom)[1])
     #best_scan = getBestPSM(filter, chrom.matched_ratio, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
     best_scan = argmax(chrom.weight)
-    truncateAfterSkip!(filter, best_scan, chrom.RT)
+    truncateAfterSkip!(state, best_scan, chrom.RT)
 
-    setFilter!(filter, chrom.weight, chrom.scan_idx)
+    setFilter!(state, chrom.weight, chrom.scan_idx)
 
     best_rt, height = chrom.RT[best_scan], chrom.weight[best_scan]
     #best_rt, height = chrom.RT[argmax(chrom.weight)], chrom.weight[argmax(chrom.weight)]
-    filterOnRT!(filter, best_rt, chrom.RT)
+    filterOnRT!(state, best_rt, chrom.RT)
 
     #Needs to be setable parametfer. 1% is currently hard-coded
-    filterLowIntensity!(filter, height*intensity_filter_fraction, chrom.weight)
+    filterLowIntensity!(state, height*intensity_filter_fraction, chrom.weight)
 
-    for i in range(1, length(filter))
+    for i in range(1, length(chrom.weight))
         if chrom.matched_ratio[i] < (chrom.matched_ratio[best_scan] - 1)
             if chrom.matched_ratio[i] < 0.0
-                filter[i] = true
+                state.mask[i] = true
             end
         end
     end
-    #Filter out samples below intensity threshold. 
-    intensity, rt, lsq_fit_weight = zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  ones(Float32, (size(chrom)[1] - sum(filter)) + 2)
-    #Offset needs to be a parameter/optional argument
-    #intensity, rt, lsq_fit_weight = zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  zeros(Float32, (size(chrom)[1] - sum(filter)) + 2),  ones(Float32, (size(chrom)[1] - sum(filter)) + 2)
-    
-    fillIntensityandRT!(intensity, rt, filter, chrom.weight, chrom.RT)
-    rt[1], rt[end] = rt[2] - tail_distance, rt[end-1] + tail_distance
-    intensity[1], intensity[end] = zero(Float32), zero(Float32)
+
+    i = 1
+    while i <= length(chrom.weight)
+        state.t[i+1] = chrom.RT[i]
+        state.data[i+1] = chrom.weight[i]
+        i += 1
+    end
+    state.max_index = length(chrom.weight) + 2
+    #fillIntensityandRT!(intensity, rt, filter, chrom.weight, chrom.RT)
+    state.t[1], state.t[state.max_index] = rt[2] - tail_distance, rt[state.max_index-1] + tail_distance
+    state.data[1], state.data[state.max_index] = zero(Float32), zero(Float32)
+
     #intensity = intensity[2:end-1]
     #rt = rt[2:end - 1]
     #lsq_fit_weight = lsq_fit_weight[2:end - 1]
-    fillLsqFitWeights!(lsq_fit_weight, intensity)
-    best_rt, height = rt[argmax(intensity.*lsq_fit_weight)], intensity[argmax(intensity.*lsq_fit_weight)]
+    fillLsqFitWeights!(state)
 
-    data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
-    if data_points < 4
-        lsq_fit_weight[1] = zero(Float32)
-        lsq_fit_weight[end] = zero(Float32)
+    best_rt, height = 0.0, 0.0
+    for i in range(1, state.max_index)
+        if state.data[i]*state.mask[i] > height
+            height = state.data[i]
+            best_rt = state.t[i]
+        end
     end
+    #best_rt, height = rt[argmax(intensity.*lsq_fit_weight)], intensity[argmax(intensity.*lsq_fit_weight)]
+
+    data_points = Int64(state.max_index - 2) #May need to change
+    #if data_points < 4
+    #    state.mask[1] = zero(Float32)
+    #    state.mask[state.max_index] = zero(Float32)
+    #end
 
     if isplot
         display(chrom)
     end
     ########
     #Fit EGH Curve 
-    EGH_FIT = nothing
-    lower, upper, p0 = nothing, nothing, nothing
+    #EGH_FIT = nothing
+    #lower, upper, p0 = nothing, nothing, nothing
+    #=
     if data_points < 10
         lower = Float32[0.015, 0, 0.023, height];
         upper = Float32[0.015, Inf, 0.023, height];
@@ -186,35 +200,28 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                             Float32(height)),
                                             lower, upper)
     else
-        lower = Float32[0.001, 0, -1, 0];
-        upper = Float32[1, Inf, 1, Inf];
-        p0 = getP0((α, 
-                                            half_width_at_α, 
-                                            half_width_at_α, 
-                                            #Float32(best_rt), 
-                                            best_rt,
-                                            Float32(height)),
-                                            lower, upper)
-    end
+    =#
+    lower = HuberParams(0.001, 0, -1, 0);
+    upper = HuberParams(1, Inf, 1, Inf);
+    state.params = getP0((α, 
+                                        half_width_at_α, 
+                                        half_width_at_α, 
+                                        #Float32(best_rt), 
+                                        best_rt,
+                                        Float32(height)),
+                                        lower, upper)
+    #end
 
-    try
-        EGH_FIT = LsqFit.curve_fit(EGH_inplace, 
-                                    JEGH_inplace, 
-                                    rt,
-                                    intensity,
-                                    lsq_fit_weight,
-                                    p0;
-                                    x_tol = LsqFit_tol,
-                                    maxIter = Lsq_max_iter,
-                                    lower = lower,
-                                    upper = upper,
-                                    #lower = Float32[0, 0, -1, 0],
-                                    #upper = Float32[1, Inf, 1, Inf],
-                                    inplace = true)
-    catch
-        println("Fail")
-        return nothing
-    end
+    GD(state,
+                lower,
+                upper,
+                tol = 5e-3, 
+                max_iter = 100, 
+                δ = 1e-2,
+                α=0.1,
+                β1 = 0.9,
+                β2 = 0.999,
+                ϵ = 1e-8)
 
     ##########
     #Plots                                           
@@ -256,13 +263,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     ############
     #Calculate Features
     
-    MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
-    peak_area = nothing
-    if data_points > 0
-        peak_area = Integrate(EGH, gauss_quad_x, gauss_quad_w, Tuple(EGH_FIT.param))
-    else
-        peak_area = integrate(rt, intensity)
-    end
+    #MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
+    peak_area = Integrate(state, gauss_quad_x, gauss_quad_w)
    
     sum_of_residuals = zero(Float32)
     points_above_FWHM = zero(Int32)
@@ -286,10 +288,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     ############
     #Model Parameters
-    σ = EGH_FIT.param[1]
-    tᵣ = EGH_FIT.param[2]
-    τ = EGH_FIT.param[3]
-    H = EGH_FIT.param[4]
+    σ = state.params.σ
+    tᵣ = state.params.tᵣ
+    τ = state.params.τ
+    H = state.params.H
     
     ############
     #Summary Statistics 

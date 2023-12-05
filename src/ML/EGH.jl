@@ -1,206 +1,252 @@
-"""
-Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
-"""
-function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-     y = zeros(T, length(t))
-     for (i, tᵢ) in enumerate(t)
-        d = 2*p[1] + p[3]*(tᵢ - p[2])
-        if d > 0
-            y[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
-        end
-    end
-    return y
+abstract type Params end
+
+struct HuberParams{T<:AbstractFloat} <: Params
+    σ::T
+    tᵣ::T
+    τ::T
+    H::T
 end
 
-function EGH(t::T, p::NTuple{4, T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    d = 2*p[1] + p[3]*(t - p[2])
-    if d > 0
-        return p[4]*exp((-(t - p[2])^2)/d)
+import Base.-
+function -(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ - b.σ, 
+                        a.tᵣ - b.tᵣ, 
+                        a.τ - b.τ,
+                        a.H - b.H)
+end
+
+import Base.+
+function +(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ + b.σ, 
+                        a.tᵣ + b.tᵣ, 
+                        a.τ + b.τ,
+                        a.H + b.H)
+end
+
+function +(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ+d, 
+                        a.tᵣ+d, 
+                        a.τ+d,
+                        a.H+d)
+end
+
+import Base.*
+function *(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ*b.σ, 
+                        a.tᵣ*b.tᵣ, 
+                        a.τ*b.τ,
+                        a.H*b.H)
+end
+
+function *(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ*d, 
+                        a.tᵣ*d, 
+                        a.τ*d,
+                        a.H*d)
+end
+
+*(d::R, a::HuberParams{T}) where {T<:AbstractFloat,R<:Real} = *(a, d)
+
+import Base./
+function /(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+                        a.σ/b.σ, 
+                        a.tᵣ/b.tᵣ, 
+                        a.τ/b.τ,
+                        a.H/b.H)
+end
+
+import Base./
+function /(a::HuberParams{T}, d::R) where {T<:AbstractFloat,R<:Real}
+    return HuberParams(
+                        a.σ/d, 
+                        a.tᵣ/d, 
+                        a.τ/d,
+                        a.H/d)
+end
+
+function norm(a::HuberParams{T}) where {T<:AbstractFloat}
+    return sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
+end
+
+import Base.sqrt
+function sqrt(a::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+        sqrt(a.σ),sqrt(a.tᵣ),sqrt(a.τ),sqrt(a.H))#sqrt(a.σ^2 + a.tᵣ^2 + a.τ^2 + a.H^2)
+end
+
+mutable struct GD_state{P<:Params, T<:Real, I,J<:Integer}
+    params::P
+    t::Vector{T}
+    y::Vector{T}
+    data::Vector{T}
+    mask::BitVector
+    n::I
+    max_index::J
+end
+
+function F(state::GD_state{HuberParams{T}, U, I, J}, tᵢ::AbstractFloat) where {T,U<:AbstractFloat, I,J<:Integer}
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+    #for (i, tᵢ) in enumerate(x)
+    d = 2*state.params.σ + state.params.τ*(tᵢ - state.params.tᵣ)
+    if real(d) > 0
+        return state.params.H*exp((-(tᵢ - state.params.tᵣ)^2)/d)
     else
         return zero(T)
     end
 end
 
-"""
-Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
-"""
-function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::NTuple{4, T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    #Given parameters in 'p'
+function F!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
     #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
-     for (i, tᵢ) in enumerate(t)
-        d = 2*p[1] + p[3]*(tᵢ - p[2])
+    #for (i, tᵢ) in enumerate(x)
+    for i in range(1, state.max_index)
+        state.mask[i] ? continue : nothing
+        tᵢ = state.t[i]
+        d = 2*state.params.σ + state.params.τ*(tᵢ - state.params.tᵣ)
         if real(d) > 0
-            f[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
+            state.y[i] = state.params.H*exp((-(tᵢ - state.params.tᵣ)^2)/d)
         else
-            f[i] = zero(Complex{T})
-        end
-    end
-    return nothing
-end
-
-
-function EGH_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    #Given parameters in 'p'
-    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
-     for (i, tᵢ) in enumerate(x)
-        d = 2*p[1] + p[3]*(tᵢ - p[2])
-        if real(d) > 0
-            F[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
-        else
-            F[i] = zero(T)
+            state.y[i] = zero(T)
         end
     end
 end
 
-function JEGH_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    for (i, tᵢ) in enumerate(x)
-        δt = tᵢ - p[2]
-        d = 2*p[1] + p[3]*δt
-        q = δt/d
-        f = exp((-δt^2)/(d))
-        #f = exp((-δt^2)/(d))
-        if d > 0
-            J[i,1] = (2*(q)^2)*p[4]*f
-            J[i,2] = p[4]*(2*q - (p[3]*(q^2)))*f
-            J[i,3] = ((δt)*(q^2))*p[4]*f
-            J[i,4] = f
+function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, δ::T) where {T,U<:AbstractFloat, I,J<:Integer}
+
+    #Initialize parameters
+    H, τ, σ, tᵣ = state.params.H, state.params.τ, state.params.σ, state.params.tᵣ
+    J_σ, J_tᵣ, J_τ, J_H = 0.0, 0.0, 0.0, 0.0
+
+    for i in range(1, state.max_index)
+        state.mask[i] ? continue : nothing #If data point is masked, skip
+
+        #Compute repeating terms in the partial derivatives 
+        tᵢ = state.t[i]
+        DT = tᵢ - tᵣ
+        T2 = DT^2
+        D = 2*σ + DT*τ
+        T2D2 = (T2/D^2)
+        EXP = exp(-1.0*T2/D)
+        N = H*EXP - state.data[i]
+        Denom = sqrt(1 + (N/δ)^2)
+        Common = N*EXP/Denom
+        if 2*σ + τ*(DT) <= 0.0
+            continue
         end
-   end
+
+        J_σ += -2.0*H*Common*(-1.0*T2D2)
+        J_tᵣ += H*(2*DT/D + τ*T2D2)*Common
+        J_τ += -1.0*H*Common*DT*(-1.0*T2D2)
+        J_H += Common
+
+    end
+
+    return HuberParams(J_σ, J_tᵣ, J_τ, J_H)
 end
 
-"""
-Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
-"""
-function JEGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    J = zeros(T, (length(t), length(p)))
-    for (i, tᵢ) in enumerate(t)
-        δt = tᵢ - p[2]
-        d = 2*p[1] + p[3]*δt
-        q = δt/d
-        f = exp((-δt^2)/(d))
-        #f = exp((-δt^2)/(d))
-        if d > 0
-            J[i,1] = (2*(q)^2)*p[4]*f
-            J[i,2] = p[4]*(2*q - (p[3]*(q^2)))*f
-            J[i,3] = ((δt)*(q^2))*p[4]*f
-            J[i,4] = f
+function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Integer} 
+    for i in range(1, state.max_index)
+        state.t[i], state.y[i] = zero(T), zero(T)
+    end
+    state.max_index = 0
+    state.n = 0
+    return 
+end
+
+function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
+     return HuberParams(
+         max(min(params.σ, upper.σ), lower.σ),
+         max(min(params.tᵣ, upper.tᵣ), lower.tᵣ),
+         max(min(params.τ, upper.τ), lower.τ),
+         max(min(params.H, upper.H), lower.H)
+     )
+end
+
+function GD(state::GD_state{P,T,I,J}, lower::P, upper::P; 
+            tol::Float64 = 1e-3, 
+            max_iter::Int64 = 1000, 
+            δ::Float64 = 1000.0,
+            α::Float64 = 0.1,
+            β1 = 0.9,
+            β2 = 0.999,
+            ϵ = 1e-8) where {P<:Params, T<:Real, I,J<:Integer} 
+    
+    #Iteration counter
+    state.n = 1
+
+    #Initialize moment estimates 
+    m1 = HuberParams(0.0, 0.0, 0.0, 0.0)
+    m2 = HuberParams(0.0, 0.0, 0.0, 0.0)
+    while state.n <= max_iter
+        t = state.n #Time step
+        F!(state) #Evaluate function with current parameters
+        grad = Jacobian(state, δ) #Compute the gradient 
+        m1 = β1*m1 + (1 - β1)*grad #First moment estimate
+        m2 = β2*m2 + (1 - β2)*grad*grad #second moment estimate
+        αₜ = α*sqrt(1 - β2^t)/(1 - β1^t) #Bias correction 
+        diff = αₜ*m1/(sqrt(m2) + ϵ)
+        #Get new parameters
+        state.params = updateParams(state.params - diff, lower, upper)
+        #If the euclidian norm of the update has fallen below a throeshold
+        if norm(diff) <= tol
+            return 
         end
-   end
-   return J
+
+        state.n += 1
+    end    
 end
 
-function GAUSS(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
-    h = p[1] 
-    μ = p[2] 
-    σ = p[3]
-    y = zeros(T, length(t))
-    for (i, tᵢ) in enumerate(t)
-       y[i] = h*exp((-(tᵢ - μ))/(2*σ^2))
-    end
-    return y
-end
-
-function GAUSS_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    #Given parameters in 'p'
-    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
-
-    h = p[1] 
-    μ = p[2] 
-    σ = p[3]
-    for (i, tᵢ) in enumerate(x)
-        F[i] =  h*exp((-(tᵢ - μ))/(2*σ^2))
-    end
-end
-
-function JGAUSS_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    h = p[1] 
-    t₀ = p[2] 
-    γ = p[3]
-    for (i, tᵢ) in enumerate(x)
-        d = γ^2 + (tᵢ - t₀)^2
-        n = h*((tᵢ - t₀)^2 - γ^2)
-        #f = exp((-δt^2)/(d))
-            J[i,1] = γ/d
-            J[i,2] = n/d
-            J[i,3] = 2*γ*h*(tᵢ - t₀)/(d^2)
-   end
-end
-
-
-function LORENZ(t::Vector{T}, p::NTuple{3, T}) where {T<:AbstractFloat}
-    h = p[1] 
-    t₀ = p[2] 
-    γ = p[3]
-    y = zeros(T, length(t))
-    for (i, tᵢ) in enumerate(t)
-       y[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
-    end
-    return y
-end
-
-function LORENZ_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
-    #Given parameters in 'p'
-    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
-
-    h = p[1] 
-    t₀ = p[2] 
-    γ = p[3]
-    for (i, tᵢ) in enumerate(x)
-        F[i] = h*γ*( 1/( (tᵢ - t₀)^2 + γ^2) )
-    end
-end
-
-function JLORENZ_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
-    h = p[1] 
-    t₀ = p[2] 
-    γ = p[3]
-    for (i, tᵢ) in enumerate(x)
-        d = γ^2 + (tᵢ - t₀)^2
-        n = h*((tᵢ - t₀)^2 - γ^2)
-        #f = exp((-δt^2)/(d))
-            J[i,1] = γ/d
-            J[i,2] = n/d
-            J[i,3] = 2*γ*h*(tᵢ - t₀)/(d^2)
-   end
-end
-
-function Integrate(f::Function, x::Vector{Float64}, w::Vector{Float64}, p::NTuple{4, T}; α::AbstractFloat = 0.01) where {T<:AbstractFloat}
+function Integrate(state::GD_state{P,T,I,J}, x::Vector{U}, w::Vector{U}; α::AbstractFloat = 0.01) where {P<:Params, T,U<:AbstractFloat, I,J<:Integer} 
 
     #Use GuassLegendre Quadrature to integrate f on the integration bounds 
     #using FastGaussQuadrature
     #x, w = gausslegendre(n)
 
-    function getBase(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
+    function getBase(state::GD_state{HuberParams{T}, U, I, J}, α::AbstractFloat) where {T,U<:AbstractFloat, I,J<:Integer}
+        τ = state.params.τ
+        σ = state.params.σ
         B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
         A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
-        return abs(A), abs(B)
+        return state.params.tᵣ - abs(A), state.params.tᵣ + abs(B)
     end
 
-    A, B = getBase(α, p[3], p[1])
-    a = p[2] - A
-    b = p[2] + B
+    a, b = getBase(state, α)
     #Quadrature rules are for integration bounds -1 to 1 but can shift
     #to arbitrary bounds a and b. 
-    #dotp = 0.0
-    #for i in eachindex(x)
-    #    dotp = f(Float32(x[i]*((b - a)/2) + (a + b)/2), p)*w[i]
-    #end
-    #return ((b - a)/2)*dotp#*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
-    return ((b - a)/2)*dot(w, f(Float32.(x.*((b - a)/2) .+ (a + b)/2), p))
+    dotp = 0.0
+    correction_factor = ((b - a)/2) + (a + b)/2
+    for i in eachindex(x)
+        dotp += F(state, 
+                    (x[i]*correction_factor) #Evaluate at 
+                )*w[i]
+    end
+
+    return ((b - a)/2)*dotp
 end
 
-function getP0(α::T, B::T, A::T, tᵣ::T, H::T) where {T<:AbstractFloat}
-    return T[(-1/(2*log(α)))*(B*A),
-             tᵣ,
-             (-1/log(α))*(B - A),
-             H]
+function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+        max(min(params.σ, upper.σ), lower.σ),
+        max(min(params.tᵣ, upper.tᵣ), lower.tᵣ),
+        max(min(params.τ, upper.τ), lower.τ),
+        max(min(params.H, upper.H), lower.H)
+    )
+end
+
+
+#σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+function getP0(α::T, B::T, A::T, tᵣ::T, H::T, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
+    return HuberParams(
+             max(min((-1/(2*log(α)))*(B*A), upper.σ), lower.σ),
+             max(min(tᵣ,upper.tᵣ), lower.tᵣ),
+             max(min((-1/log(α))*(B - A),upper.τ), lower.τ),
+             max(min(H,upper.H), lower.H)
+             )
 end
 
 function getP0(α::T, B::T, A::T, tᵣ::T, H::T,lower::Vector{T},upper::Vector{T}) where {T<:AbstractFloat}
@@ -229,6 +275,27 @@ function getFWHM(α::AbstractFloat, τ::T, σ::T) where {T<:AbstractFloat}
     A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
     return abs(A) + abs(B)
 end
+
+function getFWHM(state::GD_state{HuberParams{T}, U, I, J}, α::AbstractFloat) where {T,U<:AbstractFloat, I,J<:Integer}
+    #FWHM given parameters for EGH function 
+    τ = state.params.τ
+    σ = state.params.σ
+    #When is absolute value necessary. 
+    B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
+    A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
+    return abs(A) + abs(B)
+end
+
+
+function getBestPSM(sdf::SubDataFrame)
+    if any(sdf.q_value.<=0.01)
+        return sdf[argmax((sdf.q_value.<=0.01).*(sdf.hyperscore)),:]
+    else
+        return sdf[argmax(sdf.prob),:]
+    end
+end
+
+#=
 
 function CrossCorrFFT(f::Matrix{Complex{T}}, g::Matrix{Complex{T}}, δt::T) where {T<:AbstractFloat}
     
@@ -341,10 +408,100 @@ function pearson_corr!(psms::DataFrame; N::Int64 = 500, width_t::Float64 = 2.0) 
     end
 end
 
-function getBestPSM(sdf::SubDataFrame)
-    if any(sdf.q_value.<=0.01)
-        return sdf[argmax((sdf.q_value.<=0.01).*(sdf.hyperscore)),:]
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
+function EGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+     y = zeros(T, length(t))
+     for (i, tᵢ) in enumerate(t)
+        d = 2*p[1] + p[3]*(tᵢ - p[2])
+        if d > 0
+            y[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
+        end
+    end
+    return y
+end
+
+function EGH(t::T, p::NTuple{4, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    d = 2*p[1] + p[3]*(t - p[2])
+    if d > 0
+        return p[4]*exp((-(t - p[2])^2)/d)
     else
-        return sdf[argmax(sdf.prob),:]
+        return zero(T)
     end
 end
+
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
+function EGH!(f::Matrix{Complex{T}}, t::LinRange{T, Int64}, p::NTuple{4, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+     for (i, tᵢ) in enumerate(t)
+        d = 2*p[1] + p[3]*(tᵢ - p[2])
+        if real(d) > 0
+            f[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
+        else
+            f[i] = zero(Complex{T})
+        end
+    end
+    return nothing
+end
+
+
+function EGH_inplace(F::Vector{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    #Given parameters in 'p'
+    #Evaluate EGH function at eath time point tᵢ and store them in pre-allocated array 'f'. 
+     for (i, tᵢ) in enumerate(x)
+        d = 2*p[1] + p[3]*(tᵢ - p[2])
+        if real(d) > 0
+            F[i] = p[4]*exp((-(tᵢ - p[2])^2)/d)
+        else
+            F[i] = zero(T)
+        end
+    end
+end
+
+function JEGH_inplace(J::Matrix{T}, x::Vector{T}, p::Vector{T}) where {T<:AbstractFloat}
+    for (i, tᵢ) in enumerate(x)
+        δt = tᵢ - p[2]
+        d = 2*p[1] + p[3]*δt
+        q = δt/d
+        f = exp((-δt^2)/(d))
+        #f = exp((-δt^2)/(d))
+        if d > 0
+            J[i,1] = (2*(q)^2)*p[4]*f
+            J[i,2] = p[4]*(2*q - (p[3]*(q^2)))*f
+            J[i,3] = ((δt)*(q^2))*p[4]*f
+            J[i,4] = f
+        end
+   end
+end
+
+"""
+Lan K, Jorgenson JW. A hybrid of exponential and gaussian functions as a simple model of asymmetric chromatographic peaks. J Chromatogr A. 2001 Apr 27;915(1-2):1-13. doi: 10.1016/s0021-9673(01)00594-5. PMID: 11358238.
+"""
+function JEGH(t::Vector{T}, p::NTuple{4, T}) where {T<:AbstractFloat}
+    #σ=p[1], tᵣ=p[2], τ=p[3], H = p[4]
+    J = zeros(T, (length(t), length(p)))
+    for (i, tᵢ) in enumerate(t)
+        δt = tᵢ - p[2]
+        d = 2*p[1] + p[3]*δt
+        q = δt/d
+        f = exp((-δt^2)/(d))
+        #f = exp((-δt^2)/(d))
+        if d > 0
+            J[i,1] = (2*(q)^2)*p[4]*f
+            J[i,2] = p[4]*(2*q - (p[3]*(q^2)))*f
+            J[i,3] = ((δt)*(q^2))*p[4]*f
+            J[i,4] = f
+        end
+   end
+   return J
+end
+
+=#
