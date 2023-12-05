@@ -54,9 +54,9 @@ function SearchRAW(
     n = 0
     start = 1
     #Incorperate sacn range here 
-    for i in range(1, length(MS_TABLE[:masses]))
-        n += length(MS_TABLE[:masses][i])
-        if (n > peaks_per_thread) | ((i + 1) == length(MS_TABLE[:masses]))
+    for i in range(1, length(spectra[:masses]))
+        n += length(spectra[:masses][i])
+        if (n > peaks_per_thread) | ((i + 1) == length(spectra[:masses]))
             push!(thread_tasks, (start, i))
             start = i + 1
             n = 0

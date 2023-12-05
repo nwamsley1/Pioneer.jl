@@ -1,4 +1,6 @@
 
+
+
 """
 https://terpconnect.umd.edu/~toh/spectrum/Differentiation.html#PeakDetection
 Another common use of differentiation is in the detection of peaks in a signal. It's clear from the basic properties described in the previous section 
