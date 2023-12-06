@@ -2,6 +2,7 @@ function SearchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::Union{FragmentIndex{Float32}, Missing},
+                    precs::Bool,
                     precursors::Union{Vector{LibraryPrecursor{Float32}}, Missing},
                     ion_list::Union{Vector{Vector{LibraryFragment{Float32}}}, Missing},
                     iRT_to_RT_spline::Any,
@@ -68,7 +69,7 @@ function SearchRAW(
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             return searchRAW(
-                                spectra,lk,pbar,thread_task,frag_index,precursors,
+                                spectra,lk,precs,pbar,thread_task,frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
                                 selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
                                 fragment_tolerance,huber_δ, IonMatchType,IonTemplateType,isotope_dict,
@@ -89,6 +90,7 @@ end
 function searchRAW(
                     spectra::Arrow.Table,
                     lk::ReentrantLock,
+                    precs::Bool,
                     pbar::ProgressBar,
                     thread_task::Tuple{Int64, Int64},
                     frag_index::Union{FragmentIndex{Float32}, Missing},
@@ -130,7 +132,11 @@ function searchRAW(
 
 
     thread_peaks = 0
-    precs = Counter(UInt32, Float32, length(ion_list))
+    if precs
+        precs = Counter(UInt32, Float32, length(ion_list))
+    else
+        precs = missing
+    end
     ##########
     #Initialize 
     msms_counts = Dict{Int64, Int64}()
@@ -390,6 +396,7 @@ function firstSearch(
     return SearchRAW(
         spectra, 
         frag_index,
+        true,
         precursors, 
         ion_list,
         iRT_to_RT_spline,
@@ -447,6 +454,7 @@ function mainLibrarySearch(
     return SearchRAW(
         spectra, 
         frag_index, 
+        true,
         precursors,
         ion_list,
         iRT_to_RT_spline,
@@ -504,6 +512,7 @@ function integrateMS2(
     return SearchRAW(
         spectra, 
         missing,
+        false,
         precursors,
         ion_list, 
         x->x,

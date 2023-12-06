@@ -8,7 +8,7 @@ struct HuberParams{T<:AbstractFloat} <: Params
 end
 
 import Base.-
-function -(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+function -(a::HuberParams{T}, b::HuberParams{U}) where {T,U<:AbstractFloat}
     return HuberParams(
                         a.σ - b.σ, 
                         a.tᵣ - b.tᵣ, 
@@ -17,7 +17,7 @@ function -(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
 end
 
 import Base.+
-function +(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+function +(a::HuberParams{T}, b::HuberParams{U}) where {T,U<:AbstractFloat}
     return HuberParams(
                         a.σ + b.σ, 
                         a.tᵣ + b.tᵣ, 
@@ -53,7 +53,7 @@ end
 *(d::R, a::HuberParams{T}) where {T<:AbstractFloat,R<:Real} = *(a, d)
 
 import Base./
-function /(a::HuberParams{T}, b::HuberParams{T}) where {T<:AbstractFloat}
+function /(a::HuberParams{T}, b::HuberParams{U}) where {T,U<:AbstractFloat}
     return HuberParams(
                         a.σ/b.σ, 
                         a.tᵣ/b.tᵣ, 
@@ -116,7 +116,7 @@ function F!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat,
     end
 end
 
-function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, δ::T) where {T,U<:AbstractFloat, I,J<:Integer}
+function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, δ::V) where {T,U,V<:AbstractFloat, I,J<:Integer}
 
     #Initialize parameters
     H, τ, σ, tᵣ = state.params.H, state.params.τ, state.params.σ, state.params.tᵣ
@@ -146,19 +146,19 @@ function Jacobian(state::GD_state{HuberParams{T}, U, I, J}, δ::T) where {T,U<:A
 
     end
 
-    return HuberParams(J_σ, J_tᵣ, J_τ, J_H)
+    return HuberParams(T(J_σ), T(J_tᵣ), T(J_τ), T(J_H))
 end
 
 function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Integer} 
     for i in range(1, state.max_index)
-        state.t[i], state.y[i] = zero(T), zero(T)
+        state.t[i], state.y[i], state.mask[i] = zero(T), zero(T), false
     end
     state.max_index = 0
     state.n = 0
     return 
 end
 
-function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
+function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T,U<:AbstractFloat}
      return HuberParams(
          max(min(params.σ, upper.σ), lower.σ),
          max(min(params.tᵣ, upper.tᵣ), lower.tᵣ),
@@ -180,8 +180,13 @@ function GD(state::GD_state{P,T,I,J}, lower::P, upper::P;
     state.n = 1
 
     #Initialize moment estimates 
-    m1 = HuberParams(0.0, 0.0, 0.0, 0.0)
-    m2 = HuberParams(0.0, 0.0, 0.0, 0.0)
+    m1 = HuberParams(T(0.0), T(0.0),T(0.0),T(0.0))
+    m2 = HuberParams(T(0.0), T(0.0),T(0.0),T(0.0))
+    β1 = T(β1)
+    β2 = T(β2)
+    ϵ = T(ϵ)
+    α = T(α)
+
     while state.n <= max_iter
         t = state.n #Time step
         F!(state) #Evaluate function with current parameters
@@ -196,7 +201,7 @@ function GD(state::GD_state{P,T,I,J}, lower::P, upper::P;
         if norm(diff) <= tol
             return 
         end
-
+        println("norm_diff ", norm(diff))
         state.n += 1
     end    
 end
@@ -219,10 +224,9 @@ function Integrate(state::GD_state{P,T,I,J}, x::Vector{U}, w::Vector{U}; α::Abs
     #Quadrature rules are for integration bounds -1 to 1 but can shift
     #to arbitrary bounds a and b. 
     dotp = 0.0
-    correction_factor = ((b - a)/2) + (a + b)/2
     for i in eachindex(x)
         dotp += F(state, 
-                    (x[i]*correction_factor) #Evaluate at 
+                    (x[i]*((b - a)/2) + (a + b)/2) #Evaluate at 
                 )*w[i]
     end
 

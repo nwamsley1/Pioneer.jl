@@ -45,12 +45,14 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         #println("best_scan_idx $best_scan_idx")
         return best_scan_idx
     end
-
     #Same precursor may be isolated multiple times within a single cycle_idx
     #Retain only most abundant within each cycle .
-    function setFilter!(state::GD_state{HuberParams{T}, U, I, J}, weights::AbstractVector{T}, scan_idxs::AbstractVector{I}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function setFilter!(state::GD_state{HuberParams{T}, U, I, J}, weights::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}, scan_idxs::SubArray{UInt32, 1, Vector{UInt32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in range(1, length(weights)-1)
-            if abs(scan_idxs[i]-scan_idxs[i + 1]) == 1
+            #println("scan_idxs[i] ", scan_idxs[i])
+            #println("scan_idxs[i + 1] ", scan_idxs[i + 1])
+            #println(" abs(scan_idxs[i]-scan_idxs[i + 1]) ", abs(scan_idxs[i]-scan_idxs[i + 1]))
+            if abs(scan_idxs[i+1]-scan_idxs[i]) == 1
                 #May not be appropriate criterion to choose between competing scans
                 if weights[i] > weights[i + 1]
                     if state.mask[i] == false
@@ -61,6 +63,16 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 end
             end
         end
+    end
+
+    function getDataPoints(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+        data_points = 0
+        for i in range(1, state.max_index)
+            if state.mask[i]==false
+                data_points += 1
+            end
+        end
+        return data_points
     end
 
     function filterLowIntensity!(state::GD_state{HuberParams{T}, U, I, J}, min_intensity::T, weights::AbstractVector{T}) where {T,U<:AbstractFloat, I,J<:Integer}
@@ -85,20 +97,26 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     function fillLsqFitWeights!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
 
         intensity = state.data
-        for i in range(1, length(intensity) - 2)
+
+        #println("state.max_index ", state.max_index)            
+        #println("state.mask[1:state.max_index] ", state.mask[1:state.max_index])
+        for i in range(1, state.max_index - 2)
+
             if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[i + 2])
                 state.mask[i + 1] = true
             end
-            if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[min(i + 3, length(intensity))])
+            if (intensity[i + 1] < intensity[i]) & (intensity[i + 1] < intensity[min(i + 3, state.max_index)])
+                #println("i $i")
                 state.mask[i + 1] = true
-                if (intensity[i + 2] < intensity[i]) & (intensity[i + 2] < intensity[min(i + 3, length(intensity))])#intensity[min(i + 1, length(intensity))])
+                if (intensity[i + 2] < intensity[i]) & (intensity[i + 2] < intensity[min(i + 3, state.max_index)])#intensity[min(i + 1, length(intensity))])
                     state.mask[i + 2] = true
                 end
             end
+            #println("state.mask[1:state.max_index] ", state.mask[1:state.max_index])
         end
     end
 
-    function filterOnRT!(state::GD_state{HuberParams{T}, U, I, J}, best_rt::T, rts::AbstractVector{T}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function filterOnRT!(state::GD_state{HuberParams{T}, U, I, J}, best_rt::T, rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in eachindex(rts)
             if (rts[i] > (best_rt - 1.0)) & (rts[i] < (best_rt + 1.0))
                 continue
@@ -108,7 +126,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         end
     end
    
-    function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, best_scan::Int64, rts::AbstractVector{<:AbstractFloat}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, best_scan::Int64, rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
         
         
         for i in range(best_scan, length(rts)-1)
@@ -131,18 +149,22 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     end
 
-    function filterOnMatchedRatio!(state::GD_state{HuberParams{T}, U, I, J}, best_scan_idx::Int64, matched_ratios::AbstractVector{U}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function filterOnMatchedRatio!(state::GD_state{HuberParams{T}, U, I, J}, best_scan_idx::Int64, matched_ratios::SubArray{V, 1, Vector{V}, Tuple{Vector{Int64}}, false}) where {T,U,V<:AbstractFloat, I,J<:Integer}
         for i in range(1, state.max_index)
-            if matched_Ratios[i] < (matched_ratios[best_scan_idx] - 1)
+            if (matched_ratios[i] < (matched_ratios[best_scan_idx] - 1)) & (matched_ratios[i] < 0)
+                state.mask[i] = true
+            end
+            if matched_ratios[i] < -1
                 state.mask[i] = true
             end
         end
     end
 
     function fillState!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}) where {T,U<:AbstractFloat, I,J<:Integer}
+        max_weight = maximum(chrom.weight)
         for i in range(1, length(chrom.weight))
             state.t[i] = chrom.RT[i]
-            state.data[i] = chrom.weight[i]
+            state.data[i] = chrom.weight[i]/max_weight
         end
         state.max_index = length(chrom.weight)
     end
@@ -158,14 +180,12 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     best_rt, best_height = chrom.RT[best_scan], chrom.weight[best_scan] #Height and rt of scan with largest coefficient
     filterOnRT!(state, best_rt, chrom.RT) #Remove scans greater than a certain distance from the best scan 
     #Maybe don't need this?
-    #filterLowIntensity!(state, best_height*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
-    filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio)
-
-    fillLsqFitWeights!(state)
-
+    filterLowIntensity!(state, best_height*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
+    filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio) #Remove scans with matched ratios significantly lower than that of the best scan
+    fillLsqFitWeights!(state) #Enforce smoothness 
     best_rt, best_height = 0.0, 0.0
     for i in range(1, state.max_index)
-        if state.data[i]*state.mask[i] > best_height
+        if state.data[i]*(1 - state.mask[i]) >= best_height
             best_height = state.data[i]
             best_rt = state.t[i]
         end
@@ -176,41 +196,45 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Fit EGH Curve to data 
 
     #Parameter constraints
-    lower, upper = HuberParams(0.001, 0, -1, 0.05), HuberParams(1, Inf, 1, 2.0);
+    lower, upper = HuberParams(T(0.001), T(0), T(-1), T(0.05)), HuberParams(T(1), T(Inf), T(1), T(2.0));
     #Initial parameters
-    state.params = getP0(α, 
-                            half_width_at_α, 
-                            half_width_at_α,
-                            best_rt,
-                            best_height,
+    state.params = getP0(T(α), 
+                            T(half_width_at_α), 
+                            T(half_width_at_α),
+                            T(best_rt),
+                            T(best_height),
                             lower, upper)
-    #end
 
-    #Estimate model parameters in `state` by gradint descent using Adam algorithm
+    state.t[state.max_index + 1], state.t[state.max_index + 2] = T(best_rt - 0.5), T(best_rt + 0.5)
+    state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
+    state.max_index += 2
     GD(state,
                 lower,
                 upper,
-                tol = 5e-3, 
-                max_iter = 100, 
-                δ = 1e-2,
-                α=0.1,
+                tol = 1e-3, 
+                max_iter = 200, 
+                δ = 1e-3,
+                #δ = 100.0,
+                α=0.01,
                 β1 = 0.9,
                 β2 = 0.999,
                 ϵ = 1e-8)
-
+    println("state.n ", state.n)
+    println("state.params ", state.params)
     ##########
     #Plots                                           
     if isplot
         display(chrom)
-        p = Plots.plot(state.t, #Plot observed data points 
-                        state.data, 
+        p = Plots.plot(state.t[1:state.max_index], #Plot observed data points 
+                        state.data[1:state.max_index], 
                         show = true, seriestype=:scatter, reuse = false)
-
+        t = [state.t[i] for i in range(1, state.max_index) if state.mask[i] == false]
+        d = [state.data[i] for i in range(1, state.max_index) if state.mask[i] == false]
         Plots.plot!(p, #Plot fitted model curve
-                    state.t[state.mask.==false], 
-                    state.y[state.mask.==false], 
+                    t,d,
                     show = true, alpha = 0.5, color = :green, seriestype=:scatter)
 
+        
         X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), length(gauss_quad_w))
         Plots.plot!(p, X,  
                     [F(state, x) for x in X], #Evaluate fitted model at each point. 
@@ -220,7 +244,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
         Plots.vline!(p, [best_rt], color = :blue);
         Plots.vline!(p,[state.t[1]], color = :red);
-        Plots.vline!(p, [state.t[end][end]], color = :red);
+        Plots.vline!(p, [state.t[state.max_index]], color = :red);
+        
         display(p)
         peak_area = Integrate(state, gauss_quad_x, gauss_quad_w)
         println("peak_area $peak_area")
@@ -236,19 +261,24 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     points_above_FWHM = zero(Int32)
     points_above_FWHM_01 = zero(Int32)
     
-    for (i, I) in enumerate(state.data)
-        if I > (state.params.H*0.5)
+    total_intensity = zero(Float32)
+    for i in range(1, state.max_index)
+        intensity = state.data[i]
+        if intensity > (state.params.H*0.5)
             points_above_FWHM += one(Int32)
-        elseif I > (state.params.H*0.01)
+        elseif intensity > (state.params.H*0.01)
             points_above_FWHM_01 += one(Int32)
         end 
-        sum_of_residuals += abs.(I - state.y[i])
+        if state.mask[i] == false
+            sum_of_residuals += abs.(intensity - state.y[i])
+            total_intensity += intensity
+        end
     end
     
-    GOF = 1 - sum_of_residuals/sum(intensity)
+    GOF = 1 - sum_of_residuals/total_intensity
     FWHM = getFWHM(state, 0.5)
     FWHM_01 = getFWHM(state, 0.01)
-    #asymmetry = atan(abs(EGH_FIT.param[3])/sqrt(abs(EGH_FIT.param[1]/2)))
+   
 
     ############
     #Model Parameters
@@ -259,78 +289,78 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     
     ############
     #Summary Statistics 
-    log_sum_of_weights = 0.0
-    mean_scribe_score = 0.0
-    max_weight = 0.0
-    mean_log_entropy = -10.0
-    mean_log_probability = 0.0
-    mean_log_spectral_contrast = -10.0
-    count = 0
-    ions_sum = 0
-    for i in range(1, length(state.mask))
-        if !state.mask[i]
-            if chrom.scribe[i]>mean_scribe_score
-                mean_scribe_score = chrom.scribe[i]
-            end
-            if log2(max(chrom.entropy_score[i], 0.001))>mean_log_entropy
-                mean_log_entropy=log2(max(chrom.entropy_score[i], 0.001))
-            end
-            if chrom.scribe[i]>mean_scribe_score
-                mean_scribe_score = chrom.scribe[i]
-            end
-            if log2(chrom.spectral_contrast[i])>mean_log_spectral_contrast
-                mean_log_spectral_contrast= log2(chrom.spectral_contrast[i])
-            end
-            if chrom.weight[i]>log_sum_of_weights 
-                log_sum_of_weights  = chrom.weight[i]
-                max_weight = chrom.weight[i]
-            end
-            if chrom.total_ions[i] > ions_sum
-                ions_sum = chrom.total_ions[i]
-            end
 
-            mean_log_probability += log2(chrom.prob[i])
 
-            count += 1
-        end
-    end    
-    log_sum_of_weights = log2(log_sum_of_weights)
-    mean_log_probability = mean_log_probability/count
-   # mean_log_entropy = mean_log_entropy/count
-   # mean_scribe_score = mean_scribe_score/count
-   # mean_log_spectral_contrast = mean_log_spectral_contrast/count
-    #mean_scribe_score = mean_scribe_score/count   
+    function getSummaryScores!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}) where {T,U<:AbstractFloat, I,J<:Integer}
+        max_scribe_score = 0.0
+        max_ratio = 0.0
+        max_weight = 0.0
+        max_log_entropy = -10.0
+        sum_log_probability = 0.0
+        max_log_spectral_contrast = -10.0
 
-    #mean_scribe_score = sum(chrom.scribe_score)
-    #mean_log_probability = mean(log2.(chrom.prob))
-    #ions_sum = sum(chrom.total_ions)
-    #data_points = Int64(sum(lsq_fit_weight) - 2) #May need to change
-    mean_ratio = mean(chrom.matched_ratio)
-    base_width = rt[end] - rt[1]
+        count = 0
+        ions_sum = 0
+
+        for i in range(1, length(chrom.weight))
+            if !state.mask[i]
+                if chrom.scribe[i]>max_scribe_score
+                    max_scribe_score = chrom.scribe[i]
+                end
+                if log2(max(chrom.entropy_score[i], 0.001))>max_log_entropy
+                    max_log_entropy=log2(max(chrom.entropy_score[i], 0.001))
+                end
+                if chrom.matched_ratio[i]>max_ratio
+                    max_ratio = chrom.matched_ratio[i]
+                end
+                if log2(chrom.spectral_contrast[i])>max_log_spectral_contrast
+                    max_log_spectral_contrast= log2(chrom.spectral_contrast[i])
+                end
+                if chrom.weight[i]>max_weight
+                    max_weight = chrom.weight[i]
+                end
+                if chrom.total_ions[i] > ions_sum
+                    ions_sum = chrom.total_ions[i]
+                end
+
+                ions_sum += (chrom.b_count[i] + chrom.y_count[i])
+
+                sum_log_probability += log2(chrom.prob[i])
+
+                count += 1
+            end
+        end    
+
+        #chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
+        chrom.max_log_spectral_contrast[best_scan] = max_log_spectral_contrast
+        chrom.max_log_entropy[best_scan] = max_log_entropy
+        chrom.max_scribe_score[best_scan] = max_scribe_score
+        chrom.mean_log_probability[best_scan] = sum_log_probability/count
+        chrom.max_weight[best_scan] = max_weight
+        chrom.max_matched_ratio[best_scan] = max_ratio
+        chrom.ions_sum[best_scan] = ions_sum
+    end
+
+    getSummaryScores!(state, chrom);
 
     best_scan = argmax(chrom.weight)#argmax(chrom.prob.*(chrom.weight.!=0.0))
     chrom.peak_area[best_scan] = peak_area
     chrom.GOF[best_scan] = GOF
     chrom.FWHM[best_scan] = FWHM
     chrom.FWHM_01[best_scan] = FWHM_01
-    #chrom.asymmetry[best_scan] = asymmetry
+    chrom.assymetry[best_scan] = atan(abs(state.params.τ)/sqrt(abs(state.params.σ/2)))
     chrom.points_above_FWHM[best_scan] = points_above_FWHM
     chrom.points_above_FWHM_01[best_scan] = points_above_FWHM_01
     chrom.σ[best_scan] = σ
     chrom.tᵣ[best_scan] = tᵣ
     chrom.τ[best_scan] = τ
     chrom.H[best_scan] = H
-    chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
-    chrom.mean_log_spectral_contrast[best_scan] = mean_log_spectral_contrast
-    chrom.mean_log_entropy[best_scan] = mean_log_entropy
-    chrom.mean_scribe_score[best_scan] = mean_scribe_score
-    chrom.mean_log_probability[best_scan] = mean_log_probability
-    chrom.ions_sum[best_scan] = ions_sum
-    chrom.data_points[best_scan] = data_points
-    chrom.mean_matched_ratio[best_scan] = mean_ratio
-    chrom.base_width_min[best_scan] = base_width
+    chrom.data_points[best_scan] = getDataPoints(state) - 2
+    chrom.fraction_censored[best_scan] =  Float16(((state.max_index - 2) - chrom.data_points[best_scan])/(state.max_index - 2))
+
+    chrom.base_width_min[best_scan] = state.t[state.max_index-2] - state.t[1]
     chrom.best_scan[best_scan] = true
-    chrom.max_weight[best_scan] = max_weight
+
     
 
     return nothing
@@ -340,17 +370,18 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
 
     gx, gw = gausslegendre(n_quadrature_nodes)
     N = 500
-    state = GD_state(
-                    HuberParams(0.0, 0.0, 0.0), #Initial params
-                    zeros(Float64, N), #t
-                    zeros(Float64, N), #y
-                    zeros(Float64, N), #data
-                    falses(N), #mask
-                    0, #number of iterations
-                    N #max index
-                    )
-    #Threads.@threads for i in ProgressBar(range(1, length(grouped_precursor_df)))
-    for i in range(1, length(grouped_precursor_df))
+    dtype = eltype(grouped_precursor_df[1].weight)
+    Threads.@threads for i in ProgressBar(range(1, length(grouped_precursor_df)))
+        state = GD_state(
+            HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+            zeros(dtype, N), #t
+            zeros(dtype, N), #y
+            zeros(dtype, N), #data
+            falses(N), #mask
+            0, #number of iterations
+            N #max index
+            )
+    #for i in range(1, length(grouped_precursor_df))
         integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                 state,
                                 gx::Vector{Float64},

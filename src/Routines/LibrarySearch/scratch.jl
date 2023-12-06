@@ -582,3 +582,58 @@ function gradientDesc(x, y, learn_rate, conv_threshold, n, max_iter)
         end
     end
 end
+
+dtype = Float32
+N = 500
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    )
+    gx, gw = gausslegendre(100)
+
+N = 20000
+
+
+include("src/Routines/LibrarySearch/scratch_newchroms.jl")
+integratePrecursorMS2(MS2_CHROMS_GROUPED[N],
+                        state,
+                        gx,
+                        gw,
+                        intensity_filter_fraction = 0.000f0,
+                        α = 0.01f0,
+                        half_width_at_α = 0.15f0,
+                        LsqFit_tol = 1e-3,
+                        Lsq_max_iter = 100,
+                        tail_distance = 0.25f0,
+                        isplot = true
+)
+MS2_CHROMS_GROUPED[N][:,[:precursor_idx,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:fraction_censored]]
+reset!(state)
+N += 1
+
+N = 2016
+N = 2025
+N = 20037
+N = 20174
+
+lower = HuberParams(Float32(0.001), Float32(0), Float32(-1), Float32(0.05))
+upper =  HuberParams(Float32(1), Float32(Inf), Float32(1), Float32(2.0));
+
+GD(state,
+lower,
+upper,
+tol = 5e-3, 
+max_iter = 100, 
+δ = 1e-2,
+#δ = 100.0,
+α=0.001,
+β1 = 0.9,
+β2 = 0.999,
+ϵ = 1e-8)
+
+N += 1

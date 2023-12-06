@@ -464,18 +464,18 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_112923.jld2"); PSMs_Dict)
-RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_110223.jld2"));
-RT_INDICES = RT_INDICES["RT_INDICES"]
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_120623.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_120623.jld2"); PSMs_Dict)
+#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"));
+#RT_INDICES = RT_INDICES["RT_INDICES"]
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 
-quantitation_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    MS2_CHROMS = integrateMS2(MS_TABLE, 
+    MS2_CHROMS = vcat(integrateMS2(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
@@ -485,7 +485,7 @@ quantitation_time = @timed Threads.@threads for (ms_file_idx, MS_TABLE_PATH) in 
                     ms2_integration_params, 
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
                     #scan_range = (101357, 110357)
-                    );
+                    )...);
 
     _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
     sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
