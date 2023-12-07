@@ -501,11 +501,11 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
     filter!(x -> x.best_scan, MS2_CHROMS);
     filter!(x->x.weight>0, MS2_CHROMS);
 
-    for i in range(1, size(MS2_CHROMS)[1])
-        if isinf(MS2_CHROMS[i,:mean_matched_ratio])
-            MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
-        end
-    end
+    #for i in range(1, size(MS2_CHROMS)[1])
+    #    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
+    #        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
+    #    end
+    #end
 
     transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
     prosit_lib["precursors"][psm[:precursor_idx]].mz
@@ -646,7 +646,14 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-
+for name in names(best_psms)
+    if eltype(best_psms[:,name]) == String
+        continue
+    end
+    if any(isinf.(best_psms[:,name]))
+        println("name $name")
+    end
+end
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"); best_psms)
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"));
@@ -667,7 +674,12 @@ end
 
 filter!(x -> x.data_points > 2, best_psms)
 =#
-features = [ :FWHM,
+best_psms = MS2_CHROMS
+features = [ 
+    :max_ions,
+    :assymetry,
+    :fraction_censored,
+    :FWHM,
     :FWHM_01,
     :GOF,
     :H,
@@ -677,10 +689,8 @@ features = [ :FWHM,
     :longest_y,
     :y_count,
     :b_count,
-    #:b_ladder,
     :base_width_min,
     :best_rank,
-    #:best_over_precs,
     :charge,
     :city_block,
     :city_block_fitted,
@@ -691,13 +701,13 @@ features = [ :FWHM,
     :hyperscore,
     #:intensity_explained,
     :ions_sum,
-    :log_sum_of_weights,
+    #:log_sum_of_weights,
     :matched_ratio,
-    :mean_log_entropy,
+    :max_entropy,
     :mean_log_probability,
-    :mean_log_spectral_contrast,
-    :mean_matched_ratio,
-    :mean_scribe_score,
+    :max_spectral_contrast,
+    :max_matched_ratio,
+    :max_scribe_score,
     :missed_cleavage,
     #:ms1_ms2_diff,
     :peak_area,

@@ -201,7 +201,6 @@ function GD(state::GD_state{P,T,I,J}, lower::P, upper::P;
         if norm(diff) <= tol
             return 
         end
-        println("norm_diff ", norm(diff))
         state.n += 1
     end    
 end

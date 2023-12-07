@@ -167,12 +167,13 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             state.data[i] = chrom.weight[i]/max_weight
         end
         state.max_index = length(chrom.weight)
+        return max_weight
     end
 
     T = eltype(chrom.weight)
 
     #Initialize state with observed data 
-    fillState!(state, chrom)
+    norm_factor = fillState!(state, chrom)
     #best_scan = getBestPSM(filter, chrom.matched_ratio, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
     best_scan = argmax(chrom.weight)
     truncateAfterSkip!(state, best_scan, chrom.RT) #Only allow a fixed ammount of time without a scan
@@ -219,8 +220,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 β1 = 0.9,
                 β2 = 0.999,
                 ϵ = 1e-8)
-    println("state.n ", state.n)
-    println("state.params ", state.params)
+
     ##########
     #Plots                                           
     if isplot
@@ -295,26 +295,27 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         max_scribe_score = 0.0
         max_ratio = 0.0
         max_weight = 0.0
-        max_log_entropy = -10.0
+        max_entropy = -10.0
         sum_log_probability = 0.0
-        max_log_spectral_contrast = -10.0
+        max_spectral_contrast = -10.0
 
         count = 0
         ions_sum = 0
+        max_ions = 0
 
         for i in range(1, length(chrom.weight))
             if !state.mask[i]
                 if chrom.scribe[i]>max_scribe_score
                     max_scribe_score = chrom.scribe[i]
                 end
-                if log2(max(chrom.entropy_score[i], 0.001))>max_log_entropy
-                    max_log_entropy=log2(max(chrom.entropy_score[i], 0.001))
+                if max(chrom.entropy_score[i])>max_entropy
+                    max_entropy=max(chrom.entropy_score[i])
                 end
                 if chrom.matched_ratio[i]>max_ratio
                     max_ratio = chrom.matched_ratio[i]
                 end
-                if log2(chrom.spectral_contrast[i])>max_log_spectral_contrast
-                    max_log_spectral_contrast= log2(chrom.spectral_contrast[i])
+                if chrom.spectral_contrast[i]>max_spectral_contrast
+                    max_spectral_contrast= log2(chrom.spectral_contrast[i])
                 end
                 if chrom.weight[i]>max_weight
                     max_weight = chrom.weight[i]
@@ -323,7 +324,12 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     ions_sum = chrom.total_ions[i]
                 end
 
-                ions_sum += (chrom.b_count[i] + chrom.y_count[i])
+                ion_count = (chrom.b_count[i] + chrom.y_count[i])
+                ions_sum += ion_count
+
+                if ion_count > max_ions
+                    max_ions = ion_count
+                end
 
                 sum_log_probability += log2(chrom.prob[i])
 
@@ -332,19 +338,20 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         end    
 
         #chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
-        chrom.max_log_spectral_contrast[best_scan] = max_log_spectral_contrast
-        chrom.max_log_entropy[best_scan] = max_log_entropy
+        chrom.max_spectral_contrast[best_scan] = max_spectral_contrast
+        chrom.max_entropy[best_scan] = max_entropy
         chrom.max_scribe_score[best_scan] = max_scribe_score
         chrom.mean_log_probability[best_scan] = sum_log_probability/count
         chrom.max_weight[best_scan] = max_weight
         chrom.max_matched_ratio[best_scan] = max_ratio
         chrom.ions_sum[best_scan] = ions_sum
+        chrom.max_ions[best_scan] = max_ions
     end
 
     getSummaryScores!(state, chrom);
 
     best_scan = argmax(chrom.weight)#argmax(chrom.prob.*(chrom.weight.!=0.0))
-    chrom.peak_area[best_scan] = peak_area
+    chrom.peak_area[best_scan] = peak_area*norm_factor
     chrom.GOF[best_scan] = GOF
     chrom.FWHM[best_scan] = FWHM
     chrom.FWHM_01[best_scan] = FWHM_01
@@ -354,7 +361,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     chrom.σ[best_scan] = σ
     chrom.tᵣ[best_scan] = tᵣ
     chrom.τ[best_scan] = τ
-    chrom.H[best_scan] = H
+    chrom.H[best_scan] = H*norm_factor
     chrom.data_points[best_scan] = getDataPoints(state) - 2
     chrom.fraction_censored[best_scan] =  Float16(((state.max_index - 2) - chrom.data_points[best_scan])/(state.max_index - 2))
 

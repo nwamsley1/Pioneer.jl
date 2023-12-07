@@ -612,7 +612,7 @@ integratePrecursorMS2(MS2_CHROMS_GROUPED[N],
                         tail_distance = 0.25f0,
                         isplot = true
 )
-MS2_CHROMS_GROUPED[N][:,[:precursor_idx,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:fraction_censored]]
+MS2_CHROMS_GROUPED[N][:,[:precursor_idx,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
 reset!(state)
 N += 1
 
