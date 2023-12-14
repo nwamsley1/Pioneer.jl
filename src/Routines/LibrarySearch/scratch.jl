@@ -599,20 +599,31 @@ state = GD_state(
 N = 20000
 
 
+SEQS = "_".*best_psms[!,:sequence].*"_.".*string.(best_psms[!,:charge]);
+SEQS = replace.(SEQS, "C" => "C[Carbamidomethyl (C)]");
+best_psms[!,:modified_sequence] = SEQS;
+
+best_psms[[x ∈ diann_precs for x in best_psms[!,:modified_sequence]],:]
+ids = unique(best_psms[[x ∈ diann_precs for x in best_psms[!,:modified_sequence]],:precursor_idx])
 include("src/Routines/LibrarySearch/scratch_newchroms.jl")
-integratePrecursorMS2(MS2_CHROMS_GROUPED[N],
+
+reset!(state)
+prec_id = 10429654
+#integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = ids[N],)],
+integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)],
                         state,
                         gx,
                         gw,
-                        intensity_filter_fraction = 0.000f0,
-                        α = 0.01f0,
+                        intensity_filter_fraction = 0.01f0,
+                        α = 0.001f0,
                         half_width_at_α = 0.15f0,
                         LsqFit_tol = 1e-3,
                         Lsq_max_iter = 100,
                         tail_distance = 0.25f0,
                         isplot = true
 )
-MS2_CHROMS_GROUPED[N][:,[:precursor_idx,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
+#MS2_CHROMS_GROUPED[(precursor_idx = ids[N],)][:,[:precursor_idx,:charge,:decoy,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:data_points,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
+MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][:,[:precursor_idx,:charge,:decoy,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:data_points,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
 reset!(state)
 N += 1
 
@@ -637,3 +648,150 @@ max_iter = 100,
 ϵ = 1e-8)
 
 N += 1
+
+params = best_psms[best_psms[!,:sequence].=="IITLDTATEIEGLSTGCK",:][1,[:σ,:H,:τ]]
+dtype=Float32
+N = 1
+state = GD_state(
+    HuberParams(params.σ, zero(dtype),params.τ,params.H), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    )
+
+times =  LinRange(-1, 1, 1000)
+p = plot()
+
+for i in range(1, 10)
+    params = best_psms[best_psms[!,:sequence].=="IITLDTATEIEGLSTGCK",:][i,[:σ,:H,:τ]]
+    state = GD_state(
+        HuberParams(params.σ, zero(dtype),params.τ,params.H), #Initial params
+        zeros(dtype, N), #t
+        zeros(dtype, N), #y
+        zeros(dtype, N), #data
+        falses(N), #mask
+        0, #number of iterations
+        N #max index
+        )    
+    plot(p, LinRange(-1, 1, 1000),
+        [F(state, t) for t in times])
+end
+show(p)
+
+
+plot(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points], 
+    best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry],
+    seriestype=:scatter, alpha = 0.01)
+
+
+histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points], 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry])
+
+p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points ], 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
+hline!(p, [0.05])
+hline!(p, [-0.05])
+
+
+p = histogram2d(max.(0.0, Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:GOF])), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
+            hline!(p, [0.03])
+
+
+p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
+hline!(p, [0.05])
+hline!(p, [-0.03])
+
+p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
+hline!(p, [0.02])
+hline!(p, [0.00])
+
+p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
+
+
+            p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]),
+            Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry]))
+
+
+histogram(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
+
+histogram(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
+
+p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ],
+            bins = (LinRange(0, 0.2, 100), LinRange(-0.1, 0.1, 100)))
+
+p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ],
+            bins = (LinRange(0.075, 0.2, 100), LinRange(-0.1, 0.1, 100)))
+
+p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:σ]), 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:τ],
+            bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100)))
+
+p = histogram2d((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:σ]), 
+best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:τ],
+bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 0.1, 100)))
+hline!(p, [0.05])
+hline!(p, [-0.01])
+vline!(p, [0.01])
+vline!(p, [0.025])
+
+
+p = histogram2d((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5).&(best_psms[:,:H].>1e6),:σ]), 
+best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5).&(best_psms[:,:H].>1e6),:τ],
+#bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 0.1, 100))
+#bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 1.0, 100))
+)
+hline!(p, [0.05])
+hline!(p, [-0.01])
+vline!(p, [0.01])
+vline!(p, [0.025])
+
+p = histogram2d(Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01).&(best_psms[:,:data_points].>1),:assymetry]), 
+            log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>1),:H]),
+            #bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100))
+            )
+
+            B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
+            A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
+
+α = 0.5
+best_psms[:,:A] .= (1/2).*( best_psms[!,:τ].*log(α) .- sqrt.(abs.(log.(α).*((best_psms[!,:τ].^2).*log(α) .- best_psms[!,:σ].*8))))
+best_psms[:,:B] .=  (-1/2).*(sqrt.(abs.(log(α).*((best_psms[!,:τ].^2).*log(α) .- best_psms[!,:σ].*8) .+ best_psms[!,:τ].*log(α))))
+
+p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:A], 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:B],
+            bins = (LinRange(-0.3, 0.0, 100), LinRange(-0.3, 0.0, 100))
+            )
+
+            p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:data_points].>1),:A], 
+            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:data_points].>1),:B],
+            #bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100))
+            )
+
+rng = range(0, 2π, length = 17)   # length = odd number for symmetric vertices.
+ellipse(posx, posy, width, height) = Shape(width*sin.(rng).+posx, height*cos.(rng).+posy)
+elps = [ellipse(x,rand(),rand(),rand()) for x ∈ 1:1]
+plot!(p, elps)
+
+
+[1/sqrt(1*cos(θ)^2 + 1*sin(θ)^2) for θ in LinRange(0, 2*π, 1000)]
+
+p = histogram2d(best_psms[(best_psms[:,:decoy].==false),:σ], 
+            best_psms[(best_psms[:,:decoy].==false),:τ])
+
+
+hline!(p, [0.05])
+hline!(p, [-0.03])
+
+p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false),:H]), 
+            best_psms[(best_psms[:,:decoy].==false),:σ])
+hline!(p, [0.02])
+hline!(p, [0.00])

@@ -220,6 +220,9 @@ function Integrate(state::GD_state{P,T,I,J}, x::Vector{U}, w::Vector{U}; α::Abs
     end
 
     a, b = getBase(state, α)
+    #a = state.params.tᵣ - 1.0
+    #b = state.params.tᵣ + 1.0
+    #println("a $a; b $b")
     #Quadrature rules are for integration bounds -1 to 1 but can shift
     #to arbitrary bounds a and b. 
     dotp = 0.0

@@ -434,7 +434,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
         
-        filter!(x->x.q_value<=0.25, PSMs);
+        filter!(x->x.q_value<=0.30, PSMs);
 
         #############
         #Get best scan for every precursor
@@ -456,7 +456,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         #Build RT index of precursors to integrate
         rt_index = buildRTIndex(PSMs);
 
-         
+        #RT_indices[MS_TABLE_PATH] = rt_index
         insert!(RT_INDICES, MS_TABLE_PATH, rt_index)#joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
         #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
         #Free up memory
@@ -464,8 +464,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_120623.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_120623.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_121323.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_113623.jld2"); PSMs_Dict)
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
 
@@ -494,6 +494,7 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
     integratePrecursors(MS2_CHROMS_GROUPED, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
                                         intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                        α = 0.001f0,
                                         LsqFit_tol = params_[:LsqFit_tol],
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance])
@@ -583,7 +584,7 @@ end
 =#
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_02_mzXML.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_121323.jld2"); best_psms)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
 
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
@@ -625,9 +626,11 @@ for name in names(best_psms)
 end
 =#
 for i in range(1, size(best_psms)[1])
+    if ismissing(best_psms[i,:mean_log_probability])
+        continue
+    end
     if isinf(best_psms[i,:mean_log_probability])
-        println(i)
-        best_psms[i,:mean_log_probability] = Float16(-6000)
+        best_psms[i,:mean_log_probability] = Float16(6000)*sign(best_psms[i,:mean_log_probability] )
     end
 end
 for i in range(1, size(best_psms)[1])
@@ -650,8 +653,9 @@ for name in names(best_psms)
     if eltype(best_psms[:,name]) == String
         continue
     end
-    if any(isinf.(best_psms[:,name]))
-        println("name $name")
+    println("name $name")
+    if any(skipmissing(isinf.(best_psms[:,name])))
+        println("name $name is inf")
     end
 end
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
@@ -745,7 +749,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 9.0/9.0,
+                        train_fraction = 4.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
@@ -761,12 +765,14 @@ setdiff(combined_set, pioneer_passing_fdr)
 #@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
        
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_nOf5_110223_mzXML_02.jld2"); best_psms)
+
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_nOf5_110123.jld2"); best_psms)
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_121123.jld2"); best_psms)
+
 using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
 
 function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
