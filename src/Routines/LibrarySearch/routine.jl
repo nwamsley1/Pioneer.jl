@@ -464,10 +464,12 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_121323.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_113623.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_121423.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_121423.jld2"); PSMs_Dict)
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
+
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_121423.jld2"));
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
@@ -498,10 +500,11 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
                                         LsqFit_tol = params_[:LsqFit_tol],
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance])
-
+    println("size(MS2_CHROMS) 1", size(MS2_CHROMS))
     filter!(x -> x.best_scan, MS2_CHROMS);
+    println("size(MS2_CHROMS) 2", size(MS2_CHROMS))
     filter!(x->x.weight>0, MS2_CHROMS);
-
+    println("size(MS2_CHROMS) 3", size(MS2_CHROMS))
     #for i in range(1, size(MS2_CHROMS)[1])
     #    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
     #        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
@@ -584,7 +587,7 @@ end
 =#
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_121323.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_121423.jld2"); best_psms)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
 
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
@@ -771,7 +774,7 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_121123.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_121523.jld2"); best_psms)
 
 using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
 
