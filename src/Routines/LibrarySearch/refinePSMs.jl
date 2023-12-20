@@ -253,7 +253,7 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         col_type = last(column)
         PSMs[!,first(column)] = Vector{col_type}(undef, size(PSMs)[1])
     end
-    PSMs[!,:bes t_scan] .= false
+    PSMs[!,:best_scan] .= false
     return 
 end
 

@@ -36,6 +36,7 @@ struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     prec_charge::UInt8
     prec_id::UInt32
     rank::UInt8
+    sulfur_count::UInt8
 end
 
 getIntensity(f::LibraryFragment) = f.intensity
@@ -44,6 +45,7 @@ getIonIndex(f::LibraryFragment) = f.ion_index
 getIonPosition(f::LibraryFragment) = f.ion_position
 getFragCharge(f::LibraryFragment) = f.frag_charge
 getRank(f::LibraryFragment) = f.rank
+sulfurCount(f::LibraryFragment) = f.sulfur
 LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8))
 
 struct LibraryPrecursor{T<:AbstractFloat}
@@ -60,6 +62,7 @@ struct LibraryPrecursor{T<:AbstractFloat}
     missed_cleavages::UInt8
     variable_mods::UInt8
     length::UInt8
+    sulfur_count::UInt8
 end
 
 isDecoy(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.isDecoy
@@ -69,6 +72,7 @@ getMz(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.mz
 getTotalIntensity(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.total_intensity
 getPepID(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.pep_id
 getBasePeakInt(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.base_peak_intensity
+sulfurCount(p::LibraryPrecursor{T}) where {T<:AbstractFloat} = p.sulfur_count
 #addIntensity!(p::LibraryPrecursor{T}, intensity::T) where {T<:AbstractFloat} = p.total_intensity[] += intensity
 #ArrowTypes.arrowname(::Type{LibraryFragment{Float32}}) = :LibraryFragment
 #ArrowTypes.JuliaType(::Val{:LibraryFragment}) = LibraryFragment
