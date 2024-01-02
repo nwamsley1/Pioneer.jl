@@ -152,7 +152,7 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:stripped_sequence] .= "";
     PSMs[!,:spectrum_peak_count] .= zero(UInt16);
     #SMs[!,:sequence_length] .= false
-    for i in range(1, size(PSMs)[1])
+    for i in ProgressBar(range(1, size(PSMs)[1]))
         PSMs[i,:decoy] = isDecoy(precursors[PSMs[i,:precursor_idx]]);
         PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
     #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
@@ -176,6 +176,11 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         if isinf(PSMs[i,:matched_ratio])
             PSMs[i,:matched_ratio] = Float16(60000)
         end
+
+        if isinf(PSMs[i,:err_norm])
+            PSMs[i,:err_norm] = Float16(60000)*sign(PSMs[i,:err_norm])
+        end
+
         PSMs[i,:stripped_sequence] = replace.(PSMs[i,:sequence], "M(ox)" => "M");
 
     end

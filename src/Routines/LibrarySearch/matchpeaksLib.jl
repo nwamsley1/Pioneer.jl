@@ -42,6 +42,7 @@ struct FragmentMatch{T<:AbstractFloat} <: Match
     frag_charge::UInt8
     frag_isotope::UInt8
     ion_type::Char
+    is_isotope::Bool
     prec_id::UInt32
     count::UInt8
     scan_idx::UInt32
@@ -49,8 +50,8 @@ struct FragmentMatch{T<:AbstractFloat} <: Match
     predicted_rank::UInt8
 end
 
-FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
-FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
+FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
+FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
 
 
 getFragMZ(f::FragmentMatch) = f.theoretical_mz
@@ -69,6 +70,7 @@ getCount(f::FragmentMatch) = f.count
 getScanID(f::FragmentMatch) = f.scan_idx
 getMSFileID(f::FragmentMatch) = f.ms_file_idx
 getRank(f::FragmentMatch) = f.predicted_rank
+isIsotope(f::FragmentMatch) = f.is_isotope
 
 struct PrecursorMatch{T<:AbstractFloat} <: Match
     predicted_intensity::T
@@ -98,7 +100,8 @@ and this function selects the one with the lowest mass error to the fragment ion
 - `transition::Transition`: -- Represents a fragment ion
 - `masses::Vector{Union{Missing, Float32}}` -- Mass list from a centroided mass spectrum. MUST BE SORTED IN ASCENDING ORDER. 
 - `peak::Int` -- An index for a mass in `masses`
-- `δ` -- A mass offset that can be applied to each mass in `masses` 
+- `δ` 
+-- A mass offset that can be applied to each mass in `masses` 
 
 ### Output
 
@@ -212,6 +215,7 @@ function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition
                                  getFragCharge(transition)::UInt8,
                                  UInt8(0),
                                  true == isyIon(transition) ? 'y' : 'b',
+                                 transition.is_isotope,
                                  getPrecID(transition),
                                  UInt8(1), 
                                  scan_idx,

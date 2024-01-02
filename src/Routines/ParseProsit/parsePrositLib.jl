@@ -30,6 +30,7 @@ struct LibraryFragment{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
     frag_charge::UInt8
     is_y_ion::Bool
+    is_isotope::Bool
     ion_position::UInt8
     ion_index::UInt8
     intensity::Float32
@@ -46,7 +47,19 @@ getIonPosition(f::LibraryFragment) = f.ion_position
 getFragCharge(f::LibraryFragment) = f.frag_charge
 getRank(f::LibraryFragment) = f.rank
 sulfurCount(f::LibraryFragment) = f.sulfur
-LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8))
+#LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8), zero(UInt8))
+LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), 
+zero(UInt8), 
+false, 
+false,
+zero(UInt8), 
+zero(UInt8), 
+zero(Float32), 
+zero(UInt8),
+ zero(UInt32), 
+ zero(UInt8),
+ zero(UInt8)
+ )
 
 struct LibraryPrecursor{T<:AbstractFloat}
     iRT::T

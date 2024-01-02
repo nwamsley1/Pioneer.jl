@@ -260,7 +260,8 @@ end
                                                                                         
 #Utilities
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
-                                                                    "massErrorEstimation.jl"]];
+                                                                    "massErrorEstimation.jl",
+                                                                    "isotopeSplines.jl"]];
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
@@ -436,7 +437,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
         
         filter!(x->x.q_value<=0.30, PSMs);
-
+        #bins = LinRange(0, 1, 100)
+        #histogram(PSMs[(PSMs[!,:q_value].<=0.01),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
+        #histogram!(PSMs[(PSMs[!,:q_value].>0.1),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
+        #histogram(PSMs[(PSMs[!,:decoy].==false),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
+        #histogram!(PSMs[(PSMs[!,:decoy]),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
         #############
         #Get best scan for every precursor
         sort!(PSMs,:RT); #Sorting before grouping is critical. 
@@ -465,12 +470,15 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_121423.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_121423.jld2"); PSMs_Dict)
-#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_mxXML_112923.jld2"));
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122223_isotopes_monoonly.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_isotopes_122223_isotopes_monoonly.jld2"); PSMs_Dict)
+#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122023.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
 
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_121423.jld2"));
+PSMs_Dict = nothing
+GC.gc()
+#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_121423.jld2"));
+
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
@@ -486,7 +494,8 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
                     frag_err_dist_dict[ms_file_idx],
                     16.1,
                     ms2_integration_params, 
-                    scan_range = (1, length(MS_TABLE[:scanNumber])),
+                    #scan_range = (1, length(MS_TABLE[:scanNumber])),
+                    scan_range = (101357, 102357),
                     #scan_range = (101357, 110357)
                     )...);
 
@@ -588,7 +597,7 @@ end
 =#
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_121423.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_122223_isotopes_monoonly.jld2"); best_psms)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
 
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
@@ -682,9 +691,10 @@ end
 
 filter!(x -> x.data_points > 2, best_psms)
 =#
-best_psms = MS2_CHROMS
+#best_psms = MS2_CHROMS
 features = [ 
     :max_ions,
+    :isotope_fraction,
     :assymetry,
     :fraction_censored,
     :FWHM,
@@ -775,7 +785,7 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_121523.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_122123_isotopes.jld2"); best_psms)
 
 using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
 

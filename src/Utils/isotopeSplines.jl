@@ -104,30 +104,133 @@ function -(a::isotope{T, I}, b::isotope{T, I}) where {T<:Real,I<:Integer}
     )
 end
 
-function getFragAbundance(iso_splines::IsotopeSplineModel{T}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+"""
+    getFragAbundance(iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+
+Get the relative intensities of fragment isotopes starting at M+0. Returns `isotopes` where isotopes[1] is M+0, isotopes[2] is M+1, etc. 
+Based on Goldfarb et al. 2018 Approximating Isotope Distributions of Biomolecule Fragments 
+CS Omega 2018, 3, 9, 11383-11391
+Publication Date:September 19, 2018
+https://doi.org/10.1021/acsomega.8b01649
+
+### Input
+
+- `iso_splines::IsotopeSplineModel{Float64}` -- Splines from Goldfarb et. al. that return isotope probabilities given the number of sulfurs and average mass 
+- `frag::isotope{T, I}` -- The fragment isotope
+- `prec::isotope{T, I}` -- The precursor isotope
+- `pset::Tuple{I, I}` -- The first and last precursor isotope that was isolated. (1, 3) would indicate the M+1 through M+3 isotopes were isolated and fragmented.
+
+### Output
+
+Returns `isotopes` where isotopes[1] is M+0, isotopes[2] is M+1, etc. Does not normalize to sum to one
+
+### Notes
+
+- See methods from Goldfarb et al. 2018
+
+### Algorithm 
+
+### Examples 
+
+"""
+function getFragAbundance(iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
     #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
     min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
 
     #placeholder for fragment isotope distributions
     #zero to isotopic state of largest precursor 
     isotopes = zeros(Float64, max_p + 1)
-
     for f in range(0, max_p) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
         complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
 
-        f_i = iso_splines(frag.sulfurs, f, Float64(frag.mass)) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
+        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float64(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
-            complement_prob += iso_splines(prec.sulfurs - frag.sulfurs, p - f, Float64(prec.mass - frag.mass))
+            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), p - f, Float64(prec.mass - frag.mass)), 0.0)
         end
-
         isotopes[f+1] = f_i*complement_prob
     end
 
-    return isotopes./sum(isotopes)
+    return isotopes#./sum(isotopes)
 end
 
-#given the precursor window and precursor mass and charge, calculate which precursor fragments were isolated. 
+"""
+    getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+
+Get the relative intensities of fragment isotopes starting at M+0. Fills `isotopes` in place. isotopes[1] is M+0, isotopes[2] is M+1, etc. 
+Based on Goldfarb et al. 2018 Approximating Isotope Distributions of Biomolecule Fragments 
+CS Omega 2018, 3, 9, 11383-11391
+Publication Date:September 19, 2018
+https://doi.org/10.1021/acsomega.8b01649
+
+### Input
+
+- `isotopes::Vector{Float64}`: -- Vector to hold relative abundances of fragment isotopes. 
+- `iso_splines::IsotopeSplineModel{Float64}` -- Splines from Goldfarb et. al. that return isotope probabilities given the number of sulfurs and average mass 
+- `frag::isotope{T, I}` -- The fragment isotope
+- `prec::isotope{T, I}` -- The precursor isotope
+- `pset::Tuple{I, I}` -- The first and last precursor isotope that was isolated. (1, 3) would indicate the M+1 through M+3 isotopes were isolated and fragmented.
+
+### Output
+
+Fills `isotopes` in place with the relative abundances of the fragment isotopes. Does not normalize to sum to one!
+
+### Notes
+
+- See methods from Goldfarb et al. 2018
+
+### Algorithm 
+
+### Examples 
+
+"""
+function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+    #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
+    min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
+
+    #placeholder for fragment isotope distributions
+    #zero to isotopic state of largest precursor 
+    for f in range(0, min(length(isotopes)-1, max_p)) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
+        complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
+
+        #Splines don't go above five sulfurs
+        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float64(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
+
+        for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
+            #Splines don't go above five sulfurs 
+            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), p - f, Float64(prec.mass - frag.mass)), 0.0)
+        end
+        isotopes[f+1] = f_i*complement_prob
+    end
+
+    return isotopes#isotopes./sum(isotopes)
+end
+
+"""
+    getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
+
+Given the quadrupole isolation window and the precursor mass and charge, calculates which precursor isotopes were isolated
+
+### Input
+
+- `prec_mz::T`: -- Precursor mass-to-charge ratio
+- `prec_charge::U` -- Precursor charge state 
+- ` window::Tuple{T, T}` -- The lower and upper m/z bounds of the quadrupole isolation window
+
+
+### Output
+
+A Tuple of two integers. (1, 3) would indicate the M+1 through M+3 isotopes were isolated and fragmented.
+
+### Notes
+
+- See methods from Goldfarb et al. 2018
+
+### Algorithm 
+
+### Examples 
+
+"""
 function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
     first_iso, last_iso = -1, -1
     for iso_count in range(0, 5) #Arbitrary cutoff after 5 
@@ -142,6 +245,43 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
     return (first_iso, last_iso)
 end
 
+
+isotopes = [0.0, 0.0]
+getFragAbundance!(
+    isotopes,
+    iso_splines,
+    isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+    isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+    prec_isotope_set)
+
+p = plot([0, 0], [0, 0])
+isotopes = [0.0, 0.0]
+prec_isotope_set = (1, 5)
+prec = precursors[1000000]
+for frag in f_det[1000000]
+
+    getFragAbundance!(
+        isotopes,
+        iso_splines,
+        isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+        isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+        prec_isotope_set)
+
+    intensity = frag.intensity
+    isotopes = isotopes./sum(isotopes)
+    frag_mz = frag.frag_mz
+    iso_mz = frag.frag_mz + NEUTRON/frag.frag_charge
+    plot!([frag_mz, frag_mz], 
+    [0.0, intensity*isotopes[1]], 
+    show = true, color = :black, legend = false, alpha = 0.5)
+
+    plot!([iso_mz, iso_mz], 
+    [0.0, intensity*isotopes[2]], 
+    show = true, color = :red, legend = false, alpha = 0.5)
+
+end
+plot()
+#=
 prec = precursors[1]
 for frag in f_det[1]
     isotopes = getFragAbundance(iso_splines, 
@@ -151,6 +291,7 @@ for frag in f_det[1]
 
     println(isotopes[1:2]./sum(isotopes[1:2]))
 end
+=#
 #=
 struct LibraryFragmentS{T<:AbstractFloat} <: FragmentIndexType
     frag_mz::T
@@ -181,9 +322,9 @@ for prec in ProgressBar(f_det)
     sulfurs = 0
     for frag in prec
         if frag.is_y_ion
-            sulfurs = count(r"[CM]", precursor.sequence[1:frag.ion_position])
-        else
             sulfurs = count(r"[CM]", reverse(precursor.sequence)[1:frag.ion_position])
+        else
+            sulfurs = count(r"[CM]", precursor.sequence[1:frag.ion_position])
         end
         push!(last(f_det_sulfur), 
             LibraryFragmentS(
@@ -264,6 +405,7 @@ for prec in ProgressBar(f_det_sulfur)
                 frag.frag_mz,
                 frag.frag_charge,
                 frag.is_y_ion,
+                false,
                 frag.ion_position,
                 frag.ion_index,
                 frag.intensity,
@@ -306,11 +448,14 @@ precursors)
 =#
 
 #=
-iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
+iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
 
 #When the full precursor distribution is isolated the fragment isotope distribution should look like its natural distribution 
 getFragAbundance(iso_splines, isotope(2500.0, 0, 0), isotope(3000.0, 0, 0), [0, 1])
 getFragAbundance(iso_splines, isotope(2500.0, 0, 0), isotope(3000.0, 0, 0), [0, 1, 2, 3, 4, 5, 6, 7])
 [iso_splines(0,x,2500.0) for x in [0, 1, 2, 3, 4, 5, 6, 7]]
+
+
+
 
 =#

@@ -6,6 +6,8 @@
 function selectTransitions!(transitions::Vector{LibraryFragment{V}},
                             precursors::Vector{LibraryPrecursor{Float32}},
                             fragment_list::Vector{Vector{LibraryFragment{V}}}, 
+                            iso_splines::IsotopeSplineModel{Float64},
+                            isotopes::Vector{Float64},
                             #precursors::Vector{LibraryPrecursor{Float32}}
                             counter::Counter{I,Float32}, 
                             topN::Int, 
@@ -35,18 +37,57 @@ function selectTransitions!(transitions::Vector{LibraryFragment{V}},
             continue
         end
 
+        prec_isotope_set = getPrecursorIsotopeSet(getMz(prec), getCharge(prec), mz_bounds)
+        #println("prec.sequence ", prec.sequence)
         for frag in fragment_list[getID(counter, i)]
             #if abs((getiRT(precursors[getPrecID(frag)]) - rt)) > 5.0
             #    continue
             #end
-            transition_idx += 1
-            transitions[transition_idx] = frag
-            #Grow array if exceeds length
-            if transition_idx > length(transitions)
-                append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+            getFragAbundance!(
+                        isotopes,
+                        iso_splines,
+                        isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+                        isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+                        prec_isotope_set)
+            #println(isotopes)
+            if length(isotopes) == 0
+                continue
+            end
+            #println("isotopes $isotopes")
+            #isotope_count = min(length(isotopes), 2)
+            norm_fac = isotopes[1] + isotopes[2]
+            isotopes[1] = isotopes[1]/(norm_fac)# = isotopes[1:isotope_count]/sum(isotopes[1:isotope_count])
+            isotopes[2] = isotopes[2]/(norm_fac)
+            for iso_idx in (0, )#(0, 1)
+
+                transition_idx += 1
+
+                transitions[transition_idx] = LibraryFragment(
+                    Float32(frag.frag_mz + iso_idx*NEUTRON/frag.frag_charge),
+                    frag.frag_charge,
+                    frag.is_y_ion,
+                    Bool(iso_idx), #Is the fragment an isotope?
+                    frag.ion_position,
+                    frag.ion_index,
+                    max(Float32(frag.intensity*isotopes[iso_idx + 1]),zero(Float32)),
+                    frag.prec_charge,
+                    frag.prec_id,
+                    frag.rank,
+                    frag.sulfur_count
+                )
+
+                #Grow array if exceeds length
+                if transition_idx >= length(transitions)
+                    append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+                end
+            end
+
+            for i in range(1, length(isotopes))
+                isotopes[i] = 0.0
             end
 
         end
+
         i += 1
     end
 
@@ -66,6 +107,8 @@ end
 function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}}, 
                             precursors::Vector{LibraryPrecursor{Float32}},
                             fragment_list::Vector{Vector{LibraryFragment{V}}}, 
+                            iso_splines::IsotopeSplineModel{Float64},
+                            isotopes::Vector{Float64},
                             prec_ids::Vector{UInt32}, 
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt::U, 
@@ -89,13 +132,57 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{V}},
             if (getMz(prec) < mz_low) | (getMz(prec) > mz_high)
                 continue
             end
-            for frag in fragment_list[first(precs[i])]
-                transition_idx += 1 
-                #Grow array if exceeds length
-                (transition_idx > length(transitions)) ?  append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)]) : nothing
+            prec_isotope_set = getPrecursorIsotopeSet(getMz(prec), getCharge(prec), mz_bounds)
 
-                transitions[transition_idx] = frag
+            for frag in fragment_list[first(precs[i])]
+                getFragAbundance!(
+                        isotopes,
+                        iso_splines,
+                        isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+                        isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+                        prec_isotope_set)
+                #println(isotopes)
+                if length(isotopes) == 0
+                    continue
+                end
+                #println("isotopes $isotopes")
+                #isotope_count = min(length(isotopes), 2)
+                #norm_fac = isotopes[1] + isotopes[2]
+                #isotopes[1] = isotopes[1]/(norm_fac)# = isotopes[1:isotope_count]/sum(isotopes[1:isotope_count])
+                #isotopes[2] = isotopes[2]/(norm_fac)
+                for iso_idx in (0, )#(0, 1)
+
+                    transition_idx += 1
+
+                    transitions[transition_idx] = LibraryFragment(
+                        Float32(frag.frag_mz + iso_idx*NEUTRON/frag.frag_charge),
+                        frag.frag_charge,
+                        frag.is_y_ion,
+                        Bool(iso_idx), #Is the fragment an isotope?
+                        frag.ion_position,
+                        frag.ion_index,
+            
+                        max(Float32(frag.intensity*isotopes[iso_idx + 1]),zero(Float32)),
+                        frag.prec_charge,
+                        frag.prec_id,
+                        frag.rank,
+                        frag.sulfur_count
+                    )
+
+                    #Grow array if exceeds length
+                    if transition_idx >= length(transitions)
+                        append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+                    end
+                end
+
+                for i in range(1, length(isotopes)) #Critical step
+                    isotopes[i] = 0.0
+                end
+
             end
+            #println("precursor ", prec.sequence)
+            #println("prec_isotope_set $prec_isotope_set")
+            #println("transitions ", transitions[1:transition_idx])
             #Grow array if exceeds length
             (prec_idx > length(prec_ids)) ? append!(prec_ids, zeros(UInt32, block_size)) : nothing
 

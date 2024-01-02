@@ -189,6 +189,8 @@ function searchRAW(
     ##########
     #Iterate through spectra
     scans_processed = 0
+    iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
+    isotopes = Float64[0.0, 0.0]
     for i in range(first(thread_task), last(thread_task))
         thread_peaks += length(spectra[:masses][i])
 
@@ -242,6 +244,8 @@ function searchRAW(
             index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,
                                                 ion_list,
+                                                iso_splines,
+                                                isotopes,
                                                 precs,
                                                 topN,
                                                 Float32(iRT_to_RT_spline(spectra[:retentionTime][i])),
@@ -257,6 +261,8 @@ function searchRAW(
                                             ionTemplates,
                                             precursors,
                                             ion_list,
+                                            iso_splines,
+                                            isotopes,
                                             prec_ids,
                                             rt_index,
                                             spectra[:retentionTime][i],
