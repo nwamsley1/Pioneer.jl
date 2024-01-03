@@ -409,7 +409,8 @@ end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010224.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010224.jld2"); frag_err_dist_dict)
 ###########
 #Main PSM Search
 ###########
@@ -431,7 +432,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             16.1,
             main_search_params,
             scan_range = (1, length(MS_TABLE[:masses]))
-            #scan_range = (100000, 100010)
+        #scan_range = (100000, 100010)
         )...);
 
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
@@ -470,8 +471,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122223_isotopes_monoonly.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_isotopes_122223_isotopes_monoonly.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_010224_isotopes_M0M1.jld2"); RT_INDICES)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2"); PSMs_Dict)
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122023.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
 
@@ -494,8 +495,8 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
                     frag_err_dist_dict[ms_file_idx],
                     16.1,
                     ms2_integration_params, 
-                    #scan_range = (1, length(MS_TABLE[:scanNumber])),
-                    scan_range = (101357, 102357),
+                    scan_range = (1, length(MS_TABLE[:scanNumber])),
+                    #scan_range = (101357, 102357),
                     #scan_range = (101357, 110357)
                     )...);
 
@@ -597,9 +598,9 @@ end
 =#
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_122223_isotopes_monoonly.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_010224_M0M1.jld2"); best_psms)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
-
+best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_010224_M0.jld2"))["best_psms"];
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
 #MS2_CHROMS = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110123.jld2"));
@@ -666,7 +667,7 @@ for name in names(best_psms)
     if eltype(best_psms[:,name]) == String
         continue
     end
-    println("name $name")
+    #println("name $name")
     if any(skipmissing(isinf.(best_psms[:,name])))
         println("name $name is inf")
     end
@@ -751,6 +752,7 @@ features = [
     :adjusted_intensity_explained
     ]
 best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
+best_psms[!,:isotope_fraction] = best_psms[!,:isotope_count]./(best_psms[!,:b_count] .+ best_psms[!,:y_count])
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
 xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
@@ -767,6 +769,16 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+value_counts(df, col) = combine(groupby(df, col), nrow)
+IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0_010224.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
+
+
+
+IDs_M0M1 = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0M1_010224.jld2"))["IDs_PER_FILE"]
+bst_M0M1 = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0M1_010224.jld2"))["bst"]
 
 best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
 pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))

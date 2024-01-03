@@ -111,6 +111,8 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     Y′ = Float16.(GLM.predict(model_fit, PSMs));
     getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
     println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 5% FDR: ", sum((PSMs.q_value.<=0.05).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
     PSMs[:,:prob] = allowmissing(Y′);
 
     ########################

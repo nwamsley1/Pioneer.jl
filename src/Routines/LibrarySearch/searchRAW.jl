@@ -190,7 +190,7 @@ function searchRAW(
     #Iterate through spectra
     scans_processed = 0
     iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
-    isotopes = Float64[0.0, 0.0]
+    isotopes = Float64[0.0, 0.0, 0.0]
     for i in range(first(thread_task), last(thread_task))
         thread_peaks += length(spectra[:masses][i])
 

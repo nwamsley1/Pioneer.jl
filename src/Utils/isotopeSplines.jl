@@ -11,8 +11,14 @@ end
 
 function (p::PolynomialSpline)(x)
     idx = searchsortedfirst(p.knots, x)
-    if (idx == 1) | (idx > length(p.knots))
-        return missing
+    #if (idx == 1) | (idx > length(p.knots))
+    #    return missing
+    #end
+    if (idx == 1)
+        return p.polynomials[1](p.knots[1])
+    end
+    if (idx > length(p.knots))
+        return p.polynomials[end](p.knots[end])
     end
     return p.polynomials[idx-1](x - p.knots[idx - 1])
 end
@@ -198,13 +204,49 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
             #Splines don't go above five sulfurs 
-            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), p - f, Float64(prec.mass - frag.mass)), 0.0)
+            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), 
+                                                            p - f, 
+                                                            Float64(prec.mass - frag.mass)), 
+                                        0.0)
         end
         isotopes[f+1] = f_i*complement_prob
     end
 
-    return isotopes#isotopes./sum(isotopes)
+    #return isotopes#isotopes./sum(isotopes)
 end
+
+function getFragAbundance!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursor{U}, frag::LibraryFragment{U}, pset::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
+    getFragAbundance!(
+        isotopes,
+        iso_splines,
+        isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+        isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+        pset
+        )
+end
+
+function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursor{U}, frag::LibraryFragment{U}, prec_isotope_set::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
+    fill!(isotopes, zero(eltype(isotopes)))
+
+    if first(prec_isotope_set) > 0 #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
+        getFragAbundance!(isotopes, iso_splines, prec, frag, getPrositIsotopeSet(prec.charge))
+        prosit_mono = first(isotopes)
+        fill!(iosotopes, zero(eltype(isotopes)))
+        getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
+        corrected_mono = first(isotopes)
+        monoisotopic_intensity = max(Float32(frag.intensity*corrected_mono/prosit_mono), zero(Float32))
+    else
+        monoisotopic_intensity = frag.intensity
+        getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
+    end
+
+    #Estimate abundances of M+n fragment ions relative to the monoisotope
+    for i in reverse(range(1, length(isotopes)))
+        isotopes[i] = max(monoisotopic_intensity*isotopes[i]/first(isotopes), zero(Float32))
+    end
+end
+
+
 
 """
     getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
@@ -245,7 +287,17 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
     return (first_iso, last_iso)
 end
 
+function getPrositIsotopeSet(prec_charge::U) where {U<:Unsigned}
+    if prec_charge <= 2
+        return (0, 1)
+    elseif prec_charge == 3
+        return (0, 2)
+    else
+        return (0, 3)
+    end
+end
 
+#=
 isotopes = [0.0, 0.0]
 getFragAbundance!(
     isotopes,
@@ -281,6 +333,7 @@ for frag in f_det[1000000]
 
 end
 plot()
+=#
 #=
 prec = precursors[1]
 for frag in f_det[1]
@@ -458,4 +511,125 @@ getFragAbundance(iso_splines, isotope(2500.0, 0, 0), isotope(3000.0, 0, 0), [0, 
 
 
 
+=#
+
+
+#=
+isotopes = Float64[0.0, 0.0, 0.0, 0.0, 0.0]
+iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(3))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(3))), 0, 0),
+(0, 0)
+)
+isotopes./isotopes[1]
+
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(3))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(3))), 0, 0),
+(0, 1)
+)
+isotopes./isotopes[1]
+
+
+function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+    #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
+    min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
+
+    #placeholder for fragment isotope distributions
+    #zero to isotopic state of largest precursor 
+    for f in range(0, min(length(isotopes)-1, max_p)) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
+        complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
+
+        #Splines don't go above five sulfurs
+        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float64(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
+
+        for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
+            #Splines don't go above five sulfurs 
+            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), 
+                                                            p - f, 
+                                                            Float64(prec.mass - frag.mass)), 
+                                        0.0)
+        end
+        isotopes[f+1] = f_i*complement_prob
+    end
+
+    return isotopes#isotopes./sum(isotopes)
+end
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYIHPFH", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(0, 2)
+)
+isotopes./isotopes[1]
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(0, 1)
+)
+isotopes./isotopes[1]
+
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYIHPFH", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(1, 2)
+)
+isotopes./maximum(isotopes)
+
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(2, 2)
+)
+isotopes./maximum(isotopes)
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(2, 3)
+)
+isotopes./maximum(isotopes)
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(1))), 0, 0),
+(3, 3)
+)
+isotopes./maximum(isotopes)
+
+
+
+
+getFragAbundance!(
+isotopes,
+iso_splines,
+isotope(getMZ(Precursor("DRVYI", charge = UInt8(1))), 0, 0),
+isotope(getMZ(Precursor("DRVYIHPFHL", charge = UInt8(3))), 0, 0),
+(0, 5)
+)
+isotopes./isotopes[1]
+
+iso_splines(0, 0, )
 =#
