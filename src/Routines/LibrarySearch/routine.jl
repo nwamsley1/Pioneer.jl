@@ -94,6 +94,7 @@ params_ = (
     frag_tol_quantile = Float32(params["frag_tol_quantile"]),
     frag_tol_presearch = Float64(params["frag_tol_presearch"]),
     intensity_filter_fraction = Float32(params["intensity_filter_fraction"]),
+    isotope_err_bounds = Tuple([Int64(bound) for bound in params["isotope_err_bounds"]]),
     LsqFit_tol = Float64(params["LsqFit_tol"]),
     Lsq_max_iter = Int64(params["Lsq_max_iter"]),
     nnls_max_iter = Int64(nnls_params["nnls_max_iter"]),
@@ -122,6 +123,7 @@ params_ = (
 
     most_intense = Bool(params["most_intense"]),
     n_quadrature_nodes = Int64(params["n_quadrature_nodes"]),
+    n_frag_isotopes = Int64(params["n_frag_isotopes"]),
     nnls_tol = Float32(nnls_params["nnls_tol"]),
     quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
     regularize = Bool(nnls_params["regularize"]),
@@ -166,6 +168,7 @@ first_search_params = Dict(
 main_search_params = Dict(
     :expected_matches => params_[:expected_matches],
     :frag_tol_quantile => params_[:frag_tol_quantile],
+    :isotope_err_bounds => params_[:isotope_err_bounds],
     :max_iter => params_[:nnls_max_iter],
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count],
@@ -176,6 +179,7 @@ main_search_params = Dict(
     :min_topnOf3 => params_[:min_topnOf3],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
+    :n_frag_isotopes => params_[:n_frag_isotopes],
     :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
     :regularize => params_[:regularize],
     :rt_bounds => params_[:rt_bounds],
@@ -409,8 +413,11 @@ end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010224.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010224.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"); frag_err_dist_dict)
+
+RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"))["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"))["frag_err_dist_dict"]
 ###########
 #Main PSM Search
 ###########
@@ -418,10 +425,21 @@ println("Begining Main Search...")
 
 PSMs_Dict = Dictionary{String, DataFrame}()
 RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
+
+Profile.Allocs.clear()
+Profile.init()
+Profile.Allocs.@profile [x for x in [x for x in range(1, 10000)]]
+pprof(from_c = false)
+
+results = Profile.Allocs.fetch()
+last(sort(results.allocs, by=x->x.size))
+
+retrieve = Profile.Allocs.retrieve()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
-        MS_TABLE = Arrow.Table(MS_TABLE_PATH)    
-        PSMs = vcat(mainLibrarySearch(
+        MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+        Profile.Allocs.@profile begin 
+            @time PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
@@ -431,9 +449,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             frag_err_dist_dict[ms_file_idx],
             16.1,
             main_search_params,
-            scan_range = (1, length(MS_TABLE[:masses]))
+            scan_range = (100000, 200000),
+            #scan_range = (1, length(MS_TABLE[:masses]))
         #scan_range = (100000, 100010)
         )...);
+        end
 
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
         
@@ -468,6 +488,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
         #Free up memory
         insert!(PSMs_Dict, MS_TABLE_PATH, PSMs);
+end
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")

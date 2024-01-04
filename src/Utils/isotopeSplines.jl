@@ -193,7 +193,6 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
     #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
     min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
-
     #placeholder for fragment isotope distributions
     #zero to isotopic state of largest precursor 
     for f in range(0, min(length(isotopes)-1, max_p)) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
@@ -228,15 +227,17 @@ end
 function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursor{U}, frag::LibraryFragment{U}, prec_isotope_set::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
     fill!(isotopes, zero(eltype(isotopes)))
 
+    monoisotopic_intensity = frag.intensity
     if first(prec_isotope_set) > 0 #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
+        
+        #Get relative abundances of frag isotopes given the prosit training isotope set 
         getFragAbundance!(isotopes, iso_splines, prec, frag, getPrositIsotopeSet(prec.charge))
         prosit_mono = first(isotopes)
-        fill!(iosotopes, zero(eltype(isotopes)))
+        fill!(isotopes, zero(eltype(isotopes)))
         getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
         corrected_mono = first(isotopes)
         monoisotopic_intensity = max(Float32(frag.intensity*corrected_mono/prosit_mono), zero(Float32))
     else
-        monoisotopic_intensity = frag.intensity
         getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
     end
 
