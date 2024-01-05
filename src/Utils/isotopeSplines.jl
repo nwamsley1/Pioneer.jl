@@ -228,10 +228,14 @@ function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T
     fill!(isotopes, zero(eltype(isotopes)))
 
     monoisotopic_intensity = frag.intensity
-    if first(prec_isotope_set) > 0 #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
+    if (first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 1) #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
         
         #Get relative abundances of frag isotopes given the prosit training isotope set 
-        getFragAbundance!(isotopes, iso_splines, prec, frag, getPrositIsotopeSet(prec.charge))
+        getFragAbundance!(isotopes, iso_splines, prec, frag, 
+        #getPrositIsotopeSet(prec.charge)
+        #getPrositIsotopeSet(prec.charge, prec.mz)
+        getPrositIsotopeSet(iso_splines, prec)
+        )
         prosit_mono = first(isotopes)
         fill!(isotopes, zero(eltype(isotopes)))
         getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
@@ -288,13 +292,25 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
     return (first_iso, last_iso)
 end
 
-function getPrositIsotopeSet(prec_charge::U) where {U<:Unsigned}
-    if prec_charge <= 2
-        return (0, 1)
-    elseif prec_charge == 3
-        return (0, 2)
+function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursor{Float32}) #where {T,U<:AbstractFloat}
+    M0 = iso_splines(min(prec.sulfur_count, 5),0,Float64(prec.mz*prec.charge))
+    M1 = iso_splines(min(prec.sulfur_count, 5),1,Float64(prec.mz*prec.charge))
+    if M0 > M1
+        if prec.charge <= 2
+            return (0, 1)
+        elseif prec.charge == 3
+            return (0, 2)
+        else
+            return (0, 3)
+        end
     else
-        return (0, 3)
+        if prec.charge <= 2
+            return (0, 2)
+        elseif prec.charge == 3
+            return (0, 3)
+        else
+            return (0, 4)
+        end
     end
 end
 

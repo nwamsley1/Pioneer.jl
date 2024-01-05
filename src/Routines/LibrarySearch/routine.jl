@@ -192,6 +192,7 @@ main_search_params = Dict(
 );
 ms2_integration_params = Dict(
     :frag_tol_quantile => params_[:frag_tol_quantile],
+    :isotope_err_bounds => params_[:isotope_err_bounds],
     :max_iter => params_[:nnls_max_iter],
     :max_peaks => params_[:max_peaks],
     :max_peak_width => params_[:max_peak_width],
@@ -202,6 +203,7 @@ ms2_integration_params = Dict(
     :min_weight => params_[:min_weight],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
+    :n_frag_isotopes => params_[:n_frag_isotopes],
     :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
     :regularize => params_[:regularize],
     :rt_bounds => params_[:rt_bounds],
@@ -426,20 +428,10 @@ println("Begining Main Search...")
 PSMs_Dict = Dictionary{String, DataFrame}()
 RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
 
-Profile.Allocs.clear()
-Profile.init()
-Profile.Allocs.@profile [x for x in [x for x in range(1, 10000)]]
-pprof(from_c = false)
-
-results = Profile.Allocs.fetch()
-last(sort(results.allocs, by=x->x.size))
-
-retrieve = Profile.Allocs.retrieve()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-        Profile.Allocs.@profile begin 
-            @time PSMs = vcat(mainLibrarySearch(
+        @time PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
@@ -449,20 +441,13 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             frag_err_dist_dict[ms_file_idx],
             16.1,
             main_search_params,
-            scan_range = (100000, 200000),
-            #scan_range = (1, length(MS_TABLE[:masses]))
+            #scan_range = (100000, 200000),
+            scan_range = (1, length(MS_TABLE[:masses]))
         #scan_range = (100000, 100010)
         )...);
-        end
 
         refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
-        
         filter!(x->x.q_value<=0.30, PSMs);
-        #bins = LinRange(0, 1, 100)
-        #histogram(PSMs[(PSMs[!,:q_value].<=0.01),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
-        #histogram!(PSMs[(PSMs[!,:q_value].>0.1),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
-        #histogram(PSMs[(PSMs[!,:decoy].==false),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
-        #histogram!(PSMs[(PSMs[!,:decoy]),:entropy_score], normalize=:probability, bins = bins, alpha = 0.5)
         #############
         #Get best scan for every precursor
         sort!(PSMs,:RT); #Sorting before grouping is critical. 
@@ -488,7 +473,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
         #Free up memory
         insert!(PSMs_Dict, MS_TABLE_PATH, PSMs);
-end
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
@@ -523,6 +507,7 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
 
     _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
     sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
+    MS2_CHROMS[!,:best_scan] .= false
     MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, :precursor_idx);
 
     integratePrecursors(MS2_CHROMS_GROUPED, 
@@ -537,11 +522,7 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
     println("size(MS2_CHROMS) 2", size(MS2_CHROMS))
     filter!(x->x.weight>0, MS2_CHROMS);
     println("size(MS2_CHROMS) 3", size(MS2_CHROMS))
-    #for i in range(1, size(MS2_CHROMS)[1])
-    #    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
-    #        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
-    #    end
-    #end
+    addFeatures!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
 
     transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
     prosit_lib["precursors"][psm[:precursor_idx]].mz
@@ -551,169 +532,14 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
     BPSMS[ms_file_idx] = MS2_CHROMS;
 end
 
-#=
-for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
-        MS_TABLE = Arrow.Table(MS_TABLE_PATH) 
-        PSMs = BPSMS[ms_file_idx];
-        isotopes = UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}()
-        #lock(lk) do 
-            isotopes = getIsotopes(PSMs[!,:sequence], 
-                                    PSMs[!,:precursor_idx], 
-                                    PSMs[!,:charge], QRoots(4), 4);
-        #end
-        prec_rt_table = sort(
-                                collect(
-                                        zip(
-                                            PSMs[!,:tᵣ], 
-                                            UInt32.(PSMs[!,:precursor_idx])
-                                    )
-                            ), by = x->first(x));
-    
-        #println("Integrating MS1 $ms_file_idx...")
-        ms1_chroms = integrateMS1(MS_TABLE, 
-                                        isotopes, 
-                                        prec_rt_table, 
-                                        UInt32(ms_file_idx), 
-                                        Laplace(-1.0, 4.0),
-                                        #frag_err_dist_dict[ms_file_idx], 
-                                        integrate_ms1_params,
-                                        scan_range = (1, length(MS_TABLE[:scanNumber])));
-
-        #Integrate MS1 Chromatograms 
-        gx, gw = gausslegendre(100);
-        ms1_chrom_keys = keys(ms1_chroms);
-        time_test = @timed transform!(PSMs, AsTable(:) => ByRow(psm -> integratePrecursor(ms1_chroms, 
-                                            ms1_chrom_keys,
-                                            gx,
-                                            gw,
-                                            UInt32(psm[:precursor_idx]), 
-                                            [Float32(psm[:σ]),
-                                            Float32(psm[:tᵣ]),
-                                            Float32(psm[:τ]), 
-                                            Float32(1e4)],
-                                            isplot = false)) => [:peak_area_ms1,
-                                            :GOF_ms1,
-                                            :FWHM_ms1,
-                                            :FWHM_01_ms1,
-                                            :asymmetry_ms1,
-                                            :points_above_FWHM_ms1,
-                                            :points_above_FWHM_01_ms1,
-                                            :σ_ms1,:tᵣ_ms1,:τ_ms1,:H_ms1]);
-
-        pearson_corr!(PSMs, N = 500);
-        PSMs[:,:ms1_ms2_diff] = abs.(PSMs[!,:tᵣ] .- PSMs[!,:tᵣ_ms1]);
-        #########
-        #Quality Filter
-        PSMs[isnan.(coalesce.(PSMs[:,:GOF_ms1], 0.0)),:GOF_ms1].=missing;
-        PSMs[:,"sequence_length"] = length.(replace.(PSMs[:,"sequence"], "M(ox)" => "M"));
-
-        for i in range(1, size(PSMs)[1])
-            if ismissing(PSMs[i,:ρ])
-                continue
-            end
-            if isnan(PSMs[i,:ρ])
-                PSMs[i,:ρ] = missing
-            end
-        end
-end
-=#
-
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_010224_M0M1.jld2"); best_psms)
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110223.jld2"); RT_INDICES)
-best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_010224_M0.jld2"))["best_psms"];
-#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_110123.jld2"));
-#RT_INDICES = RT_INDICES["RT_INDICES"]
-#MS2_CHROMS = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110123.jld2"));
 BPSMS = nothing
 GC.gc()
-
 filter!(x -> x.best_scan, best_psms);
 filter!(x->x.weight>0, best_psms );
 
-    #for i in range(1, size(MS2_CHROMS)[1])
-    #    if isinf(MS2_CHROMS[i,:mean_matched_ratio])
-    #        MS2_CHROMS[i,:mean_matched_ratio] = Float16(6000)
-    #    end
-    #end
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
 
-    #transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
-    #prosit_lib["precursors"][psm[:precursor_idx]].mz
-    #) => :prec_mz
-    #);
-
-#=
-for i in range(1, size(best_psms)[1])
-    if isinf(best_psms[i,:mean_log_probability])
-        println(i)
-        best_psms[i,:mean_log_probability] = Float16(-6000)
-    end
-end
-for name in names(best_psms)
-    if eltype(best_psms[!,name]) == String
-        continue
-    else
-        if any(isinf.(best_psms[!,name]))
-            println(name)
-            println(argmax(isinf.(best_psms[!,name])))
-        end
-    end
-end
-=#
-for i in range(1, size(best_psms)[1])
-    if ismissing(best_psms[i,:mean_log_probability])
-        continue
-    end
-    if isinf(best_psms[i,:mean_log_probability])
-        best_psms[i,:mean_log_probability] = Float16(6000)*sign(best_psms[i,:mean_log_probability] )
-    end
-end
-for i in range(1, size(best_psms)[1])
-    if isinf(best_psms[i,:GOF])
-        println(i)
-        best_psms[i,:GOF] = Float16(-6000)
-    end
-end
-for i in range(1, size(best_psms)[1])
-    if isinf(best_psms[i,:mean_matched_ratio])
-        println(i)
-        best_psms[i,:mean_matched_ratio] = Float16(6000)
-    end
-end
-transform!(best_psms, AsTable(:) => ByRow(psm -> 
-prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
-) => :accession_numbers
-);
-for name in names(best_psms)
-    if eltype(best_psms[:,name]) == String
-        continue
-    end
-    #println("name $name")
-    if any(skipmissing(isinf.(best_psms[:,name])))
-        println("name $name is inf")
-    end
-end
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"); best_psms)
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_unscored_nOf5_110123.jld2"));
-for i in range(1, size(best_psms)[1])
-    if isinf(best_psms[i,:mean_log_probability])
-        println(i)
-        best_psms[i,:mean_log_probability] = Float16(-6000)
-    end
-end
-#=
-open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "meta.txt"), "w") do f
-    write(f, "Main Search Time $main_search_time \n")
-end
-
-open(joinpath(MS_DATA_DIR, "Search", "PARAMS","params.json"), "w") do f
-    write(f, JSON.json(JSON.parse(read(ARGS["params_json"], String))))
-end
-
-filter!(x -> x.data_points > 2, best_psms)
-=#
-#best_psms = MS2_CHROMS
 features = [ 
     :max_ions,
     :isotope_fraction,
@@ -744,7 +570,7 @@ features = [
     #:log_sum_of_weights,
     :matched_ratio,
     :max_entropy,
-    :mean_log_probability,
+    #:mean_log_probability,
     :max_spectral_contrast,
     :max_matched_ratio,
     :max_scribe_score,
@@ -786,7 +612,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 4.0/9.0,
+                        train_fraction = 9.0/9.0,
                         n_iters = 2);
 
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));

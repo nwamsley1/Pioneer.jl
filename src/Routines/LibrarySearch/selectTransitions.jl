@@ -56,18 +56,18 @@ function selectTransitions!(transitions::Vector{LibraryFragment{T}},
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
-function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{<:AbstractFloat}}, 
-                            precursors::Vector{LibraryPrecursor{<:AbstractFloat}},
-                            fragment_list::Vector{Vector{LibraryFragment{<:AbstractFloat}}}, 
-                            iso_splines::IsotopeSplineModel{<:AbstractFloat},
-                            isotopes::Vector{<:AbstractFloat},
+function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{T}}, 
+                            precursors::Vector{LibraryPrecursor{T}},
+                            fragment_list::Vector{Vector{LibraryFragment{T}}}, 
+                            iso_splines::IsotopeSplineModel{U},
+                            isotopes::Vector{U},
                             prec_ids::Vector{UInt32}, 
                             rt_index::Union{retentionTimeIndex{T, T}, Missing}, 
-                            rt::U, 
-                            rt_tol::U, 
-                            mz_bounds::Tuple{V, V};
+                            rt::T, 
+                            rt_tol::T, 
+                            mz_bounds::Tuple{T, T};
                             isotope_err_bounds::Tuple{I,I} = (3, 1),
-                            block_size = 10000) where {T,U,V<:AbstractFloat,I<:Integer}
+                            block_size = 10000) where {T,U<:AbstractFloat,I<:Integer}
     i = 1
     transition_idx = 0
     prec_idx = 0
@@ -75,6 +75,7 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{<:Abstr
     rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
 
     for i in rt_start:rt_stop #Add transitions
+        precs = rt_index.rt_bins[i].prec
         start = searchsortedfirst(precs, by = x->last(x), first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
@@ -123,8 +124,15 @@ function fillTransitionList!(transitions::Vector{LibraryFragment{T}}, prec_idx::
             #Skip if missing
             isnan(isotopes[iso_idx + 1]) ? continue : nothing
 
+            #if iso_idx > 0
+            #    continue
+            #end
+            if isotopes[iso_idx + 1]/first(isotopes) < 0.5
+                continue
+            end
+
             transition_idx += 1
-            
+
             transitions[transition_idx] = LibraryFragment(
                 Float32(frag.frag_mz + iso_idx*NEUTRON/frag.frag_charge), #Estimated isotopic m/z
                 frag.frag_charge,

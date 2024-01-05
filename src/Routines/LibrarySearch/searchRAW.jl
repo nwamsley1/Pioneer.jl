@@ -70,7 +70,7 @@ function SearchRAW(
     pbar = ProgressBar(total = peaks)
     lk = ReentrantLock()
     tasks = map(thread_tasks) do thread_task
-        #Threads.@spawn begin 
+        Threads.@spawn begin 
             return searchRAW(
                                 spectra,lk,precs,pbar,thread_task,frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
@@ -85,7 +85,7 @@ function SearchRAW(
             #lock(lk) do 
             #    push!(out, df_out)
             #end
-        #end
+        end
     end
     return fetch.(tasks) 
 end
@@ -194,9 +194,9 @@ function searchRAW(
     iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
     isotopes = zeros(Float64, n_frag_isotopes)
     for i in range(first(thread_task), last(thread_task))
-        if (i < 100000) | (i > 102000)
-            continue
-        end
+        #if (i < 100000) | (i > 102000)
+        #    continue
+        #end
         thread_peaks += length(spectra[:masses][i])
 
         if thread_peaks > 100000
@@ -231,12 +231,13 @@ function searchRAW(
             index_search_time += @elapsed prec_count, match_count = searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
-                        min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
+                        min_intensity, spectra[:masses][i], spectra[:intensities][i],
                         iRT_low, iRT_high,
                         #Float32(frag_ppm_err),
                         Float32(fragment_tolerance),
-                        Float32(precursor_tolerance),
+                        spectra[:precursorMZ][i],
                         Float32(quadrupole_isolation_width/2.0),
+                        isotope_err_bounds,
                         min_frag_count = min_frag_count_index_search, 
                         min_ratio = Float32(min_index_search_score),
                         topN = topN_index_search,#topN

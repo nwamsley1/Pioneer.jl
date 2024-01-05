@@ -598,7 +598,7 @@ state = GD_state(
 
 N = 20000
 
-
+diann_precs = load("/Users/n.t.wamsley/Desktop/good_precursors_a.jld2")["combined_set"]
 SEQS = "_".*best_psms[!,:sequence].*"_.".*string.(best_psms[!,:charge]);
 SEQS = replace.(SEQS, "C" => "C[Carbamidomethyl (C)]");
 best_psms[!,:modified_sequence] = SEQS;
@@ -607,9 +607,22 @@ best_psms[[x ∈ diann_precs for x in best_psms[!,:modified_sequence]],:]
 ids = unique(best_psms[[x ∈ diann_precs for x in best_psms[!,:modified_sequence]],:precursor_idx])
 include("src/Routines/LibrarySearch/scratch_newchroms.jl")
 
+N = 10000
+dtype = Float32
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    )
 reset!(state)
 prec_id = 10429654
-#integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = ids[N],)],
+#integratePrecursorMS2(MS2_CHROMS_GROUPED[N],
+prec_id = ids[N]
+reset!(state)
 integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)],
                         state,
                         gx,
@@ -622,8 +635,32 @@ integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)],
                         tail_distance = 0.25f0,
                         isplot = true
 )
-#MS2_CHROMS_GROUPED[(precursor_idx = ids[N],)][:,[:precursor_idx,:charge,:decoy,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:data_points,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
-MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][:,[:precursor_idx,:charge,:decoy,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:data_points,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
+reset!(state)
+
+integratePrecursorMS2(MS2_CHROMS_GROUPED2[(precursor_idx = prec_id,)],
+                        state,
+                        gx,
+                        gw,
+                        intensity_filter_fraction = 0.01f0,
+                        α = 0.001f0,
+                        half_width_at_α = 0.15f0,
+                        LsqFit_tol = 1e-3,
+                        Lsq_max_iter = 100,
+                        tail_distance = 0.25f0,
+                        isplot = true
+)
+reset!(state)
+
+MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][:,[:precursor_idx,:decoy,:charge,:sequence,:weight,:scan_idx,:spectral_contrast,
+                        :matched_ratio,:entropy_score,:RT,:b_count,:y_count,:isotope_count,:GOF,:data_points,
+                        :fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,
+                        :mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
+
+MS2_CHROMS_GROUPED2[(precursor_idx = prec_id,)][:,[:precursor_idx,:decoy,:charge,:sequence,:weight,:scan_idx,:spectral_contrast,
+                        :matched_ratio,:entropy_score,:RT,:b_count,:y_count,:isotope_count,:GOF,:data_points,
+                        :fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,
+                        :mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
+#MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][:,[:precursor_idx,:decoy,:sequence,:weight,:scan_idx,:matched_ratio,:entropy_score,:RT,:b_count,:y_count,:GOF,:data_points,:fraction_censored,:max_spectral_contrast,:max_entropy,:max_scribe_score,:mean_log_probability,:max_matched_ratio,:max_ions,:peak_area,:H]]
 reset!(state)
 N += 1
 

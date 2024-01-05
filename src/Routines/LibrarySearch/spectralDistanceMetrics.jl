@@ -2,14 +2,12 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
 
     for col in range(1, H.n)
         H_sqrt_sum = zero(T)
-        H_sqrt_sum_fitted = zero(T)
         X_sqrt_sum = zero(T)
 
         H_sqrt_sum_corrected = zero(T)
         X_sqrt_sum_corrected = zero(T)
 
         H2_norm = zero(T)
-        H2_norm_fitted = zero(T)
         X2_norm = zero(T)
         X_sum = zero(T)
         H2_norm_corrected = zero(T)
@@ -41,7 +39,6 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
 
         if !iszero(max_residual_int)
             setMask!(H, max_residual_int, false)
-            #mask.nzval[max_residual_int] = zero(Float32)
         end
     
         N = 0

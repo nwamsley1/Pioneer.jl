@@ -198,6 +198,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             data_points += one(UInt32)
         end
     end
+
+    #println("state.mask ", state.mask[1:state.max_index])
     ########
     #Fit EGH Curve to data 
     #println("data_points $data_points")
@@ -364,7 +366,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     max_ratio = chrom.matched_ratio[i]
                 end
                 if chrom.spectral_contrast[i]>max_spectral_contrast
-                    max_spectral_contrast= log2(chrom.spectral_contrast[i])
+                    max_spectral_contrast= chrom.spectral_contrast[i]
                 end
                 if chrom.weight[i]>max_weight
                     max_weight = chrom.weight[i]
@@ -437,7 +439,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
     thread_count = Threads.nthreads()
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))
     map(range(1,thread_count)) do thread_task
-        Threads.@spawn begin
+        #Threads.@spawn begin
             state = GD_state(
                 HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
                 zeros(dtype, N), #t
@@ -465,7 +467,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                 reset!(state)
                 i += thread_count + 1
             end
-        end
+        #end
     end
 
     ############
