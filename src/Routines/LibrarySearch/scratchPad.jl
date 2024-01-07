@@ -216,3 +216,6 @@ plot(surface(z=z_data, x=x, y=y))
 xy_min = argmin(z_data)
 println(x[xy_min[1]])
 println(y[xy_min[2]])
+
+
+

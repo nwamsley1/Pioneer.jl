@@ -122,7 +122,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, Float32}, precursor_bin::Pre
 
 end
 
-function queryFragment!(precs::Counter{UInt32, Float32}, iRT_low::Float32, iRT_high::Float32, frag_index::FragmentIndex{Float32}, min_frag_bin::Int64, frag_min::Float32, frag_max::Float32, prec_mz::Float32, prec_tol::Float32)# where {T,U<:AbstractFloat}
+function queryFragment!(precs::Counter{UInt32, Float32}, iRT_low::Float32, iRT_high::Float32, frag_index::FragmentIndex{Float32}, min_frag_bin::Int64, frag_min::Float32, frag_max::Float32, prec_bounds::Tuple{Float32, Float32})# where {T,U<:AbstractFloat}
     
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max)
     #No fragment bins contain the fragment m/z
@@ -138,8 +138,8 @@ function queryFragment!(precs::Counter{UInt32, Float32}, iRT_low::Float32, iRT_h
     end
 
     i = 1
-    prec_min = prec_mz - prec_tol - Float32(1.51)
-    prec_max = prec_mz + prec_tol + Float32(.51)
+    #prec_min = prec_mz #prec_tol - Float32(1.51)
+    #prec_max = prec_mz + prec_tol + Float32(.51)
 
     while (frag_bin < length(getFragBins(frag_index))) #getLowMZ(getFragmentBin(frag_index, frag_bin)) <frag_max
     
@@ -161,7 +161,7 @@ function queryFragment!(precs::Counter{UInt32, Float32}, iRT_low::Float32, iRT_h
             i = 1
             while (getLow(frag_index.rt_bins[rt_bin_idx][rt_sub_bin]) < iRT_high)
                 prec_bin = frag_index.rt_bins[rt_bin_idx][rt_sub_bin].sub_bin
-                searchPrecursorBin!(precs, getPrecursorBin(frag_index, prec_bin), prec_min, prec_max)
+                searchPrecursorBin!(precs, getPrecursorBin(frag_index, prec_bin), first(prec_bounds), last(prec_bounds))
                 rt_sub_bin += one(UInt32)
                 i += 1
                 if rt_sub_bin > length(frag_index.rt_bins[rt_bin_idx])
@@ -178,7 +178,10 @@ function queryFragment!(precs::Counter{UInt32, Float32}, iRT_low::Float32, iRT_h
     return frag_bin - 1
 end
 
-function searchScan!(precs::Counter{UInt32, Float32}, f_index::FragmentIndex{Float32}, min_intensity::U, masses::AbstractArray{Union{Missing, U}}, intensities::AbstractArray{Union{Missing, U}}, precursor_window::Float32, iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, prec_ppm::Float32, width::Float32; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {U<:AbstractFloat}
+function searchScan!(precs::Counter{UInt32, Float32}, f_index::FragmentIndex{Float32}, min_intensity::U, 
+                    masses::AbstractArray{Union{Missing, U}}, intensities::AbstractArray{Union{Missing, U}}, 
+                    iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, 
+                    prec_mz::Float32, prec_tol::Float32, isotope_err_bounds::Tuple{Int64, Int64}; topN::Int = 20, min_frag_count::Int = 3, min_ratio::Float32 = Float32(0.8)) where {U<:AbstractFloat}
     
     getFragTol(mass::Float32, ppm::Float32) = mass*(1 - ppm/Float32(1e6)), mass*(1 + ppm/Float32(1e6))
 
@@ -192,14 +195,15 @@ function searchScan!(precs::Counter{UInt32, Float32}, f_index::FragmentIndex{Flo
     #println("TEST")
     min_frag_bin = 0 #Fragment bins with a lower index can be excluded from the search
     ms1_idx = 1
-    lower_bound = precursor_window - (width)
-    lower_bound += -prec_ppm*lower_bound/(1e6)
+    #lower_bound = precursor_window - (width)
+    #lower_bound += -prec_ppm*lower_bound/(1e6)
 
     #ms1_idx = searchsortedfirst(MS1, lower_bound) #Find the first MS1 peak with m/z greater than the lower_bound of the quadrupole isolation window
     #if ms1_idx > length(MS1) #This occurs if every entry in MS1 is below the lower_bound of the quadrupole isolation window
     #    return 0, 0 #0 fragments mathing to 0 precursors 
     #end
-
+    prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
+    prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
     for (mass, intensity) in zip(masses, intensities)
 
         mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
@@ -211,7 +215,7 @@ function searchScan!(precs::Counter{UInt32, Float32}, f_index::FragmentIndex{Flo
         FRAGMIN, FRAGMAX = getFragTol(mass, frag_ppm)
         #println(typeof(width))
         #println("TEST")
-        min_frag_bin = queryFragment!(precs, iRT_low, iRT_high, f_index, min_frag_bin, FRAGMIN, FRAGMAX, precursor_window, width)
+        min_frag_bin = queryFragment!(precs, iRT_low, iRT_high, f_index, min_frag_bin, FRAGMIN, FRAGMAX, (prec_min, prec_max))
     end 
 
     return filterPrecursorMatches!(precs, topN, min_frag_count, min_ratio)

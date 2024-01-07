@@ -11,7 +11,6 @@ function SearchRAW(
                     selectIons!::Function,
                     searchScan!::Union{Function, Missing};
                     #keyword args
-                    chromatograms::Union{Dict{Symbol, Vector}, Missing} = missing,
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
                     frag_ppm_err::Float64 = 0.0,
@@ -20,6 +19,7 @@ function SearchRAW(
                     IonMatchType::DataType = FragmentMatch{Float32},
                     IonTemplateType::DataType = LibraryFragment{Float32},
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
+                    isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     max_iter::Int = 1000,
                     max_peak_width::Float64 = 2.0,
                     max_peaks::Union{Int64,Bool} = false, 
@@ -31,12 +31,11 @@ function SearchRAW(
                     min_topn::Int64 = 2,
                     min_weight::Float32 = zero(Float32),
                     most_intense = false,
-                    nmf_tol::Float32 = Float32(100.0),
+                    n_frag_isotopes::Int64 = 1,
                     #precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
                     #_precs::Union{Counter{UInt32, Float32}, Missing} = missing,
                     precursor_tolerance::Float64 = 5.0,
                     quadrupole_isolation_width::Float64 = 8.5,
-                    regularize::Bool = false,
                     rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     rt_tol::Float64 = 30.0,
@@ -45,10 +44,14 @@ function SearchRAW(
                     scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
                     spec_order::Set{Int64} = Set(2),
                     topN::Int64 = 20,
-                    topN_index_search::Int64 = 1000,
-                    λ::Float32 = Float32(1e3),
-                    γ::Float32 = zero(Float32)) where {T,U<:AbstractFloat}
+                    topN_index_search::Int64 = 1000) where {T,U<:AbstractFloat}
 
+
+    ########
+    #Each thread needs to handle a similair number of peaks. 
+    #For example if there are 10,000 scans and two threads, choose n so that
+    #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
+    #of scans have an equal number of fragment peaks in the spectra
     peaks = sum(length.(spectra[:masses]))
     peaks_per_thread = peaks÷Threads.nthreads()
     thread_tasks = []
@@ -72,10 +75,10 @@ function SearchRAW(
                                 spectra,lk,precs,pbar,thread_task,frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
                                 selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
-                                fragment_tolerance,huber_δ, IonMatchType,IonTemplateType,isotope_dict,
+                                fragment_tolerance,huber_δ, IonMatchType,IonTemplateType,isotope_dict,isotope_err_bounds,
                                 max_peak_width,max_peaks,min_frag_count, min_frag_count_index_search,
                                 min_matched_ratio,min_index_search_score,min_spectral_contrast,min_topn,
-                                min_weight, most_intense,precursor_tolerance,quadrupole_isolation_width,
+                                min_weight, most_intense,n_frag_isotopes,precursor_tolerance,quadrupole_isolation_width,
                                 rt_bounds,rt_index, rt_tol,sample_rate,
                                 spec_order,topN,topN_index_search
                             )
@@ -109,6 +112,7 @@ function searchRAW(
                     IonMatchType::DataType,
                     IonTemplateType::DataType,
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing},
+                    isotope_err_bounds::Tuple{Int64, Int64},
                     max_peak_width::Float64,
                     max_peaks::Union{Int64,Bool},
                     min_frag_count::Int64,
@@ -119,6 +123,7 @@ function searchRAW(
                     min_topn::Int64,
                     min_weight::Float32,
                     most_intense::Bool,
+                    n_frag_isotopes::Int64,
                     precursor_tolerance::Float64,
                     quadrupole_isolation_width::Float64,
                     rt_bounds::Tuple{Float64, Float64},
@@ -141,11 +146,8 @@ function searchRAW(
     #Initialize 
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
-    prec_idx = 0
-    ion_idx = 0
-    cycle_idx = 0 
-    last_val = 0
-    minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds)
+    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds) #only consider scans in the bounds
     ###########
     #Pre-allocate Arrays to save (lots) of time in garbage collection. 
     all_fmatches = Vector{IonMatchType}()
@@ -189,7 +191,12 @@ function searchRAW(
     ##########
     #Iterate through spectra
     scans_processed = 0
+    iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
+    isotopes = zeros(Float64, n_frag_isotopes)
     for i in range(first(thread_task), last(thread_task))
+        #if (i < 100000) | (i > 102000)
+        #    continue
+        #end
         thread_peaks += length(spectra[:masses][i])
 
         if thread_peaks > 100000
@@ -224,12 +231,13 @@ function searchRAW(
             index_search_time += @elapsed prec_count, match_count = searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
-                        min_intensity, spectra[:masses][i], spectra[:intensities][i], spectra[:precursorMZ][i], 
+                        min_intensity, spectra[:masses][i], spectra[:intensities][i],
                         iRT_low, iRT_high,
                         #Float32(frag_ppm_err),
                         Float32(fragment_tolerance),
-                        Float32(precursor_tolerance),
+                        spectra[:precursorMZ][i],
                         Float32(quadrupole_isolation_width/2.0),
+                        isotope_err_bounds,
                         min_frag_count = min_frag_count_index_search, 
                         min_ratio = Float32(min_index_search_score),
                         topN = topN_index_search,#topN
@@ -242,6 +250,8 @@ function searchRAW(
             index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,
                                                 ion_list,
+                                                iso_splines,
+                                                isotopes,
                                                 precs,
                                                 topN,
                                                 Float32(iRT_to_RT_spline(spectra[:retentionTime][i])),
@@ -249,7 +259,8 @@ function searchRAW(
                                                 (
                                                 spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                 spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                                )
+                                                ),
+                                                isotope_err_bounds = isotope_err_bounds
                                                 )::Tuple{Int64, Bool}
             #println("ion_idx $ion_idx prec_idx $prec_idx")
         else
@@ -257,17 +268,17 @@ function searchRAW(
                                             ionTemplates,
                                             precursors,
                                             ion_list,
+                                            iso_splines,
+                                            isotopes,
                                             prec_ids,
                                             rt_index,
                                             spectra[:retentionTime][i],
                                             Float32(max_peak_width/2),
-                                            spectra[:precursorMZ][i],
-                                            Float32(quadrupole_isolation_width/2.0),
                                             (
                                                 spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                 spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                                )
-                                            )
+                                                ),
+                                        isotope_err_bounds = isotope_err_bounds)
         end
         ion_idx < 2 ? continue : nothing 
         scans_processed += 1
@@ -328,7 +339,6 @@ function searchRAW(
             ##########
             #Scoring and recording data
             if !ismissing(scored_PSMs)
-
                 ScoreFragmentMatches!(unscored_PSMs,
                                     IDtoCOL,
                                     ionMatches, 
@@ -419,11 +429,9 @@ function firstSearch(
         min_topn = params[:min_topnOf3],
 
         most_intense = false,#params[:most_intense],
-        nmf_tol = params[:nmf_tol],
         #precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
         #_precs = Counter(UInt32, Float32, length(ion_list)),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        regularize = params[:regularize],
         rt_bounds = params[:rt_bounds],
         rt_tol = params[:rt_tol],
         sample_rate = params[:sample_rate],
@@ -431,8 +439,6 @@ function firstSearch(
         scored_PSMs = makePSMsDict(XTandem(Float32)),
         topN = params[:topN],
         topN_index_search = params[:topN_index_search],
-        λ = params[:λ],
-        γ = params[:γ]
     )
 end
 
@@ -467,6 +473,7 @@ function mainLibrarySearch(
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
         huber_δ = params[:huber_δ],
+        isotope_err_bounds = params[:isotope_err_bounds],
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
@@ -476,20 +483,17 @@ function mainLibrarySearch(
         min_spectral_contrast = params[:min_spectral_contrast],
         min_topn = params[:min_topnOf3],
         most_intense = params[:most_intense],
-        nmf_tol = params[:nmf_tol],
+        n_frag_isotopes = params[:n_frag_isotopes],
         #precs = Counter(UInt32, Float32, length(ion_list)),
         #precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        regularize = params[:regularize],
         rt_bounds = params[:rt_bounds],
         rt_tol = params[:rt_tol],
         sample_rate = 1.0,
         scan_range = scan_range,
         scored_PSMs = makePSMsDict(XTandem(Float32)),
         topN = params[:topN],
-        topN_index_search = params[:topN_index_search],
-        λ = params[:λ],
-        γ = params[:γ]
+        topN_index_search = params[:topN_index_search]
     )
 end
 
@@ -531,6 +535,7 @@ function integrateMS2(
         #expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
+        isotope_err_bounds = params[:isotope_err_bounds],
         max_iter = params[:max_iter],
         max_peak_width = params[:max_peak_width],
         max_peaks = params[:max_peaks],
@@ -540,10 +545,9 @@ function integrateMS2(
         min_topn = params[:min_topnOf3],
         min_weight = params[:min_weight],
         most_intense = params[:most_intense],
-        nmf_tol = params[:nmf_tol],
+        n_frag_isotopes = params[:n_frag_isotopes],
         #precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        regularize = params[:regularize],
         rt_index = rt_index,
         rt_bounds = params[:rt_bounds],
         rt_tol = params[:rt_tol],
@@ -551,8 +555,6 @@ function integrateMS2(
         scan_range = scan_range,
         topN = params[:topN],
         scored_PSMs = makePSMsDict(XTandem(Float32)),
-        λ = params[:λ],
-        γ = params[:γ]
     )
 end
 

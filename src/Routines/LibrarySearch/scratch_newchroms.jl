@@ -192,12 +192,24 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         end
     end
 
-    data_points = Int64(state.max_index) #May need to change
+    data_points = zero(UInt32)#Int64(state.max_index) #May need to change
+    for i in range(1, state.max_index)
+        if state.mask[i]==false
+            data_points += one(UInt32)
+        end
+    end
+
+    #println("state.mask ", state.mask[1:state.max_index])
     ########
     #Fit EGH Curve to data 
-
+    #println("data_points $data_points")
     #Parameter constraints
-    lower, upper = HuberParams(T(0.001), T(0), T(-1), T(0.05)), HuberParams(T(1), T(Inf), T(1), T(2.0));
+    #lower, upper = HuberParams(T(0.001), T(0), T(-1), T(0.05)), HuberParams(T(1), T(Inf), T(1), T(2.0));
+    if data_points > 6
+        lower, upper = HuberParams(T(0.001), T(0), T(-1), T(1.0)), HuberParams(T(1), T(Inf), T(1), T(1.0));
+    else
+        lower, upper = HuberParams(T(0.01), T(0), T(-0.01), T(1.0)), HuberParams(T(0.025), T(Inf), T(0.05), T(1.0));
+    end
     #Initial parameters
     state.params = getP0(T(α), 
                             T(half_width_at_α), 
@@ -220,7 +232,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 β1 = 0.9,
                 β2 = 0.999,
                 ϵ = 1e-8)
-
+    #println("area first ", Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
     ##########
     #Plots                                           
     if isplot
@@ -242,12 +254,48 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     alpha = 0.25, color = :grey, show = true
                     ); 
 
+        #lower, upper = HuberParams(T(0.01), T(0), T(-0.01), T(0.05)), HuberParams(T(0.025), T(Inf), T(0.05), T(2.0));
+        lower, upper = HuberParams(T(0.01), T(0), T(-0.01), T(1.0)), HuberParams(T(0.025), T(Inf), T(0.05), T(1.0));
+        #Initial parameters
+        state.params = getP0(T(α), 
+                                T(half_width_at_α), 
+                                T(half_width_at_α),
+                                T(best_rt),
+                                T(best_height),
+                                lower, upper)
+       
+        state.t[state.max_index + 1], state.t[state.max_index + 2] = T(best_rt - 0.5), T(best_rt + 0.5)
+        state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
+        state.max_index += 2
+        println("state.params.H ", state.params.H)
+        GD(state,
+                    lower,
+                    upper,
+                    tol = 1e-3, 
+                    max_iter = 200, 
+                    δ = 1e-3,
+                    #δ = 100.0,
+                    α=0.01,
+                    β1 = 0.9,
+                    β2 = 0.999,
+                    ϵ = 1e-8)
+        println("state.params.H ", state.params.H)
+        println("area second ", Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
+        println("state.n ", state.n)
+        X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), length(gauss_quad_w))
+        Plots.plot!(p, X,  
+                    [F(state, x) for x in X], #Evaluate fitted model at each point. 
+                    fillrange = [0.0 for x in 1:length(gauss_quad_w)], 
+                    alpha = 0.25, color = :red, show = true
+                    ); 
+
+
         Plots.vline!(p, [best_rt], color = :blue);
         Plots.vline!(p,[state.t[1]], color = :red);
         Plots.vline!(p, [state.t[state.max_index]], color = :red);
         
         display(p)
-        peak_area = Integrate(state, gauss_quad_x, gauss_quad_w)
+        peak_area = Integrate(state, gauss_quad_x, gauss_quad_w, α = α)
         println("peak_area $peak_area")
     end
 
@@ -255,7 +303,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #Calculate Features
     
     #MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
-    peak_area = Integrate(state, gauss_quad_x, gauss_quad_w)
+    peak_area = Integrate(state, gauss_quad_x, gauss_quad_w, α = α)
    
     sum_of_residuals = zero(Float32)
     points_above_FWHM = zero(Int32)
@@ -276,6 +324,9 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     end
     
     GOF = 1 - sum_of_residuals/total_intensity
+    if isinf(GOF)
+        GOF = missing
+    end
     FWHM = getFWHM(state, 0.5)
     FWHM_01 = getFWHM(state, 0.01)
    
@@ -315,7 +366,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     max_ratio = chrom.matched_ratio[i]
                 end
                 if chrom.spectral_contrast[i]>max_spectral_contrast
-                    max_spectral_contrast= log2(chrom.spectral_contrast[i])
+                    max_spectral_contrast= chrom.spectral_contrast[i]
                 end
                 if chrom.weight[i]>max_weight
                     max_weight = chrom.weight[i]
@@ -341,8 +392,15 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         chrom.max_spectral_contrast[best_scan] = max_spectral_contrast
         chrom.max_entropy[best_scan] = max_entropy
         chrom.max_scribe_score[best_scan] = max_scribe_score
+
         chrom.mean_log_probability[best_scan] = sum_log_probability/count
-        chrom.max_weight[best_scan] = max_weight
+
+        if isnan(chrom.mean_log_probability[best_scan])
+            chrom.mean_log_probability[best_scan] = missing
+        end
+
+        chrom.max_weight[best_scan] = log2(max_weight)
+
         chrom.max_matched_ratio[best_scan] = max_ratio
         chrom.ions_sum[best_scan] = ions_sum
         chrom.max_ions[best_scan] = max_ions
@@ -362,7 +420,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     chrom.tᵣ[best_scan] = tᵣ
     chrom.τ[best_scan] = τ
     chrom.H[best_scan] = H*norm_factor
-    chrom.data_points[best_scan] = getDataPoints(state) - 2
+    chrom.data_points[best_scan] = data_points#getDataPoints(state) - 4
     chrom.fraction_censored[best_scan] =  Float16(((state.max_index - 2) - chrom.data_points[best_scan])/(state.max_index - 2))
 
     chrom.base_width_min[best_scan] = state.t[state.max_index-2] - state.t[1]
@@ -378,30 +436,38 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
     gx, gw = gausslegendre(n_quadrature_nodes)
     N = 500
     dtype = eltype(grouped_precursor_df[1].weight)
-    Threads.@threads for i in ProgressBar(range(1, length(grouped_precursor_df)))
-        state = GD_state(
-            HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
-            zeros(dtype, N), #t
-            zeros(dtype, N), #y
-            zeros(dtype, N), #data
-            falses(N), #mask
-            0, #number of iterations
-            N #max index
-            )
-    #for i in range(1, length(grouped_precursor_df))
-        integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
-                                state,
-                                gx::Vector{Float64},
-                                gw::Vector{Float64},
-                                intensity_filter_fraction = intensity_filter_fraction,
-                                α = α,
-                                half_width_at_α = half_width_at_α,
-                                LsqFit_tol = LsqFit_tol,
-                                Lsq_max_iter = Lsq_max_iter,
-                                tail_distance = tail_distance,
-                                isplot = isplot
-                                )
-        reset!(state)
+    thread_count = Threads.nthreads()
+    #for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    map(range(1,thread_count)) do thread_task
+        #Threads.@spawn begin
+            state = GD_state(
+                HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+                zeros(dtype, N), #t
+                zeros(dtype, N), #y
+                zeros(dtype, N), #data
+                falses(N), #mask
+                0, #number of iterations
+                N #max index
+                )
+            i = thread_task
+            while i <= length(grouped_precursor_df)
+        #for i in range(1, length(grouped_precursor_df))
+                integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
+                                        state,
+                                        gx::Vector{Float64},
+                                        gw::Vector{Float64},
+                                        intensity_filter_fraction = intensity_filter_fraction,
+                                        α = α,
+                                        half_width_at_α = half_width_at_α,
+                                        LsqFit_tol = LsqFit_tol,
+                                        Lsq_max_iter = Lsq_max_iter,
+                                        tail_distance = tail_distance,
+                                        isplot = isplot
+                                        )
+                reset!(state)
+                i += thread_count + 1
+            end
+        #end
     end
 
     ############

@@ -4,6 +4,7 @@
     "frag_tol_quantile": 0.975,
     "frag_tol_presearch": 40.0,
     "intensity_filter_fraction": 0.01,
+    "isotope_err_bounds":[3, 1],
     "LsqFit_tol": 0.001,
     "Lsq_max_iter": 100,
     "max_peaks": false,
@@ -29,6 +30,7 @@
 
     "most_intense": false,
     "n_quadrature_nodes": 100,
+    "n_frag_isotopes": 2,
     "quadrupole_isolation_width": 8.0036, 
     "rt_bounds":[-20.0, 200.0],
     "rt_tol": 20.0,

@@ -5,6 +5,7 @@ mutable struct LXTandem{T<:AbstractFloat} <: PSM
     topn::UInt8 #How many of the topN predicted fragments were observed. 
     longest_y::UInt8
     longest_b::UInt8
+    isotope_count::UInt8
     b_count::UInt8
     b_int::T
     y_count::UInt8
@@ -14,8 +15,8 @@ mutable struct LXTandem{T<:AbstractFloat} <: PSM
     ms_file_idx::UInt32
 end
 
-LXTandem(::Type{Float32}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), UInt32(0), UInt32(0))
-LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
+LXTandem(::Type{Float32}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), UInt32(0), UInt32(0))
+LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 LXTandem() = LXTandem(Float64)
 
 function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{UInt32, UInt16}, matches::Vector{FragmentMatch{U}}, nmatches::Int64, errdist::Laplace{Float64}) where {T,U<:AbstractFloat}
@@ -27,7 +28,11 @@ function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{
 end
 
 function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::Laplace{Float64}) where {U,T<:Real}
-    if getIonType(match) == 'b'
+    if isIsotope(match)
+        score.isotope_count += 1
+        #score.precursor_idx = getPrecID(match)
+        #return 
+    elseif getIonType(match) == 'b'
         score.b_count += 1
         score.b_int += getIntensity(match)
         if getFragInd(match) > score.longest_b
@@ -69,6 +74,7 @@ struct LibPSM{H,L<:Real} <: PSM
     longest_b::UInt8
     b_count::UInt8
     y_count::UInt8
+    isotope_count::UInt8
     prec_mz_offset::Float32
 
     #Basic Metrics 
@@ -172,6 +178,7 @@ function Score!(scored_psms::Vector{LibPSM{H, L}},
             unscored_PSMs[i].longest_b,
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
+            unscored_PSMs[i].isotope_count,
             zero(Float32),
 
             Float16(getPoisson(expected_matches, total_ions)),
