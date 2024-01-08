@@ -58,7 +58,19 @@ SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123_s
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-MS_TABLE_PATHS = MS_TABLE_PATHS[1:1]
+MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
+EXPERIMENT_NAME = "TEST_y4b3_nOf5"
+=#
+#=
+params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
+SPEC_LIB_DIR = pwd()*"\\nOf3_y4b3_102123_sulfur"#"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123_sulfur"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
+MS_DATA_DIR = pwd()#"/Users/n.t.wamsley/TEST_DATA/PXD028735/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
+MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+MS_TABLE_PATHS = MS_TABLE_PATHS[1:2]
 EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 println("ARGS ", ARGS)
@@ -322,13 +334,30 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition
 #2) Fragment Mass tolerance
 #3) iRT to RT conversion spline
 ###########
+
+
+
 println("Begin processing: "*string(length(MS_TABLE_PATHS))*" files")
 println("Starting Pre Search...")
+
+N = 12
+ionMatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+ionMisses = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+IDtoCOL = [ArrayDict(UInt32, UInt16, length(precursors)) for _ in range(1, N)];
+ionTemplates = [[LibraryFragment{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
+scored_PSMs = [Vector{LibPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
+unscored_PSMs = [[LXTandem(Float32) for _ in 1:5000] for _ in range(1, N)];
+spectral_scores = [Vector{SpectralScores{Float16}}(undef, 5000) for _ in range(1, N)];
+precursor_weights = [zeros(Float32, length(precursors)) for _ in range(1, N)];
+precs = [Counter(UInt32, Float32,length(precursors)) for _ in range(1, N)];
 presearch_time = @timed begin
 #init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,Laplace{Float64}}()
 lk = ReentrantLock()
+#MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
 #=
 ms_file_idx = 1
 MS_TABLE_PATH = MS_TABLE_PATHS[1]
@@ -347,6 +376,17 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
                                             UInt32(ms_file_idx), #MS_FILE_IDX
                                             Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
                                             first_search_params,
+                                            ionMatches,
+                                            ionMisses,
+                                            all_fmatches,
+                                            IDtoCOL,
+                                            ionTemplates,
+                                            iso_splines,
+                                            scored_PSMs,
+                                            unscored_PSMs,
+                                            spectral_scores,
+                                            precursor_weights,
+                                            precs,
                                             #scan_range = (100000, 110000)
                                             scan_range = (1, length(MS_TABLE[:masses]))
                                             );
@@ -441,6 +481,17 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             frag_err_dist_dict[ms_file_idx],
             16.1,
             main_search_params,
+            ionMatches,
+            ionMisses,
+            all_fmatches,
+            IDtoCOL,
+            ionTemplates,
+            iso_splines,
+            scored_PSMs,
+            unscored_PSMs,
+            spectral_scores,
+            precursor_weights,
+            precs,
             #scan_range = (100000, 200000),
             scan_range = (1, length(MS_TABLE[:masses]))
         #scan_range = (100000, 100010)

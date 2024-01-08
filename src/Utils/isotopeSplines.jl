@@ -214,7 +214,7 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
     #return isotopes#isotopes./sum(isotopes)
 end
 
-function getFragAbundance!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursor{U}, frag::LibraryFragment{U}, pset::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
+function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursor{Float32}, frag::LibraryFragment{Float32}, pset::Tuple{I, I}) where {I<:Integer}
     getFragAbundance!(
         isotopes,
         iso_splines,
