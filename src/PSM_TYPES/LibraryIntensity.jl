@@ -1,6 +1,6 @@
 include("PSM.jl");
 
-mutable struct LXTandem{T<:AbstractFloat} <: PSM
+struct LXTandem{T<:AbstractFloat} <: PSM
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
     topn::UInt8 #How many of the topN predicted fragments were observed. 
     longest_y::UInt8
@@ -23,43 +23,70 @@ function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{
     for i in range(1, nmatches)
         match = matches[i]
         col = IDtoCOL.vals[getPrecID(match)]
-        ModifyFeatures!(results[col], match, errdist)
+        results[col] = ModifyFeatures!(results[col], match, errdist)
     end
 end
 
 function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::Laplace{Float64}) where {U,T<:Real}
+    isotope_count = score.isotope_count
+    b_count = score.b_count
+    b_int = score.b_int
+    y_count = score.y_count
+    y_int = score.y_int
+    longest_y = score.longest_y
+    longest_b = score.longest_b
+    error = score.error
+    topn = score.topn
+    best_rank = score.best_rank
     if isIsotope(match)
-        score.isotope_count += 1
+        #score.isotope_count += 1
+        isotope_count += 1
         #score.precursor_idx = getPrecID(match)
         #return 
     elseif getIonType(match) == 'b'
-        score.b_count += 1
-        score.b_int += getIntensity(match)
-        if getFragInd(match) > score.longest_b
-            score.longest_b = getFragInd(match)
+        #score.b_count += 1
+        #score.b_int += getIntensity(match)
+        b_count += 1
+        b_int += getIntensity(match)
+        if getFragInd(match) > longest_b
+            longest_b = getFragInd(match)
         end
     elseif getIonType(match) == 'y'
-        score.y_count += 1
-        score.y_int +=  getIntensity(match)
-        if getFragInd(match) > score.longest_y
-            score.longest_y = getFragInd(match)
+        y_count += 1
+        y_int +=  getIntensity(match)
+        if getFragInd(match) > longest_y
+            longest_y = getFragInd(match)
         end
     end
 
     ppm_err = (getFragMZ(match) - getMatchMZ(match))/(getFragMZ(match)/1e6)
-    score.error +=  Distributions.logpdf(errdist, ppm_err*sqrt(getIntensity(match)))
+    error +=  Distributions.logpdf(errdist, ppm_err*sqrt(getIntensity(match)))
 
-    score.precursor_idx = getPrecID(match)
+    precursor_idx = getPrecID(match)
 
-    if match.predicted_rank < score.best_rank
-        score.best_rank = match.predicted_rank
+    if match.predicted_rank < best_rank
+        best_rank = match.predicted_rank
     end
 
     if match.predicted_rank <= 3
-        score.topn += one(UInt8)
+        topn += one(UInt8)
     end
-
+    return LXTandem{U}(
+        best_rank,
+        min(topn, 255),
+        longest_y,
+        longest_b,
+        min(isotope_count, 255),
+        min(b_count,255),
+        b_int,
+        min(y_count,255),
+        y_int,
+        error,
+        precursor_idx,
+        score.ms_file_idx)
 end
+
+
 
 using SpecialFunctions
 

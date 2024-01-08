@@ -402,9 +402,9 @@ function searchRAW(
         reset!(ionMatches, nmatches)
         reset!(ionMisses, nmisses)
         fill!(prec_ids, zero(UInt32))
-        for i in range(1, Hs.n)
-            unscored_PSMs[i] = LXTandem(Float32)
-        end
+        #for i in range(1, Hs.n)
+        #    unscored_PSMs[i] = LXTandem(Float32)
+        #end
         reset!(IDtoCOL);
         reset!(Hs);
     end

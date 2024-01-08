@@ -367,7 +367,7 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
 
-    sub_search_time = @timed RESULT =  firstSearch(
+    @time RESULT =  firstSearch(
                                             MS_TABLE,
                                             prosit_lib["f_index"],
                                             prosit_lib["precursors"],
