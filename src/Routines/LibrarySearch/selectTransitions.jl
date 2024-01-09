@@ -58,25 +58,25 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
-function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{<:AbstractFloat}}, 
-                            precursors::Vector{LibraryPrecursor{<:AbstractFloat}},
-                            fragment_list::Vector{Vector{LibraryFragment{<:AbstractFloat}}}, 
-                            iso_splines::IsotopeSplineModel{<:AbstractFloat},
-                            isotopes::Vector{<:AbstractFloat},
+function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{Float32}}, 
+                            precursors::Vector{LibraryPrecursor{Float32}},
+                            fragment_list::Vector{Vector{LibraryFragment{Float32}}}, 
+                            iso_splines::IsotopeSplineModel{Float64},
+                            isotopes::Vector{Float64},
                             prec_ids::Vector{UInt32}, 
-                            rt_index::Union{retentionTimeIndex{T, T}, Missing}, 
-                            rt::U, 
-                            rt_tol::U, 
-                            mz_bounds::Tuple{V, V};
-                            isotope_err_bounds::Tuple{I,I} = (3, 1),
-                            block_size = 10000) where {T,U,V<:AbstractFloat,I<:Integer}
-    i = 1
+                            rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
+                            rt::Float32, 
+                            rt_tol::Float32, 
+                            mz_bounds::Tuple{Float32, Float32};
+                            isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
+                            block_size = 10000)
     transition_idx = 0
     prec_idx = 0
     rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
     rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
 
-    for i in rt_start:rt_stop #Add transitions
+    for rt_bin_idx in rt_start:rt_stop #Add transitions
+        precs = rt_index.rt_bins[rt_bin_idx].prec
         start = searchsortedfirst(precs, by = x->last(x), first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
@@ -130,6 +130,7 @@ function fillTransitionList!(transitions::Vector{LibraryFragment{Float32}},
 
             #Skip if missing
             isnan(isotopes[iso_idx + 1]) ? continue : nothing
+            isotopes[iso_idx + 1]/first(isotopes) < 0.5 ? continue : nothing
 
             transition_idx += 1
             

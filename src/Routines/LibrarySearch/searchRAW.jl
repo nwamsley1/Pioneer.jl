@@ -2,7 +2,6 @@ function SearchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::Union{FragmentIndex{Float32}, Missing},
-                    isprecs::Bool,
                     precursors::Union{Vector{LibraryPrecursor{Float32}}, Missing},
                     ion_list::Union{Vector{Vector{LibraryFragment{Float32}}}, Missing},
                     iRT_to_RT_spline::Any,
@@ -20,7 +19,7 @@ function SearchRAW(
                     unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
                     spectral_scores::Vector{Vector{SpectralScores{Float16}}},
                     precursor_weights::Vector{Vector{Float32}},
-                    precs::Vector{Counter{UInt32, Float32}};
+                    precs::Union{Missing, Vector{Counter{UInt32, Float32}}};
                     #keyword args
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
@@ -80,10 +79,14 @@ function SearchRAW(
     println("length(thread_tasks) ", length(thread_tasks))
     pbar = ProgressBar(total = peaks)
     lk = ReentrantLock()
+
+    if ismissing(precs)
+        precs = [missing for _ in range(1, length(thread_tasks))]
+    end
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             return searchRAW(
-                                spectra,lk,isprecs,pbar,
+                                spectra,lk,pbar,
                                 (first(thread_task), last(thread_task)),
                                 frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
@@ -110,7 +113,7 @@ end
 function searchRAW(
                     spectra::Arrow.Table,
                     lk::ReentrantLock,
-                    isprecs::Bool,
+                    #isprecs::Bool,
                     pbar::ProgressBar,
                     thread_task::Tuple{Int64, Int64},
                     frag_index::Union{FragmentIndex{Float32}, Missing},
@@ -139,7 +142,7 @@ function searchRAW(
                     unscored_PSMs::Vector{LXTandem{Float32}},
                     spectral_scores::Vector{SpectralScores{Float16}},
                     precursor_weights::Vector{Float32},
-                    precs::Counter{UInt32, Float32},
+                    precs::Union{Missing, Counter{UInt32, Float32}},
 
                     IonTemplateType::DataType,
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing},
@@ -166,15 +169,7 @@ function searchRAW(
                     topN_index_search::Int64,
                     ) where {T,U<:AbstractFloat}
 
-    #test_time = @timed begin
     thread_peaks = 0
-    #=
-    if precs
-        precs = Counter(UInt32, Float32, length(ion_list))
-    else
-        precs = missing
-    end
-    =#
     ##########
     #Initialize 
     msms_counts = Dict{Int64, Int64}()
@@ -182,46 +177,15 @@ function searchRAW(
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
     minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds) #only consider scans in the bounds
     ###########
-    #Pre-allocate Arrays to save (lots) of time in garbage collection. 
-    #all_fmatches = Vector{IonMatchType}()
-    #collect_fmatches ? all_fmatches = [IonMatchType() for x in range(1, expected_matches)] : nothing
-    #collect_fmatches = true
-    #These are overwritten for every searched spectrum. "expected_matches"
-    #is a guess for the largest array size that would be needed for any spectrum. 
-    #If the guess is too small, the arrays will simply be increased in size as needed
-    #by a pre-determined block-size. 
-    #ionMatches = [IonMatchType() for _ in range(1, expected_matches)] #IonMatchType is something that inherits from the "Match" class. 
-    #ionMisses = [IonMatchType() for _ in range(1, expected_matches)]
-    #ionTemplates = [IonTemplateType() for _ in range(1, expected_matches)] 
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
-    #scored_PSMs = Vector{LibPSM{Float32, Float16}}(undef, 5000);
-    #unscored_PSMs = [LXTandem(Float32) for _ in 1:5000];
-    #spectral_scores = Vector{SpectralScores{Float16}}(undef, 5000);
     Hs = SparseArray(5000);
-
-    #weights
-    #precursor_weights = ""
-    #=
-    if ismissing(ion_list)
-        precursor_weights = zeros(Float32, maximum(keys(isotope_dict)))
-    else
-        precursor_weights = zeros(Float32, length(ion_list))
-    end
-    =#
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
-    #fragment_intensities = Dictionary{String, Vector{Tuple{Float32, Float32}}}()
-    solve_time = 0.0
-    index_search_time = 0.0
-    prep_time = 0.0
-    index_ions_time = 0.0
+    solve_time, index_search_time, prep_time, index_ions_time = zero(Float64), zero(Float64),zero(Float64),zero(Float64)
     ##########
     #Iterate through spectra
     scans_processed = 0
-    #iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")
     isotopes = zeros(Float64, n_frag_isotopes)
-    #end
-    #println("test_time ", test_time)
     for i in range(first(thread_task), last(thread_task))
         #if (i < 100000) | (i > 102000)
         #    continue
@@ -275,7 +239,7 @@ function searchRAW(
         end
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
-        if isprecs#!ismissing(precs) 
+        if !ismissing(precs) 
             index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,
                                                 ion_list,
@@ -311,8 +275,6 @@ function searchRAW(
         end
         ion_idx < 2 ? continue : nothing 
         scans_processed += 1
-        #println("topN $topN")
-        #println("rt_tol $rt_tol")
         ##########
         #Match sorted list of plausible ions to the observed spectra
         prep_time += @elapsed nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
@@ -402,20 +364,15 @@ function searchRAW(
         reset!(ionMatches, nmatches)
         reset!(ionMisses, nmisses)
         fill!(prec_ids, zero(UInt32))
-        #for i in range(1, Hs.n)
-        #    unscored_PSMs[i] = LXTandem(Float32)
-        #end
+        for i in range(1, Hs.n)
+            unscored_PSMs[i] = LXTandem(Float32)
+        end
         reset!(IDtoCOL);
         reset!(Hs);
     end
 
     if collect_fmatches
-        #return DataFrame(scored_PSMs), all_fmatches
-        #println("scans_processed $scans_processed")
-        #println("df ", DataFrame(@view(scored_PSMs[1:last_val])))
-        #println("last_val $last_val")
         return DataFrame(@view(scored_PSMs[1:last_val])), @view(all_fmatches[1:frag_err_idx])
-        #return DataFrame(scored_PSMs[1:last_val]), all_fmatches[1:frag_err_idx]
     else
         return DataFrame(@view(scored_PSMs[1:last_val]))
     end
@@ -448,7 +405,6 @@ function firstSearch(
     return SearchRAW(
         spectra, 
         frag_index,
-        true,
         precursors, 
         ion_list,
         iRT_to_RT_spline,
@@ -525,7 +481,6 @@ function mainLibrarySearch(
     return SearchRAW(
         spectra, 
         frag_index, 
-        true,
         precursors,
         ion_list,
         iRT_to_RT_spline,
@@ -583,7 +538,17 @@ function integrateMS2(
     ms_file_idx::UInt32,
     err_dist::Laplace{Float64},
     fragment_tolerance::Float64,
-    params::Dict; 
+    params::Dict,
+    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
+    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
+    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
+    ionTemplates::Vector{Vector{LibraryFragment{Float32}}},
+    iso_splines::IsotopeSplineModel{Float64},
+    scored_PSMs::Vector{Vector{LibPSM{Float32, Float16}}},
+    unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
+    spectral_scores::Vector{Vector{SpectralScores{Float16}}},
+    precursor_weights::Vector{Vector{Float32}};
     N = 600000*10,
     scan_range =  (0, 0)) where {U,T<:AbstractFloat}
 
@@ -593,7 +558,6 @@ function integrateMS2(
     return SearchRAW(
         spectra, 
         missing,
-        false,
         precursors,
         ion_list, 
         x->x,
@@ -602,28 +566,31 @@ function integrateMS2(
         selectRTIndexedTransitions!,
         missing,
         
-        #chromatograms =  Dict(:precursor_idx => zeros(UInt32, N), 
-        #                        :weight => zeros(Float32, N), 
-        #                        :scan_idx => zeros(UInt32, N),
-        #                        :rt => zeros(Float32, N), 
-        #                        :frag_count => zeros(Int64, N),
-        #                        :rank => zeros(UInt8, N),
-        #                        :cycle_idx => zeros(UInt32, N)),
-        #expected_matches = params[:expected_matches],
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precursor_weights,
+        missing,
+        
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
         isotope_err_bounds = params[:isotope_err_bounds],
         max_iter = params[:max_iter],
         max_peak_width = params[:max_peak_width],
         max_peaks = params[:max_peaks],
+        min_topn = params[:min_topnOf3],
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
-        min_spectral_contrast = params[:min_spectral_contrast],
-        min_topn = params[:min_topnOf3],
+        min_spectral_contrast = params[:min_spectral_contrast], 
         min_weight = params[:min_weight],
         most_intense = params[:most_intense],
         n_frag_isotopes = params[:n_frag_isotopes],
-        #precursor_tolerance = params[:precursor_tolerance],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
         rt_bounds = params[:rt_bounds],
@@ -631,7 +598,6 @@ function integrateMS2(
         sample_rate = Inf,
         scan_range = scan_range,
         topN = params[:topN],
-        scored_PSMs = makePSMsDict(XTandem(Float32)),
     )
 end
 

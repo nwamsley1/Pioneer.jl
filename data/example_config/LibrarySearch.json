@@ -4,7 +4,7 @@
     "frag_tol_quantile": 0.975,
     "frag_tol_presearch": 40.0,
     "intensity_filter_fraction": 0.01,
-    "isotope_err_bounds":[3, 1],
+    "isotope_err_bounds":[1, 0],
     "LsqFit_tol": 0.001,
     "Lsq_max_iter": 100,
     "max_peaks": false,

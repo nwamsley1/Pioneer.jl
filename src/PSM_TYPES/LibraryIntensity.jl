@@ -28,20 +28,24 @@ function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{
 end
 
 function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::Laplace{Float64}) where {U,T<:Real}
+    
+    best_rank = score.best_rank
+    topn = score.topn
+    longest_y = score.longest_y
+    longest_b = score.longest_b
     isotope_count = score.isotope_count
     b_count = score.b_count
     b_int = score.b_int
     y_count = score.y_count
     y_int = score.y_int
-    longest_y = score.longest_y
-    longest_b = score.longest_b
     error = score.error
-    topn = score.topn
-    best_rank = score.best_rank
+    precursor_idx = score.precursor_idx
+
     if isIsotope(match)
         #score.isotope_count += 1
         isotope_count += 1
         #score.precursor_idx = getPrecID(match)
+        precursor_idx = getPrecID(match)
         #return 
     elseif getIonType(match) == 'b'
         #score.b_count += 1

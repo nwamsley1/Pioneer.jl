@@ -58,7 +58,7 @@ SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123_s
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
+#MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
 EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 #=
@@ -455,11 +455,11 @@ end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"); frag_err_dist_dict)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"); RT_to_iRT_map_dict)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"); frag_err_dist_dict)
 
-RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"))["RT_to_iRT_map_dict"]
-frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"))["frag_err_dist_dict"]
+#RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"))["RT_to_iRT_map_dict"]
+#frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"))["frag_err_dist_dict"]
 ###########
 #Main PSM Search
 ###########
@@ -550,10 +550,18 @@ quantitation_time = for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TAB
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
                     16.1,
-                    ms2_integration_params, 
+                    ms2_integration_params,  
+                    ionMatches,
+                    ionMisses,
+                    all_fmatches,
+                    IDtoCOL,
+                    ionTemplates,
+                    iso_splines,
+                    scored_PSMs,
+                    unscored_PSMs,
+                    spectral_scores,
+                    precursor_weights,
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
-                    #scan_range = (101357, 102357),
-                    #scan_range = (101357, 110357)
                     )...);
 
     _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
@@ -621,7 +629,7 @@ features = [
     #:log_sum_of_weights,
     :matched_ratio,
     :max_entropy,
-    #:mean_log_probability,
+    :mean_log_probability,
     :max_spectral_contrast,
     :max_matched_ratio,
     :max_scribe_score,
