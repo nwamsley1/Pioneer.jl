@@ -20,9 +20,9 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
        
         prec_idx = getID(counter, i)
         prec = precursors[prec_idx]
-        i += 1
         #Enforce iRT tolerance on precursors
         if abs(getIRT(prec) - iRT) > iRT_tol
+            i += 1
              continue
         end
 
@@ -31,17 +31,33 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
         mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getCharge(prec)
 
         if (getMz(prec) < mz_low) | (getMz(prec) > mz_high)
+            i += 1
             continue
         end
 
+        for frag in fragment_list[getID(counter, i)]
+            #if abs((getiRT(precursors[getPrecID(frag)]) - rt)) > 5.0
+            #    continue
+            #end
+            transition_idx += 1
+            transitions[transition_idx] = frag
+            #Grow array if exceeds length
+            if transition_idx > length(transitions)
+                append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+            end
+
+        end
+        i += 1
+
         #println("prec.sequence ", prec.sequence)
 
-        
+        #=
         transition_idx = fillTransitionList!(transitions, 
                                             prec_idx,
                                             transition_idx,
                                             fragment_list, 
                                             isotopes, iso_splines, prec, mz_bounds, block_size)::Int64
+        =#
 
     end
 
@@ -130,6 +146,7 @@ function fillTransitionList!(transitions::Vector{LibraryFragment{Float32}},
 
             #Skip if missing
             isnan(isotopes[iso_idx + 1]) ? continue : nothing
+            #iso_idx > 0 ? continue : nothing
             isotopes[iso_idx + 1]/first(isotopes) < 0.5 ? continue : nothing
 
             transition_idx += 1

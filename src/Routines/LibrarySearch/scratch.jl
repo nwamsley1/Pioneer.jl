@@ -718,117 +718,107 @@ for i in range(1, 10)
 end
 show(p)
 
+PSMs_Dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2")["PSMs_Dict"];
 
-plot(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points], 
-    best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry],
-    seriestype=:scatter, alpha = 0.01)
+function mapRTandiRT(psms_dict::Dictionary{String, DataFrame})
+
+    #Dictionaries mapping fild_id names to data
+
+    prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
+    iRT_RT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
+    RT_iRT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
+    for (key, psms) in ProgressBar(pairs(psms_dict)) #For each data frame 
+        psms[!,:file_path] .= key #Add column for file name
+
+        insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
+
+        best_hits = (psms[!,:spectral_contrast].>0.9 #Map RTs using only the best psms 
+                    ) .& (psms[!,:decoy].==false
+                    ) .& (psms[!,:entropy_score].>0.9
+                    ) .& (psms[!,:total_ions].>6)
+        
+        #Build RT=>iRT and iRT=> RT mappings for the file and add to the dictionaries 
+        insert!(iRT_RT, key, KDEmapping(psms[best_hits,:iRT],
+        psms[best_hits,:RT]
+        ))
+        insert!(RT_iRT, key, KDEmapping(psms[best_hits,:RT],
+        psms[best_hits,:iRT]
+        ))
+    end
+    return (:iRT_RT => iRT_RT, :RT_iRT => RT_iRT)
+end
+
+function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any)
+
+    psms = vcat(values(psms_dict)...); #Combine data from all files
+
+    #For each precursor, what was the best scan, maximum q-value, and observed iRT for the best scan
+    psms[!,:best_scan] .= false #Best scan for a given precursor_idx
+    psms[!,:max_q] .= Float64(Inf) #Maximum q-value for a given precursor 
+    psms[!,:iRT_observed] .= zero(Float64) #Observed iRT for the best scan
+    grouped_psms = groupby(psms, :precursor_idx); #Groupby precursor idx
+    for i in range(1, length(grouped_psms)) #For each precursor 
+        best_scan = argmin(grouped_psms[i].q_value) #Best scan for teh precursor 
+        grouped_psms[i].best_scan[best_scan] = true
+        grouped_psms[i].max_q[best_scan] = maximum(grouped_psms[i].q_value)
+        irt = RT_iRT[grouped_PSMs[i].file_path[best_scan]](grouped_psms[i].RT[best_scan])
+        grouped_psms[i].iRT_observed[best_scan] = irt
+    end
+    filter!(x->x.best_scan, psms)
+    return Dictionary(psms[!,:precursor_idx], zip(psms[!,:iRT_observed], psms[!,:prec_mz]))
+end
+
+function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
+                        precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
+                        iRT_RT::Any)
+    rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
+    for (file_path, psms) in ProgressBar(pairs(psms_dict))
+        RTs = zeros(Float32, length(precID_to_iRT))
+        mzs = zeros(Float32, length(precID_to_iRT))
+        prec_ids = zeros(UInt32, length(precID_to_iRT))
+        prec_set = Dictionary(psms[!,:precursor_idx]::Vector{UInt32},
+                            zip(psms[!,:RT]::Vector{Float32}, 
+                                psms[!,:prec_mz]::Vector{Float32})
+                            )
+        #i = 1
+        for (i, (prec_id, value)) in ProgressBar(enumerate(pairs(precID_to_iRT)))
+            prec_ids[i] = prec_id
+            if prec_id ∈ prec_set::Dictionary{UInt32, Tuple{Float32, Float32}}
+                rt, mz = prec_set[prec_id]::Tuple{Float64, Float32}
+                RTs[i] = rt
+                mzs[i] = mz
+            else
+                irt, mz = precID_to_iRT[prec_id]::Tuple{Float64, Float32}
+                rt = iRT_RT[file_path](irt)::Float64
+                RTs[i] = rt
+                mzs[i] = mz
+            end
+            #i += 1
+            if i > 100000
+                return
+            end
+        end
+        return 
+        rt_df = DataFrame(Dict(:RT => RTs,
+        :prec_mz => mzs,
+        :precursor_idx => prec_ids))
+        sort!(rt_df, :RT)
+        rt_index = buildRTIndex(rt_df);
+        insert!(rt_indices, file_path, rt_index)
+    end
+end
+
+@profview makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
+Dictionary(PSMs[!,:precursor_idx], PSMs[!,:])
+
+PSMs_test = PSMs_Dict.values[1]
 
 
-histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points], 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry])
-
-p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:data_points ], 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
-hline!(p, [0.05])
-hline!(p, [-0.05])
-
-
-p = histogram2d(max.(0.0, Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:GOF])), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
-            hline!(p, [0.03])
-
-
-p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
-hline!(p, [0.05])
-hline!(p, [-0.03])
-
-p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
-hline!(p, [0.02])
-hline!(p, [0.00])
-
-p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
-
-
-            p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:H]),
-            Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:assymetry]))
-
-
-histogram(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ])
-
-histogram(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ])
-
-p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ],
-            bins = (LinRange(0, 0.2, 100), LinRange(-0.1, 0.1, 100)))
-
-p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:σ]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01),:τ],
-            bins = (LinRange(0.075, 0.2, 100), LinRange(-0.1, 0.1, 100)))
-
-p = histogram2d(sqrt.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:σ]), 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:τ],
-            bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100)))
-
-p = histogram2d((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:σ]), 
-best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:τ],
-bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 0.1, 100)))
-hline!(p, [0.05])
-hline!(p, [-0.01])
-vline!(p, [0.01])
-vline!(p, [0.025])
-
-
-p = histogram2d((best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5).&(best_psms[:,:H].>1e6),:σ]), 
-best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5).&(best_psms[:,:H].>1e6),:τ],
-#bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 0.1, 100))
-#bins = (LinRange(0, 0.03, 100), LinRange(-0.1, 1.0, 100))
+best_hits = (PSMs_test[!,:spectral_contrast].>0.9) .& (PSMs_test[!,:decoy].==false) .& (PSMs_test[!,:entropy_score].>0.9) .& (PSMs_test[!,:total_ions].>6)
+linear_spline = KDEmapping(PSMs_test[best_hits,:iRT],
+PSMs_test[best_hits,:RT]
 )
-hline!(p, [0.05])
-hline!(p, [-0.01])
-vline!(p, [0.01])
-vline!(p, [0.025])
 
-p = histogram2d(Float64.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01).&(best_psms[:,:data_points].>1),:assymetry]), 
-            log2.(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.01).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>1),:H]),
-            #bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100))
-            )
-
-            B = (-1/2)*(sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ) + τ*log(α))))
-            A = (1/2)*( τ*log(α) - sqrt(abs(log(α)*((τ^2)*log(α) - 8*σ))))
-
-α = 0.5
-best_psms[:,:A] .= (1/2).*( best_psms[!,:τ].*log(α) .- sqrt.(abs.(log.(α).*((best_psms[!,:τ].^2).*log(α) .- best_psms[!,:σ].*8))))
-best_psms[:,:B] .=  (-1/2).*(sqrt.(abs.(log(α).*((best_psms[!,:τ].^2).*log(α) .- best_psms[!,:σ].*8) .+ best_psms[!,:τ].*log(α))))
-
-p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>5),:A], 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:q_value].<=0.001).&(best_psms[:,:data_points].>1).&(best_psms[:,:data_points].>5),:B],
-            bins = (LinRange(-0.3, 0.0, 100), LinRange(-0.3, 0.0, 100))
-            )
-
-            p = histogram2d(best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:data_points].>1),:A], 
-            best_psms[(best_psms[:,:decoy].==false).&(best_psms[:,:data_points].>1),:B],
-            #bins = (LinRange(0, 0.5, 100), LinRange(-0.1, 0.1, 100))
-            )
-
-rng = range(0, 2π, length = 17)   # length = odd number for symmetric vertices.
-ellipse(posx, posy, width, height) = Shape(width*sin.(rng).+posx, height*cos.(rng).+posy)
-elps = [ellipse(x,rand(),rand(),rand()) for x ∈ 1:1]
-plot!(p, elps)
-
-
-[1/sqrt(1*cos(θ)^2 + 1*sin(θ)^2) for θ in LinRange(0, 2*π, 1000)]
-
-p = histogram2d(best_psms[(best_psms[:,:decoy].==false),:σ], 
-            best_psms[(best_psms[:,:decoy].==false),:τ])
-
-
-hline!(p, [0.05])
-hline!(p, [-0.03])
-
-p = histogram2d(log2.(best_psms[(best_psms[:,:decoy].==false),:H]), 
-            best_psms[(best_psms[:,:decoy].==false),:σ])
-hline!(p, [0.02])
-hline!(p, [0.00])
+plot(PSMs_test[best_hits,:iRT],
+PSMs_test[best_hits,:RT], seriestype=:scatter, alpha = 0.1)
+plot!(LinRange(-30, 150, 100), [linear_spline(x) for x in LinRange(-30, 150, 100)])

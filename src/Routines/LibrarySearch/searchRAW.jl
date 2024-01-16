@@ -63,7 +63,7 @@ function SearchRAW(
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
     peaks = sum(length.(spectra[:masses]))
-    peaks_per_thread = peaks÷(12)#Threads.nthreads()÷2)
+    peaks_per_thread = peaks÷(16)#Threads.nthreads()÷2)
     thread_tasks = []
     n = 0
     start = 1

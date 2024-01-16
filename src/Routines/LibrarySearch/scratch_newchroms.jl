@@ -349,13 +349,21 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         max_entropy = -10.0
         sum_log_probability = 0.0
         max_spectral_contrast = -10.0
-
+        max_scribe_fitted = -100.0
+        max_city_fitted = -100.0
+        mean_city_fitted = 0.0
         count = 0
         ions_sum = 0
         max_ions = 0
 
         for i in range(1, length(chrom.weight))
             if !state.mask[i]
+                if chrom.scribe_fitted[i] > max_scribe_fitted
+                    max_scribe_fitted = chrom.scribe_fitted[i]
+                end
+                if chrom.city_block_fitted[i] > max_city_fitted
+                    max_city_fitted = chrom.city_block_fitted[i]
+                end
                 if chrom.scribe[i]>max_scribe_score
                     max_scribe_score = chrom.scribe[i]
                 end
@@ -382,28 +390,31 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     max_ions = ion_count
                 end
 
-                sum_log_probability += log2(chrom.prob[i])
-
+                #sum_log_probability += log2(chrom.prob[i])
+                mean_city_fitted += chrom.city_block_fitted[i]
                 count += 1
             end
         end    
 
         #chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
-        chrom.max_spectral_contrast[best_scan] = max_spectral_contrast
+        #chrom.max_spectral_contrast[best_scan] = max_spectral_contrast
         chrom.max_entropy[best_scan] = max_entropy
         chrom.max_scribe_score[best_scan] = max_scribe_score
 
-        chrom.mean_log_probability[best_scan] = sum_log_probability/count
+        #chrom.mean_log_probability[best_scan] = sum_log_probability/count
 
-        if isnan(chrom.mean_log_probability[best_scan])
-            chrom.mean_log_probability[best_scan] = missing
-        end
+        #if isnan(chrom.mean_log_probability[best_scan])
+        #    chrom.mean_log_probability[best_scan] = missing
+        #end
 
         chrom.max_weight[best_scan] = log2(max_weight)
 
         chrom.max_matched_ratio[best_scan] = max_ratio
         chrom.ions_sum[best_scan] = ions_sum
         chrom.max_ions[best_scan] = max_ions
+        chrom.max_scribe_fitted[best_scan] = max_scribe_fitted
+        chrom.max_city_fitted[best_scan] = max_city_fitted
+        chrom.mean_city_fitted[best_scan] = mean_city_fitted/count
     end
 
     getSummaryScores!(state, chrom);

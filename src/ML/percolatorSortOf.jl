@@ -54,6 +54,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
     folds = ones(Int64, size(PSMs)[1])
     fold = 1
     fold_ids = Tuple([_ for _ in range(1, n_folds)])
+    Random.seed!(1234)
     for i in range(2, length(folds))
         if PSMs[i,:sequence] == PSMs[i-1,:sequence]
             folds[i] = fold
