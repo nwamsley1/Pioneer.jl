@@ -147,7 +147,7 @@ function fillTransitionList!(transitions::Vector{LibraryFragment{Float32}},
             #Skip if missing
             isnan(isotopes[iso_idx + 1]) ? continue : nothing
             #iso_idx > 0 ? continue : nothing
-            isotopes[iso_idx + 1]/first(isotopes) < 0.5 ? continue : nothing
+            #isotopes[iso_idx + 1]/first(isotopes) < 0.5 ? continue : nothing
 
             transition_idx += 1
             

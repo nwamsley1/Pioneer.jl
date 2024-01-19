@@ -536,7 +536,8 @@ PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
-    MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    println("starting file $ms_file_idx")
     MS2_CHROMS = vcat(integrateMS2(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
@@ -557,9 +558,14 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
                     )...);
+    filter!(x->x.weight>0.0, MS2_CHROMS);
+    #filter!(x->x.topn>1, MS2_CHROMS);
     _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"], RT_iRT);
+    #filter!(x->x.total_ions>2, MS2_CHROMS)
     sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
     MS2_CHROMS[!,:best_scan] .= false
+    #sum(MS2_CHROMS.weight.!=0.0)
+    
     MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, :precursor_idx);
     println("starting integration")
     @time integratePrecursors(MS2_CHROMS_GROUPED, 
@@ -611,6 +617,7 @@ for i in ProgressBar(range(1, size(best_psms)[1]))
     best_psms[i,:stripped_sequence] = replace.(best_psms[i,:sequence] , "M(ox)" => "M");
 end
 for i in ProgressBar(range(1, size(best_psms)[1]))
+    best_psms[i,:iRT_predicted] = precursors[best_psms.precursor_idx[i]].iRT
     best_psms[i,:iRT_diff] = abs(best_psms[i,:iRT_observed]- first(precID_to_iRT[best_psms[i,:precursor_idx]]))
 end
 best_psms[!,:iRT_error] .= zero(Float32)
@@ -618,8 +625,11 @@ for i in ProgressBar(range(1, size(best_psms)[1]))
     best_psms[i,:iRT_error] = abs(best_psms[i,:iRT_observed]- best_psms[i,:iRT_predicted])
 end
 
+
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_50_lambda0_topn2_total4_minimpute_011824.jld2"))["best_psms"]
 features = [ 
     #:iRT_diff,
+    :max_prob,
     :max_city_fitted,
     :mean_city_fitted,
     #:max_scribe_fitted,
@@ -687,7 +697,7 @@ best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox
 best_psms[!,:isotope_fraction] = best_psms[!,:isotope_count]./(best_psms[!,:b_count] .+ best_psms[!,:y_count])
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
-xgboost_time = @timed bst = rankPSMs!(best_psms, 
+xgboost_time = @timed bst = rankPSMs2!(best_psms, 
                         features,
                         colsample_bytree = 1.0, 
                         min_child_weight = 5, 
@@ -698,9 +708,9 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 4.0/9.0,
+                        train_fraction = 9.0/9.0,
                         n_iters = 2);
-
+best_psms = bst[3]
 getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
 value_counts(df, col) = combine(groupby(df, col), nrow)
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
@@ -708,7 +718,11 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_mbr_011624.jld2"); best_psms)
+
+histogram(best_psms[best_psms[!,:target], :prob], normalize = :probability, alpha = 0.5)
+histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alpha = 0.5)
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_50_lambda15_topn2_total4_minimpute_011824.jld2"))["best_psms"]
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_test2_011824.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 

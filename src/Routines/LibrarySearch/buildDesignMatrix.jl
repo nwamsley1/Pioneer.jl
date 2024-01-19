@@ -73,7 +73,7 @@ function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::V
         #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(miss)])), getPredictedIntenisty(miss), zero(U))
         H.colval[i] = Int64(precID_to_col[getPrecID(miss)])
         H.rowval[i] = row
-        H.nzval[i] = getPredictedIntenisty(miss)
+        H.nzval[i] = Float32(getPredictedIntenisty(miss)/2) #factor to reduce impact of unmatched ions 
         H.x[i] = zero(U)
         H.matched[i] = false
 

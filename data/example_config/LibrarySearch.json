@@ -8,7 +8,7 @@
     "LsqFit_tol": 0.001,
     "Lsq_max_iter": 100,
     "max_peaks": false,
-    "max_peak_width": 1.5,
+    "max_peak_width": 5.0,
 
     "min_index_search_score": 1.5,
 

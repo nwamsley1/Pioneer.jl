@@ -22,7 +22,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
         #Loop through all precursors in the seed 
         Threads.@threads for (i, (prec_id, irt_mz_imputed)) in collect(enumerate(pairs(precID_to_iRT)))
             prec_ids[i] = prec_id
-            if false == true#prec_id ∈ pset::Set{UInt32} #Use empirical iRT/RT
+            if prec_id ∈ pset::Set{UInt32} #Use empirical iRT/RT
                 rt, mz = prec_set[prec_id]::Tuple{Float32, Float32}
                 RTs[i] = rt
                 mzs[i] = mz
@@ -105,7 +105,7 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
     return Dictionary(psms[!,:precursor_idx], zip(psms[!,:iRT_observed], psms[!,:prec_mz]))
 end
 
-function KZfiltter!(X::Vector{T}, m::Int64, k::Int64) where {T<:Real}
+function KZfilter!(X::Vector{R}, m::Int64, k::Int64) where {R<:Real}
     #Kolmogorov-Zurbenko filter
     #zero padding on both sides   
     #implement as k applications of a moving average filter
@@ -115,15 +115,73 @@ function KZfiltter!(X::Vector{T}, m::Int64, k::Int64) where {T<:Real}
     T = length(X)
     for n in range(1, k)
         for t in range(1, T)
-            w = (m - 1)÷2
+            #w = (m - 1)÷2
             S = zero(T)
-            for s in range(min(0, t - w), min(T, t + w))
+            start, stop = max(1, t - m), min(T, t + m)
+            for s in range(start, stop)
                 S += X[s]
             end
-            X[t] = S
+            X[t] = S/(2*m + 1)
         end
     end
 end
+
+N = 10000
+N = 1
+
+prec_id = precs[N]
+MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,[:precursor_idx,:decoy,:RT,:weight,:total_ions,:topn,:entropy_score]]
+
+CHROM = MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)]
+plot(CHROM[!,:RT],
+CHROM[!,:weight],
+seriestype=:scatter)
+weights = copy(CHROM[!,:weight]);
+KZfilter!(weights, 2, 3);
+plot!(CHROM[!,:RT],
+weights,
+seriestype=:scatter)
+weights = copy(CHROM[!,:weight]);
+KZfilter!(weights, 1,3);
+plot!(CHROM[!,:RT],
+weights,
+seriestype=:scatter)
+
+N += 1
+
+precs = best_psms[(best_psms[!,:q_value].<0.01).&(best_psms[!,:decoy].==false),:precursor_idx]
+prec_id = precs[N]
+
+dtype = Float32
+gx, gw = gausslegendre(100)
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    )
+reset!(state)
+#prec_id = 10429654
+#integratePrecursorMS2(MS2_CHROMS_GROUPED[N],
+prec_id = precs[N]
+reset!(state)
+integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)],
+                        state,
+                        gx,
+                        gw,
+                        intensity_filter_fraction = 0.01f0,
+                        α = 0.001f0,
+                        half_width_at_α = 0.15f0,
+                        LsqFit_tol = 1e-3,
+                        Lsq_max_iter = 100,
+                        tail_distance = 0.25f0,
+                        isplot = true
+)
+MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,[:precursor_idx,:total_ions,:isotope_count,:entropy_score,:scribe,:spectral_contrast,:weight,:RT,:decoy]]
+N +=1
 #=
 PSMs_Dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2")["PSMs_Dict"];
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)

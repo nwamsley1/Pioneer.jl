@@ -449,8 +449,8 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
     dtype = eltype(grouped_precursor_df[1].weight)
     thread_count = Threads.nthreads()
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))
-    map(range(1,thread_count)) do thread_task
-        #Threads.@spawn begin
+    tasks = map(range(1,thread_count)) do thread_task
+        Threads.@spawn begin
             state = GD_state(
                 HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
                 zeros(dtype, N), #t
@@ -478,9 +478,9 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                 reset!(state)
                 i += thread_count + 1
             end
-        #end
+        end
     end
-
+    fetch.(tasks)
     ############
     #Clean
 

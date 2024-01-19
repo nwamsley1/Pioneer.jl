@@ -186,8 +186,9 @@ function searchRAW(
     #Iterate through spectra
     scans_processed = 0
     isotopes = zeros(Float64, n_frag_isotopes)
+    #ncols = 0
     for i in range(first(thread_task), last(thread_task))
-        #if (i < 100000) | (i > 102000)
+        #if (i < 100000) | (i > 100200)
         #    continue
         #end
         thread_peaks += length(spectra[:masses][i])
@@ -291,16 +292,98 @@ function searchRAW(
                                     ppm = fragment_tolerance, #Fragment match tolerance in ppm
                                     most_intense = most_intense
                                     )
+                                    nmisses_all = nmisses
+                                    nmatches_all = nmatches
+        
+        for i in range(1, nmatches)
+            match = ionMatches[i]
+            prec_id = getPrecID(match)
+            if match.is_isotope 
+                continue
+            end
+            #if getRank(match) < 4
+                if iszero(IDtoCOL[prec_id])
+                    update!(IDtoCOL, prec_id, one(UInt16))
+                else
+                    IDtoCOL.vals[prec_id] += one(UInt16)
+                end
+            #end
+        end
+        nmatches2 = 0
+        for i in range(1, nmatches)
+            if IDtoCOL[getPrecID(ionMatches[i])] < 4
+                continue
+            else
+                nmatches2 += 1
+                ionMatches[nmatches2] = ionMatches[i]
+            end
+        end
+        nmisses2 = 0
+        for i in range(1, nmisses)
+            if IDtoCOL[getPrecID(ionMisses[i])] < 4
+                 continue
+            else
+                nmisses2 += 1
+                ionMisses[nmisses2] = ionMisses[i]
+            end
+        end
+        
+        nmisses_all = nmisses
+        nmatches_all = nmatches
+        nmatches = nmatches2
+        nmisses = nmisses2
 
+        reset!(IDtoCOL);
+        
+        for i in range(1, nmatches)
+            match = ionMatches[i]
+            prec_id = getPrecID(match)
+            if match.is_isotope 
+                continue
+            end
+            if getRank(match) < 4
+                if iszero(IDtoCOL[prec_id])
+                    update!(IDtoCOL, prec_id, one(UInt16))
+                else
+                    IDtoCOL.vals[prec_id] += one(UInt16)
+                end
+            end
+        end
+        
+        nmatches2 = 0
+        for i in range(1, nmatches)
+            if IDtoCOL[getPrecID(ionMatches[i])] < 2
+                continue
+            else
+                nmatches2 += 1
+                ionMatches[nmatches2] = ionMatches[i]
+            end
+        end
+        nmisses2 = 0
+        for i in range(1, nmisses)
+            if IDtoCOL[getPrecID(ionMisses[i])] < 2
+                 continue
+            else
+                nmisses2 += 1
+                ionMisses[nmisses2] = ionMisses[i]
+            end
+        end
+        
+        nmatches = nmatches2
+        nmisses = nmisses2
+        
+        #println("nmatches $nmatches")
+        reset!(IDtoCOL);
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
             
+
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-
+            #println("Hs.n ", Hs.n)
             if IDtoCOL.size > length(_weights_)
                 append!(_weights_, zeros(eltype(_weights_), IDtoCOL.size - length(_weights_) + 1000 ))
                 append!(spectral_scores, Vector{SpectralScores{Float16}}(undef, IDtoCOL.size - length(spectral_scores) + 1000 ))
@@ -323,6 +406,13 @@ function searchRAW(
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
 
+            for col in range(1, Hs.n)
+                for k in range(Hs.colptr[col], Hs.colptr[col + 1]-1)
+                    if iszero(Hs.matched[k])
+                        Hs.nzval[k] = 2*Hs.nzval[k]
+                    end
+                end
+            end
             if ismissing(isotope_dict) 
                 getDistanceMetrics(_weights_, Hs, spectral_scores)
             end
@@ -361,8 +451,8 @@ function searchRAW(
         ##########
         #Reset pre-allocated arrays 
         reset!(ionTemplates, ion_idx)
-        reset!(ionMatches, nmatches)
-        reset!(ionMisses, nmisses)
+        reset!(ionMatches, nmatches_all)
+        reset!(ionMisses, nmisses_all)
         fill!(prec_ids, zero(UInt32))
         for i in range(1, Hs.n)
             unscored_PSMs[i] = LXTandem(Float32)
@@ -587,6 +677,7 @@ function integrateMS2(
         min_topn = params[:min_topnOf3],
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
+        min_index_search_score = 0.6f0,#params[:min_index_search_score],
         min_spectral_contrast = params[:min_spectral_contrast], 
         min_weight = params[:min_weight],
         most_intense = params[:most_intense],
