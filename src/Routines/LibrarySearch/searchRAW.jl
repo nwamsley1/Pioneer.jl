@@ -311,7 +311,7 @@ function searchRAW(
         end
         nmatches2 = 0
         for i in range(1, nmatches)
-            if IDtoCOL[getPrecID(ionMatches[i])] < 5
+            if IDtoCOL[getPrecID(ionMatches[i])] < 4
                 continue
             else
                 nmatches2 += 1
@@ -320,7 +320,7 @@ function searchRAW(
         end
         nmisses2 = 0
         for i in range(1, nmisses)
-            if IDtoCOL[getPrecID(ionMisses[i])] < 5
+            if IDtoCOL[getPrecID(ionMisses[i])] < 4
                  continue
             else
                 nmisses2 += 1
@@ -334,7 +334,7 @@ function searchRAW(
         nmisses = nmisses2
 
         reset!(IDtoCOL);
-        #=
+        
         for i in range(1, nmatches)
             match = ionMatches[i]
             prec_id = getPrecID(match)
@@ -371,9 +371,9 @@ function searchRAW(
         
         nmatches = nmatches2
         nmisses = nmisses2
-        =#
+        
         #println("nmatches $nmatches")
-        #reset!(IDtoCOL);
+        reset!(IDtoCOL);
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 

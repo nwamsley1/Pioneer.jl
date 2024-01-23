@@ -526,10 +526,18 @@ PSMs_Dict = load(joinpath(MS_DATA_DIR, "PSMs_Dict_isotopes_010224_isotopes_M0M1.
 PSMs_Dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2")["PSMs_Dict"];
 PSMs = vcat(PSMs_Dict.values...);
 =#
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_011624_M0.jld2"))["PSMs_Dict"]
+#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_011624_M0.jld2"))["PSMs_Dict"]
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"))["PSMs_Dict"]
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
-precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
-RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
+precID_to_iRT, PSMS = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
+PSMS[!,:best_scan] .= false
+psms_grouped = groupby(PSMS, [:file_path,:precursor_idx])
+for prec_psms in psms_grouped
+    best_scan = argmin(prec_psms.iRT_diff_from_median)
+    prec_psms.best_scan[best_scan] = true
+end
+filter!(x->x.best_scan, PSMS)
+RT_INDICES = makeRTIndices(PSMS,precID_to_iRT,iRT_RT)
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
@@ -620,7 +628,7 @@ for (i, path) in ProgressBar(enumerate(MS2_CHROMS_PATHS))
 end
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_111624.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012324.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_111624.jld2"))["best_psms"];
 BPSMS = nothing
 GC.gc()
@@ -750,7 +758,7 @@ histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alph
 
 filter!(x->x.best_scan==true, best_psms );
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_012224.jld2"))["best_psms"]
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean7_012224.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean8_012224.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 

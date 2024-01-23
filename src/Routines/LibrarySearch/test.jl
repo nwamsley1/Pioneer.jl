@@ -1,24 +1,26 @@
-function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
-                       precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
+function makeRTIndices(PSMS::DataFrame, 
+                       precID_to_iRT::Dictionary{UInt32, Tuple{Float32, Float32}},
                        iRT_RT::Any;
                        min_prob::AbstractFloat = 0.75)
     #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
     rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
+    filter!(x->x.prob>=min_prob, PSMS);
+    grouped_psms = groupby(PSMS,:file_path) 
     #iRT dict
     #iRT_dict = Dictionary{String, UnorderedDictionary{UInt32, Float32}}()
-    for (file_path, psms) in ProgressBar(pairs(psms_dict)) #For each file in the experiment
+    for (groupkey, psms) in ProgressBar(pairs(grouped_psms)) #For each file in the experiment
         #insert!(iRT_dict, file_path, UnorderedDictionary{UInt32, Float32}())
         #Impute empirical iRT value for psms with probability lower than the threshold
-        filter!(x->x.prob>=min_prob, psms); 
+        file_path = groupkey.file_path
         RTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
 
-        prec_set = Dictionary(psms[!,:precursor_idx]::Vector{UInt32},
-                            zip(psms[!,:RT]::Vector{Float32}, 
+        prec_set = Dictionary(psms[!,:precursor_idx],
+                            zip(psms[!,:RT], 
                                 #psms[!,:iRT]::Vector{Float32},
-                                psms[!,:prec_mz]::Vector{Float32})
-                            )
+                                psms[!,:prec_mz])
+                            )::Dictionary{UInt32, Tuple{Float32, Float32}}
         #Set of precursors where empirical iRTs can be used and do not need to be imputed 
-        pset = Set(psms[!,:precursor_idx]::Vector{UInt32})
+        pset = Set(psms[!,:precursor_idx])
         #Loop through all precursors in the seed 
         Threads.@threads for (i, (prec_id, irt_mz_imputed)) in collect(enumerate(pairs(precID_to_iRT)))
             prec_ids[i] = prec_id
@@ -27,7 +29,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
                 RTs[i] = rt
                 mzs[i] = mz
             else #Impute empirical iRT from the best observed psm for the precursor accross the experiment 
-                irt, mz = irt_mz_imputed::Tuple{Float64, Float32}
+                irt, mz = irt_mz_imputed::Tuple{Float32, Float32}
                 rt = iRT_RT[file_path](irt)::Float64 #Convert iRT to RT 
                 RTs[i] = rt
                 mzs[i] = mz
@@ -79,9 +81,11 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
     #For each precursor, what was the best scan, maximum q-value, and observed iRT for the best scan
     psms[!,:best_scan] .= false #Best scan for a given precursor_idx accross the experiment
     psms[!,:iRT_observed] .= zero(Float64) #Observed iRT for each psm
+    psms[!,:iRT_diff_from_median] .= zero(Float64) #Observed iRT for each psm
     #psms[!,:iRT_observed_best] .= zero(Float64) #Best iRT accross the experiment for a given precursor
     grouped_psms = groupby(psms, :precursor_idx); #Groupby precursor idx
 
+    precIDtoiRT = Dictionary{UInt32, Tuple{Float32, Float32}}()
     for i in ProgressBar(range(1, length(grouped_psms))) #For each precursor 
 
         #Best scan for the precursor accross the experiment
@@ -89,8 +93,6 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
         #grouped_psms[i].best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
         #irt = RT_iRT[grouped_psms[i].file_path[best_scan]](grouped_psms[i].RT[best_scan])
         #grouped_psms[i].iRT_observed[best_scan] = irt
-        median_irt = median(grouped_psms[i].iRT_observed)
-        
         #Could alternatively estimate the iRT using the best-n scans 
         for j in range(1, size(grouped_psms[i])[1])
             #Get empirical iRT for the psm given the empirical RT
@@ -98,13 +100,23 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
             grouped_psms[i].iRT_observed[j] = irt
         end
 
-        grouped_psms[i].iRT_observed[best_scan] = median(grouped_psms[i].iRT_observed)
+        median_irt = median(grouped_psms[i].iRT_observed)
+        
+        for j in range(1, size(grouped_psms[i])[1])
+            grouped_psms[i].iRT_diff_from_median[j] = abs(median_irt - grouped_psms[i].iRT_observed[j])
+        end
+
+        insert!(precIDtoiRT, #dict
+                first(grouped_psms[i].precursor_idx), #key
+                (Float32(median_irt),  first(grouped_psms[i].prec_mz)) #value
+                )
     end
 
-    filter!(x->x.best_scan, psms); #Filter out non-best scans 
+    #filter!(x->x.best_scan, psms); #Filter out non-best scans 
     #Map the precursor idx to the best empirical iRT extimate and the precursor m/z
-    return Dictionary(psms[!,:precursor_idx], zip(psms[!,:iRT_observed], psms[!,:prec_mz]))
+    return precIDtoiRT, psms #Dictionary(psms[!,:precursor_idx], zip(psms[!,:iRT_observed], psms[!,:prec_mz]))
 end
+
 
 function KZfilter!(X::Vector{R}, m::Int64, k::Int64) where {R<:Real}
     #Kolmogorov-Zurbenko filter
