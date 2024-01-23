@@ -236,20 +236,21 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     ##########
     #Plots                                           
     if isplot
-        display(chrom)
+        #display(chrom)
+        println("best_height $best_height")
         p = Plots.plot(state.t[1:state.max_index], #Plot observed data points 
-                        state.data[1:state.max_index], 
+                        state.data[1:state.max_index].*norm_factor, 
                         show = true, seriestype=:scatter, reuse = false)
         t = [state.t[i] for i in range(1, state.max_index) if state.mask[i] == false]
         d = [state.data[i] for i in range(1, state.max_index) if state.mask[i] == false]
         Plots.plot!(p, #Plot fitted model curve
-                    t,d,
+                    t,d.*norm_factor,
                     show = true, alpha = 0.5, color = :green, seriestype=:scatter)
 
         
         X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), length(gauss_quad_w))
         Plots.plot!(p, X,  
-                    [F(state, x) for x in X], #Evaluate fitted model at each point. 
+                    [F(state, x) for x in X].*norm_factor, #Evaluate fitted model at each point. 
                     fillrange = [0.0 for x in 1:length(gauss_quad_w)], 
                     alpha = 0.25, color = :grey, show = true
                     ); 
@@ -284,7 +285,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         println("state.n ", state.n)
         X = LinRange(T(best_rt - 1.0), T(best_rt + 1.0), length(gauss_quad_w))
         Plots.plot!(p, X,  
-                    [F(state, x) for x in X], #Evaluate fitted model at each point. 
+                    [F(state, x) for x in X].*norm_factor, #Evaluate fitted model at each point. 
                     fillrange = [0.0 for x in 1:length(gauss_quad_w)], 
                     alpha = 0.25, color = :red, show = true
                     ); 

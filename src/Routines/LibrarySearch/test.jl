@@ -74,7 +74,7 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
     psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment
     #Only consider precursors with a q_value passing the threshold
     # at least once accross the entire experiment
-    filter!(x->x.q_value<=max_q_value,psms); 
+    #filter!(x->x.q_value<=max_q_value,psms); 
 
     #For each precursor, what was the best scan, maximum q-value, and observed iRT for the best scan
     psms[!,:best_scan] .= false #Best scan for a given precursor_idx accross the experiment
@@ -85,11 +85,12 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
     for i in ProgressBar(range(1, length(grouped_psms))) #For each precursor 
 
         #Best scan for the precursor accross the experiment
-        best_scan = argmax(grouped_psms[i].prob) 
-        grouped_psms[i].best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
+        #best_scan = argmax(grouped_psms[i].prob) 
+        #grouped_psms[i].best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
         #irt = RT_iRT[grouped_psms[i].file_path[best_scan]](grouped_psms[i].RT[best_scan])
         #grouped_psms[i].iRT_observed[best_scan] = irt
-
+        median_irt = median(grouped_psms[i].iRT_observed)
+        
         #Could alternatively estimate the iRT using the best-n scans 
         for j in range(1, size(grouped_psms[i])[1])
             #Get empirical iRT for the psm given the empirical RT
@@ -149,7 +150,7 @@ seriestype=:scatter)
 
 N += 1
 
-precs = best_psms[(best_psms[!,:q_value].<0.01).&(best_psms[!,:decoy].==false),:precursor_idx]
+precs = unique(best_psms[(best_psms[!,:q_value].<0.01).&(best_psms[!,:decoy].==false),:precursor_idx])
 prec_id = precs[N]
 
 dtype = Float32
@@ -180,8 +181,99 @@ integratePrecursorMS2(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)],
                         tail_distance = 0.25f0,
                         isplot = true
 )
-MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,[:precursor_idx,:total_ions,:isotope_count,:entropy_score,:scribe,:spectral_contrast,:weight,:RT,:decoy]]
+MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,[:precursor_idx,:total_ions,:isotope_count,:entropy_score,
+:scribe,:spectral_contrast,:weight,:RT,:scan_idx,:isotopes,:matched_ratio,:minMZ,:prec_mz,:maxMZ,:scanMZ,:iso_rank,:decoy]]
+
+#good_scans = (abs.(MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,[:maxMZ]] .- 616.53).<0.1)[!,:maxMZ];
+#good_scans = (MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,:isotopes] .== (0.0f0, 5.0f0))[!,:isotopes];
+
+#good_scans = MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][!,:iso_rank] .== 1
+#good_scans = [true, true, true, false, true, false, false, true, false, true, false]
+#MS2_CHROMS_GROUPED[(precursor_idx = prec_id,)][good_scans,[:precursor_idx,:total_ions,:isotope_count,:entropy_score,
+#:scribe,:spectral_contrast,:weight,:RT,:scan_idx,:matched_ratio,:isotopes,:minMZ,:prec_mz,:maxMZ,:scanMZ,:decoy]]
+N += 1
+
+#MS2_CHROMS[!,:isotopes] .= [(0.0, 0.0) for x in range(1, size(MS2_CHROMS, 1))]
+MS2_CHROMS[!,:iso_rank] .= zero(UInt8)
+for i in ProgressBar(range(1, size(MS2_CHROMS,1)))
+    charge = MS2_CHROMS[i,:charge]
+    mz = MS2_CHROMS[i,:prec_mz]
+    window = (Float32(MS2_CHROMS[i,:minMZ]), Float32(MS2_CHROMS[i,:maxMZ]))
+    isotopes = getPrecursorIsotopeSet(mz, charge, window)
+    rank = zero(UInt8)
+    if iszero(first(isotopes))
+        if last(isotopes) > 1
+            rank = UInt8(1)
+        elseif last(isotopes) == 1
+            rank = UInt8(2)
+        else
+            rank = UInt8(3)
+        end
+    else
+        rank = UInt8(4)
+    end
+    MS2_CHROMS[i,:iso_rank] = rank
+end
+
+MS2_CHROMS[!,:scanMZ] = [MS_TABLE[:precursorMZ][scan_id] for scan_id in MS2_CHROMS[!,:scan_idx]]
+MS2_CHROMS[!,:maxMZ] = MS2_CHROMS[!,:scanMZ] .+ 8.0036/2
+MS2_CHROMS[!,:minMZ] = MS2_CHROMS[!,:scanMZ] .-8.0036/2
+
 N +=1
+test_psms = vcat(values(PSMs_Dict)...);
+test = groupby(test_psms,:precursor_idx)
+
+Threads.@threads for i in ProgressBar(range(1, length(test_psms[!,:file_path])))
+    words = split(split(test_psms[i,:file_path], "\\")[end], "_")
+    test_psms[i,:name] = words[5]*"_"*words[7]*"_"*words[8]
+end
+test[N][!,[:precursor_idx,:q_value,:topn,:y_count,:b_count,:entropy_score,:RT,:iRT_observed,:name]]
+describe(test[N][!,[:iRT_observed]])
+N += 1
+
+grouped_psms = groupby(best_psms, :precursor_idx)
+for i in ProgressBar(range(1, length(grouped_psms)))
+    iso_ranks = unique(grouped_psms[i][!,:iso_rank])
+    if length(iso_ranks)<=1
+        continue
+    end
+    best_rank, best_score = 0, 0
+    score = 0
+    best_rank = minimum(iso_ranks)
+    
+    for rank in iso_ranks
+        for j in range(1, size(grouped_psms[i], 1))
+            if grouped_psms[i][j,:iso_rank] == rank
+                #if grouped_psms[i][j,:q_value] <=0.01
+                    score += grouped_psms[i][j,:weight]
+                #end
+            end
+        end
+        if score == best_score
+            if rank < best_rank
+                best_score = score
+                best_rank = rank
+            end
+            score = 0
+        elseif score > best_score
+            best_score = score
+            best_rank = rank
+            score = 0
+        else
+            score = 0
+        end
+    end
+    
+    for j in range(1, size(grouped_psms[i], 1))
+        if grouped_psms[i][j,:iso_rank] != best_rank
+            grouped_psms[i][j,:best_scan] = false
+        end
+    end
+end
+
+N = 10000
+sort(grouped_psms[N], :iso_rank)[!,[:sequence,:iso_rank,:decoy,:q_value,:H,:best_scan]]
+N += 1
 #=
 PSMs_Dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2")["PSMs_Dict"];
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)

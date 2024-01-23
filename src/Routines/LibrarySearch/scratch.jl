@@ -822,3 +822,6 @@ PSMs_test[best_hits,:RT]
 plot(PSMs_test[best_hits,:iRT],
 PSMs_test[best_hits,:RT], seriestype=:scatter, alpha = 0.1)
 plot!(LinRange(-30, 150, 100), [linear_spline(x) for x in LinRange(-30, 150, 100)])
+
+
+sum([a.intensity for a in f_det[1]])

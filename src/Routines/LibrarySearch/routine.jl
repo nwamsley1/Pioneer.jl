@@ -457,6 +457,7 @@ RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
 
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+        println("starting file $ms_file_idx")
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
         @time PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
@@ -487,20 +488,19 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         filter!(x->x.q_value<=0.1, PSMs);
         #############
         #Get best scan for every precursor
-        sort!(PSMs,:RT); #Sorting before grouping is critical. 
-        PSMs[!,:max_weight] .= zero(Float32)
-        grouped_PSMs = groupby(PSMs, :precursor_idx);
-        for i in range(1, length(grouped_PSMs))
-            best_scan = argmax(grouped_PSMs[i].matched_ratio)
-            grouped_PSMs[i].best_scan[best_scan] = true
-        end
-        filter!(x->x.best_scan, PSMs);
-
+        #sort!(PSMs,:RT); #Sorting before grouping is critical. 
+        #PSMs[!,:max_weight] .= zero(Float32)
+        #grouped_PSMs = groupby(PSMs, :precursor_idx);
+        # for i in range(1, length(grouped_PSMs))
+        #     best_scan = argmax(grouped_PSMs[i].matched_ratio)
+        #     grouped_PSMs[i].best_scan[best_scan] = true
+        # end
+        #filter!(x->x.q_value<=0.1, PSMs);
         transform!(PSMs, AsTable(:) => ByRow(psm -> 
         prosit_lib["precursors"][psm[:precursor_idx]].mz
         ) => :prec_mz
         );
-        sort!(PSMs,:RT, rev = false);
+        #sort!(PSMs,:RT, rev = false);
         #Build RT index of precursors to integrate
         #rt_index = buildRTIndex(PSMs);
 
@@ -514,7 +514,7 @@ println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
 
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_011124_M0.jld2"); RT_INDICES)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_011624_M0.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"); PSMs_Dict)
 #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_011124_M0_MBR.jld2"); RT_INDICES)
 #RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122023.jld2"));
 #RT_INDICES = RT_INDICES["RT_INDICES"]
@@ -565,8 +565,31 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
     MS2_CHROMS[!,:best_scan] .= false
     #sum(MS2_CHROMS.weight.!=0.0)
-    
-    MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, :precursor_idx);
+    MS2_CHROMS[!,:iso_rank] .= zero(UInt8)
+    for i in ProgressBar(range(1, size(MS2_CHROMS,1)))
+        charge = MS2_CHROMS[i,:charge]
+        mz = MS2_CHROMS[i,:prec_mz]
+        scan_id = MS2_CHROMS[i,:scan_idx]
+        scan_mz = MS_TABLE[:precursorMZ][scan_id]
+        window = (Float32(scan_mz-8.0036/2), 
+                  Float32(scan_mz+8.0036/2)
+                  )
+        isotopes = getPrecursorIsotopeSet(mz, charge, window)
+        rank = zero(UInt8)
+        if iszero(first(isotopes))
+            if last(isotopes) > 1
+                rank = UInt8(1)
+            elseif last(isotopes) == 1
+                rank = UInt8(2)
+            else
+                rank = UInt8(3)
+            end
+        else
+            rank = UInt8(4)
+        end
+        MS2_CHROMS[i,:iso_rank] = rank
+    end
+    MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, [:precursor_idx,:iso_rank]);
     println("starting integration")
     @time integratePrecursors(MS2_CHROMS_GROUPED, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
@@ -626,10 +649,13 @@ for i in ProgressBar(range(1, size(best_psms)[1]))
 end
 
 
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_50_lambda0_topn2_total4_minimpute_011824.jld2"))["best_psms"]
+
+
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
 features = [ 
     #:iRT_diff,
     :max_prob,
+    :iso_rank,
     :max_city_fitted,
     :mean_city_fitted,
     #:max_scribe_fitted,
@@ -721,8 +747,10 @@ prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 
 histogram(best_psms[best_psms[!,:target], :prob], normalize = :probability, alpha = 0.5)
 histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alpha = 0.5)
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_50_lambda15_topn2_total4_minimpute_011824.jld2"))["best_psms"]
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_test2_011824.jld2"); best_psms)
+
+filter!(x->x.best_scan==true, best_psms );
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_012224.jld2"))["best_psms"]
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean7_012224.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 

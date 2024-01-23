@@ -181,7 +181,9 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     TIC = zeros(Float16, N);
     total_ions = zeros(UInt16, N);
     err_norm = zeros(Float16, N);
-    targets = zeros(Bool, N)
+    targets = zeros(Bool, N);
+    charge = zeros(UInt8, N);
+    prec_mz = zeros(Float32, N);
     scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
     precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
     y_count::Vector{UInt8} = PSMs[!,:y_count]
@@ -199,6 +201,8 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         #iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
         RT[i] = Float32(scan_retention_time[scan_idx[i]]);
         #iRT_obs = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
+        charge[i] = UInt8(getCharge(precursors[precursor_idx[i]]));
+        prec_mz[i] = Float32(getMz(precursors[precursor_idx[i]]));
         TIC[i] = Float16(log2(tic[scan_idx[i]]));
         total_ions[i] = UInt16(y_count[i] + b_count[i]);
         err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
@@ -217,6 +221,8 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:total_ions] = total_ions
     PSMs[!,:err_norm] = err_norm
     PSMs[!,:target] = targets
+    PSMs[!,:charge] = charge
+    PSMs[!,:prec_mz] = prec_mz
     end
     #println("test $test")
     ###########################
