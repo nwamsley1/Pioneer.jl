@@ -409,7 +409,7 @@ function searchRAW(
             for col in range(1, Hs.n)
                 for k in range(Hs.colptr[col], Hs.colptr[col + 1]-1)
                     if iszero(Hs.matched[k])
-                        Hs.nzval[k] = 2*Hs.nzval[k]
+                        Hs.nzval[k] = 3*Hs.nzval[k]
                     end
                 end
             end

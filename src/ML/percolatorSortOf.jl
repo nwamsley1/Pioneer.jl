@@ -37,7 +37,7 @@ end
 getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = getQvalues!(PSMs, allowmissing(probs), allowmissing(labels))
 
 function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, colsample_bytree::Float64 = 0.5, num_round::Int = 25, eta::Float64 = 0.15, min_child_weight::Int = 1, subsample::Float64 = 0.5, gamma::Int = 0, max_depth::Int = 10, train_fraction::Float64 = 1.0, n_iters::Int = 2, print_importance::Bool = false)
-   
+
     #Initialize class probabilisites
     PSMs[:,:prob_temp] = zeros(Float64, size(PSMs)[1])
     PSMs[:,:prob] = zeros(Float64, size(PSMs)[1])
@@ -75,10 +75,16 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3, 
         train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
         train_fold_idxs = Random.randsubseq(train_fold_idxs_all[:], train_fraction)
         #Iterative training 
-        for train_iter in range(1, n_iters)
+        #for train_iter in range(1, n_iters)
+        for train_iter in range(1, 5)
             println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))
             ###################
             #Train
+            if train_iter != 5
+                num_round = 50
+            else
+                num_round = 200
+            end
             train_features = X[train_fold_idxs,:]
             train_classes = X_labels[train_fold_idxs,1]
             #Train a model on the n-1 training folds. Then apply it to get class probabilities for the test-fold. 
@@ -139,6 +145,7 @@ function rankPSMs2!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3,
     #if Symbol("max_prob") ∉ features
     #    push!(features, Symbol("max_prob"))
     #end
+    println("urmom")
     PSMs[!,:row] = collect(range(1, size(PSMs, 1)))
     PSMs[!,:max_prob] = zeros(Float64, size(PSMs)[1])
     #Initialize class probabilisites
@@ -183,8 +190,15 @@ function rankPSMs2!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3,
         psms_train_sub = PSMs[train_fold_idxs_all,:]
         psms_test_sub = PSMs[test_fold_idxs,:]
         prec_to_prob = Dictionary{UInt32, Float32}()
-        for train_iter in range(1, n_iters)
+        #for train_iter in range(1, n_iters)
+        #    println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))
+        for train_iter in range(1, 3)
             println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))
+            if train_iter != 3
+                num_round = 100
+            else
+                num_round = 200
+            end
             ###################
             #Train
             println("sum probs ", sum(psms_train_sub[:,:max_prob]))
