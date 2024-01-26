@@ -293,7 +293,7 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         scan_mz = MS_TABLE[:precursorMZ][scan_id]
 
         window = (Float32(scan_mz-window_width/2), 
-                  Float32(scan_mz+windpw_width/2)
+                  Float32(scan_mz+window_width/2)
 
                   )
         isotopes = getPrecursorIsotopeSet(mz, charge, window)

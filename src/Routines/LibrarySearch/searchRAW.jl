@@ -26,7 +26,7 @@ function SearchRAW(
                     frag_ppm_err::Float64 = 0.0,
                     fragment_tolerance::Float64 = 20.0,
                     huber_δ::Float32 = 1000f0,
-                    unmatched_penalty_factor::Float64 = 1.0
+                    unmatched_penalty_factor::Float64 = 1.0,
                     IonMatchType::DataType = FragmentMatch{Float32},
                     IonTemplateType::DataType = LibraryFragment{Float32},
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
@@ -40,7 +40,7 @@ function SearchRAW(
                     min_index_search_score::Float32 = zero(Float32),
                     min_spectral_contrast::Float32 = Float32(0.65),
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
-                    filter_by_rank::False, 
+                    filter_by_rank::Bool = false, 
                     min_weight::Float32 = zero(Float32),
                     most_intense = false,
                     n_frag_isotopes::Int64 = 1,
@@ -288,7 +288,6 @@ function searchRAW(
                                     ionMisses, #Fill with unmatched ions 
                                     spectra[:masses][i], 
                                     spectra[:intensities][i], 
-                                    count_unmatched=true, #Should we fill "ionMisses"?
                                     δs = [frag_ppm_err], #Mass offsets 
                                     scan_idx = UInt32(i),
                                     ms_file_idx = ms_file_idx,
@@ -305,7 +304,7 @@ function searchRAW(
                                                                         )
         if filter_by_rank
         #println("nmatches_all $nmatches_all, nmatches $nmatches")
-            _, _, nmatches, nmisses = filterMatchedIons(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
+            _, _, nmatches, nmisses = filterMatchedIons!(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
                                                         last(min_topn_of_m), 
                                                         first(min_topn_of_m),
                                                         )
@@ -634,7 +633,7 @@ function integrateMS2(
     )
 end
 
-function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMath{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
+function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
     nmatches_all, nmisses_all = nmatches, nmisses
 
     for i in range(1, nmatches)

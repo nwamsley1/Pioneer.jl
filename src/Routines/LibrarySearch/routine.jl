@@ -203,7 +203,7 @@ main_search_params = Dict(
     :huber_δ => params_[:huber_δ]
 );
 ms2_integration_params = Dict(
-    :unmatched_penalty_factor => params[:unmatched_penalty_factor]
+    :unmatched_penalty_factor => params_[:unmatched_penalty_factor],
     :frag_tol_quantile => params_[:frag_tol_quantile],
     :isotope_err_bounds => params_[:isotope_err_bounds],
     :max_iter => params_[:nnls_max_iter],
@@ -227,27 +227,6 @@ ms2_integration_params = Dict(
     :γ => params_[:γ],
     :huber_δ => params_[:huber_δ]
 );
-integrate_ms1_params = Dict(
-    :expected_matches => params_[:expected_matches],
-    :frag_tol_quantile => params_[:frag_tol_quantile],
-    :max_iter => params_[:nnls_max_iter],
-    :max_peak_width => params_[:max_peak_width],
-    :max_peaks => params_[:max_peaks],
-    :min_frag_count => params_[:min_frag_count],
-    :min_matched_ratio => params_[:min_matched_ratio],
-    :min_spectral_contrast => params_[:min_spectral_contrast],
-    :most_intense => params_[:most_intense],
-    :nmf_tol => params_[:nnls_tol],
-    :precursor_tolerance => params_[:prec_tolerance],
-    :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
-    :regularize => params_[:regularize],
-    :rt_bounds => params_[:rt_bounds],
-    :rt_tol => params_[:rt_tol],
-    :sample_rate => 1.0,
-    :topN => params_[:topN],
-    :λ => params_[:λ],
-    :γ => params_[:γ]
-);
 
 if parse(Bool, lowercase(strip(ARGS["print_params"])))
     for (k,v) in zip(keys(params_), params_)
@@ -262,27 +241,32 @@ end
 ##########
 #Fragment Library Parsing
 
-[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl","parseFasta.jl","PrecursorDatabase.jl"]];
+#[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl","parseFasta.jl","PrecursorDatabase.jl"]];
+[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl"
+                                                                    #        ,"parseFasta.jl"
+                                                                    #"precursorDatabase.jl"
+                                                                    ]];
 
-[include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["buildPrositCSV.jl",
-                                                                                    "parsePrositLib.jl"]];
+#[include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["parsePrositLib.jl"]];
 
 #Generic files in src directory
-[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["precursor.jl","isotopes.jl"]];
+[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["precursor.jl","isotopes.jl"]];
 
 #ML/Math Routines                                                                                    
 [include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in ["customsparse.jl","sparseNNLS.jl",
                                                                                             "percolatorSortOf.jl",
                                                                                             "kdeRTAlignment.jl",
-                                                                                            "entropySimilarity.jl",
                                                                                             "EGH.jl"]];
-                                                                                        
+                                 
+                                                                                            #Files needed for PSM scoring
+[include(joinpath(pwd(), "src", "structs", jl_file)) for jl_file in ["structs.jl"]]
+
 #Utilities
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "isotopeSplines.jl"]];
-#Files needed for PSM scoring
-[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]]
+
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]];
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
@@ -298,12 +282,7 @@ end
                                                                                     "getCrossCorr.jl",
                                                                                     "queryFragmentIndex.jl",
                                                                                     "scratch_newchroms.jl"]];
-
-
-                                                                                                                                
-
-[include(joinpath(pwd(), "src", "Routines", "PRM","IS-PRM",jl_file)) for jl_file in ["getScanPairs.jl"]]
-
+                                             
 ##########
 #Load Spectral Library
 f_det_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_det\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];

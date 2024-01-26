@@ -90,8 +90,6 @@ function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::L
         score.ms_file_idx)
 end
 
-
-
 using SpecialFunctions
 
 struct LibPSM{H,L<:Real} <: PSM
