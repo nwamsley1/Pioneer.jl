@@ -1,4 +1,7 @@
-function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; max_rt_error::Float64,  n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; 
+                        max_rt_error::Float64 = 20.0,  
+                        max_q_value::Float64 = 0.1, 
+                        n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     
     ###########################
     #Correct Weights by base-peak intensity
@@ -11,7 +14,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     =#
     ###########################
     #Allocate new columns
-    @time begin
+    #@time begin
 
     N = size(PSMs, 1)
     decoys = zeros(Bool, N);
@@ -55,7 +58,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
         return mox
     end
 
-    Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
+    Threads.@threads for i in range(1, size(PSMs)[1])#ProgressBar(range(1, size(PSMs)[1]))
         decoys[i] = isDecoy(precursors[precursor_idx[i]]);
         targets[i] = decoys[i] == false
         missed_cleavage[i] = precursors[precursor_idx[i]].missed_cleavages
@@ -74,6 +77,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
         matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
         #stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
     end
+
     PSMs[!,:matched_ratio] = matched_ratio
     PSMs[!,:decoy] = decoys
     PSMs[!,:iRT_predicted] = iRT_pred
@@ -87,25 +91,27 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[!,:adjusted_intensity_explained] = adjusted_intensity_explained
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
-    end
+    #end
     ###########################
 
     ###########################
     #Estimate RT Prediction Error
-    @time begin
+    #@time begin
     #best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[!,spectral_contrast].>min_spectral_contrast) .& (PSMs[!,:decoy].==false),:], [:scan_idx]))
-    linear_spline = KDEmapping(PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false) .& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6),:RT],
-                                        PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false).& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6),:iRT_predicted]
-                                    )
+    best_psms_bool = (PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false) .& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6)
+    linear_spline = KDEmapping(
+                                PSMs[best_psms_bool,:RT],
+                                PSMs[best_psms_bool,:iRT_predicted]
+                            )
     #PSMs[!,:RT_pred] = 
     PSMs[:,:iRT_observed] = Float16.(linear_spline(PSMs[:,:RT]))
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-    end
+    #end
     ############################
     #return 
     ###########################
     #Filter on Rank and Topn
-    #filter!(x->x.RT_error<max_rt_error, PSMs);
+    #filter!(x->x.iRT_error<15.0, PSMs);
     #filter!(x->isnan(x.entropy_score)==false, PSMs);
     #filter!(:best_rank => x -> x<2, PSMs);
     #filter!(:topn => x -> x>1, PSMs);
@@ -114,7 +120,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     #######################
     #Clean Features
     #######################
-    @time begin
+    #@time begin
     PSMs[:,:q_value] .= zero(Float16);
     
     FORM = FormulaTerm(
@@ -124,15 +130,18 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          #Term(:spectral_contrast_corrected),
          Term(:spectral_contrast),
          Term(:scribe),
-         Term(:iRT_error),
-         Term(:missed_cleavage),
-         Term(:Mox),
-         Term(:TIC),
          Term(:city_block),
          Term(:entropy_score),
+
+         Term(:iRT_error),
+
+         Term(:missed_cleavage),
+         Term(:Mox),
+         Term(:charge),
+
+         Term(:TIC),
          Term(:total_ions),
          Term(:err_norm),
-         Term(:charge),
          Term(:spectrum_peak_count),
          #Term(:poisson)
          #Term(:adjusted_intensity_explained)
@@ -144,34 +153,46 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     Y′ = Float16.(GLM.predict(model_fit, PSMs[!,[:target,:spectral_contrast,:scribe,:iRT_error,:missed_cleavage,:Mox,:TIC,:city_block,:entropy_score,:total_ions,:err_norm,:charge,:spectrum_peak_count]]));
     getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
 
-    println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
-    println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
-    end
+    #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    #println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+    #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+    #end
     PSMs[:,:prob] = allowmissing(Y′);
     
-    ########################
-    #Add columns 
-    PSMs[!,:best_scan] .= false
-    
+    ##########
+    #Filter low scoring psms and add precursor mz
+
+    #Remove psms below q_value threshold
+    filter!(x->x.q_value<=max_q_value, PSMs);
+
+    #println("get best psms...")
+    #@time begin
+    PSMs[!,:best_psm] .= false
+    gpsms = groupby(PSMs,:precursor_idx)
+    for (precursor_idx, prec_psms) in pairs(gpsms)
+        best_psm_idx = argmax(prec_psms[!,:prob])
+        prec_psms[best_psm_idx,:best_psm] = true
+    end
+    filter!(x->x.best_psm, PSMs);
+    #end
+
+    prec_mz = zeros(Float32, size(PSMs, 1));
+    precursor_idx = PSMs[!,:precursor_idx]::Vector{UInt32}
+    Threads.@threads for i in range(1, size(PSMs)[1])
+        prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
+    end
+    PSMs[!,:prec_mz] = prec_mz
     return 
 end
 
-function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}, RT_iRT::Any; min_spectral_contrast::AbstractFloat = 0.9,  n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; window_width::Float64 = 0.0) where {T<:AbstractFloat}
     
     ###########################
     #Correct Weights by base-peak intensity
-    #=
-    for i in size(PSMs)[1]
-        prec_id = PSMs[i,:precursor_idx]
-        base_peak_intensity = precursors[prec_id].base_peak_intensity
-        PSMs[i,:weight] = Float32(PSMs[i,:weight]/base_peak_intensity)
-    end
-    =#
+    filter!(x->x.weight>0.0, PSMs);
     ###########################
     #Allocate new columns
    
-    test = @time begin
     #Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
     N = size(PSMs)[1]
     decoys = zeros(Bool, N);
@@ -223,59 +244,8 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:target] = targets
     PSMs[!,:charge] = charge
     PSMs[!,:prec_mz] = prec_mz
-    end
-    #println("test $test")
     ###########################
-
-    ###########################
-    #Estimate RT Prediction Error
-    #best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[!,spectral_contrast].>min_spectral_contrast) .& (PSMs[!,:decoy].==false),:], [:scan_idx]))
-    #linear_spline = KDEmapping(PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false) .& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6),:iRT_predicted],
-    #                                   PSMs[(PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false).& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6),:RT]
-    #                               )
-    #PSMs[!,:RT_pred] = Float16.(linear_spline(PSMs[!,:iRT_predicted]))
-    #PSMs[!,:RT_error] = Float16.(abs.(PSMs[!,:RT_pred] .- PSMs[!,:RT]))
-    ############################
-     #######################
-    #Clean Features
-    #######################
-    #model_time = @time begin
-    #@time begin
-    #=
-    PSMs[:,:q_value] .= zero(Float16);
-    FORM = FormulaTerm(
-        (Term(:target),),
-        (
-         #Term(:scribe_corrected),
-         #Term(:spectral_contrast_corrected),
-         Term(:spectral_contrast),
-         Term(:scribe),
-         #Term(:RT_error),
-         Term(:TIC),
-         Term(:city_block),
-         Term(:entropy_score),
-         Term(:total_ions),
-         Term(:err_norm),
-         Term(:city_block_fitted),
-         #Term(:scribe_fitted)
-    ));
-    end
-    #filter!(x->isnan(x.entropy_score)==false, PSMs);
-    @time model_fit = glm(FORM, PSMs, 
-                            Binomial(), 
-                            ProbitLink());
-    @time Y′ = Float16.(GLM.predict(model_fit, PSMs));
-    @time getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
-    #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)));
-    #println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)));
-    #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)));
-    PSMs[!,:prob] = allowmissing(Y′);
-    =#
-    #end
-    #println("model_time $model_time")
-    ########################
-    #Add columns 
-    new_features = @time begin
+    #Add columns
     new_cols = [(:peak_area,                   Union{Float32, Missing})
     (:GOF,                      Union{Float16, Missing})
     (:FWHM,                     Union{Float16, Missing})
@@ -308,13 +278,49 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         PSMs[!,col_name] = zeros(col_type, size(PSMs)[1])
     end
     PSMs[!,:best_scan] .= false;
+
+    #######
+    sort!(PSMs,:RT); #Sorting before grouping is critical. 
+
+    #sum(MS2_CHROMS.weight.!=0.0)
+    PSMs[!,:iso_rank] .= zero(UInt8)
+
+    Threads.@threads for i in range(1, size(PSMs,1))
+
+        charge = PSMs[i,:charge]
+        mz = PSMs[i,:prec_mz]
+        scan_id = PSMs[i,:scan_idx]
+        scan_mz = MS_TABLE[:precursorMZ][scan_id]
+
+        window = (Float32(scan_mz-window_width/2), 
+                  Float32(scan_mz+windpw_width/2)
+
+                  )
+        isotopes = getPrecursorIsotopeSet(mz, charge, window)
+
+        rank = zero(UInt8)
+        if iszero(first(isotopes))
+            if last(isotopes) > 1
+                rank = UInt8(1)
+            elseif last(isotopes) == 1
+                rank = UInt8(2)
+            else
+                rank = UInt8(3)
+            end
+        else
+            rank = UInt8(4)
+        end
+        PSMs[i,:iso_rank] = rank
     end
+
     #println("new_features $new_features")
     return 
 end
 
 function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}) where {T<:AbstractFloat}
     
+    filter!(x -> x.best_scan, PSMs);
+    filter!(x->x.weight>0, PSMs);
     ###########################
     #Allocate new columns
     #println("TEST")
@@ -331,7 +337,7 @@ function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:spectrum_peak_count] .= zero(UInt16);
     PSMs[!,:sequence_length] .= zero(UInt8);
     PSMs[!,:Mox] .= zero(UInt8);
-    @Threads.threads for i in ProgressBar(range(1, size(PSMs)[1]))
+    @Threads.threads for i in range(1, size(PSMs)[1])
         PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
     #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
         PSMs[i,:sequence] = precursors[PSMs[i,:precursor_idx]].sequence;
@@ -355,6 +361,13 @@ function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     #######################
     #Clean Features
     #######################    
+    prec_mz = zeros(Float32, size(PSMs, 1));
+    precursor_idx = PSMs[!,:precursor_idx]::Vector{UInt32}
+    Threads.@threads for i in range(1, size(PSMs)[1])
+        prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
+    end
+    PSMs[!,:prec_mz] = prec_mz
+
     return 
 end
 

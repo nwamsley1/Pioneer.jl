@@ -128,7 +128,7 @@ params_ = (
     min_spectral_contrast_presearch = Float32(params["min_spectral_contrast_presearch"]),
     min_spectral_contrast_integration = Float32(params["min_spectral_contrast_integration"]),
 
-    min_topnOf3 = Int64(params["min_topnOf3"]),
+    min_topn_of_m = Tuple([Int64(x) for x in params["min_topn_of_m"]]),
     min_topnOf3_integration = Int64(params["min_topnOf3_integration"]),
     min_weight = Float32(params["min_weight"]),
 
@@ -145,6 +145,7 @@ params_ = (
     topN_presearch = Int64(params["topN_presearch"]),
     topN = Int64(params["topN"]),
     topN_index_search = Int64(params["topN_index_search"]),
+    unmatched_penalty_factor = Float64(params["unmatched_penalty_factor"]),
     huber_δ = Float32(nnls_params["huber_delta"]),
     λ = Float32(nnls_params["lambda"]),
     γ = Float32(nnls_params["gamma"]),
@@ -162,7 +163,7 @@ first_search_params = Dict(
     :min_matched_ratio => params_[:min_matched_ratio_presearch],
     :min_index_search_score => params_[:min_index_search_score],
     :min_spectral_contrast => params_[:min_spectral_contrast_presearch],
-    :min_topnOf3 => params_[:min_topnOf3],
+    :min_topn_of_m => params_[:min_topn_of_m],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
     :quadrupole_isolation_width => params_[:quadrupole_isolation_width],
@@ -187,7 +188,7 @@ main_search_params = Dict(
     :min_matched_ratio_main_search => params_[:min_matched_ratio_main_search],
     :min_index_search_score => params_[:min_index_search_score],
     :min_spectral_contrast => params_[:min_spectral_contrast],
-    :min_topnOf3 => params_[:min_topnOf3],
+    :min_topn_of_m => params_[:min_topn_of_m],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
     :n_frag_isotopes => params_[:n_frag_isotopes],
@@ -202,6 +203,7 @@ main_search_params = Dict(
     :huber_δ => params_[:huber_δ]
 );
 ms2_integration_params = Dict(
+    :unmatched_penalty_factor => params[:unmatched_penalty_factor]
     :frag_tol_quantile => params_[:frag_tol_quantile],
     :isotope_err_bounds => params_[:isotope_err_bounds],
     :max_iter => params_[:nnls_max_iter],
@@ -210,7 +212,7 @@ ms2_integration_params = Dict(
     :min_frag_count => params_[:min_frag_count_integration],
     :min_matched_ratio => params_[:min_matched_ratio_integration],
     :min_spectral_contrast => params_[:min_spectral_contrast_integration],
-    :min_topnOf3 => params_[:min_topnOf3_integration],
+    :min_topn_of_m => params_[:min_topn_of_m],
     :min_weight => params_[:min_weight],
     :most_intense => params_[:most_intense],
     :nmf_tol => params_[:nnls_tol],
@@ -279,6 +281,8 @@ end
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "isotopeSplines.jl"]];
+#Files needed for PSM scoring
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]]
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
@@ -290,15 +294,13 @@ end
                                                                                     "buildRTIndex.jl",
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
-                                                                                "integrateChroms.jl",
-                                                                                "getCrossCorr.jl",
+                                                                                    "integrateChroms.jl",
+                                                                                    "getCrossCorr.jl",
                                                                                     "queryFragmentIndex.jl",
                                                                                     "scratch_newchroms.jl"]];
 
 
                                                                                                                                 
-#Files needed for PSM scoring
-[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]]
 
 [include(joinpath(pwd(), "src", "Routines", "PRM","IS-PRM",jl_file)) for jl_file in ["getScanPairs.jl"]]
 
@@ -458,8 +460,9 @@ RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 #@profview for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         println("starting file $ms_file_idx")
+        @time begin
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-        @time PSMs = vcat(mainLibrarySearch(
+        PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
@@ -484,73 +487,25 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             scan_range = (1, length(MS_TABLE[:masses]))
         #scan_range = (100000, 100010)
         )...);
-        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0);
-        filter!(x->x.q_value<=0.1, PSMs);
-        #############
-        #Get best scan for every precursor
-        #sort!(PSMs,:RT); #Sorting before grouping is critical. 
-        #PSMs[!,:max_weight] .= zero(Float32)
-        #grouped_PSMs = groupby(PSMs, :precursor_idx);
-        # for i in range(1, length(grouped_PSMs))
-        #     best_scan = argmax(grouped_PSMs[i].matched_ratio)
-        #     grouped_PSMs[i].best_scan[best_scan] = true
-        # end
-        #filter!(x->x.q_value<=0.1, PSMs);
-        transform!(PSMs, AsTable(:) => ByRow(psm -> 
-        prosit_lib["precursors"][psm[:precursor_idx]].mz
-        ) => :prec_mz
-        );
-        #sort!(PSMs,:RT, rev = false);
-        #Build RT index of precursors to integrate
-        #rt_index = buildRTIndex(PSMs);
-
-        #RT_indices[MS_TABLE_PATH] = rt_index
-        #insert!(RT_INDICES, MS_TABLE_PATH, rt_index)#joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name);
-        #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", psms_file_name); PSMs);
+        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0,  max_q_value = 0.1);
         #Free up memory
-        insert!(PSMs_Dict, MS_TABLE_PATH, PSMs);
+        insert!(PSMs_Dict, 
+                MS_TABLE_PATH, 
+                PSMs[!,
+                    [:precursor_idx,:RT,:iRT_predicted,:prec_mz,:q_value,:prob]
+                    ]
+            );
+        end
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
 
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_011124_M0.jld2"); RT_INDICES)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"); PSMs_Dict)
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_011124_M0_MBR.jld2"); RT_INDICES)
-#RT_INDICES = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_INDICES_isotopes_122023.jld2"));
-#RT_INDICES = RT_INDICES["RT_INDICES"]
-
-#=
-PSMs_Dict = nothing
-GC.gc()
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2"))["PSMs_Dict"];
-PSMs_Dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs_Dict_isotopes_010224_isotopes_M0M1.jld2")["PSMs_Dict"];
-PSMs = vcat(PSMs_Dict.values...);
-=#
-#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_011624_M0.jld2"))["PSMs_Dict"]
 PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"))["PSMs_Dict"]
-iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
-IDtoiRT_IMPUTED, IDtoiRT_OBSERVED = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
-testdf = makeRTIndices(iRT_RT, IDtoiRT_IMPUTED, IDtoiRT_OBSERVED)
-RT_INDICES = buildRTIndex(testdf)
-
-#=
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
-=#
-#=
-for (file_path, PSMs) in pairs(PSMs_Dict)
-    PSMs[!,:best_scan] .= false
-    psms_grouped = groupby(PSMs, [:precursor_idx])
-    for prec_psms in psms_grouped
-        best_scan = argmax(prec_psms.prob)
-        prec_psms.best_scan[best_scan] = true
-    end
-    filter!(x->x.best_scan, PSMs)
-end
-=#
-#filter!(x->x.best_scan, PSMS)
-#RT_INDICES = makeRTIndices(PSMS,precID_to_iRT,iRT_RT)
+
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
@@ -559,6 +514,7 @@ PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
+    @time begin
     MS2_CHROMS = vcat(integrateMS2(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
@@ -579,80 +535,32 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
                     )...);
+
     filter!(x->x.weight>0.0, MS2_CHROMS);
-    #filter!(x->x.topn>1, MS2_CHROMS);
-    _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"], RT_iRT);
-    #filter!(x->x.total_ions>2, MS2_CHROMS)
-    sort!(MS2_CHROMS,:RT); #Sorting before grouping is critical. 
-    MS2_CHROMS[!,:best_scan] .= false
-    #sum(MS2_CHROMS.weight.!=0.0)
-    MS2_CHROMS[!,:iso_rank] .= zero(UInt8)
-    for i in ProgressBar(range(1, size(MS2_CHROMS,1)))
-        charge = MS2_CHROMS[i,:charge]
-        mz = MS2_CHROMS[i,:prec_mz]
-        scan_id = MS2_CHROMS[i,:scan_idx]
-        scan_mz = MS_TABLE[:precursorMZ][scan_id]
-        window = (Float32(scan_mz-8.0036/2), 
-                  Float32(scan_mz+8.0036/2)
-                  )
-        isotopes = getPrecursorIsotopeSet(mz, charge, window)
-        rank = zero(UInt8)
-        if iszero(first(isotopes))
-            if last(isotopes) > 1
-                rank = UInt8(1)
-            elseif last(isotopes) == 1
-                rank = UInt8(2)
-            else
-                rank = UInt8(3)
-            end
-        else
-            rank = UInt8(4)
-        end
-        MS2_CHROMS[i,:iso_rank] = rank
-    end
+    _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"], window_width = ms2_integration_params[:quadrupole_isolation_width]);
     MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, [:precursor_idx,:iso_rank]);
-    println("starting integration")
-    @time integratePrecursors(MS2_CHROMS_GROUPED, 
+    integratePrecursors(MS2_CHROMS_GROUPED, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
                                         intensity_filter_fraction = params_[:intensity_filter_fraction],
                                         α = 0.001f0,
                                         LsqFit_tol = params_[:LsqFit_tol],
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance])
-    println("finished integration")
-    filter!(x -> x.best_scan, MS2_CHROMS);
-    filter!(x->x.weight>0, MS2_CHROMS);
     addFeatures!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
-    transform!( MS2_CHROMS, AsTable(:) => ByRow(psm -> 
-    prosit_lib["precursors"][psm[:precursor_idx]].mz
-    ) => :prec_mz
-    );
     MS2_CHROMS[!,:file_path].=MS_TABLE_PATH
     BPSMS[ms_file_idx] = MS2_CHROMS;
-    #jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "psms_"*string(ms_file_idx)*".jld2"); MS2_CHROMS);
-    #MS2_CHROMS = nothing
     GC.gc()
+    end
 end
 
-
-Set([first(x) for x in RT_INDICES.values[1].rt_bins[1001].prec]) ∩ Set([first(x) for x in RT_INDICES.values[1].rt_bins[1000].prec])
-#MS2_CHROMS_PATHS = [joinpath(MS_DATA_DIR, "Search", "RESULTS", x) for x in readdir(joinpath(MS_DATA_DIR, "Search", "RESULTS")
-#) if (match(r"psms_[0-9]+.jld2", x) != nothing)]
-#for (i, path) in ProgressBar(enumerate(MS2_CHROMS_PATHS))
-#    BPSMS[i] = load(path)["MS2_CHROMS"]
-#end
-
 best_psms = vcat(values(BPSMS)...)
+getBestTrace!(best_psms)
+
+#=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
-BPSMS = nothing
-GC.gc()
-filter!(x -> x.best_scan, best_psms);
-filter!(x->x.weight>0, best_psms );
+=#
 
-
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_110223_mzXML.jld2"); best_psms)
-#best_psms = MS2_CHROMS
 best_psms[!,:iRT_diff] .= zero(Float32)
 best_psms[!,:iRT_observed] .= zero(Float32)
 best_psms[!,:sequence] .= ""
@@ -672,9 +580,6 @@ best_psms[!,:iRT_error] .= zero(Float32)
 for i in ProgressBar(range(1, size(best_psms)[1]))
     best_psms[i,:iRT_error] = abs(best_psms[i,:iRT_observed]- best_psms[i,:iRT_predicted])
 end
-
-
-
 
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
 features = [ 
@@ -775,335 +680,10 @@ histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alph
 
 filter!(x->x.best_scan==true, best_psms );
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean5_012224.jld2"))["best_psms"]
-
-
-filter!(x->x.q_value<=0.01, best_psms );
-best_psms[!,:q_value].
+#filter!(x->x.q_value<=0.01, best_psms );
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_test8_012524.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 
 
 
-IDs_M0M1 = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0M1_010224.jld2"))["IDs_PER_FILE"]
-bst_M0M1 = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0M1_010224.jld2"))["bst"]
-
-best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:decoy].==false),:]
-pioneer_passing_fdr = Set("_".*best_psms_passing[!,:stripped_sequence].*"_.".*string.(best_psms_passing[!,:charge]))
-setdiff(combined_set, pioneer_passing_fdr)
-
-pioneer_passing_fdr = Set("_".*best_psms[!,:stripped_sequence].*"_.".*string.(best_psms[!,:charge]))
-setdiff(combined_set, pioneer_passing_fdr)
-
-
-#@save "/Users/n.t.wamsley/TEST_DATA/best_psms_unfiltered_16ppm_huber10000_y4b3bestand1_cosineCorrected_102323.jld2" best_psms
-       
-
-
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_nOf5_110123.jld2"); best_psms)
-transform!(best_psms, AsTable(:) => ByRow(psm -> 
-prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
-) => :accession_numbers
-);
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_y4b3_nOf5_122123_isotopes.jld2"); best_psms)
-
-using CSV, DataFrames, StatsBase, Plots, StatsPlots, Measures, JLD2, FASTX, CodecZlib, Loess, KernelDensity, Distributions, SavitzkyGolay,Interpolations
-
-function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
-
-    function getReader(fasta_path::String)
-        if endswith(fasta_path, ".fasta.gz")
-            return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
-        elseif endswith(fasta_path, ".fasta")
-            return FASTA.Reader(open(fasta_path))
-        else
-            throw(ErrorException("fasta_path \"$fasta_path\" did not end with `.fasta` or `.fasta.gz`"))
-        end
-    end
-
-    #I/O for Fasta
-    reader = getReader(fasta_path)
-
-    #In memory representation of FastaFile
-    #fasta = Vector{FastaEntry}()
-    fasta = Vector{Tuple{String, String}}()
-    @time begin
-        for record in reader
-                push!(fasta, 
-                        (parse_identifier(FASTA.identifier(record)),
-                         split(split(split(FASTA.description(record), ' ')[1], '|')[end], '_')[end],
-                                #FASTA.sequence(record),
-                                #false
-                        )
-                )
-        end
-    end
-
-    return fasta
-end
-
-PIONEER = best_psms[(best_psms[!,:q_value].<=0.1).&(best_psms[!,:decoy].==false).&(best_psms[!,:data_points].>2),:];
-PIONEER = PIONEER[(iszero.(PIONEER[:,:peak_area]).==false),:];
-MEANS = combine(prec_group -> (mean_log2 = mean(log2.(prec_group[:,:peak_area])),
-                               median_log2 = median(log2.(prec_group[:,:peak_area])),
-                               CV = std(prec_group[:,:peak_area])/mean(prec_group[:,:peak_area])
-                            ),
-                groupby(PIONEER[:,[:precursor_idx,:peak_area]], 
-                        [:precursor_idx])
-    );
-#Exclude precursors without enough data to calculate a global CV
-MEANS = MEANS[isnan.(MEANS[:,:CV]).==false,:];
-
-#Use only precursors with CV in the bottom 25%
-MEANS = MEANS[MEANS[:,:CV].<quantile(MEANS[:,:CV], 0.25),:];
-
-#Dictionary mapping precursor id's to named tuple with global log2_mean, log2_median, and CV
-mean_dict = Dict(zip(MEANS[:,:precursor_idx], [NamedTuple(x) for x in eachrow(MEANS[:,[:mean_log2,:median_log2,:CV]])]));
-
-PIONEER[:,:CV] = allowmissing(zeros(Float64, size(PIONEER)[1]));
-#Apply precursor group CVs to the rows of the data
-for i in range(1,size(PIONEER)[1])
-    #if PIONEER[i,:file_path]=="/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_B_Sample_Alpha_01.arrow"
-    if haskey(mean_dict, PIONEER[i,:precursor_idx])
-        PIONEER[i,:CV] = mean_dict[PIONEER[i,:precursor_idx]][:CV]
-    else
-        PIONEER[i,:CV] = missing
-    end
-end
-
-PIONEER[:,:peak_area_norm] = PIONEER[:,:peak_area];
-PIONEER[:,:peak_area_log2] = log2.(PIONEER[:,:peak_area]);
-
-PIONEER_BEST = PIONEER[(PIONEER[:,:q_value].<=0.01).&( #1% FDR
-                        PIONEER[:,:decoy].==false).&(
-                        coalesce.(PIONEER[:,:CV], Inf).<median(skipmissing(PIONEER[:,:CV]))), #CV less than median
-    :]
-
-INTENSITIES = combine(file -> (median = median(file[:,:peak_area_log2]),mean = mean(file[:,:peak_area_log2])), groupby(PIONEER_BEST[:,[:file_path,:peak_area_log2]], :file_path));
-
-#INTENSITIES = combine(file -> (median = median(file[:,:peak_area_log2]),mean = mean(file[:,:peak_area_log2])), groupby(PIONEER_BEST[:,[:file_path,:peak_area_log2]], :file_path));
-
-INTENSITIES[:,:correction] = (INTENSITIES[:,:median] .- median(INTENSITIES[:,:median]));
-
-NORM_CORRECTIONS = Dict(zip(INTENSITIES[:,:file_path],INTENSITIES[:,:correction]));
-
-transform!(PIONEER, AsTable(:) => ByRow(precursor -> 2^(precursor[:peak_area_log2] .- NORM_CORRECTIONS[precursor[:file_path]])) => [:peak_area_norm]);
-PIONEER[:,:peak_area_log2_norm] .= log2.(PIONEER[:,:peak_area_norm]);
-#try
-p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Original Response",
-topmargin=5mm)
-
-@df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
-             PIONEER[:,:decoy].==false),:] boxplot(p, (:file_path), :peak_area_log2, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true)
-#savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "RAW_INTENSITIES.pdf"))
-
-p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n Normalized Response",
-topmargin=5mm)
-@df PIONEER[(PIONEER[:,:q_value].<=0.01).&(
-            PIONEER[:,:decoy].==false),:] boxplot(p, (:file_path), :peak_area_log2_norm, ylim = (10, 25), ylabel = "Log2 (Response)", xlabel = "Run ID", show = true) 
-
-#savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "NORM_INTENSITIES.pdf"))            
-##catch
-#    println("couldn't printn normalization plots")
-#end 
-ACC_TO_SPEC = Dict(vcat([parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000000625_83333_Escherichia_coli.fasta.gz"),
-            parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000002311_559292_Saccharomyces_cerevisiae.fasta.gz"),
-            parseFasta("/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/UP000005640_9606_human.fasta.gz")]...));
-
-PIONEER[:,:species_set] = [Set([ACC_TO_SPEC[id] for id in ids]) for ids in split.(PIONEER[:,:accession_numbers],';')];
-            PIONEER = PIONEER[length.(PIONEER[:,:species_set]).==1,:];
-            PIONEER[:,:species] = first.(PIONEER[:,:species_set]);
-value_counts(df, col) = combine(groupby(df, col), nrow)
-IDs_PER_FILE = value_counts(PIONEER[(PIONEER[:,:q_value].<=0.01) .& (PIONEER[:,:decoy].==false),:], [:file_path])
-
-CSV.write(joinpath(MS_DATA_DIR, "Search", "RESULTS", "id_per_file.csv"), IDs_PER_FILE)
-
-
-function getCondition(row)
-    file_name = split(split(row[:file_path], '/')[end], '.')[1]
-    file_name_split = split(file_name, '_')
-    condition, biological, technical = file_name_split[end - 3], file_name_split[end - 1], file_name_split[end]
-    return condition, biological, technical
-end
-
-transform!(PIONEER, AsTable(:) => ByRow(precursor -> getCondition(precursor)) => [:condition, :biological, :technical]);
-
-PIONEER_GROUPED = groupby(PIONEER[(PIONEER[:,:decoy].==false).&(PIONEER[:,:Mox].==0).&(PIONEER[:,:data_points].>2),:], [:species,:accession_numbers,:sequence,:charge,:condition]);
-PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(prec_group[:,:peak_area_norm])), 
-                                        CV = 100*std(prec_group[:,:peak_area_norm])/mean(prec_group[:,:peak_area_norm]),
-                                        non_missing = length(prec_group[:,:peak_area_norm]),
-                                        min_q_value = minimum(prec_group[:,:q_value])), 
-    PIONEER_GROUPED );
-
-
-#=
-PIONEER_LOG2MEAN = combine(prec_group -> (log2_mean = log2(mean(trim(prec_group[:,:peak_area_norm], prop = 0.2))), 
-                                        CV = 100*std(trim(prec_group[:,:peak_area_norm], prop = 0.2))/mean(trim(prec_group[:,:peak_area_norm], prop = 0.2)),
-                                        non_missing = length(prec_group[:,:peak_area_norm]),
-                                        min_q_value = minimum(prec_group[:,:q_value])), 
-    PIONEER_GROUPED );
-=#
-
-
-filter!(:min_q_value => x -> x<=0.01, PIONEER_LOG2MEAN);
-
-function getLog2Diff(prec_group)
-    #println(size(prec_group))
-    if size(prec_group)[1].!=2
-        return (log2_diff = zeros(Float64, 1),
-                 log2_mean = zeros(Float64, 1),
-                 log2_a = zeros(Float64, 1),
-                 log2_b = zeros(Float64, 1),
-                 CV_a = zeros(Float64, 1),
-                 CV_b = zeros(Float64, 1),
-                 nonMissing_a = zeros(Int64, 1),
-                 nonMissing_b = zeros(Int64, 1))
-    end
-    group_A = occursin.("A", prec_group[:,:condition])
-    group_B = group_A.==false
-    log2_diff = prec_group[:,:log2_mean][group_B] - prec_group[:,:log2_mean][group_A]
-    out = (
-     log2_diff = log2_diff, 
-     log2_mean = (prec_group[:,:log2_mean][group_A] + prec_group[:,:log2_mean][group_B])/2,
-     log2_a = prec_group[:,:log2_mean][group_A],
-     log2_b = prec_group[:,:log2_mean][group_B],
-     CV_a = prec_group[:,:CV][group_A],
-     CV_b = prec_group[:,:CV][group_B],
-     nonMissing_a = prec_group[:,:non_missing][group_A],
-     nonMissing_b = prec_group[:,:non_missing][group_B]
-        )
-    return out
-end
-
-PIONEER_COMBINED = combine(prec_group -> getLog2Diff(prec_group), groupby(PIONEER_LOG2MEAN, [:species, :accession_numbers, :sequence, :charge]));
-PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:nonMissing_a].>3).&(PIONEER_COMBINED[:,:nonMissing_b].>3),:];
-PIONEER_COMBINED = PIONEER_COMBINED[(PIONEER_COMBINED[:,:CV_a].<30).&(PIONEER_COMBINED[:,:CV_b].<30),:];
-
-open(joinpath(MS_DATA_DIR, "Search", "RESULTS", "passing_benchmark.txt"), "w") do f
-    #size = "size(PIONEER_COMBINED) "*string(size(PIONEER_COMBINED))
-    write(f, "size(PIONEER_COMBINED) "*string(size(PIONEER_COMBINED)))
-end
-
-gdf = groupby(PIONEER_COMBINED , [:species])
-nt = NamedTuple.(keys(gdf))
-p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
-topmargin=5mm)
-i = 1
-SPECIES_TO_LOG2FC = Dict("HUMAN" => 0.0,
-                         "YEAST" => -1.0,
-                         "ECOLI" => 2.0)
-for (k,v) in pairs(gdf)
-    density!(p, gdf[k][:,:log2_diff], label=nothing, color = i, bins = LinRange(-3, 3, 100), show = true, normalize = :pdf, alpha = 0.5)
-    vline!([SPECIES_TO_LOG2FC[nt[i][:species]]], color = i, label = label="$(nt[i][:species])")
-    i += 1
-end
-
-savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "HIST.pdf"))
-
-gdf = groupby(PIONEER_COMBINED , [:species])
-nt = NamedTuple.(keys(gdf))
-p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
-topmargin=5mm)
-i = 1
-
-for (k,v) in pairs(gdf)
-    violin!(p, gdf[k][:,:log2_diff], label="$(nt[i])", ylim = (-3, 4), span = [10.0])
-    i += 1
-end
-
-savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "VIOLIN.pdf"))
-
-gdf = groupby(PIONEER_COMBINED , [:species])
-nt = NamedTuple.(keys(gdf))
-p = plot(legend=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<30%, 1% FDR \n 27498 Precursors",
-topmargin=5mm)
-i = 1
-for (k,v) in pairs(gdf)
-    plot!(p, gdf[k][:,:log2_mean], gdf[k][:,:log2_diff], color = i, label=nothing, xlim = (10, 30), ylim = (-3, 4), alpha = 0.1, seriestype=:scatter)
-    hline!([SPECIES_TO_LOG2FC[nt[i][:species]]], color = i, label = label="$(nt[i][:species])")
-  
-    i += 1
-end
-
-savefig(p, joinpath(MS_DATA_DIR, "Search", "RESULTS", "SCATTER.pdf"))
-
-
-
-####################
-#Get Differential Expression/Benchmark
-
-#=
-features = [ :FWHM,
-    :FWHM_01,
-    :GOF,
-    :H,
-    :Mox,
-    :RT,
-    :RT_error,
-    :b_ladder,
-    :base_width_min,
-    :best_rank,
-    :charge,
-    :city_block,
-    :data_points,
-    :entropy_sim,
-    :err_norm_log2,
-    :error,
-    :hyperscore,
-    :intensity_explained,
-    :ions_sum,
-    :log_sum_of_weights,
-    :matched_ratio,
-    :mean_log_entropy,
-    :mean_log_probability,
-    :mean_log_spectral_contrast,
-    :mean_matched_ratio,
-    :mean_scribe_score,
-    :missed_cleavage,
-    :ms1_ms2_diff,
-    :peak_area,
-    :peak_area_ms1,
-    :points_above_FWHM,
-    :points_above_FWHM_01,
-    :poisson,
-    :prec_mz,
-    :scribe_score,
-    :sequence_length,
-    :spectral_contrast,
-    :spectrum_peaks,
-    :topn,
-    :total_ions,
-    :weight,
-    :y_ladder,
-    :ρ,
-
-    :log2_base_peak_intensity,
-    :TIC,
-    :adjusted_intensity_explained
-    ]
-
-
-time_test = @timed filter!(x -> x.topn>1, best_psms);
-time_test = @timed filter!(x -> x.best_rank<3, best_psms);
-time_test = @timed filter!(x -> x.points_above_FWHM>0, best_psms);
-time_test = @timed filter!(x -> x.data_points>2, best_psms);
-#time_test = @timed filter!(x -> x.data_points>2, best_psms);
-#time_test = @timed filter!(x -> x.points_above_FWHM>0, best_psms);
-
-xgboost_time = @timed bst = rankPSMs!(best_psms, 
-                        features,
-                        colsample_bytree = 1.0, 
-                        min_child_weight = 5, 
-                        gamma = 1, 
-                        subsample = 0.5, 
-                        n_folds = 2, 
-                        num_round = 200, 
-                        max_depth = 10, 
-                        eta = 0.05, 
-                        #eta = 0.0175,
-                        train_fraction = 9.0/9.0,
-                        n_iters = 2);
-
-getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
-best_psms_passing = best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false).&(ismissing.(best_psms[:,:peak_area]).==false),:]
-=#

@@ -19,15 +19,15 @@ LXTandem(::Type{Float32}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(
 LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 LXTandem() = LXTandem(Float64)
 
-function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{UInt32, UInt16}, matches::Vector{FragmentMatch{U}}, nmatches::Int64, errdist::Laplace{Float64}) where {T,U<:AbstractFloat}
+function ScoreFragmentMatches!(results::Vector{LXTandem{T}}, IDtoCOL::ArrayDict{UInt32, UInt16}, matches::Vector{FragmentMatch{U}}, nmatches::Int64, errdist::Laplace{Float64}, m_rank::Int64) where {T,U<:AbstractFloat}
     for i in range(1, nmatches)
         match = matches[i]
         col = IDtoCOL.vals[getPrecID(match)]
-        results[col] = ModifyFeatures!(results[col], match, errdist)
+        results[col] = ModifyFeatures!(results[col], match, errdist, m_rank)
     end
 end
 
-function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::Laplace{Float64}) where {U,T<:Real}
+function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::Laplace{Float64}, m_rank::Int64) where {U,T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -72,7 +72,7 @@ function ModifyFeatures!(score::LXTandem{U}, match::FragmentMatch{T}, errdist::L
         best_rank = match.predicted_rank
     end
 
-    if match.predicted_rank <= 3
+    if match.predicted_rank <= m_rank
         topn += one(UInt8)
     end
     return LXTandem{U}(

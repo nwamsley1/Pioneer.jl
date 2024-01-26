@@ -26,6 +26,7 @@ function SearchRAW(
                     frag_ppm_err::Float64 = 0.0,
                     fragment_tolerance::Float64 = 20.0,
                     huber_δ::Float32 = 1000f0,
+                    unmatched_penalty_factor::Float64 = 1.0
                     IonMatchType::DataType = FragmentMatch{Float32},
                     IonTemplateType::DataType = LibraryFragment{Float32},
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
@@ -38,7 +39,8 @@ function SearchRAW(
                     min_matched_ratio::Float32 = Float32(0.8),
                     min_index_search_score::Float32 = zero(Float32),
                     min_spectral_contrast::Float32 = Float32(0.65),
-                    min_topn::Int64 = 2,
+                    min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
+                    filter_by_rank::False, 
                     min_weight::Float32 = zero(Float32),
                     most_intense = false,
                     n_frag_isotopes::Int64 = 1,
@@ -91,13 +93,13 @@ function SearchRAW(
                                 frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
                                 selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
-                                fragment_tolerance,huber_δ, IonMatchType,
+                                fragment_tolerance,huber_δ, unmatched_penalty_factor, IonMatchType,
                                 ionMatches[thread_task[2]],ionMisses[thread_task[2]],all_fmatches[thread_task[2]],IDtoCOL[thread_task[2]],ionTemplates[thread_task[2]],
                                 iso_splines, scored_PSMs[thread_task[2]],unscored_PSMs[thread_task[2]],spectral_scores[thread_task[2]],precursor_weights[thread_task[2]],
                                 precs[thread_task[2]],
                                 IonTemplateType,isotope_dict,isotope_err_bounds,
                                 max_peak_width,max_peaks,min_frag_count, min_frag_count_index_search,
-                                min_matched_ratio,min_index_search_score,min_spectral_contrast,min_topn,
+                                min_matched_ratio,min_index_search_score,min_spectral_contrast,min_topn_of_m,filter_by_rank,
                                 min_weight, most_intense,n_frag_isotopes,precursor_tolerance,quadrupole_isolation_width,
                                 rt_bounds,rt_index, rt_tol,sample_rate,
                                 spec_order,topN,topN_index_search
@@ -129,6 +131,7 @@ function searchRAW(
                     frag_ppm_err::Float64,
                     fragment_tolerance::Float64,
                     huber_δ::Float32,
+                    unmatched_penalty_factor::Float64,
                     IonMatchType::DataType,
 
 
@@ -154,7 +157,8 @@ function searchRAW(
                     min_matched_ratio::Float32,
                     min_index_search_score::Float32,
                     min_spectral_contrast::Float32,
-                    min_topn::Int64,
+                    min_topn_of_m::Tuple{Int64, Int64},
+                    filter_by_rank::Bool,
                     min_weight::Float32,
                     most_intense::Bool,
                     n_frag_isotopes::Int64,
@@ -188,8 +192,8 @@ function searchRAW(
     isotopes = zeros(Float64, n_frag_isotopes)
     #ncols = 0
     for i in range(first(thread_task), last(thread_task))
-        #if (i < 100000) | (i > 100200)
-        #    continue
+        #if (i < 100000) | (i > 100020)
+        #   continue
         #end
         thread_peaks += length(spectra[:masses][i])
 
@@ -222,7 +226,7 @@ function searchRAW(
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
 
         if !ismissing(searchScan!) | !ismissing(frag_index)
-            index_search_time += @elapsed prec_count, match_count = searchScan!(
+            searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
                         min_intensity, spectra[:masses][i], spectra[:intensities][i],
@@ -241,7 +245,7 @@ function searchRAW(
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
         if !ismissing(precs) 
-            index_ions_time += @elapsed ion_idx, prec_idx = selectIons!(ionTemplates, 
+            ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,
                                                 ion_list,
                                                 iso_splines,
@@ -278,7 +282,7 @@ function searchRAW(
         scans_processed += 1
         ##########
         #Match sorted list of plausible ions to the observed spectra
-        prep_time += @elapsed nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
+        nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
                                     ion_idx, #search ionTemplates[1:ion_idx]
                                     ionMatches, #Fill with matched ions 
                                     ionMisses, #Fill with unmatched ions 
@@ -295,85 +299,18 @@ function searchRAW(
                                     nmisses_all = nmisses
                                     nmatches_all = nmatches
         
-        for i in range(1, nmatches)
-            match = ionMatches[i]
-            prec_id = getPrecID(match)
-            if match.is_isotope 
-                continue
-            end
-            #if getRank(match) < 4
-                if iszero(IDtoCOL[prec_id])
-                    update!(IDtoCOL, prec_id, one(UInt16))
-                else
-                    IDtoCOL.vals[prec_id] += one(UInt16)
-                end
-            #end
+        nmatches_all, nmisses_all, nmatches, nmisses = filterMatchedIons!(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
+                                                                                10000, #Arbitrarily hight
+                                                                                min_frag_count #Remove precursors matching fewer than this many fragments
+                                                                        )
+        if filter_by_rank
+        #println("nmatches_all $nmatches_all, nmatches $nmatches")
+            _, _, nmatches, nmisses = filterMatchedIons(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
+                                                        last(min_topn_of_m), 
+                                                        first(min_topn_of_m),
+                                                        )
         end
-        nmatches2 = 0
-        for i in range(1, nmatches)
-            if IDtoCOL[getPrecID(ionMatches[i])] < 4
-                continue
-            else
-                nmatches2 += 1
-                ionMatches[nmatches2] = ionMatches[i]
-            end
-        end
-        nmisses2 = 0
-        for i in range(1, nmisses)
-            if IDtoCOL[getPrecID(ionMisses[i])] < 4
-                 continue
-            else
-                nmisses2 += 1
-                ionMisses[nmisses2] = ionMisses[i]
-            end
-        end
-        
-        nmisses_all = nmisses
-        nmatches_all = nmatches
-        nmatches = nmatches2
-        nmisses = nmisses2
 
-        reset!(IDtoCOL);
-        
-        for i in range(1, nmatches)
-            match = ionMatches[i]
-            prec_id = getPrecID(match)
-            if match.is_isotope 
-                continue
-            end
-            if getRank(match) < 4
-                if iszero(IDtoCOL[prec_id])
-                    update!(IDtoCOL, prec_id, one(UInt16))
-                else
-                    IDtoCOL.vals[prec_id] += one(UInt16)
-                end
-            end
-        end
-        
-        nmatches2 = 0
-        for i in range(1, nmatches)
-            if IDtoCOL[getPrecID(ionMatches[i])] < 2
-                continue
-            else
-                nmatches2 += 1
-                ionMatches[nmatches2] = ionMatches[i]
-            end
-        end
-        nmisses2 = 0
-        for i in range(1, nmisses)
-            if IDtoCOL[getPrecID(ionMisses[i])] < 2
-                 continue
-            else
-                nmisses2 += 1
-                ionMisses[nmisses2] = ionMisses[i]
-            end
-        end
-        
-        nmatches = nmatches2
-        nmisses = nmisses2
-        
-        #println("nmatches $nmatches")
-        reset!(IDtoCOL);
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
@@ -382,7 +319,8 @@ function searchRAW(
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
-            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
+            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL,
+                                unmatched_penalty_factor = unmatched_penalty_factor)
             #println("Hs.n ", Hs.n)
             if IDtoCOL.size > length(_weights_)
                 append!(_weights_, zeros(eltype(_weights_), IDtoCOL.size - length(_weights_) + 1000 ))
@@ -409,7 +347,7 @@ function searchRAW(
             for col in range(1, Hs.n)
                 for k in range(Hs.colptr[col], Hs.colptr[col + 1]-1)
                     if iszero(Hs.matched[k])
-                        Hs.nzval[k] = 3*Hs.nzval[k]
+                        Hs.nzval[k] = unmatched_penalty_factor*Hs.nzval[k]
                     end
                 end
             end
@@ -424,7 +362,9 @@ function searchRAW(
                                     IDtoCOL,
                                     ionMatches, 
                                     nmatches, 
-                                    err_dist)
+                                    err_dist,
+                                    last(min_topn_of_m)
+                                    )
 
                 last_val = Score!(scored_PSMs, 
                     unscored_PSMs,
@@ -440,7 +380,7 @@ function searchRAW(
                     min_matched_ratio = min_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
                     min_weight = min_weight,
-                    min_topn = min_topn,
+                    min_topn = first(min_topn_of_m),
                     block_size = 500000,
                     )
             end
@@ -526,7 +466,7 @@ function firstSearch(
         min_matched_ratio = params[:min_matched_ratio],
         min_index_search_score = params[:min_index_search_score],
         min_spectral_contrast = params[:min_spectral_contrast],
-        min_topn = params[:min_topnOf3],
+        min_topn_of_m = params[:min_topn_of_m],
 
         most_intense = false,#params[:most_intense],
         #precs = Counter(UInt32, UInt8, Float32, length(ion_list)),
@@ -603,7 +543,7 @@ function mainLibrarySearch(
         min_matched_ratio = params[:min_matched_ratio_main_search],
         min_index_search_score = params[:min_index_search_score],
         min_spectral_contrast = params[:min_spectral_contrast],
-        min_topn = params[:min_topnOf3],
+        min_topn_of_m = params[:min_topn_of_m],
         most_intense = params[:most_intense],
         n_frag_isotopes = params[:n_frag_isotopes],
         #precs = Counter(UInt32, Float32, length(ion_list)),
@@ -670,11 +610,13 @@ function integrateMS2(
         
         frag_ppm_err = frag_ppm_err,
         fragment_tolerance = fragment_tolerance,
+        unmatched_penalty_factor = params[:unmatched_penalty_factor],
         isotope_err_bounds = params[:isotope_err_bounds],
         max_iter = params[:max_iter],
         max_peak_width = params[:max_peak_width],
         max_peaks = params[:max_peaks],
-        min_topn = params[:min_topnOf3],
+        min_topn_of_m = params[:min_topn_of_m],
+        filter_by_rank = true,
         min_frag_count = params[:min_frag_count],
         min_matched_ratio = params[:min_matched_ratio],
         min_index_search_score = 0.6f0,#params[:min_index_search_score],
@@ -690,6 +632,48 @@ function integrateMS2(
         scan_range = scan_range,
         topN = params[:topN],
     )
+end
+
+function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMath{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
+    nmatches_all, nmisses_all = nmatches, nmisses
+
+    for i in range(1, nmatches)
+        match = ionMatches[i]
+        prec_id = getPrecID(match)
+        if match.is_isotope 
+            continue
+        end
+            if getRank(match) <= max_rank
+                if iszero(IDtoNMatches[prec_id])
+                    update!(IDtoNMatches, prec_id, one(UInt16))
+                else
+                    IDtoNMatches.vals[prec_id] += one(UInt16)
+                end
+            end
+    end
+    nmatches, nmisses = 0, 0
+    for i in range(1, nmatches_all)
+        if IDtoNMatches[getPrecID(ionMatches[i])] < min_matched_ions
+
+            continue
+        else
+            nmatches += 1
+            ionMatches[nmatches] = ionMatches[i]
+        end
+    end
+
+    for i in range(1, nmisses_all)
+        if IDtoNMatches[getPrecID(ionMisses[i])] < min_matched_ions
+            continue
+        else
+            nmisses += 1
+            ionMisses[nmisses] = ionMisses[i]
+        end
+    end
+
+    reset!(IDtoNMatches)
+
+    return nmatches_all, nmisses_all, nmatches, nmisses
 end
 
 function integrateMS1(
@@ -783,7 +767,6 @@ function integrateMS1(
         γ = params[:γ]
     )
 end
-
 
 function fillChroms!(chroms::Dict{Symbol, Vector}, id_to_row::UnorderedDictionary{UInt32, Tuple{UInt32, UInt8}}, n::Int64, scan_idx::Int64, cycle_idx::Int64, prec_ids::Vector{UInt32}, prec_idx::Int64, frag_counts::Accumulator{UInt32,Int64}, weights::Vector{T}, retention_time::U; block_size = 100000) where {T,U<:AbstractFloat}
     function inc!(chroms::Dict{Symbol, Vector}, n::Int64, scan_idx::Int64, cycle_idx::Int64, key::UInt32, weight::AbstractFloat, rt::AbstractFloat, frag_count::Int64,rank::UInt8)

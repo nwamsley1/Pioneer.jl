@@ -1,4 +1,4 @@
-function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
+function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000, unmatched_penalty_factor::Float64 = 1.0) where {m<:Match,Ti<:Integer,U<:AbstractFloat}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -73,7 +73,7 @@ function buildDesignMatrix!(H::SparseArray{Ti,U}, matches::Vector{m},  misses::V
         #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(miss)])), getPredictedIntenisty(miss), zero(U))
         H.colval[i] = Int64(precID_to_col[getPrecID(miss)])
         H.rowval[i] = row
-        H.nzval[i] = Float32(getPredictedIntenisty(miss)/3) #factor to reduce impact of unmatched ions 
+        H.nzval[i] = Float32(getPredictedIntenisty(miss)/unmatched_penalty_factor) #factor to reduce impact of unmatched ions 
         H.x[i] = zero(U)
         H.matched[i] = false
 

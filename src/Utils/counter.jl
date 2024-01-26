@@ -50,7 +50,7 @@ function reset!(c::Counter{I,T}, id::I) where {I<:Unsigned,T<:AbstractFloat}
     return nothing
 end
 
-function inc!(c::Counter{I,T}, id::I, pred_intensity::T) where {I,C<:Unsigned,T<:AbstractFloat} 
+function inc!(c::Counter{I,T}, id::I, pred_intensity::T) where {I<:Unsigned,T<:AbstractFloat} 
     if iszero(c.counts[id])#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
         c.ids[getSize(c)] = id;
         update!(c,id,pred_intensity);
@@ -63,7 +63,7 @@ end
 
 
 import Base.sort!
-function sort!(counter::Counter{I,T}, topN::Int) where {I,C<:Unsigned,T<:AbstractFloat}
+function sort!(counter::Counter{I,T}, topN::Int) where {I<:Unsigned,T<:AbstractFloat}
     sort!(
                 @view(counter.ids[1:counter.matches]), 
                 by = id -> counter.counts[id],

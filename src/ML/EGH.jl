@@ -158,7 +158,7 @@ function reset!(state::GD_state{P,T,I,J}) where {P<:Params, T<:Real, I,J<:Intege
     return 
 end
 
-function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T,U<:AbstractFloat}
+function updateParams(params::HuberParams{T}, lower::HuberParams{T}, upper::HuberParams{T}) where {T<:AbstractFloat}
      return HuberParams(
          max(min(params.σ, upper.σ), lower.σ),
          max(min(params.tᵣ, upper.tᵣ), lower.tᵣ),
