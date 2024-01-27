@@ -109,10 +109,6 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::I, p
     return isotopes
 end
 
-sequence = "M(ox)QVDQEEPHTEEQQQQPQTPAENK"
-for match in findall(r"[A-Z](\(.*?\))+", sequence)
-    println(match)
-end
 
 const aa_to_composition::Dict{Char, Composition} = Dict{Char, Composition}(
         'A' => Composition(3, 5, 1, 1, 0),

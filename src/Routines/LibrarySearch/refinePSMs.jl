@@ -1,4 +1,4 @@
-function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; 
+function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_rt_error::Float64 = 20.0,  
                         max_q_value::Float64 = 0.1, 
                         n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
@@ -185,7 +185,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     return 
 end
 
-function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}; window_width::Float64 = 0.0) where {T<:AbstractFloat}
+function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; window_width::Float64 = 0.0) where {T<:AbstractFloat}
     
     ###########################
     #Correct Weights by base-peak intensity
@@ -317,7 +317,7 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     return 
 end
 
-function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursor{T}}) where {T<:AbstractFloat}
+function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}) where {T<:AbstractFloat}
     
     filter!(x -> x.best_scan, PSMs);
     filter!(x->x.weight>0, PSMs);

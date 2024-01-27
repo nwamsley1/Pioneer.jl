@@ -6,7 +6,7 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
     irt::T
     mz::T
 
-    isDecoy::Bool
+    is_decoy::Bool
 
     accession_numbers::String
     sequence::String
@@ -18,11 +18,15 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
     sulfur_count::UInt8
 end
 
-getIRT(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.iRT
-isDecoy(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.isDecoy
+getIRT(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.irt
+isDecoy(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.is_decoy
 getAccessionNumbers(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.accession_numbers
-
+getSequence(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sequence
+getMissedCleavages(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.missed_cleavages
+getVariableMods(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.variable_mods
+getLength(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.length
 sulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
+
 
 abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
 
@@ -34,21 +38,23 @@ struct SimpleFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     mz::T
     prec_id::UInt32
     prec_mz::T
+    prec_irt::T
     prec_charge::UInt8
+    score::UInt8
 end
+getScore(pbi::SimpleFrag)::UInt8 = pbi.score
 
-struct DetailedFrag{T,U<:AbstractFloat} <: LibraryFragment{T}
+struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_id::UInt32
 
     mz::T
-    intensity::U
+    intensity::Float16
     
     is_y_ion::Bool
     is_isotope::Bool
 
     frag_charge::UInt8
     ion_position::UInt8
-
     prec_charge::UInt8
     rank::UInt8
     sulfur_count::UInt8
@@ -62,17 +68,21 @@ getFragCharge(f::DetailedFrag) = f.frag_charge
 getRank(f::DetailedFrag) = f.rank
 sulfurCount(f::DetailedFrag) = f.sulfur
 #LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8), zero(UInt8))
-LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), 
-                zero(UInt8), 
-                false, 
-                false,
-                zero(UInt8), 
-                zero(UInt8), 
-                zero(Float32), 
-                zero(UInt8),
-                zero(UInt32), 
-                zero(UInt8),
-                zero(UInt8)
+DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
+
+                zero(UInt32), #prec_id
+
+                zero(T), #mz
+                zero(Float16), #intensity
+
+                false, #is_y_ion
+                false, #is_isotope
+                
+                zero(UInt8), #frag_charge
+                zero(UInt8), #ion_position
+                zero(UInt8), #prec_charge
+                zero(UInt8), #rank
+                zero(UInt8)  #sulfur_count
  )
 
 """
@@ -93,12 +103,12 @@ what the precursor ID is.
 - getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
 - getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
 """
-struct PrecursorBinFragment{T<:AbstractFloat} <: LibraryFragment{T}
+struct PrecursorBinFragment{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_id::UInt32
     prec_mz::T #Only need to tell if the peptide is in the quad isolation window
     score::UInt8 
     charge::UInt8
 end
 
-getScore(pbi::PrecursorBinFragment{U}) = pbi.score
+getScore(pbi::PrecursorBinFragment{T}) where {T<:AbstractFloat} = pbi.score
 

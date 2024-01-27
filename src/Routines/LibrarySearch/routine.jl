@@ -51,7 +51,7 @@ ARGS = parse_commandline();
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123_sulfur"
+SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012723_sulfur"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
@@ -63,7 +63,7 @@ EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = pwd()*"\\..\\data\\nOf3_y4b3_102123_sulfur"#"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123_sulfur"
+SPEC_LIB_DIR = pwd()*"\\..\\data\\nOf3_y4b3_012724_sulfur"#"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012724_sulfur"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
@@ -242,35 +242,48 @@ end
 #Fragment Library Parsing
 
 #[include(joinpath(pwd(), "src", jl_file)) for jl_file in ["IonType.jl","parseFasta.jl","PrecursorDatabase.jl"]];
-[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl"
-                                                                    #        ,"parseFasta.jl"
-                                                                    #"precursorDatabase.jl"
-                                                                    ]];
+#[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl"
+#                                                                    #        ,"parseFasta.jl"
+#                                                                    #"precursorDatabase.jl"
+#                                                                    ]];
 
+[include(joinpath(pwd(), "src", "structs", jl_file)) for jl_file in ["Ion.jl",
+                                                                    
+                                                                    "LibraryIon.jl",
+                                                                    "MatchIon.jl",
+                                                                    "LibraryFragmentIndex.jl",
+                                                                    "SparseArray.jl",
+                                                                    "structs.jl"]];
 #[include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["parsePrositLib.jl"]];
 
 #Generic files in src directory
-[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["precursor.jl","isotopes.jl"]];
+[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl","isotopes.jl"]];
+
+
 
 #ML/Math Routines                                                                                    
-[include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in ["customsparse.jl","sparseNNLS.jl",
+[include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in [
                                                                                             "percolatorSortOf.jl",
                                                                                             "kdeRTAlignment.jl",
-                                                                                            "EGH.jl"]];
+                                                                                            ]];
                                  
                                                                                             #Files needed for PSM scoring
-[include(joinpath(pwd(), "src", "structs", jl_file)) for jl_file in ["structs.jl"]]
+
 
 #Utilities
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
+                                                                    "ExponentialGaussianHybrid.jl",
+                                                                    "IonType.jl",
+                                                                    "isotopes.jl",
+                                                                    "isotopeSplines.jl",
                                                                     "massErrorEstimation.jl",
-                                                                    "isotopeSplines.jl"]];
+                                                                    "SpectralDeconvolution.jl"]];
 
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]];
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
-                                                                                        "buildFragmentIndex.jl",
+                                                                                        #"buildFragmentIndex.jl",
                                                                                     "matchpeaksLib.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "spectralDistanceMetrics.jl",
@@ -279,24 +292,23 @@ end
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
                                                                                     "integrateChroms.jl",
-                                                                                    "getCrossCorr.jl",
                                                                                     "queryFragmentIndex.jl",
                                                                                     "scratch_newchroms.jl"]];
                                              
 ##########
 #Load Spectral Library
-f_det_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_det\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_det_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"detailed_frags\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"index\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 #prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart2.jld2"
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
 spec_load_time = @timed begin
-    const f_index = load(f_index_path)["f_index"];
+    @time const f_index = load(f_index_path)["library_fragment_index"];
     prosit_lib["f_index"] = f_index#["f_index"]
-    const f_det = load(f_det_path)["f_det"]
+    @time const f_det = load(f_det_path)["detailed_frags"]
     prosit_lib["f_det"] = f_det#["f_det"];
-    const precursors = load(precursors_path)["precursors"]
+    @time const precursors = load(precursors_path)["library_precursors"]
     prosit_lib["precursors"] = precursors#["precursors"];
 end
 ###########
@@ -325,13 +337,13 @@ ionMatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in ran
 ionMisses = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 IDtoCOL = [ArrayDict(UInt32, UInt16, length(precursors)) for _ in range(1, N)];
-ionTemplates = [[LibraryFragment{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
 scored_PSMs = [Vector{LibPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 unscored_PSMs = [[LXTandem(Float32) for _ in 1:5000] for _ in range(1, N)];
 spectral_scores = [Vector{SpectralScores{Float16}}(undef, 5000) for _ in range(1, N)];
 precursor_weights = [zeros(Float32, length(precursors)) for _ in range(1, N)];
-precs = [Counter(UInt32, Float32,length(precursors)) for _ in range(1, N)];
+precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
 presearch_time = @timed begin
 #init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
@@ -426,8 +438,8 @@ println("Finished presearch in ", presearch_time.time, " seconds")
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"); RT_to_iRT_map_dict)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"); frag_err_dist_dict)
 
-RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"))["RT_to_iRT_map_dict"]
-frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"))["frag_err_dist_dict"]
+RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\rt_map_dict_010324.jld2")["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\frag_err_dist_dict_010324.jld2")["frag_err_dist_dict"]
 ###########
 #Main PSM Search
 ###########

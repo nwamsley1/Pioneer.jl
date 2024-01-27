@@ -110,7 +110,10 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition::LibraryFragment{Float32}, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32; block_size = 10000) where {T<:AbstractFloat}
+function setMatch!(matches::Vector{M}, i::Int64, 
+                    transition::LibraryIon{Float32}, 
+                    mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32; 
+                    block_size = 10000) where {T<:AbstractFloat,M<:MatchIon{Float32}}
     i += 1
     if i > length(matches)
         append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
@@ -118,9 +121,9 @@ function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition
     #if iszero(getPrecID(transition))
     #    println("TEST C")
     #end
-    matches[i] = FragmentMatch(getIntensity(transition)::Float32, 
+    matches[i] = FragmentMatch(Float32(getIntensity(transition))::Float32, 
                                  intensity::Float32,
-                                 Float32(getFragMZ(transition)),
+                                 Float32(getMZ(transition)),
                                  mass::Float32,
                                  peak_ind::Int64,
                                  getIonPosition(transition)::UInt8,
@@ -136,6 +139,7 @@ function setMatch!(matches::Vector{FragmentMatch{Float32}}, i::Int64, transition
     return i
 end
 
+#=
 function setMatch!(matches::Vector{PrecursorMatch{T}}, i::Int64, ion::I, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat,I<:IonType}
     i += 1
     if i > length(matches)
@@ -149,6 +153,7 @@ function setMatch!(matches::Vector{PrecursorMatch{T}}, i::Int64, ion::I, mass::T
     )::PrecursorMatch{T}
     return i
 end
+=#
 #export setFragmentMatch!
 
 """
@@ -191,14 +196,18 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{FragmentMatch{Float32}}, Ions::Vector{LibraryFragment{Float32}}, ion_idx::Int64, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, ppm_err::U, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::T; ppm::Float64 = Float64(20.0), most_intense::Bool = false) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, 
+                    Ions::Vector{I}, ion_idx::Int64, 
+                    masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
+                    ppm_err::Float32, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::Float32; ppm::Float64 = Float64(20.0), 
+                    most_intense::Bool = false) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
     peak, ion, matched_idx = 1, 1, 0
     unmatched_idx = 0
 
-    function getPPM(ion::LibraryFragment{Float32}, ppm::Float64)
+    function getPPM(ion::I, ppm::Float64)
         mz = getMZ(ion)
         tol = ppm*mz/1e6
         return mz - tol, mz + tol
@@ -235,7 +244,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{
             #if iszero(getPrecID(Ions[ion]))
             #    println("TEST A")
             #end
-            unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
+            unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], zero(Float32), zero(Float32) , unmatched_idx, scan_idx, ms_file_idx);
             ion += 1
             if ion > ion_idx#length(Ions)
                 return matched_idx, unmatched_idx
@@ -251,7 +260,7 @@ function matchPeaks!(matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{
         #if iszero(getPrecID(Ions[ion]))
         #    println("TEST B")
         #end
-        unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], T(0.0), T(0.0), unmatched_idx, scan_idx, ms_file_idx);
+        unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], zero(Float32), zero(Float32), unmatched_idx, scan_idx, ms_file_idx);
         ion += 1
     end
 
@@ -290,7 +299,11 @@ Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new Fr
 ### Examples 
 
 """
-function matchPeaks(Ions::Vector{LibraryFragment{Float32}}, ion_idx::Int64, matches::Vector{FragmentMatch{Float32}}, unmatched::Vector{FragmentMatch{Float32}}, masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}; δs::Vector{U} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0, most_intense = false) where {T,U<:AbstractFloat,I<:IonType,M<:Match}
+function matchPeaks(Ions::Vector{I}, ion_idx::Int64, 
+                    matches::Vector{M}, unmatched::Vector{M}, 
+                    masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}; 
+                    δs::Vector{Float32} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0, 
+                    most_intense = false) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
     nmatches, nmisses = 0, 0
     for δ in δs
         nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm, most_intense = most_intense)

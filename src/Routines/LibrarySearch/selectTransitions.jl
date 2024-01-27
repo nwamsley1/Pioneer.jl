@@ -1,10 +1,10 @@
-function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
-                            precursors::Vector{LibraryPrecursor{Float32}},
-                            fragment_list::Vector{Vector{LibraryFragment{Float32}}}, 
+function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
+                            precursors::Vector{LibraryPrecursorIon{Float32}},
+                            fragment_list::Vector{Vector{DetailedFrag{Float32}}}, 
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             #precursors::Vector{LibraryPrecursor{Float32}}
-                            counter::Counter{UInt32,Float32}, 
+                            counter::Counter{UInt32,UInt8}, 
                             topN::Int64, 
                             iRT::Float32, 
                             iRT_tol::Float32, 
@@ -27,10 +27,10 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
         end
 
         #Manage isotope errors
-        mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getCharge(prec)
-        mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getCharge(prec)
+        mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
+        mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
 
-        if (getMz(prec) < mz_low) | (getMz(prec) > mz_high)
+        if (getMZ(prec) < mz_low) | (getMZ(prec) > mz_high)
             i += 1
             continue
         end
@@ -43,7 +43,7 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
             transitions[transition_idx] = frag
             #Grow array if exceeds length
             if transition_idx > length(transitions)
-                append!(transitions, [LibraryFragment{V}() for _ in range(1, block_size)])
+                append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
             end
 
         end
@@ -62,7 +62,7 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
     end
 
     sort!(@view(transitions[1:transition_idx]), 
-            by = x->getFragMZ(x),
+            by = x->getMZ(x),
             alg=PartialQuickSort(1:transition_idx)
             #alg = TimSort)
     )
@@ -74,9 +74,9 @@ function selectTransitions!(transitions::Vector{LibraryFragment{Float32}},
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
-function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{Float32}}, 
-                            precursors::Vector{LibraryPrecursor{Float32}},
-                            fragment_list::Vector{Vector{LibraryFragment{Float32}}}, 
+function selectRTIndexedTransitions!(transitions::Vector{LibraryFragmentIon{Float32}}, 
+                            precursors::Vector{LibraryPrecursorIon{Float32}},
+                            fragment_list::Vector{Vector{LibraryFragmentIon{Float32}}}, 
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             prec_ids::Vector{UInt32}, 
@@ -128,12 +128,12 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragment{Float32
     return transition_idx, prec_idx
 end
 
-function fillTransitionList!(transitions::Vector{LibraryFragment{Float32}}, 
+function fillTransitionList!(transitions::Vector{LibraryFragmentIon{Float32}}, 
                             prec_idx::UInt32, 
                             transition_idx::Int64, 
-                            fragment_list::Vector{Vector{LibraryFragment{Float32}}}, 
+                            fragment_list::Vector{Vector{LibraryFragmentIon{Float32}}}, 
                             isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, 
-                            prec::LibraryPrecursor{Float32},  
+                            prec::LibraryPrecursorIon{Float32},  
                             mz_bounds::Tuple{Float32,Float32}, block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
     NEUTRON = Float64(1.00335)
     prec_isotope_set = getPrecursorIsotopeSet(getMz(prec), getCharge(prec), mz_bounds)

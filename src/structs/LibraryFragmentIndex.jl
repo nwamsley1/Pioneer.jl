@@ -20,18 +20,18 @@ Container for precursor Items.
 - setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
 """
 struct PrecursorBin{T<:AbstractFloat}
-    precs::Vector{PrecursorBinItem{T}}
+    precs::Vector{PrecursorBinFragment{T}}
 end
 
 getPrecursors(pb::PrecursorBin)  = pb.precs
 getPrecursor(pb::PrecursorBin, i::Int64) = getPrecursors(pb)[i] 
 getLength(pb::PrecursorBin)= length(pb.precs)
 
-function setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
+function setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinFragment)
     pb.precs[index] = pbi
 end
 
-PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{PrecursorBinItem{T}}(undef, N))
+PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{PrecursorBinFragment{T}}(undef, N))
 
 """
     FragBin{T<:AbstractFloat}
@@ -120,3 +120,42 @@ getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
 getPrecursorBin(fi::FragmentIndex, bin::UInt32) = fi.precursor_bins[bin]
 getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
 
+function FragmentIndex(T::DataType) 
+    return FragmentIndex(Vector{FragBin{T}}(), Vector{Vector{RTBin{T}}}(), Vector{PrecursorBin{T}}())
+end
+
+getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
+
+function setFragmentBin!(fi::FragmentIndex{T}, bin::Int64, frag_bin::FragBin{T}) where {T<:AbstractFloat}
+    fi.fragment_bins[bin] = frag_bin
+end
+
+function addFragmentBin!(fi::FragmentIndex{T}, frag_bin::FragBin{T}) where {T<:AbstractFloat}
+    push!(getFragBins(fi), frag_bin)
+end
+
+#function setRTBin!(fi::FragmentIndex{T}, bin::Int64, rt_bin::RTBin{T}) where {T<:AbstractFloat}
+#    fi.rt_bins[bin] = rt_bin
+#end
+
+function addRTBin!(fi::FragmentIndex{T}) where {T<:AbstractFloat}
+    push!(getRTBins(fi), Vector{RTBin{T}}())
+end
+
+
+getPrecursorBin(fi::FragmentIndex, bin::UInt32) = fi.precursor_bins[bin]
+getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
+
+function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::UInt32, index::Int, prec_bin_item::PrecursorBinFragment{T}) where {T<:AbstractFloat}
+    setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
+end
+
+function addPrecursorBinFragment!(fi::FragmentIndex{T}, bin::UInt32, prec_bin_item::PrecursorBinFragment{T}) where {T<:AbstractFloat}
+    push!(getPrecursors(fi.precursor_bins[bin]), prec_bin_item)
+end
+
+function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where {T<:AbstractFloat}
+    push!(getPrecBins(fi), prec_bin)
+end
+
+getPPM(frag_mz::T, ppm::T) where {T<:AbstractFloat} = ppm*frag_mz/1e6

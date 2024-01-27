@@ -214,7 +214,7 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
     #return isotopes#isotopes./sum(isotopes)
 end
 
-function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursor{Float32}, frag::LibraryFragment{Float32}, pset::Tuple{I, I}) where {I<:Integer}
+function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursorIon{Float32}, frag::LibraryFragmentIon{Float32}, pset::Tuple{I, I}) where {I<:Integer}
     getFragAbundance!(
         isotopes,
         iso_splines,
@@ -224,7 +224,7 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
         )
 end
 
-function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursor{U}, frag::LibraryFragment{U}, prec_isotope_set::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
+function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursorIon{U}, frag::LibraryFragmentIon{U}, prec_isotope_set::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
     fill!(isotopes, zero(eltype(isotopes)))
 
     monoisotopic_intensity = frag.intensity
@@ -292,7 +292,7 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
     return (first_iso, last_iso)
 end
 
-function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursor{Float32}) #where {T,U<:AbstractFloat}
+function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursorIon{Float32}) #where {T,U<:AbstractFloat}
     M0 = iso_splines(min(prec.sulfur_count, 5),0,Float64(prec.mz*prec.charge))
     M1 = iso_splines(min(prec.sulfur_count, 5),1,Float64(prec.mz*prec.charge))
     if M0 > M1
