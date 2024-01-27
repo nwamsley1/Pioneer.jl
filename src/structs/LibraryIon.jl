@@ -1,0 +1,104 @@
+abstract type LibraryIon{T<:AbstractFloat} <: Ion{T} end
+
+getPrecCharge(f::LibraryIon)::UInt8 = f.prec_charge
+
+struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
+    irt::T
+    mz::T
+
+    isDecoy::Bool
+
+    accession_numbers::String
+    sequence::String
+
+    prec_charge::UInt8
+    missed_cleavages::UInt8
+    variable_mods::UInt8
+    length::UInt8
+    sulfur_count::UInt8
+end
+
+getIRT(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.iRT
+isDecoy(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.isDecoy
+getAccessionNumbers(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.accession_numbers
+
+sulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
+
+abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
+
+getPrecID(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_id
+getPrecMZ(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_mz
+getIntensity(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.intensity
+
+struct SimpleFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
+    mz::T
+    prec_id::UInt32
+    prec_mz::T
+    prec_charge::UInt8
+end
+
+struct DetailedFrag{T,U<:AbstractFloat} <: LibraryFragment{T}
+    prec_id::UInt32
+
+    mz::T
+    intensity::U
+    
+    is_y_ion::Bool
+    is_isotope::Bool
+
+    frag_charge::UInt8
+    ion_position::UInt8
+
+    prec_charge::UInt8
+    rank::UInt8
+    sulfur_count::UInt8
+end
+
+getIntensity(f::DetailedFrag) = f.intensity
+isyIon(f::DetailedFrag) = f.is_y_ion
+getIonIndex(f::DetailedFrag) = f.ion_index
+getIonPosition(f::DetailedFrag) = f.ion_position
+getFragCharge(f::DetailedFrag) = f.frag_charge
+getRank(f::DetailedFrag) = f.rank
+sulfurCount(f::DetailedFrag) = f.sulfur
+#LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8), zero(UInt8))
+LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), 
+                zero(UInt8), 
+                false, 
+                false,
+                zero(UInt8), 
+                zero(UInt8), 
+                zero(Float32), 
+                zero(UInt8),
+                zero(UInt32), 
+                zero(UInt8),
+                zero(UInt8)
+ )
+
+"""
+    PrecursorBinItem{T<:AbstractFloat}
+
+Item in a precursor bin. Minimal information required to know if the fragment has a correct precursor mass, and if so, 
+what the precursor ID is.  
+
+### Fields
+
+- prec_id::UInt32 -- Unique identifier for the precursor
+- prec_mz::T -- m/z of the precursor
+
+### Examples
+
+### GetterMethods
+
+- getPrecID(pbi::PrecursorBinItem) = pbi.prec_id
+- getPrecMZ(pbi::PrecursorBinItem) = pbi.prec_mz
+"""
+struct PrecursorBinFragment{T<:AbstractFloat} <: LibraryFragment{T}
+    prec_id::UInt32
+    prec_mz::T #Only need to tell if the peptide is in the quad isolation window
+    score::UInt8 
+    charge::UInt8
+end
+
+getScore(pbi::PrecursorBinFragment{U}) = pbi.score
+
