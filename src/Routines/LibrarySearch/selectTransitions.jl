@@ -1,6 +1,7 @@
 function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             precursors::Vector{LibraryPrecursorIon{Float32}},
-                            fragment_list::Vector{Vector{DetailedFrag{Float32}}}, 
+                            #fragment_list::Vector{Vector{DetailedFrag{Float32}}}, 
+                            fragment_list::LibraryFragmentLookup{Float32}, 
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             #precursors::Vector{LibraryPrecursor{Float32}}
@@ -35,12 +36,12 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
             continue
         end
 
-        for frag in fragment_list[getID(counter, i)]
+        for frag_idx in fragment_list.prec_frag_ranges[prec_idx]#fragment_list[getID(counter, i)]
             #if abs((getiRT(precursors[getPrecID(frag)]) - rt)) > 5.0
             #    continue
             #end
             transition_idx += 1
-            transitions[transition_idx] = frag
+            transitions[transition_idx] = fragment_list.frags[frag_idx]
             #Grow array if exceeds length
             if transition_idx > length(transitions)
                 append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])

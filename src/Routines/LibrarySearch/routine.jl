@@ -457,7 +457,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
-            prosit_lib["f_det"],
+            #prosit_lib["f_det"],
+            library_fragment_lookup_table,
             RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
             UInt32(ms_file_idx), #MS_FILE_IDX
             frag_err_dist_dict[ms_file_idx],
