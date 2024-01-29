@@ -85,6 +85,16 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8)  #sulfur_count
  )
 
+struct LibraryFragmentLookup{T<:AbstractFloat}
+    frags::Vector{DetailedFrag{T}}
+    prec_frag_ranges::Vector{UnitRange{UInt32}}
+end
+
+getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
+
+getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt32} = lfp.prec_frag_ranges[prec_idx]
+
+
 """
     PrecursorBinItem{T<:AbstractFloat}
 
