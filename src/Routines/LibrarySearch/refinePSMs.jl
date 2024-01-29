@@ -1,3 +1,115 @@
+function refineFirstSearchPSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
+                        max_rt_error::Float64 = 20.0,  
+                        min_prob::Float64 = 0.95, 
+                        n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+    
+    ###########################
+    #Correct Weights by base-peak intensity
+    #=
+    for i in size(PSMs)[1]
+        prec_id = PSMs[i,:precursor_idx]
+        base_peak_intensity = precursors[prec_id].base_peak_intensity
+        PSMs[i,:weight] = Float32(PSMs[i,:weight]/base_peak_intensity)
+    end
+    =#
+    ###########################
+    #Allocate new columns
+    #@time begin
+
+    N = size(PSMs, 1)
+    decoys = zeros(Bool, N);
+    targets = zeros(Bool, N);
+    TIC = zeros(Float16, N);
+    charge = zeros(UInt8, N);
+    total_ions = zeros(UInt16, N);
+    spectrum_peak_count = zeros(UInt32, N);
+    iRT_pred = zeros(Float32, N);
+    RT = zeros(Float32, N);
+
+    scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
+    precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
+    y_count::Vector{UInt8} = PSMs[!,:y_count]
+    b_count::Vector{UInt8} = PSMs[!,:b_count]
+    matched_ratio::Vector{Float16} = PSMs[!,:matched_ratio]
+    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #PSMs[!,:total_ions]
+    #SMs[!,:sequence_length] .= false
+
+    Threads.@threads for i in range(1, size(PSMs)[1])#ProgressBar(range(1, size(PSMs)[1]))
+        decoys[i] = isDecoy(precursors[precursor_idx[i]]);
+        targets[i] = decoys[i] == false
+        iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
+        RT[i] = Float32(scan_retention_time[scan_idx[i]]);
+        #PSMs[i,:iRT_obdserved] = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
+        TIC[i] = Float16(log2(tic[scan_idx[i]]));
+        charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
+        total_ions[i] = UInt16(y_count[i] + b_count[i]);
+        matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
+        #stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
+    end
+
+    PSMs[!,:matched_ratio] = matched_ratio
+    PSMs[!,:decoy] = decoys
+    PSMs[!,:iRT_predicted] = iRT_pred
+    PSMs[!,:RT] = RT
+    PSMs[!,:TIC] = TIC
+    PSMs[!,:total_ions] = total_ions
+    PSMs[!,:target] = targets
+    PSMs[!,:charge] = charge
+    PSMs[!,:spectrum_peak_count] = spectrum_peak_count
+    #end
+    ###########################
+
+    ###########################
+    #Estimate RT Prediction Error
+    #@time begin
+    #best_psms = combine(sdf -> sdf[argmax(sdf.matched_ratio), :], groupby(PSMs[(PSMs[!,spectral_contrast].>min_spectral_contrast) .& (PSMs[!,:decoy].==false),:], [:scan_idx]))
+    #best_psms_bool = (PSMs[!,:spectral_contrast].>0.9) .& (PSMs[!,:decoy].==false) .& (PSMs[!,:entropy_score].>0.9) .& (PSMs[!,:total_ions].>6)
+    #$linear_spline = KDEmapping(
+    #                           PSMs[best_psms_bool,:RT],
+    #                            PSMs[best_psms_bool,:iRT_predicted]
+    #                        )
+    #PSMs[!,:RT_pred] = 
+    #PSMs[:,:iRT_observed] = Float16.(linear_spline(PSMs[:,:RT]))
+    #PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
+    #end
+    ############################
+    #return 
+    ###########################
+    #Filter on Rank and Topn
+    #filter!(x->x.iRT_error<15.0, PSMs);
+    #filter!(x->isnan(x.entropy_score)==false, PSMs);
+    #filter!(:best_rank => x -> x<2, PSMs);
+
+
+    #######################
+    #Clean Features
+    #######################
+    #@time begin
+    PSMs[:,:q_value] .= zero(Float16);
+    
+    FORM = FormulaTerm(
+        (Term(:target),),
+        (Term(:entropy_score),
+         Term(:city_block),
+         Term(:scribe),
+         Term(:spectral_contrast),
+         Term(:y_count),
+         Term(:error),
+         Term(:total_ions),
+         Term(:TIC))
+    )
+
+    model_fit = glm(FORM, PSMs, 
+                            Binomial(), 
+                            ProbitLink())
+
+    PSMs[!,:prob]::Vector{Float16} = Float16.(GLM.predict(model_fit, PSMs));
+   
+    filter!(:prob => x -> x>=min_prob, PSMs);
+    return 
+end
 function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_rt_error::Float64 = 20.0,  
                         max_q_value::Float64 = 0.1, 
@@ -30,7 +142,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     targets = zeros(Bool, N);
     spectrum_peak_count = zeros(UInt32, N);
     scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
-    precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
+    precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx] 
     log2_intensity_explained::Vector{Float16} = PSMs[!,:log2_intensity_explained]
     y_count::Vector{UInt8} = PSMs[!,:y_count]
     b_count::Vector{UInt8} = PSMs[!,:b_count]

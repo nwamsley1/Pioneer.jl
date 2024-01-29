@@ -10,7 +10,7 @@
     "max_peaks": false,
     "max_peak_width": 5.0,
 
-    "min_index_search_score": 1.5,
+    "min_index_search_score": 2,
 
     "min_frag_count": 5,
     "min_frag_count_presearch": 7,

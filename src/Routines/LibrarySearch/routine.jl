@@ -112,7 +112,7 @@ params_ = (
     max_peaks = typeof(params["max_peaks"]) == Bool ? params["max_peaks"] : Int64(params["max_peaks"]),
     max_peak_width = Float64(params["max_peak_width"]),
 
-    min_index_search_score = Float32(params["min_index_search_score"]),
+    min_index_search_score = UInt8(params["min_index_search_score"]),
 
     min_frag_count = Int64(params["min_frag_count"]),
     min_frag_count_presearch = Int64(params["min_frag_count_presearch"]),
@@ -247,20 +247,16 @@ end
 #                                                                    #"precursorDatabase.jl"
 #                                                                    ]];
 
-[include(joinpath(pwd(), "src", "structs", jl_file)) for jl_file in ["Ion.jl",
+[include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in ["Ion.jl",
                                                                     
                                                                     "LibraryIon.jl",
                                                                     "MatchIon.jl",
                                                                     "LibraryFragmentIndex.jl",
-                                                                    "SparseArray.jl",
-                                                                    "structs.jl"]];
+                                                                    "SparseArray.jl"]];
 #[include(joinpath(pwd(), "src", "Routines","ParseProsit", jl_file)) for jl_file in ["parsePrositLib.jl"]];
 
 #Generic files in src directory
-[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl","isotopes.jl"]];
-
-
-
+#[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["IonType.jl","isotopes.jl"]]
 #ML/Math Routines                                                                                    
 [include(joinpath(pwd(), "src","ML", jl_file)) for jl_file in [
                                                                                             "percolatorSortOf.jl",
@@ -272,12 +268,12 @@ end
 
 #Utilities
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
-                                                                    "ExponentialGaussianHybrid.jl",
-                                                                    "IonType.jl",
+                                                                    "exponentialGaussianHybrid.jl",
                                                                     "isotopes.jl",
+                                                                    "globalConstants.jl",
                                                                     "isotopeSplines.jl",
                                                                     "massErrorEstimation.jl",
-                                                                    "SpectralDeconvolution.jl"]];
+                                                                    "spectralDeconvolution.jl"]];
 
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
@@ -293,7 +289,7 @@ end
                                                                                     "selectTransitions.jl",
                                                                                     "integrateChroms.jl",
                                                                                     "queryFragmentIndex.jl",
-                                                                                    "scratch_newchroms.jl"]];
+                                                                                    "integrateChroms.jl"]];
                                              
 ##########
 #Load Spectral Library
@@ -383,50 +379,56 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
                                             );
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
+    @time begin
+
+    @time refineFirstSearchPSMs!(rtPSMs, MS_TABLE, precursors)
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
         (a-b)/(a/1e6)
     end
     #Get Retention Times and Target/Decoy Status 
-    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(getIRT(prosit_lib["precursors"][psm[:precursor_idx]]))) => :iRT);
-    transform!(rtPSMs, AsTable(:) => ByRow(psm -> Float64(MS_TABLE[:retentionTime][psm[:scan_idx]])) => :RT);
-    transform!(rtPSMs, AsTable(:) => ByRow(psm -> isDecoy(prosit_lib["precursors"][psm[:precursor_idx]])) => :decoy);
-    filter!(:entropy_score => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
-    rtPSMs[!,:total_ions] = rtPSMs[!,:y_count] .+ rtPSMs[!,:b_count]
-    #filter!(:entropy_sim => x -> !any(f -> f(x), (ismissing, isnothing, isnan)), rtPSMs);
-    rtPSMs[:,:target] =  rtPSMs[:,:decoy].==false
-    FORM = FormulaTerm(
-        (Term(:target),),
-        (Term(:poisson),
-         Term(:hyperscore),
-         Term(:topn),
-         Term(:scribe),
-         Term(:spectral_contrast),
-         Term(:total_ions))
-    )
-    model_fit = glm(FORM, rtPSMs, 
-    Binomial(), 
-    ProbitLink())
-    Y′ = GLM.predict(model_fit, rtPSMs);
-    println(size(rtPSMs))
-    rtPSMs = rtPSMs[Y′.>0.75,:]
-    println(size(rtPSMs))
-    #Retain only targets
-    rtPSMs = rtPSMs[rtPSMs[:,:decoy].==false,:];
     ####################
     #Use best_psms to estimate 
     #1) RT to iRT curve and 
     #2) mass error (ppm) distribution 
+    @time begin
     best_precursors = Set(rtPSMs[:,:precursor_idx]);
     best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
+    frag_ppm_intensities = [match.intensity for match in best_matches];
+    end
+    bins = cut(log2.(frag_ppm_intensities), 5)
+    df = DataFrame(Dict(:ppm_errs => frag_ppm_errs, 
+                        :intensities => log2.(frag_ppm_intensities), 
+                        :bins => bins))
+    gdf = groupby(df, :bins)
+    p = plot()
+    for (key, subdf) in pairs(gdf)
+        density!(p, subdf[!,:ppm_errs], show = true, bins = LinRange(-30, 30, 100), alpha = 1.0)
+    end
+    combine(gdf, :intensities => median)
+    combine(gdf, :ppm_errs => std)
+    combine(gdf, :ppm_errs => x->quantile(x, 0.975))
+                        histogram(y = df[!,:ppm_errs], color = df[!,:bins])
+    histogram2d(log2.(frag_ppm_intensities), frag_ppm_errs)
+    plot!(collect(LinRange(12, 25, 100)), [100/x for x in LinRange(12, 25, 100)])
+
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[1][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+                        f_out = PLOT_PATH );
+    quantile(frag_err_dist, 0.975)
+    
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[5][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+                        f_out = PLOT_PATH );
+    quantile(frag_err_dist, 0.975)
+
+    end
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     lock(lk) do 
         PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+        @time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
                         f_out = PLOT_PATH );
         #Spline mapping RT to iRT
-        RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT], n = 50, bandwidth = 4.0);
-        plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT], RT_to_iRT_map, 
+        @time RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], n = 50, bandwidth = 4.0);
+        @time plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
                     f_out = PLOT_PATH);
         RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
         frag_err_dist_dict[ms_file_idx] = frag_err_dist

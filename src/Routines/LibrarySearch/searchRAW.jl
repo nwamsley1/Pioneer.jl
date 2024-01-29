@@ -431,14 +431,17 @@ function firstSearch(
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
-    ionTemplates::Vector{Vector{LibraryFragmentIon{Float32}}},
+    ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
     iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{ScoredPSM}},
-    unscored_PSMs::Vector{Vector{UnscoredPSM}},
-    spectral_scores::Vector{Vector{SpectralScores}},
+    scored_PSMs::Vector{Vector{S}},
+    unscored_PSMs::Vector{Vector{Q}},
+    spectral_scores::Vector{Vector{R}},
     precursor_weights::Vector{Vector{Float32}},
     precs::Vector{Counter{UInt32, UInt8}};
-    scan_range = (0, 0))
+    scan_range = (0, 0)) where {S<:ScoredPSM{Float32, Float16},
+    Q<:UnscoredPSM{Float32},
+    R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
+
 
     return SearchRAW(
         spectra, 

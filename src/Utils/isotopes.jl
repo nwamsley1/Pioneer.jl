@@ -60,7 +60,7 @@ import Base.+
 
 Composition() = Composition(zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt32))
 
-struct Isotope{T<:AbstractFloat} <: IonType
+struct Isotope{T<:AbstractFloat} <: Ion{T}
     mass::T
     intensity::T
     prec_idx::UInt32
