@@ -279,14 +279,14 @@ end
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl"]];
 
-[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","LibraryXTandem.jl","LibraryIntensity.jl"]];
+[include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
                                                                                         #"buildFragmentIndex.jl",
                                                                                     "matchpeaksLib.jl",
                                                                                     "buildDesignMatrix.jl",
-                                                                                    "spectralDistanceMetrics.jl",
+                                                                                    #"spectralDistanceMetrics.jl",
                                                                                     "refinePSMs.jl",
                                                                                     "buildRTIndex.jl",
                                                                                     "searchRAW.jl",
@@ -297,7 +297,7 @@ end
                                              
 ##########
 #Load Spectral Library
-f_det_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"detailed_frags\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lookup_table\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"index\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 #prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart2.jld2"
@@ -306,8 +306,8 @@ prosit_lib = Dict{String, Any}()
 spec_load_time = @timed begin
     @time const f_index = load(f_index_path)["library_fragment_index"];
     prosit_lib["f_index"] = f_index#["f_index"]
-    @time const f_det = load(f_det_path)["detailed_frags"]
-    prosit_lib["f_det"] = f_det#["f_det"];
+    @time const library_fragment_lookup_table = load(library_fragment_lookup_path)["library_fragment_lookup_table"]
+    prosit_lib["f_det"] = library_fragment_lookup_table #["f_det"];
     @time const precursors = load(precursors_path)["library_precursors"]
     prosit_lib["precursors"] = precursors#["precursors"];
 end
@@ -339,9 +339,9 @@ all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in r
 IDtoCOL = [ArrayDict(UInt32, UInt16, length(precursors)) for _ in range(1, N)];
 ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
-scored_PSMs = [Vector{LibPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
-unscored_PSMs = [[LXTandem(Float32) for _ in 1:5000] for _ in range(1, N)];
-spectral_scores = [Vector{SpectralScores{Float16}}(undef, 5000) for _ in range(1, N)];
+scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
+unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
+spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
 precursor_weights = [zeros(Float32, length(precursors)) for _ in range(1, N)];
 precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
 presearch_time = @timed begin
@@ -453,7 +453,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         println("starting file $ms_file_idx")
         @time begin
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-        PSMs = vcat(mainLibrarySearch(
+        @time PSMs = vcat(mainLibrarySearch(
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
@@ -479,7 +479,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
             scan_range = (1, length(MS_TABLE[:masses]))
         #scan_range = (100000, 100010)
         )...);
-        refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0,  max_q_value = 0.1);
+        @time refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0,  max_q_value = 0.1);
         #Free up memory
         insert!(PSMs_Dict, 
                 MS_TABLE_PATH, 

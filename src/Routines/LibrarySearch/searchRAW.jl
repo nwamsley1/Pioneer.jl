@@ -15,9 +15,9 @@ function SearchRAW(
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
                     iso_splines::IsotopeSplineModel{Float64},
-                    scored_PSMs::Vector{Vector{LibPSM{Float32, Float16}}},
-                    unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
-                    spectral_scores::Vector{Vector{SpectralScores{Float16}}},
+                    scored_PSMs::Vector{Vector{S}},
+                    unscored_PSMs::Vector{Vector{Q}},
+                    spectral_scores::Vector{Vector{R}},
                     precursor_weights::Vector{Vector{Float32}},
                     precs::Union{Missing, Vector{Counter{UInt32, UInt8}}};
                     #keyword args
@@ -56,7 +56,11 @@ function SearchRAW(
                     #scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
                     spec_order::Set{Int64} = Set(2),
                     topN::Int64 = 20,
-                    topN_index_search::Int64 = 1000) where {T,U<:AbstractFloat, L<:LibraryIon{Float32}}
+                    topN_index_search::Int64 = 1000) where {T,U<:AbstractFloat, 
+                                                            L<:LibraryIon{Float32}, 
+                                                            S<:ScoredPSM{Float32, Float16},
+                                                            Q<:UnscoredPSM{Float32},
+                                                            R<:SpectralScores{Float16}}
 
 
     ########
@@ -65,7 +69,7 @@ function SearchRAW(
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
     peaks = sum(length.(spectra[:masses]))
-    peaks_per_thread = peaks÷(16)#Threads.nthreads()÷2)
+    peaks_per_thread = peaks÷(Threads.nthreads())#Threads.nthreads()÷2)
     thread_tasks = []
     n = 0
     start = 1
@@ -143,9 +147,9 @@ function searchRAW(
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
                     iso_splines::IsotopeSplineModel{Float64},
-                    scored_PSMs::Vector{LibPSM{Float32, Float16}},
-                    unscored_PSMs::Vector{LXTandem{Float32}},
-                    spectral_scores::Vector{SpectralScores{Float16}},
+                    scored_PSMs::Vector{S},
+                    unscored_PSMs::Vector{Q},
+                    spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
                     precs::Union{Missing, Counter{UInt32, UInt8}},
 
@@ -173,7 +177,10 @@ function searchRAW(
                     spec_order::Set{Int64},
                     topN::Int64,
                     topN_index_search::Int64,
-                    ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32}}
+                    ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
+                    S<:ScoredPSM{Float32, Float16},
+                    Q<:UnscoredPSM{Float32},
+                    R<:SpectralScores{Float16}}
 
     thread_peaks = 0
     ##########
@@ -396,7 +403,7 @@ function searchRAW(
         reset!(ionMisses, nmisses_all)
         fill!(prec_ids, zero(UInt32))
         for i in range(1, Hs.n)
-            unscored_PSMs[i] = LXTandem(Float32)
+            unscored_PSMs[i] = eltype(unscored_PSMs)()
         end
         reset!(IDtoCOL);
         reset!(Hs);
@@ -426,9 +433,9 @@ function firstSearch(
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{LibraryFragmentIon{Float32}}},
     iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{LibPSM{Float32, Float16}}},
-    unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
-    spectral_scores::Vector{Vector{SpectralScores{Float16}}},
+    scored_PSMs::Vector{Vector{ScoredPSM}},
+    unscored_PSMs::Vector{Vector{UnscoredPSM}},
+    spectral_scores::Vector{Vector{SpectralScores}},
     precursor_weights::Vector{Vector{Float32}},
     precs::Vector{Counter{UInt32, UInt8}};
     scan_range = (0, 0))
@@ -500,12 +507,14 @@ function mainLibrarySearch(
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
     iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{LibPSM{Float32, Float16}}},
-    unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
-    spectral_scores::Vector{Vector{SpectralScores{Float16}}},
+    scored_PSMs::Vector{Vector{S}},
+    unscored_PSMs::Vector{Vector{Q}},
+    spectral_scores::Vector{Vector{R}},
     precursor_weights::Vector{Vector{Float32}},
     precs::Vector{Counter{UInt32, UInt8}};
-    scan_range::Tuple{Int64, Int64} = (0, 0))
+    scan_range::Tuple{Int64, Int64} = (0, 0)) where {S<:ScoredPSM{Float32, Float16},
+                                                            Q<:UnscoredPSM{Float32},
+                                                            R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
 
     frag_ppm_err = err_dist.μ
     
@@ -576,9 +585,9 @@ function integrateMS2(
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{LibraryFragmentIon{Float32}}},
     iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{LibPSM{Float32, Float16}}},
-    unscored_PSMs::Vector{Vector{LXTandem{Float32}}},
-    spectral_scores::Vector{Vector{SpectralScores{Float16}}},
+    scored_PSMs::Vector{Vector{ScoredPSM}},
+    unscored_PSMs::Vector{Vector{UnscoredPSM}},
+    spectral_scores::Vector{Vector{SpectralScores}},
     precursor_weights::Vector{Vector{Float32}};
     N = 600000*10,
     scan_range =  (0, 0)) where {U,T<:AbstractFloat}

@@ -247,15 +247,3 @@ function multiply!(sa::SparseArray{Ti,T}, w::Vector{T}, r::Vector{T}) where {Ti<
         end
     end
 end
-
-struct SpectralScores{T<:AbstractFloat}
-    scribe::T
-    scribe_corrected::T
-    scribe_fitted::T
-    city_block::T
-    city_block_fitted::T
-    spectral_contrast::T
-    spectral_contrast_corrected::T
-    matched_ratio::T
-    entropy_score::T
-end

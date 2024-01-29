@@ -53,7 +53,7 @@ FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Flo
 FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
 
 
-getFragMZ(f::FragmentMatch) = f.theoretical_mz
+getMZ(f::FragmentMatch) = f.theoretical_mz
 getMatchMZ(f::FragmentMatch) = f.match_mz
 getPredictedIntenisty(f::FragmentMatch) = f.predicted_intensity
 getIntensity(f::FragmentMatch) = f.intensity

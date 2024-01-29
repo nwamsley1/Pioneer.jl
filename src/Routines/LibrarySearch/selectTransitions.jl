@@ -39,10 +39,11 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
         for frag_idx in getPrecFragRange(library_fragment_lookup, prec_idx)#fragment_list[getID(counter, i)]
             transition_idx += 1
             transitions[transition_idx] = getFrag(library_fragment_lookup, frag_idx) #fragment_list.frags[frag_idx]
-            #Grow array if exceeds length
+            
             if transition_idx > length(transitions)
                 append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
             end
+            #Grow array if exceeds length
         end
         i += 1
     end

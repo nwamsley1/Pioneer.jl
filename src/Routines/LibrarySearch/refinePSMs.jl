@@ -70,9 +70,9 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
         TIC[i] = Float16(log2(tic[scan_idx[i]]));
         adjusted_intensity_explained[i] = Float16(min(log2(tic[scan_idx[i]]*(2^log2_intensity_explained[i])), 
                                                         6e4));
-        charge[i] = UInt8(getCharge(precursors[precursor_idx[i]]));
+        charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
         total_ions[i] = UInt16(y_count[i] + b_count[i]);
-        err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
+        err_norm[i] = Float16(min(abs((error[i])/(total_ions[i])), 6e4))
         spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
         matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
         #stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
@@ -143,14 +143,12 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:total_ions),
          Term(:err_norm),
          Term(:spectrum_peak_count),
-         #Term(:poisson)
-         #Term(:adjusted_intensity_explained)
     ))
 
-    model_fit = glm(FORM, PSMs[!,[:target,:spectral_contrast,:scribe,:iRT_error,:missed_cleavage,:Mox,:TIC,:city_block,:entropy_score,:total_ions,:err_norm,:charge,:spectrum_peak_count]], 
-                            Binomial(), 
-                            ProbitLink())
-    Y′ = Float16.(GLM.predict(model_fit, PSMs[!,[:target,:spectral_contrast,:scribe,:iRT_error,:missed_cleavage,:Mox,:TIC,:city_block,:entropy_score,:total_ions,:err_norm,:charge,:spectrum_peak_count]]));
+    #model_fit = glm(FORM, PSMs, 
+    #                        Binomial(), 
+    #                        ProbitLink())
+    Y′ = Float16.(GLM.predict(model_fit, PSMs));
     getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
 
     #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
