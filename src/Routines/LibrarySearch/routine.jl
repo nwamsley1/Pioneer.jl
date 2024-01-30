@@ -7,7 +7,7 @@ println("Importing Libraries...")
 
 using ArgParse
 using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
-using Plots, PrettyPrinting
+using Plots, StatsPlots, PrettyPrinting
 #DataStructures 
 using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
 #Algorithms 
@@ -379,7 +379,7 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
                                             );
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
-    @time begin
+    #@time begin
 
     @time refineFirstSearchPSMs!(rtPSMs, MS_TABLE, precursors)
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
@@ -396,7 +396,7 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
     frag_ppm_intensities = [match.intensity for match in best_matches];
     end
-    bins = cut(log2.(frag_ppm_intensities), 5)
+    bins = cut(log2.(frag_ppm_intensities), 10)
     df = DataFrame(Dict(:ppm_errs => frag_ppm_errs, 
                         :intensities => log2.(frag_ppm_intensities), 
                         :bins => bins))
@@ -405,19 +405,64 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     for (key, subdf) in pairs(gdf)
         density!(p, subdf[!,:ppm_errs], show = true, bins = LinRange(-30, 30, 100), alpha = 1.0)
     end
+
+    medians = Float64[]
+    sds  = Float64[]
+    for (key, subdf) in pairs(gdf)
+        push!(medians, median(subdf[!,:intensities]))
+        push!(sds, std(subdf[!,:ppm_errs] .- median(subdf[!,:ppm_errs])))
+        #density!(p, subdf[!,:ppm_errs], show = true, bins = LinRange(-30, 30, 100), alpha = 1.0)
+    end
+    Plots.plot(medians, sds)
+    Plots.plot!(medians, sds, seriestype=:scatter)
+
+    frag_distributions = []
+    for (key, subdf) in pairs(gdf)
+        push!(frag_distributions, estimateErrorDistribution(collect(Float64.(subdf[!,:ppm_errs])), Normal{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+        f_out = PLOT_PATH ));
+    end
+    p = plot()
+    for frag_distribution in frag_distributions
+    Plots.plot!(
+        collect(LinRange(-40, 40, 100)),
+        [Distributions.pdf(frag_distribution, x) for x in LinRange(-40, 40, 100)],
+        show = true
+    )
+    end
+
+
     combine(gdf, :intensities => median)
     combine(gdf, :ppm_errs => std)
     combine(gdf, :ppm_errs => x->quantile(x, 0.975))
                         histogram(y = df[!,:ppm_errs], color = df[!,:bins])
     histogram2d(log2.(frag_ppm_intensities), frag_ppm_errs)
+
+
+
     plot!(collect(LinRange(12, 25, 100)), [100/x for x in LinRange(12, 25, 100)])
 
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[1][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
                         f_out = PLOT_PATH );
     quantile(frag_err_dist, 0.975)
     
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[5][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+    
+    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "NORMAL_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Normal{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
                         f_out = PLOT_PATH );
+
+
+
+                        PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "LAPLACE_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[1][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+                        f_out = PLOT_PATH );
+    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "LAPLACE_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
+    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Logistic{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
+                        f_out = PLOT_PATH );
+                    
+
+
+            ==
+
     quantile(frag_err_dist, 0.975)
 
     end

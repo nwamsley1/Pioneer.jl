@@ -104,8 +104,7 @@ function refineFirstSearchPSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precurso
     model_fit = glm(FORM, PSMs, 
                             Binomial(), 
                             ProbitLink())
-
-    PSMs[!,:prob]::Vector{Float16} = Float16.(GLM.predict(model_fit, PSMs));
+    PSMs[!,:prob] = Float16.(GLM.predict(model_fit, PSMs));
    
     filter!(:prob => x -> x>=min_prob, PSMs);
     return 
