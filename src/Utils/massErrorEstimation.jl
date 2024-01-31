@@ -90,7 +90,7 @@ function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          w::T, #Known uniform distribution width
                                          b0::T, #Initial Scale estimate
                                          z::T, #Initial mixture estimate
-                                         γ::Vector{Bool}; #Latent state variable 
+                                         γ::AbstractVector{Bool}; #Latent state variable 
                                          max_iter::Int = 100,
                                          min_iter::Int = 10,
                                          atol::Float64 = 1e-6) where {T<:AbstractFloat,D<:Distribution}
@@ -141,7 +141,91 @@ function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
 
 end
 
-@time EstimateMixtureWithUniformNoise(
+function ModelMassErrs(intensities::Vector{T},
+                       ppm_errs::Vector{U},
+                       frag_tol::U;
+                       n_intensity_bins::Int = 10) where {T,U<:AbstractFloat}
+    log2_intensities = log2.(intensities)
+
+    bins = cut(log2_intensities, n_intensity_bins)
+    err_df = DataFrame(Dict(
+            :ppm_errs => ppm_errs, 
+            :log2_intensities => log2_intensities, 
+            :bins => bins)
+            )
+    err_df[!,:γ] .= false
+    median_intensities = zeros(T, n_intensity_bins)
+    shape_estimates = zeros(T, n_intensity_bins)
+    μ = median(err_df[!,:ppm_errs]) #global location estimate
+    bin_idx = 0
+    for (int_bin, subdf) in pairs(groupby(err_df, :bins))
+        bin_idx += 1 #Intensity bin counter
+        median_intensities[bin_idx] = median(subdf[!,:log2_intensities])
+        b = mean(abs.(subdf[!,:ppm_errs] .- μ)) #Mean absolute deviation estimate
+        L, z = EstimateMixtureWithUniformNoise(
+            subdf[!,:ppm_errs],
+            Laplace{Float64},
+            μ,
+            frag_tol,
+            b,
+            0.5, #mixture estimate
+            subdf[!,:γ] 
+        )
+        shape_estimates[bin_idx] = L.θ
+    end
+    intensities = 2 .^ median_intensities;
+    #=
+    return extrapolate(
+            Interpolations.scale(
+                interpolate(hcat(intensities, shape_estimates), 
+                            #(BSpline(Quadratic(Natural(OnGrid()))), NoInterp())
+                            BSpline(Quadratic(InPlace(OnGrid())))
+                            ),
+                LinRange(0, intensities, 100), 1:2), Flat()
+            )
+    =##
+    return LinearInterpolation(intensities, shape_estimates, extrapolation_bc = Flat())
+    #return Interpolations.linear_interpolation(median_intensities, shape_estimates, extrapolation_bc = Flat())#median_intensities, shape_estimates
+end
+
+@time intensity_to_scale = ModelMassErrs(frag_ppm_intensities,
+       frag_ppm_errs,
+       40.0)
+
+plot([intensity_to_scale(i, 1) for i in LinRange(0, 1, 100)], [intensity_to_scale(i, 2) for i in LinRange(0, 1, 100)])
+
+struct MassErrorModel{D<:Distribution}
+    intensity_to_shape_param::AbstractExtrapolation
+    distribution::Type{D}
+end
+function (mem::MassErrorModel)(x::T) where {T<:AbstractFloat} 
+    mem.intensity_to_shape_param(x) 
+end
+
+MassErrorModel(intensity::T) where {T<:AbstractFloat} = 
+testmodel = MassErrorModel(intensity_to_scale, Laplace{Float32})
+
+function getMassErrorLogLik(model::MassErrorModel{Laplace{T}}, intensity::T, err::T) where {T<:AbstractFloat}
+    b = model(intensity)
+    return -log(b*2) - abs(err)/b
+end
+getMassErrorLogLik(testmodel, Float32(1e6), 1.0f0)
+p = plot()
+for intensity in [5e3, 1e4, 5e4, 1e5, 5e5, 1e6]
+    plot!(LinRange(-40, 40, 100), [exp(1)^getMassErrorLogLik(testmodel, Float32(intensity),Float32(x)) for x in LinRange(-10, 10, 100)],
+    show = true)
+end
+hline!([1/80])
+
+    interpolate((xs,), A, Gridded(Cubic(Line())))
+
+    t = LinRange(0, 1, length(xs))
+    itp = extrapolate(Interpolations.scale(interpolate(hcat(xs, A), (BSpline(Cubic(Natural(OnGrid()))), NoInterp())),
+    LinRange(0, 1, length(xs)), 1:2), Flat())
+
+    plot(LinRange(0, 1, 100), [intensity_to_scale(i, 2) for i in LinRange(0, 1, 100)])
+
+@time itp_e = EstimateMixtureWithUniformNoise(
     errs,
     Laplace{Float64},
     μ,
