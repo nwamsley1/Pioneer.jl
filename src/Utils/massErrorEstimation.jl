@@ -1,21 +1,21 @@
-struct MassErrorModel{D<:Distribution,T<:AbstractFloat}
-    intensity_to_shape_param::AbstractExtrapolation
-    distribution::Type{D}
+struct MassErrorModel{T<:AbstractFloat}
+    err_qantiles::Tuple{T, T, T}
     location::T
 end
 
-function (mem::MassErrorModel)(x::T)::T where {T<:AbstractFloat} 
-    mem.intensity_to_shape_param(x) 
-end
+#function (mem::MassErrorModel)(x::T)::T where {T<:AbstractFloat} 
+#    mem.intensity_to_shape_param(x) 
+#end
 
-function getLocation(mem::MassErrorModel{D, T}) where {D<:Distribution,T<:AbstractFloat}
+
+function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
     return mem.location
 end
 
-function getMassErrorLogLik(model::MassErrorModel{Laplace{T}, T}, intensity::T, err::T) where {T<:AbstractFloat}
-    b = model(intensity)
-    return -log(b*2) - abs(err)/b
-end
+#function getMassErrorLogLik(model::MassErrorModel{Laplace{T}, T}, intensity::T, err::T) where {T<:AbstractFloat}
+#    b = model(intensity)
+#    return -log(b*2) - abs(err)/b
+#end
 
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          err_model::Type{D}, #Distribution to model error
@@ -88,7 +88,7 @@ function ModelMassErrs(intensities::Vector{T},
             )
     err_df[!,:γ] .= false
     median_intensities = zeros(T, n_intensity_bins)
-    shape_estimates = zeros(T, n_intensity_bins)
+    shape_estimates = Array{Float32}(undef, (10, 3))#zeros(T, n_intensity_bins)
     μ = median(err_df[!,:ppm_errs]) #global location estimate
     bin_idx = 0
     for (int_bin, subdf) in pairs(groupby(err_df, :bins))
@@ -107,13 +107,17 @@ function ModelMassErrs(intensities::Vector{T},
         #println("L.θ ", L.θ, " z ", z)
         #println("median_intensities[bin_idx] ", 2^median_intensities[bin_idx] )
         #println("cutof, ", L.θ*log(1*z*2*L.θ*80/(1-z)))
-        println("quantile ", quantile(Laplace(0.0, L.θ), 0.975))
-        shape_estimates[bin_idx] =  quantile(Laplace(0.0, L.θ), 0.975)# L.θ
+        #println("quantile ", quantile(Laplace(0.0, L.θ), 0.975))
+        #shape_estimates[bin_idx] =  quantile(Laplace(0.0, L.θ), 0.975)# L.θ
+        #println("quantile ", quantile(Laplace(0.0, L.θ), 0.975))
+        quantiles_ = (0.95, 0.975, 0.99)
+        for i in range(1, length(quantiles_))
+        shape_estimates[bin_idx, i] = quantile(Laplace(0.0, L.θ), quantiles_[i])# L.θ
+        end
     end
 
 
     intensities = 2 .^ median_intensities;
-    println(intensities)
     #=
     return extrapolate(
             Interpolations.scale(
@@ -127,7 +131,17 @@ function ModelMassErrs(intensities::Vector{T},
                 plot([x for x in intensities],
         [mass_err_model(x) for x in intensities])
                         plot!([x for x in intensities],
-        [2931/sqrt(x) for x in intensities]
+        [mass_err_model(x) for x in intensities], seriestype=:scatter)
+
+        plot_range = LinRange(8000, 100000, 100)
+                        plot( plot_range,
+        [ mass_err_model.err_qantiles[1]/sqrt(x) for x in  plot_range]
+    )
+                            plot!( plot_range,
+        [ mass_err_model.err_qantiles[2]/sqrt(x) for x in  plot_range]
+    )
+                            plot!( plot_range,
+        [ mass_err_model.err_qantiles[3]/sqrt(x) for x in  plot_range]
     )
 (1 ./sqrt.(intensities))\errs
     errs = [mass_err_model(x) for x in intensities]
@@ -136,14 +150,10 @@ function ModelMassErrs(intensities::Vector{T},
     vline!([intensities[6]])
     =##
 
-
-    return MassErrorModel(
-        LinearInterpolation(intensities, shape_estimates, extrapolation_bc = Flat()),
-        Laplace{T},
+    MassErrorModel(
+        Tuple((1 ./sqrt.(intensities))\shape_estimates),
         Float32(μ)
-    )
-    #return LinearInterpolation(intensities, shape_estimates, extrapolation_bc = Flat())
-    #return Interpolations.linear_interpolation(median_intensities, shape_estimates, extrapolation_bc = Flat())#median_intensities, shape_estimates
+        )
 end
 
 

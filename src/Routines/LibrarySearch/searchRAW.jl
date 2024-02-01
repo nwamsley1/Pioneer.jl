@@ -6,7 +6,7 @@ function SearchRAW(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     iRT_to_RT_spline::Any,
                     ms_file_idx::UInt32,
-                    err_dist::MassErrorModel{Laplace{Float32}, Float32},
+                    err_dist::MassErrorModel{Float32},
                     selectIons!::Function,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -23,7 +23,7 @@ function SearchRAW(
                     #keyword args
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
-                    frag_ppm_err::Float64 = 0.0,
+                    frag_ppm_err::Float32 = 0.0f0,
                     fragment_tolerance::Float64 = 20.0,
                     huber_δ::Float32 = 1000f0,
                     unmatched_penalty_factor::Float64 = 1.0,
@@ -129,12 +129,12 @@ function searchRAW(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     iRT_to_RT_spline::Any,
                     ms_file_idx::UInt32,
-                    err_dist::MassErrorModel{Laplace{Float32}, Float32},
+                    mass_err_model::MassErrorModel{Float32},
                     selectIons!::Function,
                     searchScan!::Union{Function, Missing},
                     collect_fmatches::Bool,
                     expected_matches::Int64,
-                    frag_ppm_err::Float64,
+                    frag_ppm_err::Float32,
                     fragment_tolerance::Float64,
                     huber_δ::Float32,
                     unmatched_penalty_factor::Float64,
@@ -201,9 +201,6 @@ function searchRAW(
     isotopes = zeros(Float64, n_frag_isotopes)
     #ncols = 0
     for i in range(first(thread_task), last(thread_task))
-        #if (i < 100000) | (i > 100001)
-        #   continue
-        #end
         thread_peaks += length(spectra[:masses][i])
 
         if thread_peaks > 100000
@@ -238,10 +235,11 @@ function searchRAW(
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
-                        min_intensity, spectra[:masses][i], spectra[:intensities][i],
+                        min_intensity, 
+                        spectra[:masses][i], spectra[:intensities][i],
                         iRT_low, iRT_high,
-                        #Float32(frag_ppm_err),
-                        Float32(fragment_tolerance),
+                        frag_ppm_err,
+                        mass_err_model.err_qantiles[3],
                         spectra[:precursorMZ][i],
                         Float32(quadrupole_isolation_width/2.0),
                         isotope_err_bounds,
@@ -284,13 +282,14 @@ function searchRAW(
                                             (
                                                 spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                 spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                                ),
+                                            ),
                                         isotope_err_bounds = isotope_err_bounds)
         end
         ion_idx < 2 ? continue : nothing 
         scans_processed += 1
         ##########
         #Match sorted list of plausible ions to the observed spectra
+        #=
         nmatches, nmisses = matchPeaks(ionTemplates, #Search the spectra for these ions 
                                     ion_idx, #search ionTemplates[1:ion_idx]
                                     ionMatches, #Fill with matched ions 
@@ -304,9 +303,21 @@ function searchRAW(
                                     ppm = fragment_tolerance, #Fragment match tolerance in ppm
                                     most_intense = most_intense
                                     )
-                                    nmisses_all = nmisses
-                                    nmatches_all = nmatches
+        =#
+        nmatches, nmisses = matchPeaks!(ionMatches, 
+                                        ionMisses, 
+                                        ionTemplates, 
+                                        ion_idx, 
+                                        spectra[:masses][i], 
+                                        spectra[:intensities][i], 
+                                        frag_ppm_err,
+                                        mass_err_model.err_qantiles[2],
+                                        UInt32(i), 
+                                        ms_file_idx)
         
+        nmisses_all = nmisses
+        nmatches_all = nmatches    
+ 
         nmatches_all, nmisses_all, nmatches, nmisses = filterMatchedIons!(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
                                                                                 10000, #Arbitrarily hight
                                                                                 min_frag_count #Remove precursors matching fewer than this many fragments
@@ -371,7 +382,7 @@ function searchRAW(
                                     IDtoCOL,
                                     ionMatches, 
                                     nmatches, 
-                                    err_dist,
+                                    mass_err_model,
                                     last(min_topn_of_m)
                                     )
 
@@ -445,8 +456,7 @@ function firstSearch(
 
     xs = 0:1
     A = collect(xs)
-    err_dist = MassErrorModel(LinearInterpolation(xs, A,extrapolation_bc=Line()),
-    Laplace{Float32}, zero(Float32))
+    err_dist = MassErrorModel((zero(Float32), zero(Float32), zero(Float32)), zero(Float32))
     return SearchRAW(
         spectra, 
         frag_index,
@@ -472,7 +482,7 @@ function firstSearch(
 
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
-        frag_ppm_err = params[:frag_ppm_err],
+        frag_ppm_err = Float32(params[:frag_ppm_err]),
         fragment_tolerance = params[:frag_tol_presearch],
         max_iter = params[:max_iter],
         max_peaks = params[:max_peaks],
@@ -505,7 +515,7 @@ function mainLibrarySearch(
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Laplace{Float32}, Float32},
+    err_dist::MassErrorModel{Float32},
     fragment_tolerance::Float64,
     params::Dict,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -523,7 +533,7 @@ function mainLibrarySearch(
                                                             Q<:UnscoredPSM{Float32},
                                                             R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
 
-    frag_ppm_err = Float64(getLocation(err_dist))
+    frag_ppm_err = getLocation(err_dist)
     
     return SearchRAW(
         spectra, 
@@ -576,15 +586,15 @@ function mainLibrarySearch(
     )
 end
 
-function integrateMS2(
+function integrateMS2_(
     #Mandatory Args
     spectra::Arrow.Table,
     precursors::Vector{LibraryPrecursorIon{Float32}},
     ion_list::LibraryFragmentLookup{Float32},
     rt_index::retentionTimeIndex{Float32, Float32},
     ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Laplace{Float32}, Float32},
-    fragment_tolerance::Float64,
+    err_dist::MassErrorModel{Float32},
+    fragment_tolerance::Float32,
     params::Dict,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -596,13 +606,13 @@ function integrateMS2(
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
     precursor_weights::Vector{Vector{Float32}};
-    N = 600000*10,
     scan_range =  (0, 0)) where {S<:ScoredPSM{Float32, Float16},
                                             Q<:UnscoredPSM{Float32},
                                             R<:SpectralScores{Float16}}
-    frag_ppm_err = Float64(getLocation(err_dist))
+    frag_ppm_err = Float32(getLocation(err_dist))
+    println("frag_ppm_err $frag_ppm_err")
+    
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-
     return SearchRAW(
         spectra, 
         missing,
@@ -626,8 +636,8 @@ function integrateMS2(
         precursor_weights,
         missing,
         
-        frag_ppm_err = frag_ppm_err,
-        fragment_tolerance = fragment_tolerance,
+        frag_ppm_err = Float32(frag_ppm_err),
+        fragment_tolerance = Float64(fragment_tolerance),
         unmatched_penalty_factor = params[:unmatched_penalty_factor],
         isotope_err_bounds = params[:isotope_err_bounds],
         max_iter = params[:max_iter],

@@ -491,13 +491,13 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
     #@time begin
-    MS2_CHROMS = vcat(integrateMS2(MS_TABLE, 
+    MS2_CHROMS = vcat(integrateMS2_(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
-                    30.0,
+                    30.0f0,
                     ms2_integration_params,  
                     ionMatches,
                     ionMisses,
@@ -536,7 +536,8 @@ getBestTrace!(best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
 =#
-best_psms = MS2_CHROMS
+best_psms = copy(MS2_CHROMS)
+getBestTrace!(best_psms)
 best_psms[!,:iRT_diff] .= zero(Float32)
 best_psms[!,:iRT_observed] .= zero(Float32)
 best_psms[!,:sequence] .= ""
@@ -629,7 +630,7 @@ best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox
 best_psms[!,:isotope_fraction] = best_psms[!,:isotope_count]./(best_psms[!,:b_count] .+ best_psms[!,:y_count])
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
-xgboost_time = @timed bst = rankPSMs2!(best_psms, 
+xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
                         colsample_bytree = 1.0, 
                         min_child_weight = 5, 

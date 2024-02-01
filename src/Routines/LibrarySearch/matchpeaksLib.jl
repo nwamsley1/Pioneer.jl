@@ -31,7 +31,7 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T,U<:AbstractFloat}
+function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_high::Float32, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T,U<:AbstractFloat}
     smallest_diff = abs(masses[peak]+δ - frag_mz)
     best_peak = peak
     i = 0
@@ -66,7 +66,7 @@ function getMostIntense(masses::AbstractArray{Union{Missing, T}}, intensities::A
     #Iterate through peaks in  `masses` until a peak is encountered that is 
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
-    while (masses[peak + 1 + i]+ δ <= mz_high)
+    while (masses[peak + 1 + i]-δ <= mz_high)
         intensity = intensities[peak + 1 + i]#abs(masses[peak  + 1 + i]+δ - frag_mz)
         if intensity > most_intense
             most_intense = intensity
@@ -197,20 +197,26 @@ each fragment ion is only assigned to 0 or 1 peaks.
 ### Examples 
 
 """
-function matchPeaks!(matches::Vector{M}, unmatched::Vector{M}, 
-                    Ions::Vector{I}, ion_idx::Int64, 
+function matchPeaks!(matches::Vector{M}, 
+                    unmatched::Vector{M}, 
+                    Ions::Vector{I}, 
+                    ion_idx::Int64, 
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
-                    ppm_err::Float32, scan_idx::UInt32, ms_file_idx::UInt32, min_intensity::Float32; ppm::Float64 = Float64(20.0), 
-                    most_intense::Bool = false) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
+                    ppm_err::Float32, 
+                    ppm_tol_param::Float32,
+                    scan_idx::UInt32, 
+                    ms_file_idx::UInt32
+                    ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
     #match is a running count of the number of transitions that have been matched to a peak
     #This is not necessarily the same as `transition` because some (perhaps most)
     #transitions will not match to any peak. 
     peak, ion, matched_idx = 1, 1, 0
     unmatched_idx = 0
 
-    function getPPM(mz::Float32, ppm::Float64, intensity::Float32)
-        tol = (2931.0/sqrt(intensity))*mz/1e6
-        #tol = (1/sqrt(intensity))*mz/1e6
+    function getPPM(mz::Float32, ppm_tol_param::Float32, intensity::Float32)
+        ppm = max(min(ppm_tol_param/sqrt(intensity), 40.0f0), 5.0f0)
+        #ppm = Float32(16.1)
+        tol = ppm*mz/Float32(1e6)
         return mz - tol, mz + tol        
     end
 
@@ -218,17 +224,23 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M},
     if ion_idx<1
         return matched_idx, unmatched_idx
     end
-    low, high = getPPM(masses[peak], ppm, intensities[peak])
     δ = Float32(ppm_err*(masses[peak]/1e6))
+    low, high = getPPM(masses[peak] - δ, ppm_tol_param, intensities[peak])
+
     while (peak <= length(masses)) & (ion <= ion_idx)#(ion <= length(Ions))
 
         #Is the peak within the tolerance of the transition m/z?
-        if (getMZ(Ions[ion])-δ > low)
-            if (getMZ(Ions[ion])- δ < high)
+        if (getMZ(Ions[ion])> low)
+            if (getMZ(Ions[ion])< high)
                 #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
                 #best_peak = most_intense ? getMostIntense(masses, intensities, high, peak, δ=δ) : getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
-                best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
-                matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]+δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+                #best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
+                #matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]-δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+
+                best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=0.0f0)
+                matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]-δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+     
+
                 ion += 1
                 if ion > ion_idx#length(Ions)
                     return matched_idx, unmatched_idx
@@ -239,8 +251,8 @@ function matchPeaks!(matches::Vector{M}, unmatched::Vector{M},
             #Need to check the next fragment against the current peak. 
             peak += 1
             if peak <= length(masses)
-                low, high = getPPM(masses[peak], ppm, intensities[peak])
-                δ = Float32(ppm_err*(masses[peak]/1e6))
+                δ = Float32(ppm_err*(masses[peak]/1e6)) 
+                low, high = getPPM(masses[peak] - δ, ppm_tol_param, intensities[peak])
             end
             continue
         end
@@ -369,10 +381,8 @@ function matchPeaks(Ions::Vector{I}, ion_idx::Int64,
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}; 
                     δs::Vector{Float32} = zeros(Float32, (1, )), scan_idx = UInt32(0), ms_file_idx = UInt32(0), min_intensity::Float32 = Float32(0.0), ppm::Float64 = 20.0, 
                     most_intense = false) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
-    nmatches, nmisses = 0, 0
-    for δ in δs
-        nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm, most_intense = most_intense)
-    end
+
+    nmatches, nmisses = matchPeaks!(matches, unmatched, Ions, ion_idx, masses, intensities, δ, scan_idx, ms_file_idx, min_intensity, ppm=ppm, most_intense = most_intense)
     #println("nmatches $nmatches, nmisses $nmisses")
     return nmatches, nmisses#sort(matches, by = x->getPeakInd(x)), sort(unmatched, by = x->getPeakInd(x))
 end

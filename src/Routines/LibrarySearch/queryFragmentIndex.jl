@@ -178,12 +178,25 @@ function queryFragment!(precs::Counter{UInt32, UInt8}, iRT_low::Float32, iRT_hig
     return frag_bin - 1
 end
 
-function searchScan!(precs::Counter{UInt32, UInt8}, f_index::FragmentIndex{Float32}, min_intensity::Float32, 
+function searchScan!(precs::Counter{UInt32, UInt8}, 
+                    f_index::FragmentIndex{Float32}, 
+                    min_intensity::Float32, 
                     masses::AbstractArray{Union{Missing, U}}, intensities::AbstractArray{Union{Missing, U}}, 
-                    iRT_low::Float32, iRT_high::Float32, frag_ppm::Float32, 
-                    prec_mz::Float32, prec_tol::Float32, isotope_err_bounds::Tuple{Int64, Int64}; topN::Int = 20, min_frag_count::Int = 3, min_score::UInt8 = zero(UInt8)) where {U<:AbstractFloat}
+                    iRT_low::Float32, iRT_high::Float32, 
+                    ppm_err::Float32, 
+                    ppm_tol_param::Float32,
+                    prec_mz::Float32, 
+                    prec_tol::Float32, 
+                    isotope_err_bounds::Tuple{Int64, Int64}; 
+                    topN::Int = 20, min_frag_count::Int = 3, min_score::UInt8 = zero(UInt8)) where {U<:AbstractFloat}
     
-    getFragTol(mass::Float32, ppm::Float32) = mass*(1 - ppm/Float32(1e6)), mass*(1 + ppm/Float32(1e6))
+    function getFragTol(mass::Float32, ppm_err::Float32, intensity::Float32, ppm_tol_param::Float32)
+        mass -= Float32(ppm_err*mass/1e6)
+        ppm = max(min(ppm_tol_param/sqrt(intensity), 20.1), 5.0)
+        tol = ppm*mass/1e6
+        return Float32(mass - tol), Float32(mass + tol)
+       #return Float32(mass*(1 - 16.1*mass/1e6)), Float32(mass*(1 + 16.1*mass/1e6))
+    end
 
     function filterPrecursorMatches!(precs::Counter{UInt32, UInt8}, topN::Int, min_score::UInt8)
         #match_count = countFragMatches(precs, min_frag_count, min_ratio)
@@ -194,14 +207,6 @@ function searchScan!(precs::Counter{UInt32, UInt8}, f_index::FragmentIndex{Float
     end
     #println("TEST")
     min_frag_bin = 0 #Fragment bins with a lower index can be excluded from the search
-    ms1_idx = 1
-    #lower_bound = precursor_window - (width)
-    #lower_bound += -prec_ppm*lower_bound/(1e6)
-
-    #ms1_idx = searchsortedfirst(MS1, lower_bound) #Find the first MS1 peak with m/z greater than the lower_bound of the quadrupole isolation window
-    #if ms1_idx > length(MS1) #This occurs if every entry in MS1 is below the lower_bound of the quadrupole isolation window
-    #    return 0, 0 #0 fragments mathing to 0 precursors 
-    #end
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
     for (mass, intensity) in zip(masses, intensities)
@@ -212,7 +217,7 @@ function searchScan!(precs::Counter{UInt32, UInt8}, f_index::FragmentIndex{Float
             continue
         end
 
-        FRAGMIN, FRAGMAX = getFragTol(mass, frag_ppm)
+        FRAGMIN, FRAGMAX = getFragTol(mass, ppm_err, intensity, ppm_tol_param)
         #println(typeof(width))
         #println("TEST")
         min_frag_bin = queryFragment!(precs, iRT_low, iRT_high, f_index, min_frag_bin, FRAGMIN, FRAGMAX, (prec_min, prec_max))

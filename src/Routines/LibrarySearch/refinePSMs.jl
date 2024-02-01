@@ -252,6 +252,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
                             Binomial(), 
                             LogitLink(),
                             verbose = false)
+    column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,:iRT_error,:missed_cleavage,:Mox,:charge,:TIC,:total_ions,:err_norm,:spectrum_peak_count]
     model_predict(PSMs, model_fit, column_names)
     getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
     println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
