@@ -126,7 +126,6 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     ###########################
     #Allocate new columns
     #@time begin
-
     N = size(PSMs, 1)
     decoys = zeros(Bool, N);
     missed_cleavage = zeros(UInt8, N);
@@ -134,15 +133,14 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     iRT_pred = zeros(Float32, N);
     RT = zeros(Float32, N);
     TIC = zeros(Float16, N);
-    adjusted_intensity_explained = zeros(Float16, N);
     charge = zeros(UInt8, N);
     total_ions = zeros(UInt16, N);
     err_norm = zeros(Float16, N);
+    err_norm2 = zeros(Float16, N);
     targets = zeros(Bool, N);
     spectrum_peak_count = zeros(UInt32, N);
     scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
     precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx] 
-    log2_intensity_explained::Vector{Float16} = PSMs[!,:log2_intensity_explained]
     y_count::Vector{UInt8} = PSMs[!,:y_count]
     b_count::Vector{UInt8} = PSMs[!,:b_count]
     error::Vector{Float32} = PSMs[!,:error]
@@ -168,27 +166,20 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
         end
         return mox
     end
-
-    Threads.@threads for i in range(1, size(PSMs)[1])#ProgressBar(range(1, size(PSMs)[1]))
+    Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
         decoys[i] = isDecoy(precursors[precursor_idx[i]]);
         targets[i] = decoys[i] == false
         missed_cleavage[i] = precursors[precursor_idx[i]].missed_cleavages
-        #sequence[i] = precursors[precursor_idx[i]].sequence;
         Mox[i] = countMOX(precursors[precursor_idx[i]].sequence)::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
         iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
         RT[i] = Float32(scan_retention_time[scan_idx[i]]);
-        #PSMs[i,:iRT_obdserved] = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
         TIC[i] = Float16(log2(tic[scan_idx[i]]));
-        adjusted_intensity_explained[i] = Float16(min(log2(tic[scan_idx[i]]*(2^log2_intensity_explained[i])), 
-                                                        6e4));
         charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
         total_ions[i] = UInt16(y_count[i] + b_count[i]);
         err_norm[i] = Float16(min(abs((error[i])/(total_ions[i])), 6e4))
         spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
         matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
-        #stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
     end
-
     PSMs[!,:matched_ratio] = matched_ratio
     PSMs[!,:decoy] = decoys
     PSMs[!,:iRT_predicted] = iRT_pred
@@ -196,10 +187,11 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     PSMs[!,:TIC] = TIC
     PSMs[!,:total_ions] = total_ions
     PSMs[!,:err_norm] = err_norm
+    PSMs[!,:err_norm2] = err_norm2
     PSMs[!,:target] = targets
     PSMs[!,:missed_cleavage] = missed_cleavage
     PSMs[!,:Mox] = Mox
-    PSMs[!,:adjusted_intensity_explained] = adjusted_intensity_explained
+    #PSMs[!,:adjusted_intensity_explained] = adjusted_intensity_explained
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
     #end
@@ -255,19 +247,18 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:err_norm),
          Term(:spectrum_peak_count),
     ))
+    N = size(PSMs, 1)÷10
+    model_fit = glm(FORM, PSMs[shuffle(1:nrow(PSMs))[1:N],:], 
+                            Binomial(), 
+                            LogitLink(),
+                            verbose = false)
+    model_predict(PSMs, model_fit, column_names)
+    getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
+    println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 
-    #model_fit = glm(FORM, PSMs, 
-    #                        Binomial(), 
-    #                        ProbitLink())
-    Y′ = Float16.(GLM.predict(model_fit, PSMs));
-    getQvalues!(PSMs, allowmissing(Y′),  allowmissing(PSMs[:,:decoy]));
-
-    #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
-    #println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-    #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
     #end
-    PSMs[:,:prob] = allowmissing(Y′);
-    
     ##########
     #Filter low scoring psms and add precursor mz
 
@@ -331,8 +322,8 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         #iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
         RT[i] = Float32(scan_retention_time[scan_idx[i]]);
         #iRT_obs = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
-        charge[i] = UInt8(getCharge(precursors[precursor_idx[i]]));
-        prec_mz[i] = Float32(getMz(precursors[precursor_idx[i]]));
+        charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
+        prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
         TIC[i] = Float16(log2(tic[scan_idx[i]]));
         total_ions[i] = UInt16(y_count[i] + b_count[i]);
         err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
@@ -452,7 +443,7 @@ function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         PSMs[i,:sequence] = precursors[PSMs[i,:precursor_idx]].sequence;
         PSMs[i,:Mox] = UInt8(length(collect(eachmatch(r"ox",  PSMs[i,:sequence]))))
         PSMs[i,:adjusted_intensity_explained] = Float16(log2(MS_TABLE[:TIC][PSMs[i,:scan_idx]]*(2^PSMs[i,:log2_intensity_explained])));
-        PSMs[i,:charge] = UInt8(getCharge(precursors[PSMs[i,:precursor_idx]]));
+        PSMs[i,:charge] = UInt8((precursors[PSMs[i,:precursor_idx]].prec_charge));
         #println(precursors[PSMs[i,:precursor_idx]].length)
         PSMs[i,:sequence_length] = UInt8(precursors[PSMs[i,:precursor_idx]].length);
         PSMs[i,:b_y_overlap] = ((PSMs[i,:sequence_length] - PSMs[i,:longest_y])>PSMs[i,:longest_b]) &  (PSMs[i,:longest_b] > 0) & (PSMs[i,:longest_y] > 0);

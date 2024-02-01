@@ -7,7 +7,7 @@ println("Importing Libraries...")
 
 using ArgParse
 using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
-using Plots, StatsPlots, PrettyPrinting
+using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
 #DataStructures 
 using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
 #Algorithms 
@@ -343,7 +343,7 @@ precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
 presearch_time = @timed begin
 #init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
-frag_err_dist_dict = Dict{Int64,Laplace{Float64}}()
+frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 lk = ReentrantLock()
 #MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
 #=
@@ -396,97 +396,31 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
     frag_ppm_intensities = [match.intensity for match in best_matches];
     end
-    bins = cut(log2.(frag_ppm_intensities), 10)
-    df = DataFrame(Dict(:ppm_errs => frag_ppm_errs, 
-                        :intensities => log2.(frag_ppm_intensities), 
-                        :bins => bins))
-    gdf = groupby(df, :bins)
-    p = plot()
-    for (key, subdf) in pairs(gdf)
-        density!(p, subdf[!,:ppm_errs], show = true, bins = LinRange(-30, 30, 100), alpha = 1.0)
-    end
 
-    medians = Float64[]
-    sds  = Float64[]
-    for (key, subdf) in pairs(gdf)
-        push!(medians, median(subdf[!,:intensities]))
-        push!(sds, std(subdf[!,:ppm_errs] .- median(subdf[!,:ppm_errs])))
-        #density!(p, subdf[!,:ppm_errs], show = true, bins = LinRange(-30, 30, 100), alpha = 1.0)
-    end
-    Plots.plot(medians, sds)
-    Plots.plot!(medians, sds, seriestype=:scatter)
-
-    frag_distributions = []
-    for (key, subdf) in pairs(gdf)
-        push!(frag_distributions, estimateErrorDistribution(collect(Float64.(subdf[!,:ppm_errs])), Normal{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-        f_out = PLOT_PATH ));
-    end
-    p = plot()
-    for frag_distribution in frag_distributions
-    Plots.plot!(
-        collect(LinRange(-40, 40, 100)),
-        [Distributions.pdf(frag_distribution, x) for x in LinRange(-40, 40, 100)],
-        show = true
+    mass_err_model = ModelMassErrs(
+        frag_ppm_intensities,
+        frag_ppm_errs,
+        40.0
     )
-    end
-
-
-    combine(gdf, :intensities => median)
-    combine(gdf, :ppm_errs => std)
-    combine(gdf, :ppm_errs => x->quantile(x, 0.975))
-                        histogram(y = df[!,:ppm_errs], color = df[!,:bins])
-    histogram2d(log2.(frag_ppm_intensities), frag_ppm_errs)
-
-
-
-    plot!(collect(LinRange(12, 25, 100)), [100/x for x in LinRange(12, 25, 100)])
-
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH );
-    quantile(frag_err_dist, 0.975)
     
-    
-    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "NORMAL_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Normal{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH );
-
-
-
-                        PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "LAPLACE_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[1][!,:ppm_errs])), Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH );
-    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "LAPLACE_"*split(splitpath(MS_TABLE_PATH)[end],".")[1])
-    frag_err_dist = estimateErrorDistribution(collect(Float64.(gdf[10][!,:ppm_errs])), Logistic{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH );
-                    
-
-
-            ==
-
-    quantile(frag_err_dist, 0.975)
-
-    end
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     lock(lk) do 
         PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        @time frag_err_dist = estimateErrorDistribution(frag_ppm_errs, Laplace{Float64}, 0.0, 3.0, first_search_params[:frag_tol_presearch],
-                        f_out = PLOT_PATH );
-        #Spline mapping RT to iRT
         @time RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], n = 50, bandwidth = 4.0);
         @time plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
                     f_out = PLOT_PATH);
         RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
-        frag_err_dist_dict[ms_file_idx] = frag_err_dist
+        frag_err_dist_dict[ms_file_idx] = mass_err_model
     end
 end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_010324.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_010324.jld2"); frag_err_dist_dict)
-
-RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\rt_map_dict_010324.jld2")["RT_to_iRT_map_dict"]
-frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\frag_err_dist_dict_010324.jld2")["frag_err_dist_dict"]
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_013024.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_013024.jld2"); frag_err_dist_dict)
+#MS_TABLE_PATHS = MS_TABLE_PATHS[1:2]
+RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\rt_map_dict_013024.jld2")["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\frag_err_dist_dict_013024.jld2")["frag_err_dist_dict"]
 ###########
 #Main PSM Search
 ###########
@@ -527,20 +461,21 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         #scan_range = (100000, 100010)
         )...);
         @time refinePSMs!(PSMs, MS_TABLE, prosit_lib["precursors"], max_rt_error = 10.0,  max_q_value = 0.1);
-        #Free up memory
+
         insert!(PSMs_Dict, 
-                MS_TABLE_PATH, 
-                PSMs[!,
-                    [:precursor_idx,:RT,:iRT_predicted,:prec_mz,:q_value,:prob]
-                    ]
-            );
+            MS_TABLE_PATH, 
+            PSMs[!,
+                [:precursor_idx,:RT,:iRT_predicted,:prec_mz,:q_value,:prob]
+                ]
+        );
         end
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_013024_M0.jld2"); PSMs_Dict)
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"); PSMs_Dict)
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_012324_M0.jld2"))["PSMs_Dict"]
+x = 1
+PSMs_Dict = load(joinpath("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS", "PSMs_Dict_013024_M0.jld2"))["PSMs_Dict"]
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
@@ -549,18 +484,20 @@ RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
-
+scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
+unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
+spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
-    @time begin
+    #@time begin
     MS2_CHROMS = vcat(integrateMS2(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
-                    16.1,
+                    30.0,
                     ms2_integration_params,  
                     ionMatches,
                     ionMisses,
@@ -599,7 +536,7 @@ getBestTrace!(best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
 =#
-
+best_psms = MS2_CHROMS
 best_psms[!,:iRT_diff] .= zero(Float32)
 best_psms[!,:iRT_observed] .= zero(Float32)
 best_psms[!,:sequence] .= ""
@@ -610,7 +547,7 @@ for i in ProgressBar(range(1, size(best_psms)[1]))
     best_psms[i,:stripped_sequence] = replace.(best_psms[i,:sequence] , "M(ox)" => "M");
 end
 for i in ProgressBar(range(1, size(best_psms)[1]))
-    best_psms[i,:iRT_predicted] = precursors[best_psms.precursor_idx[i]].iRT
+    best_psms[i,:iRT_predicted] = precursors[best_psms.precursor_idx[i]].irt
     #irt = IDtoiRT_IMPUTED[best_psms[i,:precursor_idx]]
     #best_psms[i,:iRT_diff] = abs(best_psms[i,:iRT_observed]- mean([first(irt), irt[2]]))
     best_psms[i,:iRT_diff] = abs(best_psms[i,:iRT_observed]- first(precID_to_iRT[best_psms[i,:precursor_idx]]))
@@ -706,7 +643,8 @@ xgboost_time = @timed bst = rankPSMs2!(best_psms,
                         train_fraction = 9.0/9.0,
                         n_iters = 2);
 best_psms = bst[3]
-getQvalues!(best_psms, allowmissing(best_psms[:,:prob]), allowmissing(best_psms[:,:decoy]));
+best_psms[!,:prob] = Float32.(best_psms[!,:prob])
+getQvalues!(best_psms[!,:prob], best_psms[:,:decoy], best_psms[!,:q_value]);
 value_counts(df, col) = combine(groupby(df, col), nrow)
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
@@ -720,9 +658,10 @@ histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alph
 filter!(x->x.best_scan==true, best_psms );
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean5_012224.jld2"))["best_psms"]
 #filter!(x->x.q_value<=0.01, best_psms );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_test8_012524.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_013024_ppm30.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 
 
 
+test = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_013024_ppm16.jld2"))

@@ -61,9 +61,9 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
-function selectRTIndexedTransitions!(transitions::Vector{LibraryFragmentIon{Float32}}, 
+function selectRTIndexedTransitions!(transitions::Vector{DetailedFrag{Float32}}, 
                             precursors::Vector{LibraryPrecursorIon{Float32}},
-                            fragment_list::Vector{Vector{LibraryFragmentIon{Float32}}}, 
+                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             prec_ids::Vector{UInt32}, 
@@ -86,18 +86,18 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragmentIon{Floa
         for i in start:stop #Get transitions for each precursor
             prec_idx += 1 #Keep track of number of precursors 
             prec = precursors[first(precs[i])]
-            mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getCharge(prec)
-            mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getCharge(prec)
+            mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
+            mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
 
             #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
-            (getMz(prec) < mz_low) | (getMz(prec) > mz_high) ? continue : nothing
+            (getMZ(prec) < mz_low) | (getMZ(prec) > mz_high) ? continue : nothing
 
             #Which precursor isotopes where captured in the quadrupole isolation window? 
             #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
             transition_idx = @inline fillTransitionList!(transitions, 
                                                 first(precs[i]), #prec_idx
                                                 transition_idx,
-                                                fragment_list, 
+                                                library_fragment_lookup, 
                                                 isotopes, iso_splines, prec, mz_bounds, block_size)
 
             #Grow array if exceeds length
@@ -108,25 +108,26 @@ function selectRTIndexedTransitions!(transitions::Vector{LibraryFragmentIon{Floa
     end
 
     sort!(@view(transitions[1:transition_idx]), 
-          by = x->getFragMZ(x),
+          by = x->getMZ(x),
           alg=PartialQuickSort(1:transition_idx))
 
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, prec_idx
 end
 
-function fillTransitionList!(transitions::Vector{LibraryFragmentIon{Float32}}, 
+function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             prec_idx::UInt32, 
                             transition_idx::Int64, 
-                            fragment_list::Vector{Vector{LibraryFragmentIon{Float32}}}, 
+                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, 
                             prec::LibraryPrecursorIon{Float32},  
                             mz_bounds::Tuple{Float32,Float32}, block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
     NEUTRON = Float64(1.00335)
-    prec_isotope_set = getPrecursorIsotopeSet(getMz(prec), getCharge(prec), mz_bounds)
+    prec_isotope_set = getPrecursorIsotopeSet(getMZ(prec), getPrecCharge(prec), mz_bounds)
     #for frag in fragment_list[getID(counter, i)]
-    for frag in fragment_list[prec_idx]
+    for frag_idx in getPrecFragRange(library_fragment_lookup, prec_idx)
 
+        frag = getFrag(library_fragment_lookup, frag_idx)
         #Estimate isotope abundances 
         getFragIsotopes!(isotopes, iso_splines, prec, frag, prec_isotope_set)
 
@@ -137,18 +138,21 @@ function fillTransitionList!(transitions::Vector{LibraryFragmentIon{Float32}},
             #iso_idx > 0 ? continue : nothing
             #isotopes[iso_idx + 1]/first(isotopes) < 0.5 ? continue : nothing
 
-            transition_idx += 1
             
-            transitions[transition_idx] = LibraryFragment(
-                Float32(frag.frag_mz + iso_idx*NEUTRON/frag.frag_charge), #Estimated isotopic m/z
-                frag.frag_charge,
+            
+            transition_idx += 1
+            transitions[transition_idx] = DetailedFrag(
+                frag.prec_id,
+
+                Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge), #Estimated isotopic m/z
+                Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
+
                 frag.is_y_ion,
                 iso_idx>0, #Is the fragment an isotope?
+
+                frag.frag_charge,
                 frag.ion_position,
-                frag.ion_index,
-                Float32(isotopes[iso_idx + 1]), #Estimated relative abundance 
                 frag.prec_charge,
-                frag.prec_id,
                 frag.rank,
                 frag.sulfur_count
             )#::LibraryFragment{T}

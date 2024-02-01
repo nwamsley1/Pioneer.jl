@@ -218,8 +218,8 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
     getFragAbundance!(
         isotopes,
         iso_splines,
-        isotope(Float64(frag.frag_mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
-        isotope(Float64(prec.mz*prec.charge), Int64(prec.sulfur_count), 0),
+        isotope(Float64(frag.mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
+        isotope(Float64(prec.mz*prec.prec_charge), Int64(prec.sulfur_count), 0),
         pset
         )
 end
@@ -293,20 +293,20 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
 end
 
 function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursorIon{Float32}) #where {T,U<:AbstractFloat}
-    M0 = iso_splines(min(prec.sulfur_count, 5),0,Float64(prec.mz*prec.charge))
-    M1 = iso_splines(min(prec.sulfur_count, 5),1,Float64(prec.mz*prec.charge))
+    M0 = iso_splines(min(prec.sulfur_count, 5),0,Float64(prec.mz*prec.prec_charge))
+    M1 = iso_splines(min(prec.sulfur_count, 5),1,Float64(prec.mz*prec.prec_charge))
     if M0 > M1
-        if prec.charge <= 2
+        if prec.prec_charge <= 2
             return (0, 1)
-        elseif prec.charge == 3
+        elseif prec.prec_charge == 3
             return (0, 2)
         else
             return (0, 3)
         end
     else
-        if prec.charge <= 2
+        if prec.prec_charge <= 2
             return (0, 2)
-        elseif prec.charge == 3
+        elseif prec.prec_charge == 3
             return (0, 3)
         else
             return (0, 4)

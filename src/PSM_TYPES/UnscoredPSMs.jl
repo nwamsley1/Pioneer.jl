@@ -36,7 +36,7 @@ function ScoreFragmentMatches!(results::Vector{P},
                                 IDtoCOL::ArrayDict{UInt32, UInt16}, 
                                 matches::Vector{FragmentMatch{Float32}}, 
                                 nmatches::Int64, 
-                                errdist::Laplace{Float64},
+                                errdist::MassErrorModel{Laplace{Float32}, Float32},
                                  m_rank::Int64) where {P<:UnscoredPSM}
     for i in range(1, nmatches)
         match = matches[i]
@@ -45,7 +45,7 @@ function ScoreFragmentMatches!(results::Vector{P},
     end
 end
 
-function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, errdist::Laplace{Float64}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, errdist::MassErrorModel{Laplace{Float32}, Float32}, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -63,10 +63,10 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, e
 
     intensity += getIntensity(match)
 
-    ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/1e6)
+    ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/Float32(1e6))
     #error +=  Distributions.logpdf(errdist, ppm_err*sqrt(getIntensity(match)))
-    error +=  Distributions.logpdf(errdist, ppm_err)
-
+    #error += getMassErrorLogLik(errdist, getIntensity(match), ppm_err)#Distributions.logpdf(errdist, ppm_err)
+    error += abs(ppm_err)#Distributions.logpdf(Laplace{Float64}(-1.16443, 4.36538), ppm_err)
     precursor_idx = getPrecID(match)
 
     if match.predicted_rank < best_rank
@@ -88,7 +88,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, e
     )
 end
 
-function ModifyFeatures!(score::ComplexUnscoredPSM{T}, match::FragmentMatch{T}, errdist::Laplace{Float64}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::ComplexUnscoredPSM{T}, match::FragmentMatch{T}, errdist::MassErrorModel{Laplace{Float32}, Float32}, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -124,9 +124,10 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T}, match::FragmentMatch{T}, 
         end
     end
 
-    ppm_err = (getFragMZ(match) - getMatchMZ(match))/(getFragMZ(match)/1e6)
+    ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/1e6)
     #error +=  Distributions.logpdf(errdist, ppm_err*sqrt(getIntensity(match)))
-    error +=  Distributions.logpdf(errdist, ppm_err)
+    #error +=  Distributions.logpdf(errdist, ppm_err)
+    error += abs(ppm_err)
 
     precursor_idx = getPrecID(match)
 

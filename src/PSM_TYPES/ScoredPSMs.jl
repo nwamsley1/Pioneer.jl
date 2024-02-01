@@ -209,7 +209,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
 
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
 
-        scored_psms[start_idx + i - skipped] = LibPSM(
+        scored_psms[start_idx + i - skipped] = ComplexScoredPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].topn,
             unscored_PSMs[i].longest_y,

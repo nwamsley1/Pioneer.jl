@@ -123,7 +123,7 @@ function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; min_prob::Abstrac
 
         insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
 
-        best_hits = psms[!,:prob].>min_prob#Map RTs using only the best psms
+        best_hits = psms[!,:q_value].<0.01#.>min_prob#Map RTs using only the best psms
         
         #Build RT=>iRT and iRT=> RT mappings for the file and add to the dictionaries 
         insert!(iRT_RT, key, KDEmapping(psms[best_hits,:iRT_predicted],
