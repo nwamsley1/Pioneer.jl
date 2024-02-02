@@ -1,4 +1,65 @@
+"""
+    setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)  
 
+Adds a FragmentMatch to `matches` if `match` is not an index in `matches`, otherwise, updates the match.
+
+### Input
+
+- `hits::Vector{FragmentMatch}`: -- Represents a fragment ion
+- `match::Int` -- Index of the match. Must be <=N+1 where N is length(hits) 
+- `mass::Float32` -- m/z of the emperical peak matched to the transition
+- `intensity::Float32` -- intensity of the emperical peak matched to the transition
+- `peak_ind` -- unique index of the emperical peak matched to the transition
+
+### Output
+
+Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new FragmentMatch at `matches[match]`
+
+### Notes
+
+- Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
+    This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
+    only be added to `matches` and existing ones never modified. 
+- Recording the `peak_ind` could be useful, for example, "chimeric" scoring of a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
+    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be rescored but excluding FragmentMatches corresponding
+    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum (making an additional call to `matchPeaks`). 
+
+### Algorithm 
+
+### Examples 
+
+"""
+function setMatch!(matches::Vector{M}, 
+                    transition::LibraryIon{Float32}, 
+                    mass::T, 
+                    intensity::T, 
+                    peak_ind::Int64, 
+                    scan_idx::UInt32, 
+                    ms_file_idx::UInt32,
+                    i::Int64; 
+                    block_size = 10000) where {T<:AbstractFloat,M<:MatchIon{Float32}}
+    i += 1
+    if i > length(matches)
+        append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
+    end
+
+    matches[i] = FragmentMatch(Float32(getIntensity(transition))::Float32, 
+                                 intensity::Float32,
+                                 Float32(getMZ(transition)),
+                                 mass::Float32,
+                                 peak_ind::Int64,
+                                 getIonPosition(transition)::UInt8,
+                                 getFragCharge(transition)::UInt8,
+                                 UInt8(0),
+                                 true == isyIon(transition) ? 'y' : 'b',
+                                 transition.is_isotope,
+                                 getPrecID(transition),
+                                 UInt8(1), 
+                                 scan_idx,
+                                 ms_file_idx,
+                                 getRank(transition))::FragmentMatch{Float32}
+    return i
+end
 
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
@@ -31,131 +92,78 @@ An Int representing the index of the m/z in `masses` nearest in m/z to that of t
 ### Examples 
 
 """
-function getNearest(masses::AbstractArray{Union{Missing, T}}, frag_mz::U, mz_high::Float32, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T,U<:AbstractFloat}
-    smallest_diff = abs(masses[peak]+δ - frag_mz)
-    best_peak = peak
-    i = 0
+function setNearest!(matches::Vector{M}, 
+                     unmatched::Vector{M},
+                    masses::AbstractArray{Union{Missing, Float32}}, 
+                    intensities::AbstractArray{Union{Missing, Float32}},
+                    Ion::DetailedFrag{Float32},
+                    max_mz::Float32,
+                    ppm_tol_param::Float32,
+                    δ::Float32,
+                    peak_idx::Int64,
+                    scan_idx::UInt32,
+                    ms_file_idx::UInt32,
+                    matched_idx::Int64,
+                    unmatched_idx::Int64
+                    )::Int64 where {M<:MatchIon{Float32}}
 
-    #Shorthand to check for BoundsError on `masses`
-   # boundsCheck() = (peak + 1 + i > length(masses))
-    if (peak + 1 + i > length(masses)) return best_peak end
-
-    #Iterate through peaks in  `masses` until a peak is encountered that is 
-    #greater in m/z than the upper bound of the `transition` tolerance 
-    #or until there are no more masses to check. Keep track of the best peak/transition match. 
-    while (masses[peak + 1 + i]+ δ <= mz_high)
-        new_diff = abs(masses[peak  + 1 + i]+δ - frag_mz)
-        if new_diff < smallest_diff
-            smallest_diff = new_diff
-            best_peak = peak + 1 + i
-        end
-        i+=1
-        if (peak + 1 + i > length(masses)) break end
+                    
+    function getMzBounds(mz::Float32, ppm_tol_param::Float32, intensity::Float32)
+        #ppm = max(min(ppm_tol_param/sqrt(intensity), 16.1f0), 5.0f0)
+        ppm = Float32(16.1)
+        #ppm = max(ppm_tol_param/sqrt(intensity), 5.0f0)
+        tol = ppm*mz/Float32(1e6)
+        return mz - tol, mz + tol        
     end
-    return best_peak
-end
 
-function getMostIntense(masses::AbstractArray{Union{Missing, T}}, intensities::AbstractArray{Union{Missing, T}}, mz_high::Float64, peak::Int; δ::Float32 = zero(Float32))::Int64 where {T<:AbstractFloat}
-    most_intense = intensities[peak]#smallest_diff = abs(masses[peak]+δ - frag_mz)
-    best_peak = peak
-    i = 0
+    smallest_diff = Float32(Inf)#abs(masses[peak]-δ - frag_mz)
+    best_peak, i = 0, 0
 
-    #Shorthand to check for BoundsError on `masses`
-   # boundsCheck() = (peak + 1 + i > length(masses))
-    if (peak + 1 + i > length(masses)) return best_peak end
-    #Iterate through peaks in  `masses` until a peak is encountered that is 
-    #greater in m/z than the upper bound of the `transition` tolerance 
-    #or until there are no more masses to check. Keep track of the best peak/transition match. 
-    while (masses[peak + 1 + i]-δ <= mz_high)
-        intensity = intensities[peak + 1 + i]#abs(masses[peak  + 1 + i]+δ - frag_mz)
-        if intensity > most_intense
-            most_intense = intensity
-            best_peak = peak + 1 + i
-        end
-        i+=1
-        if (peak + 1 + i > length(masses)) break end
-    end
-    return best_peak
-end
 
-export getNearest
-
-"""
-    setFragmentMatch!(matches::Vector{FragmentMatch}, match::Int, transition::Transition, mass::Float32, intensity::Float32, peak_ind::Int64)  
-
-Adds a FragmentMatch to `matches` if `match` is not an index in `matches`, otherwise, updates the match.
-
-### Input
-
-- `hits::Vector{FragmentMatch}`: -- Represents a fragment ion
-- `match::Int` -- Index of the match. Must be <=N+1 where N is length(hits) 
-- `mass::Float32` -- m/z of the emperical peak matched to the transition
-- `intensity::Float32` -- intensity of the emperical peak matched to the transition
-- `peak_ind` -- unique index of the emperical peak matched to the transition
-
-### Output
-
-Modifies `matches[match]` if match is <= lenth(matches). Otherwise adds a new FragmentMatch at `matches[match]`
-
-### Notes
-
-- Updating a match in `matches` could be useful if researching the same spectra many times at different mass offsets with `matchPeaks!` 
-    This could be done to calculate a cross correlatoin score for example. If a spectrum is only searched once, then matches should
-    only be added to `matches` and existing ones never modified. 
-- Recording the `peak_ind` could be useful, for example, "chimeric" scoring of a spectrum from a Vector{FragmentMatch} type. The best scoring precursor would
-    have fragments matching to known `peak_ind`. The Vector{FragmentMatch} could be rescored but excluding FragmentMatches corresponding
-    to those peak_ind's. This would enable a simple chimeric spectra scoring that would not involve completely researching the spectrum (making an additional call to `matchPeaks`). 
-
-### Algorithm 
-
-### Examples 
-
-"""
-function setMatch!(matches::Vector{M}, i::Int64, 
-                    transition::LibraryIon{Float32}, 
-                    mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32; 
-                    block_size = 10000) where {T<:AbstractFloat,M<:MatchIon{Float32}}
-    i += 1
-    if i > length(matches)
-        append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
-    end
-    #if iszero(getPrecID(transition))
-    #    println("TEST C")
+    #if (peak_idx + 1 + i > length(masses)) 
+    #    i = -1 
     #end
-    matches[i] = FragmentMatch(Float32(getIntensity(transition))::Float32, 
-                                 intensity::Float32,
-                                 Float32(getMZ(transition)),
-                                 mass::Float32,
-                                 peak_ind::Int64,
-                                 getIonPosition(transition)::UInt8,
-                                 getFragCharge(transition)::UInt8,
-                                 UInt8(0),
-                                 true == isyIon(transition) ? 'y' : 'b',
-                                 transition.is_isotope,
-                                 getPrecID(transition),
-                                 UInt8(1), 
-                                 scan_idx,
-                                 ms_file_idx,
-                                 getRank(transition))::FragmentMatch{Float32}
-    return i
-end
 
-#=
-function setMatch!(matches::Vector{PrecursorMatch{T}}, i::Int64, ion::I, mass::T, intensity::T, peak_ind::Int64, scan_idx::UInt32, ms_file_idx::UInt32) where {T<:AbstractFloat,I<:IonType}
-    i += 1
-    if i > length(matches)
-        append!(matches, [PrecursorMatch{Float32}() for _ in range(1, block_size)])
+    theoretical_mz = getMZ(Ion)
+    #Iterate through peaks in  `masses` until a peak is encountered that is 
+    #greater in m/z than the upper bound of the `transition` tolerance 
+    #or until there are no more masses to check. Keep track of the best peak/transition match. 
+    while (masses[peak_idx + i]-δ<= max_mz)
+        low, high = getMzBounds(theoretical_mz, ppm_tol_param, intensities[peak_idx + i])
+        if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
+            mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
+            if mz_diff < smallest_diff
+                smallest_diff = mz_diff
+                best_peak = peak_idx + i
+            end
+        end
+        i+=1
+        if (peak_idx + 1 + i > length(masses)) break end
     end
-    matches[i] = PrecursorMatch(
-                    getIntensity(ion),
-                    intensity,
-                    peak_ind,
-                    getPrecID(ion)
-    )::PrecursorMatch{T}
-    return i
+
+    if best_peak > 0
+        return setMatch!(matches, 
+                                Ion, 
+                                masses[best_peak]-δ, 
+                                intensities[best_peak], 
+                                best_peak, 
+                                scan_idx, 
+                                ms_file_idx,
+                                matched_idx);
+    else
+        setMatch!(unmatched,
+                    Ion, 
+                    zero(Float32), 
+                    zero(Float32),
+                    unmatched_idx, 
+                    scan_idx, 
+                    ms_file_idx,
+                    unmatched_idx
+                    );
+        return matched_idx
+    end
+     
 end
-=#
-#export setFragmentMatch!
 
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
@@ -204,6 +212,7 @@ function matchPeaks!(matches::Vector{M},
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
                     ppm_tol_param::Float32,
+                    max_ppm_tol::Float32,
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
                     ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
@@ -213,60 +222,81 @@ function matchPeaks!(matches::Vector{M},
     peak, ion, matched_idx = 1, 1, 0
     unmatched_idx = 0
 
-    function getPPM(mz::Float32, ppm_tol_param::Float32, intensity::Float32)
-        ppm = max(min(ppm_tol_param/sqrt(intensity), 40.0f0), 5.0f0)
-        #ppm = Float32(16.1)
-        tol = ppm*mz/Float32(1e6)
-        return mz - tol, mz + tol        
+    function getMaxErrBounds(theoretical_mz::Float32, max_ppm_tol::Float32)
+        mz_tol = Float32(max_ppm_tol*theoretical_mz/1e6)
+        return theoretical_mz - mz_tol, theoretical_mz + mz_tol
     end
-
     #if length(Ions)<1
     if ion_idx<1
         return matched_idx, unmatched_idx
     end
-    δ = Float32(ppm_err*(masses[peak]/1e6))
-    low, high = getPPM(masses[peak] - δ, ppm_tol_param, intensities[peak])
 
-    while (peak <= length(masses)) & (ion <= ion_idx)#(ion <= length(Ions))
+    δ = Float32(ppm_err*(masses[peak]/1e6)) #ppm offset determined in calibration
+    corrected_empirical_mz = masses[peak] - δ #corrected empirical mass
+    low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol) #max and min m/z of a matching empirical ion
 
+    while (peak <= length(masses)) & (ion <= ion_idx)
         #Is the peak within the tolerance of the transition m/z?
-        if (getMZ(Ions[ion])> low)
-            if (getMZ(Ions[ion])< high)
-                #Find the closest matching peak to the transition within the upper and lower bounds (getLow(transition)<=masses[peak]<=getHigh(transition)))
-                #best_peak = most_intense ? getMostIntense(masses, intensities, high, peak, δ=δ) : getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
-                #best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=δ)
-                #matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]-δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
+        if (corrected_empirical_mz>=low)
+            if (corrected_empirical_mz<=high) #Empirical peak is within maximum mass tolerance
 
-                best_peak = getNearest(masses, getMZ(Ions[ion]), high, peak, δ=0.0f0)
-                matched_idx = setMatch!(matches, matched_idx, Ions[ion], masses[best_peak]-δ, intensities[best_peak], best_peak, scan_idx, ms_file_idx);
-     
+                matched_idx = setNearest!(  matches,
+                                            unmatched,
+                                            masses, 
+                                            intensities, 
+                                            Ions[ion], 
+                                            high, 
+                                            ppm_tol_param,
+                                            δ,
+                                            peak, 
+                                            scan_idx,
+                                            ms_file_idx,
+                                            matched_idx,
+                                            unmatched_idx) #Set nearest matching peak if there are any 
 
+                #Progress to the next theoretical ion
                 ion += 1
-                if ion > ion_idx#length(Ions)
+                low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol)
+                if ion > ion_idx
                     return matched_idx, unmatched_idx
                 end
                 continue
             end
-            #Important that this is also within the first if statement. 
-            #Need to check the next fragment against the current peak. 
-            peak += 1
-            if peak <= length(masses)
-                δ = Float32(ppm_err*(masses[peak]/1e6)) 
-                low, high = getPPM(masses[peak] - δ, ppm_tol_param, intensities[peak])
+            #Progress to next theoretical ion
+            unmatched_idx = setMatch!(unmatched,
+                                        Ions[ion], 
+                                        zero(Float32), 
+                                        zero(Float32),
+                                        unmatched_idx, 
+                                        scan_idx, 
+                                        ms_file_idx,
+                                        unmatched_idx
+                                        );
+            ion += 1
+            low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol)
+            if ion > ion_idx
+                return matched_idx, unmatched_idx
             end
             continue
         end
-        #No additional matches possible for the current peak. Move on to the next. 
-        unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], zero(Float32), zero(Float32) , unmatched_idx, scan_idx, ms_file_idx);
-        ion += 1
-
-        if ion > ion_idx#length(Ions)
-            return matched_idx, unmatched_idx
+        
+        peak += 1 #Progress to next peak
+        if peak <= length(masses)
+            δ = Float32(ppm_err*(masses[peak]/1e6)) 
+            corrected_empirical_mz = masses[peak] - δ
         end
     end
 
     while ion <= ion_idx#length(Ions)
-        unmatched_idx = setMatch!(unmatched, unmatched_idx, Ions[ion], zero(Float32), zero(Float32), unmatched_idx, scan_idx, ms_file_idx);
+        unmatched_idx = setMatch!(unmatched,
+                                    Ions[ion], 
+                                    zero(Float32), 
+                                    zero(Float32),
+                                    unmatched_idx, 
+                                    scan_idx, 
+                                    ms_file_idx,
+                                    unmatched_idx
+                                    );
         ion += 1
     end
 

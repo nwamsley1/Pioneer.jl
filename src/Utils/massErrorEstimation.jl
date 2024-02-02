@@ -134,15 +134,31 @@ function ModelMassErrs(intensities::Vector{T},
         [mass_err_model(x) for x in intensities], seriestype=:scatter)
 
         plot_range = LinRange(8000, 100000, 100)
+
                         plot( plot_range,
-        [ mass_err_model.err_qantiles[1]/sqrt(x) for x in  plot_range]
+        [ 2405/sqrt(x) for x in  plot_range]
     )
                             plot!( plot_range,
-        [ mass_err_model.err_qantiles[2]/sqrt(x) for x in  plot_range]
+        [3129/sqrt(x) for x in  plot_range]
     )
                             plot!( plot_range,
-        [ mass_err_model.err_qantiles[3]/sqrt(x) for x in  plot_range]
+        [4085/sqrt(x) for x in  plot_range]
     )
+
+                            plot( plot_range,
+        [ 2776/sqrt(x) for x in  plot_range]
+    )
+                            plot!( plot_range,
+        [3260/sqrt(x) for x in  plot_range]
+    )
+
+                            plot!( plot_range,
+        [4085/sqrt(x) for x in  plot_range]
+    )
+    vline!([36833.156])
+    hline!([16.0])
+    hline!([10.0])
+
 (1 ./sqrt.(intensities))\errs
     errs = [mass_err_model(x) for x in intensities]
     sqr

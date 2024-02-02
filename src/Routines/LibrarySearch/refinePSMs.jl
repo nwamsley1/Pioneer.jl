@@ -224,7 +224,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
     #Clean Features
     #######################
     #@time begin
-    PSMs[:,:q_value] .= zero(Float16);
+    PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
     
     FORM = FormulaTerm(
         (Term(:target),),
@@ -247,10 +247,10 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:err_norm),
          Term(:spectrum_peak_count),
     ))
-    N = size(PSMs, 1)÷10
+    N = size(PSMs, 1)÷4
     model_fit = glm(FORM, PSMs[shuffle(1:nrow(PSMs))[1:N],:], 
                             Binomial(), 
-                            LogitLink(),
+                            ProbitLink(),
                             verbose = false)
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,:iRT_error,:missed_cleavage,:Mox,:charge,:TIC,:total_ions,:err_norm,:spectrum_peak_count]
     model_predict(PSMs, model_fit, column_names)
@@ -268,7 +268,7 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
 
     #println("get best psms...")
     #@time begin
-    PSMs[!,:best_psm] .= false
+    PSMs[!,:best_psm] = zeros(Bool, size(PSMs, 1))
     gpsms = groupby(PSMs,:precursor_idx)
     for (precursor_idx, prec_psms) in pairs(gpsms)
         best_psm_idx = argmax(prec_psms[!,:prob])

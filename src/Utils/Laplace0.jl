@@ -34,3 +34,8 @@ function getPPMTest(mz::Float32, ppm_tol_param::Float32, intensity::Float32)
     #tol = (1/sqrt(intensity))*mz/1e6
     return mz - tol, mz + tol        
 end
+
+N = 100000
+a = MS_TABLE[:masses][N]
+sort(diff(a)./(a[2:end]./1e6))
+N += 1

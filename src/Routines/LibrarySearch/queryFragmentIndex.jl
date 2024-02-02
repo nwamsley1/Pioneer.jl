@@ -192,7 +192,8 @@ function searchScan!(precs::Counter{UInt32, UInt8},
     
     function getFragTol(mass::Float32, ppm_err::Float32, intensity::Float32, ppm_tol_param::Float32)
         mass -= Float32(ppm_err*mass/1e6)
-        ppm = max(min(ppm_tol_param/sqrt(intensity), 20.1), 5.0)
+        #ppm = max(min(ppm_tol_param/sqrt(intensity), 16.1), 5.0)
+        ppm = 16.1
         tol = ppm*mass/1e6
         return Float32(mass - tol), Float32(mass + tol)
        #return Float32(mass*(1 - 16.1*mass/1e6)), Float32(mass*(1 + 16.1*mass/1e6))

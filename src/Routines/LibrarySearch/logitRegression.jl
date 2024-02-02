@@ -1,19 +1,5 @@
 
 
-
-using Plots
-using Distributions
-gr()
-using DataFrames
-using TensorFlow
-import CSV
-import StatsBase
-using PyCall
-
-
-column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,:iRT_error,:missed_cleavage,:Mox,:charge,:TIC,:total_ions,:err_norm,:spectrum_peak_count]
-
-
 function model_predict(psms::DataFrame, model_fit::Any, column_names::Vector{Symbol})
     coefs = coef(model_fit)
     psms[!,:prob] = zeros(Float16, size(psms, 1))
@@ -36,11 +22,6 @@ function model_predict(psms::DataFrame, model_fit::Any, column_names::Vector{Sym
     end
 
 end
-
-@time model_predict(PSMs, model_fit, column_names)
-
-PSMs[!,:prob] = zeros(Float16, size(PSMs, 1))
-
 
 #=
 

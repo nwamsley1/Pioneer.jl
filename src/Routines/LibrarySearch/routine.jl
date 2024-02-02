@@ -416,8 +416,8 @@ end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_013024.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_013024.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_013124.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_020124.jld2"); frag_err_dist_dict)
 #MS_TABLE_PATHS = MS_TABLE_PATHS[1:2]
 RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\rt_map_dict_013024.jld2")["RT_to_iRT_map_dict"]
 frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\frag_err_dist_dict_013024.jld2")["frag_err_dist_dict"]
@@ -470,10 +470,19 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         );
         end
 end
+
+Set(PSMs[!,:precursor_idx]) ∩ precs
+Set(PSMs_Dict.values[1][!,:precursor_idx]) ∩ precs
+
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_013024_M0.jld2"); PSMs_Dict)
-
+rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
+filter!(x -> x.q_value<=0.01, best_psms)
+rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
+precs_ = Set(best_psms[rows_,:precursor_idx])
+Set(PSMs[!,:precursor_idx]) ∩ precs_
+Set(PSMs_Dict.values[1][!,:precursor_idx]) ∩ precs_
 x = 1
 PSMs_Dict = load(joinpath("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS", "PSMs_Dict_013024_M0.jld2"))["PSMs_Dict"]
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
@@ -487,10 +496,10 @@ PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath
 scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
+
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
-    #@time begin
     MS2_CHROMS = vcat(integrateMS2_(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
@@ -526,18 +535,20 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     MS2_CHROMS[!,:file_path].=MS_TABLE_PATH
     BPSMS[ms_file_idx] = MS2_CHROMS;
     GC.gc()
-    end
 end
 
 best_psms = vcat(values(BPSMS)...)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0_q99min5max25_020124.jld2"); 
+best_psms)
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
 getBestTrace!(best_psms)
 
 #=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
 =#
-best_psms = copy(MS2_CHROMS)
-getBestTrace!(best_psms)
+#best_psms = copy(MS2_CHROMS)
+#getBestTrace!(best_psms)
 best_psms[!,:iRT_diff] .= zero(Float32)
 best_psms[!,:iRT_observed] .= zero(Float32)
 best_psms[!,:sequence] .= ""
@@ -630,7 +641,7 @@ best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox
 best_psms[!,:isotope_fraction] = best_psms[!,:isotope_count]./(best_psms[!,:b_count] .+ best_psms[!,:y_count])
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
-xgboost_time = @timed bst = rankPSMs!(best_psms, 
+xgboost_time = @timed bst = rankPSMs2!(best_psms, 
                         features,
                         colsample_bytree = 1.0, 
                         min_child_weight = 5, 
@@ -652,6 +663,7 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0_020124_q99min5max25.jld2"); best_psms)
 
 histogram(best_psms[best_psms[!,:target], :prob], normalize = :probability, alpha = 0.5)
 histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alpha = 0.5)
@@ -659,7 +671,7 @@ histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alph
 filter!(x->x.best_scan==true, best_psms );
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_penalty50_clean5_012224.jld2"))["best_psms"]
 #filter!(x->x.q_value<=0.01, best_psms );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_013024_ppm30.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124_q975_5to40.jld2"); best_psms)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "ids_M0_010224.jld2"); IDs_PER_FILE)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "xgboost_M0_010224.jld2"); bst)
 
