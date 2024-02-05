@@ -289,7 +289,8 @@ end
                                                                                     "selectTransitions.jl",
                                                                                     "integrateChroms.jl",
                                                                                     "queryFragmentIndex.jl",
-                                                                                    "integrateChroms.jl"]];
+                                                                                    "integrateChroms.jl",
+                                                                                    "logitRegression.jl"]];
                                              
 ##########
 #Load Spectral Library
@@ -327,7 +328,7 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition
 
 println("Begin processing: "*string(length(MS_TABLE_PATHS))*" files")
 println("Starting Pre Search...")
-
+@time begin
 N = 24
 ionMatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 ionMisses = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
@@ -340,6 +341,7 @@ unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in
 spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
 precursor_weights = [zeros(Float32, length(precursors)) for _ in range(1, N)];
 precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
+end
 presearch_time = @timed begin
 #init_frag_tol = 30.0 #Initial tolerance should probably be pre-determined for each different instrument and resolution. 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
@@ -416,11 +418,12 @@ end
 
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_013124.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_020124.jld2"); frag_err_dist_dict)
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_020224.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_020224.jld2"); frag_err_dist_dict)
 #MS_TABLE_PATHS = MS_TABLE_PATHS[1:2]
-RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\rt_map_dict_013024.jld2")["RT_to_iRT_map_dict"]
-frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\frag_err_dist_dict_013024.jld2")["frag_err_dist_dict"]
+RT_to_iRT_map_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\rt_map_dict_020224.jld2")["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\frag_err_dist_dict_020224.jld2")["frag_err_dist_dict"]
 ###########
 #Main PSM Search
 ###########
@@ -470,13 +473,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         );
         end
 end
-
-Set(PSMs[!,:precursor_idx]) ∩ precs
-Set(PSMs_Dict.values[1][!,:precursor_idx]) ∩ precs
-
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_013024_M0.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020224_M0.jld2"); PSMs_Dict)
+
 rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
 filter!(x -> x.q_value<=0.01, best_psms)
 rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
@@ -485,10 +485,11 @@ Set(PSMs[!,:precursor_idx]) ∩ precs_
 Set(PSMs_Dict.values[1][!,:precursor_idx]) ∩ precs_
 x = 1
 PSMs_Dict = load(joinpath("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS", "PSMs_Dict_013024_M0.jld2"))["PSMs_Dict"]
+@time begin
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
-
+end
 
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
@@ -496,6 +497,7 @@ PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath
 scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
+end
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
@@ -538,11 +540,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
 end
 
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0_q99min5max25_020124.jld2"); 
-best_psms)
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
-getBestTrace!(best_psms)
 
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_020224.jld2"); best_psms)
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
+@time begin
+getBestTrace!(best_psms)
 #=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
@@ -568,7 +570,6 @@ best_psms[!,:iRT_error] .= zero(Float32)
 for i in ProgressBar(range(1, size(best_psms)[1]))
     best_psms[i,:iRT_error] = abs(best_psms[i,:iRT_observed]- best_psms[i,:iRT_predicted])
 end
-
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
 features = [ 
     #:iRT_diff,
@@ -663,8 +664,9 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0_020124_q99min5max25.jld2"); best_psms)
-
+end
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020224_q99min5max25.jld2"); best_psms)
+end
 histogram(best_psms[best_psms[!,:target], :prob], normalize = :probability, alpha = 0.5)
 histogram!(best_psms[best_psms[!,:decoy], :prob], normalize = :probability, alpha = 0.5)
 

@@ -248,17 +248,67 @@ function refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{
          Term(:spectrum_peak_count),
     ))
     N = size(PSMs, 1)÷4
+   
+   
     model_fit = glm(FORM, PSMs[shuffle(1:nrow(PSMs))[1:N],:], 
-                            Binomial(), 
-                            ProbitLink(),
-                            verbose = false)
+                           Binomial(), 
+                           ProbitLink(),
+                           verbose = false)
+
+    @time model_fit = glm(FORM, PSMs, 
+                           Binomial(), 
+                           ProbitLink(),
+                           verbose = false)
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,:iRT_error,:missed_cleavage,:Mox,:charge,:TIC,:total_ions,:err_norm,:spectrum_peak_count]
     model_predict(PSMs, model_fit, column_names)
+
+    y = Float32.(PSMs[!,:target])
+    θ = X\y
+    PSMs[!,:prob] = Float16.(X*β)
+    PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
     getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
     println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
     println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
     println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 
+    best = ((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)) .| PSMs.decoy;
+    #y = Float32.(PSMs[!,:target])
+    θ = X[best,:]\y[best]
+    PSMs[!,:prob] = Float16.(X*θ)
+    getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
+    println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+
+
+
+    XF64 = Float64.(X)
+    XF64 = hcat(XF64, ones(size(X, 1)))
+    Y = Float64.(PSMs[!,:target])
+    @time y_hat = XF64*(XF64\Y)
+    PSMs[!,:prob] = Float16.(y_hat)
+    PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
+
+    getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
+    println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+
+
+    best = ((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)) .| PSMs.decoy;
+    X2 = XF64[best,:];
+    @time θ = X2\Y[best,:];
+    y_hat = reshape(XF64*θ, (length(best),));
+    PSMs[!,:prob] = Float16.(y_hat);
+    PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
+
+    getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
+    println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+    println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+    println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+
+
+    BLAS.set_num_threads(1) 
     #end
     ##########
     #Filter low scoring psms and add precursor mz

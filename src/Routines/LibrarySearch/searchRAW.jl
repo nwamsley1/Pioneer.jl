@@ -312,7 +312,7 @@ function searchRAW(
                                         spectra[:intensities][i], 
                                         frag_ppm_err,
                                         mass_err_model.err_qantiles[3],
-                                        20.0f0,
+                                        25.0f0,
                                         UInt32(i), 
                                         ms_file_idx)
         
