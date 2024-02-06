@@ -200,11 +200,13 @@ end
 X = hcat(X[:,1:11], X[:,1:11].^2)
 X = hcat(X, ones(eltype(X), size(X, 1)))
 y = Bool.(y)
+Threads.@threads for i in range(1, 11)
+    X[:,i] = X[:,i]/std(X[:,i])
+end
 include("src/Routines/LibrarySearch/test.jl")
-
-β = zeros(Float64, size(X, 2))
-@time β = ProbitRegression(β, X, y, max_iter = 20)
-PSMs[!,:prob] = Float16.(X*β)
+β = zeros(Float64, size(X, 2));
+@time β = ProbitRegression(β, X, y, max_iter = 15);
+PSMs[!,:prob] = Float16.(X*β);
 PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
 getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
@@ -212,7 +214,7 @@ println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==fals
 println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 
 best = ((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)) .| PSMs.decoy;
-β = ProbitRegression(β, X[best,:], y[best], max_iter = 30);
+β = ProbitRegression(β, X[best,:], y[best], max_iter = 15);
 PSMs[!,:prob] = Float16.(X*β);
 getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
@@ -224,6 +226,14 @@ jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs.jld2"); PSMs)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "X.jld2"); X)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "y.jld2"); y)
 joinpath(MS_DATA_DIR, "Search", "RESULTS", "y.jld2")
+
+
+exp(-((-7.0)^2)/2)/sqrt(2*π)
+(1 + SpecialFunctions.erf((-7.0)/sqrt(2)))/2
+
+
+exp(-((7.0)^2)/2)/sqrt(2*π)
+(1 + SpecialFunctions.erf((7.0)/sqrt(2)))/2
 
 y = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\y.jld2")["y"]
 X = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\X.jld2")["X"]
