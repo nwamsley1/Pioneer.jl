@@ -195,8 +195,14 @@ function ProbitRegression(β::Vector{T}, X::Matrix{T}, y::Vector{T}; max_iter::I
     end
     return β
 end
+
+
+X = hcat(X[:,1:11], X[:,1:11].^2)
+X = hcat(X, ones(eltype(X), size(X, 1)))
+y = Bool.(y)
 include("src/Routines/LibrarySearch/test.jl")
-β = zeros(eltype(X), size(X, 2))
+
+β = zeros(Float64, size(X, 2))
 @time β = ProbitRegression(β, X, y, max_iter = 20)
 PSMs[!,:prob] = Float16.(X*β)
 PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
@@ -204,8 +210,9 @@ getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
 println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
 println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
-best = ((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)) .| PSMs.decoy;
-β = ProbitRegression(β, X[best,:], y[best], max_iter = 10);
+
+best = ((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)) .| PSMs.decoy;
+β = ProbitRegression(β, X[best,:], y[best], max_iter = 30);
 PSMs[!,:prob] = Float16.(X*β);
 getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
@@ -228,7 +235,8 @@ println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==fal
 println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
 println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 
-
+plot( LinRange(-5, 5, 1000),
+[logcdf(Normal(), x) for x in LinRange(-5, 5, 1000)])
 XWX = zeros(T, (size(X, 2), size(X, 2)))
 @time fillXWX!(XWX, X, W)
 fillY!(Y, X, W, Z)
