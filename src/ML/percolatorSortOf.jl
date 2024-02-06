@@ -16,14 +16,14 @@ function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, la
     PSMs[:,:q_value] = q_values;
 end
 =#
-function getQvalues!(probs::Vector{T}, labels::Vector{Bool}, qvals::Vector{T}) where {T<:AbstractFloat}
+function getQvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}) where {T,U<:AbstractFloat}
 
     order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
     targets = 0
     decoys = 0
     @inbounds @fastmath for i in order
-            decoys += labels[i]
-            targets += (1 - labels[i])
+            targets += labels[i]
+            decoys += (1 - labels[i])
             qvals[i] = decoys/(targets + decoys)
     end
     #PSMs[:,:q_value] = q_values;

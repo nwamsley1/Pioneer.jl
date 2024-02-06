@@ -8,7 +8,7 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     ik = KernelDensity.InterpKDE(B)
     #Get KDE
     for i in eachindex(x_grid), j in eachindex(y_grid)
-            z[i, j] = Distributions.pdf(ik, x_grid[i], y_grid[j])
+        z[i, j] = Distributions.pdf(ik, x_grid[i], y_grid[j])
     end
     #Monotonic increasing walk along ridge
     max_j = 1

@@ -205,7 +205,23 @@ y = Bool.(y)
 Threads.@threads for i in range(1, 11)
     X[:,i] = X[:,i]/std(X[:,i])
 end
+
 include("src/Routines/LibrarySearch/test.jl")
+@time begin
+β = zeros(Float64, length(column_names));
+β = ProbitRegression(β, PSMs[!,column_names], PSMs[!,:target], max_iter = 30);
+PSMs[!,:score] = ModelPredict!(PSMs[!,column_names], β);
+getQvalues!(PSMs[!,:score],PSMs[!,:decoy],PSMs[!,:q_value]);
+best = ((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)) .| PSMs.decoy;
+β = ProbitRegression(β, PSMs[best,column_names], PSMs[best,:target], max_iter = 30);
+PSMs[!,:score] = ModelPredict!(PSMs[!,column_names], β);
+getQvalues!(PSMs[!,:score],PSMs[!,:decoy],PSMs[!,:q_value]);
+end
+println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+
+
 β = zeros(Float64, size(X, 2));
 @time begin
 row_sample = sample(1:size(X,1), 2000000, replace=false, ordered=true)
