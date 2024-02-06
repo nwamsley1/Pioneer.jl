@@ -1,4 +1,7 @@
-function refineFirstSearchPSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
+#println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false))
+#println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+#println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_rt_error::Float64 = 20.0,  
                         min_prob::Float64 = 0.95, 
                         n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
@@ -8,34 +11,33 @@ function refineFirstSearchPSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precurso
     targets = zeros(Bool, N);
     TIC = zeros(Float16, N);
     charge = zeros(UInt8, N);
-    total_ions = zeros(UInt16, N);
     spectrum_peak_count = zeros(UInt32, N);
     iRT_pred = zeros(Float32, N);
     RT = zeros(Float32, N);
-
     scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
     precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
-    y_count::Vector{UInt8} = PSMs[!,:y_count]
-    b_count::Vector{UInt8} = PSMs[!,:b_count]
     matched_ratio::Vector{Float16} = PSMs[!,:matched_ratio]
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    #PSMs[!,:total_ions]
-    #SMs[!,:sequence_length] .= false
 
-    Threads.@threads for i in range(1, size(PSMs)[1])#ProgressBar(range(1, size(PSMs)[1]))
-        decoys[i] = isDecoy(precursors[precursor_idx[i]]);
-        targets[i] = decoys[i] == false
-        iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
-        RT[i] = Float32(scan_retention_time[scan_idx[i]]);
-        #PSMs[i,:iRT_obdserved] = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
-        TIC[i] = Float16(log2(tic[scan_idx[i]]));
-        charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
-        total_ions[i] = UInt16(y_count[i] + b_count[i]);
-        matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
-        #stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
+    tasks_per_thread = 10
+    chunk_size = max(1, size(PSMs, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(PSMs, 1), chunk_size) # partition your data into chunks that
+
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            for i in chunk
+            decoys[i] = isDecoy(precursors[precursor_idx[i]]);
+            targets[i] = decoys[i] == false
+            iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
+            RT[i] = Float32(scan_retention_time[scan_idx[i]]);
+            TIC[i] = Float16(log2(tic[scan_idx[i]]));
+            charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
+            matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
+            end
+        end
     end
-
+    fetch.(tasks)
     PSMs[!,:matched_ratio] = matched_ratio
     PSMs[!,:decoy] = decoys
     PSMs[!,:iRT_predicted] = iRT_pred
@@ -45,33 +47,8 @@ function refineFirstSearchPSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precurso
     PSMs[!,:target] = targets
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
-
-    #######################
-    #Clean Features
-    #######################
-    #@time begin
-    PSMs[:,:q_value] .= zero(Float16);
-    
-    FORM = FormulaTerm(
-        (Term(:target),),
-        (Term(:entropy_score),
-         Term(:city_block),
-         Term(:scribe),
-         Term(:spectral_contrast),
-         Term(:y_count),
-         Term(:error),
-         Term(:total_ions),
-         Term(:TIC))
-    )
-
-    model_fit = glm(FORM, PSMs, 
-                            Binomial(), 
-                            ProbitLink())
-    PSMs[!,:prob] = Float16.(GLM.predict(model_fit, PSMs));
-   
-    filter!(:prob => x -> x>=min_prob, PSMs);
-    return 
 end
+
 function addMainSearchColumns!(PSMs::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
                                 precursors::Vector{LibraryPrecursorIon{T}}
@@ -79,7 +56,6 @@ function addMainSearchColumns!(PSMs::DataFrame,
     
     ###########################
     #Allocate new columns
-    #@time begin
     N = size(PSMs, 1)
     missed_cleavage = zeros(UInt8, N);
     Mox = zeros(UInt8, N);
@@ -114,6 +90,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
         return mox
     end
 
+    #Split data into chunk ranges
     tasks_per_thread = 10
     chunk_size = max(1, size(PSMs, 1) ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = partition(1:size(PSMs, 1), chunk_size) # partition your data into chunks that
@@ -233,33 +210,13 @@ function getBestPSMs!(psms::DataFrame,
 
     return
 end
-#=
-    #optimize to make type stable
-    filter!(x->x.best_psm, psms);
 
-    prec_mz = zeros(Float32, size(psms, 1));
-    precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
-    Threads.@threads for i in range(1, size(psms, 1))
-        prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
-    end
-    psms[!,:prec_mz] = prec_mz
-    return psms
-end
-=#
-
-function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; window_width::Float64 = 0.0) where {T<:AbstractFloat}
-    
-    ###########################
-    #Correct Weights by base-peak intensity
-    filter!(x->x.weight>0.0, PSMs);
+function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, 
+                                    precursors::Vector{LibraryPrecursorIon{T}}) where {T<:AbstractFloat}
     ###########################
     #Allocate new columns
-   
-    #Threads.@threads for i in ProgressBar(range(1, size(PSMs)[1]))
     N = size(PSMs)[1]
-    decoys = zeros(Bool, N);
     iRT_pred = zeros(Float32, N);
-    iRT_obs = zeros(Float32, N);
     RT = zeros(Float32, N);
     TIC = zeros(Float16, N);
     total_ions = zeros(UInt16, N);
@@ -272,30 +229,33 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     y_count::Vector{UInt8} = PSMs[!,:y_count]
     b_count::Vector{UInt8} = PSMs[!,:b_count]
     error::Vector{Float32} = PSMs[!,:error]
-    #PSMs[!,:total_ions]
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     matched_ratio::Vector{Float16} = PSMs[!,:matched_ratio]
-    #file_path::Vector{String} = PSMs[!,:file_path]
-    #err_norm = PSMs[!,:err_norm]
-    Threads.@threads for i in range(1, size(PSMs)[1])
-        decoys[i] = isDecoy(precursors[precursor_idx[i]]);
-        targets[i] = decoys[i] == false
-        #iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
-        RT[i] = Float32(scan_retention_time[scan_idx[i]]);
-        #iRT_obs = RT_iRT[PSMs[i,:file_path]](PSMs[i,:RT])
-        charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
-        prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
-        TIC[i] = Float16(log2(tic[scan_idx[i]]));
-        total_ions[i] = UInt16(y_count[i] + b_count[i]);
-        err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
-        if isinf(matched_ratio[i])
-            matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
+
+    #Split data into chunk ranges
+    tasks_per_thread = 10
+    chunk_size = max(1, size(PSMs, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(PSMs, 1), chunk_size) # partition your data into chunks that
+
+
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            for i in chunk
+                targets[i] = isDecoy(precursors[precursor_idx[i]]) == false;
+                RT[i] = Float32(scan_retention_time[scan_idx[i]]);
+                charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
+                prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
+                TIC[i] = Float16(log2(tic[scan_idx[i]]));
+                total_ions[i] = UInt16(y_count[i] + b_count[i]);
+                err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
+                if isinf(matched_ratio[i])
+                    matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
+                end
+            end
         end
-        #if isinf(PSMs[i,:err_norm])
-        #    PSMs[i,:err_norm] = Float16(60000)*sign(PSMs[i,:err_norm])
-        #end
     end
+    fetch.(tasks)
     PSMs[!,:matched_ratio] = matched_ratio
     PSMs[!,:decoy] = decoys
     PSMs[!,:iRT_predicted] = iRT_pred
@@ -306,6 +266,12 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
     PSMs[!,:target] = targets
     PSMs[!,:charge] = charge
     PSMs[!,:prec_mz] = prec_mz
+
+    sort!(PSMs,:RT); #Sorting before grouping is critical. 
+
+end
+
+function addIntegrationFeatures!(PSMs::DataFrame)
     ###########################
     #Add columns
     new_cols = [(:peak_area,                   Union{Float32, Missing})
@@ -340,42 +306,49 @@ function _refinePSMs!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector
         PSMs[!,col_name] = zeros(col_type, size(PSMs)[1])
     end
     PSMs[!,:best_scan] .= false;
+end
 
-    #######
-    sort!(PSMs,:RT); #Sorting before grouping is critical. 
+function getIsoRanks!(psms::DataFrame, MS_TABLE::Arrow.Table)
 
-    #sum(MS2_CHROMS.weight.!=0.0)
-    PSMs[!,:iso_rank] .= zero(UInt8)
+    psms[!,:iso_rank] = zeros(UInt8, size(psms, 1))
 
-    Threads.@threads for i in range(1, size(PSMs,1))
+    #Split data into chunk ranges
+    tasks_per_thread = 10
+    chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
 
-        charge = PSMs[i,:charge]
-        mz = PSMs[i,:prec_mz]
-        scan_id = PSMs[i,:scan_idx]
-        scan_mz = MS_TABLE[:precursorMZ][scan_id]
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            for i in chunk
 
-        window = (Float32(scan_mz-window_width/2), 
-                  Float32(scan_mz+window_width/2)
+                charge = PSMs[i,:charge]
+                mz = PSMs[i,:prec_mz]
+                scan_id = PSMs[i,:scan_idx]
+                scan_mz = MS_TABLE[:precursorMZ][scan_id]
 
-                  )
-        isotopes = getPrecursorIsotopeSet(mz, charge, window)
+                window = (Float32(scan_mz-window_width/2), 
+                        Float32(scan_mz+window_width/2)
 
-        rank = zero(UInt8)
-        if iszero(first(isotopes))
-            if last(isotopes) > 1
-                rank = UInt8(1)
-            elseif last(isotopes) == 1
-                rank = UInt8(2)
-            else
-                rank = UInt8(3)
+                        )
+                isotopes = getPrecursorIsotopeSet(mz, charge, window)
+
+                rank = zero(UInt8)
+                if iszero(first(isotopes))
+                    if last(isotopes) > 1
+                        rank = UInt8(1)
+                    elseif last(isotopes) == 1
+                        rank = UInt8(2)
+                    else
+                        rank = UInt8(3)
+                    end
+                else
+                    rank = UInt8(4)
+                end
+                PSMs[i,:iso_rank] = rank
             end
-        else
-            rank = UInt8(4)
         end
-        PSMs[i,:iso_rank] = rank
     end
-
-    #println("new_features $new_features")
+    fetch.(tasks)
     return 
 end
 

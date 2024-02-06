@@ -477,18 +477,13 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
                                     n_train_rounds = 3,
                                     max_iter_per_round = 10,
                                     max_q_value = 0.01);
-
-        #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
-        #println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-        #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
-
                                     
         getBestPSMs!(PSMs,
                         prosit_lib["precursors"],
                         max_q_value = 0.10);
 
         println("retained ", size(PSMs, 1), " psms")
-        
+
         insert!(PSMs_Dict, 
             MS_TABLE_PATH, 
             PSMs[!,
@@ -526,7 +521,7 @@ end
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
-    MS2_CHROMS = vcat(integrateMS2_(MS_TABLE, 
+    PSMS = vcat(integrateMS2_(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
@@ -547,19 +542,23 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
                     )...);
 
-    filter!(x->x.weight>0.0, MS2_CHROMS);
-    _refinePSMs!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"], window_width = ms2_integration_params[:quadrupole_isolation_width]);
-    MS2_CHROMS_GROUPED = groupby(MS2_CHROMS, [:precursor_idx,:iso_rank]);
-    integratePrecursors(MS2_CHROMS_GROUPED, 
+    filter!(x->x.weight>0.0, PSMS);
+    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"]);
+    getIsoRanks!(PSMS, MS_TABLE)
+    addIntegrationFeatures!(PSMS)
+    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
+    integratePrecursors(MS2_CHROMS, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
                                         intensity_filter_fraction = params_[:intensity_filter_fraction],
                                         α = 0.001f0,
                                         LsqFit_tol = params_[:LsqFit_tol],
                                         Lsq_max_iter = params_[:Lsq_max_iter],
-                                        tail_distance = params_[:tail_distance])
-    addFeatures!(MS2_CHROMS, MS_TABLE, prosit_lib["precursors"]);
-    MS2_CHROMS[!,:file_path].=MS_TABLE_PATH
-    BPSMS[ms_file_idx] = MS2_CHROMS;
+                                        tail_distance = params_[:tail_distance]
+                        )
+
+    addFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"]);
+    PSMS[!,:ms_file_idx].=ms_file_idx
+    BPSMS[ms_file_idx] = PSMS;
     GC.gc()
 end
 
