@@ -465,31 +465,30 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         #scan_range = (100000, 100010)
         )...);
 
-        @time addMainSearchColumns!(PSMs, MS_TABLE, prosit_lib["precursors"]);
-        @time getRTErrs!(PSMs);
+        addMainSearchColumns!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+        getRTErrs!(PSMs);
 
         column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
                         :iRT_error,:missed_cleavage,:Mox,:charge,:TIC,
-                        :y_count,:err_norm,:spectrum_peak_count]
+                        :y_count,:err_norm,:spectrum_peak_count,:intercept]
 
-        @time scoreMainSearchPSMs!(PSMs,
+        scoreMainSearchPSMs!(PSMs,
                                     column_names,
-                                    n_train_rounds = 2,
-                                    max_iter_per_round = 20,
+                                    n_train_rounds = 3,
+                                    max_iter_per_round = 10,
                                     max_q_value = 0.01);
 
-        println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
-        println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-        println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
+        #println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
+        #println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
+        #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 
                                     
-        @time getBestPSMs!(PSMs,
+        getBestPSMs!(PSMs,
                         prosit_lib["precursors"],
                         max_q_value = 0.10);
+
+        println("retained ", size(PSMs, 1), " psms")
         
-        filter!(x->x.best_psm, PSMs);
-
-
         insert!(PSMs_Dict, 
             MS_TABLE_PATH, 
             PSMs[!,

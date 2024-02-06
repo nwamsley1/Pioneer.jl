@@ -145,6 +145,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
     PSMs[!,:Mox] = Mox
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
+    PSMs[!,:intercept] = ones(Float16, N)
 end
 
 function getRTErrs!(psms::DataFrame; 
@@ -177,13 +178,25 @@ function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
 
     β = zeros(Float64, length(column_names));
     best_psms = nothing#ones(Bool, size(psms, 1))
+
+    tasks_per_thread = 10
+    M = size(psms, 1)
+    chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+
     for i in range(1, n_train_rounds)
         if i < 2 #Train on all data during first round
-            β = ProbitRegression(β, psms[!,column_names], psms[!,:target], max_iter = max_iter_per_round);
+            β = ProbitRegression(β, psms[!,column_names], psms[!,:target], data_chunks, max_iter = max_iter_per_round);
+            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
         else #Train using only decoys and high scoring targets from the previous round
-            β = ProbitRegression(β, psms[best_psms,column_names], psms[best_psms,:target], max_iter = max_iter_per_round);
+            psms_targets = psms[best_psms,:target]
+            M = size(psms_targets, 1)
+            sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+            sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that
+            β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
+            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
         end
-        psms[!,:score] = ModelPredict!(psms[!,column_names], β); #Get Z-scores 
+      
         getQvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
         if i < n_train_rounds #Get Data to train on during subsequent round
             best_psms = ((psms[!,:q_value].<=max_q_value).&(PSMs[!,:target])) .| (psms[!,:target].==false);
