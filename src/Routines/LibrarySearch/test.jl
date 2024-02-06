@@ -5,10 +5,13 @@ function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::BitVector) whe
             μ = (1 + SpecialFunctions.erf(η[i]/sqrt(2)))/2
             if y[i]
                 Z[i] = η[i] + (1 - μ)/ϕ
+                η[i] = log(μ)
             else
                 Z[i] = η[i] - μ/ϕ
+                η[i] = 1- log(μ)
             end
             W[i] = (ϕ^2)/(μ*(1 - μ))
+
         end
     end
 end
@@ -63,26 +66,29 @@ function fillη!(η::Vector{T}, X::Matrix{U}, β::Vector{T}) where {T,U<:Abstrac
     end
 end
 
-function ProbitRegression(β::Vector{T}, X::Matrix{U}, y::BitVector; max_iter::Int = 3) where {T,U<:AbstractFloat}
+function ProbitRegression(β::Vector{T}, X::Matrix{U}, y::BitVector; max_iter::Int = 30) where {T,U<:AbstractFloat}
     W = zeros(T, length(y))
     η = zeros(T, length(y))
     Z = zeros(T, length(y))
     Y = zeros(T, size(X, 2))
     XWX = zeros(T, (size(X, 2), size(X, 2)))
     old_β = copy(β)
-    @time for i in ProgressBar(range(1, max_iter))
-        fillη!(η, X, β)
+    old_loss = 0.0
+    @time for i in range(1, max_iter)#ProgressBar(range(1, max_iter))
+        fillη!(η, X, β)        
         fillZandW!(Z, W, η, y)
+        loss = 0.0
+        @turbo for i in range(1, length(η))
+            loss += η[i]
+        end
         fillXWX!(XWX, X, W)
         fillY!(Y, X, W, Z)
-        #println("max(W) ", maximum(W), " ", minimum(W))
-        #println("maximum(Z) ", maximum(Z)," ", minimum(Z))
-        #println("maximum(η) ", maximum(η), " ", minimum(Z))
-        #println("Y", maximum(Y), " ", minimum(Y))
-        #println("XWX ", XWX)
-        #println("Y $Y")
-        #println(" β $β")
         β = T.(XWX\Y)
+        if abs(1 - exp(loss - old_loss)) < 1e-2
+            return β
+        end
+        old_loss = loss
+
         #println(LinearAlgebra.norm2(β .- old_β)/(LinearAlgebra.norm2(β)))
         old_β = copy(β)
     end

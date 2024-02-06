@@ -199,24 +199,24 @@ end
 
 X = hcat(X[:,1:11], X[:,1:11].^2)
 X = hcat(X, ones(eltype(X), size(X, 1)))
+
+
 y = Bool.(y)
 Threads.@threads for i in range(1, 11)
     X[:,i] = X[:,i]/std(X[:,i])
 end
 include("src/Routines/LibrarySearch/test.jl")
 β = zeros(Float64, size(X, 2));
-@time β = ProbitRegression(β, X, y, max_iter = 15);
+@time begin
+row_sample = sample(1:size(X,1), 2000000, replace=false, ordered=true)
+@time β = ProbitRegression(β, X[row_sample,:], y[row_sample], max_iter = 8);
 PSMs[!,:prob] = Float16.(X*β);
-PSMs[!,:q_value] = zeros(Float16, size(PSMs, 1));
-getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
-println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
-println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
-
+getQvalues!(PSMs[!,:prob],PSMs[!,:decoy],PSMs[!,:q_value]);
 best = ((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)) .| PSMs.decoy;
-β = ProbitRegression(β, X[best,:], y[best], max_iter = 15);
+@time β = ProbitRegression(β, X[best,:], y[best], max_iter = 39);
 PSMs[!,:prob] = Float16.(X*β);
 getQvalues!(PSMs[!,:prob],  PSMs[!,:decoy],PSMs[!,:q_value]);
+end;
 println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false)))
 println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
 println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
