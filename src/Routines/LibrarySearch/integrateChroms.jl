@@ -323,7 +323,6 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             total_intensity += intensity
         end
     end
-    
     GOF = 1 - sum_of_residuals/total_intensity
     if isinf(GOF)
         GOF = missing
@@ -341,81 +340,67 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     
     ############
     #Summary Statistics 
-
-
     function getSummaryScores!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}) where {T,U<:AbstractFloat, I,J<:Integer}
-        max_scribe_score = 0.0
-        max_ratio = 0.0
-        max_weight = 0.0
-        max_entropy = -10.0
-        sum_log_probability = 0.0
-        max_spectral_contrast = -10.0
-        max_scribe_fitted = -100.0
+        max_scribe_score = -100.0
+        max_matched_ratio = -100.0
+        max_entropy = -100.0
+        max_score = -100.0
+        mean_score = 0.0
         max_city_fitted = -100.0
         mean_city_fitted = 0.0
         count = 0
-        ions_sum = 0
-        max_ions = 0
+        y_ions_sum = 0
+        max_y_ions = 0
 
-        for i in range(1, length(chrom.weight))
+        start = max(1, best_scan - 2)
+        stop = min(length(chrom.weight), best_scan + 2)
+
+        for i in range(start, stop)
             if !state.mask[i]
-                if chrom.scribe_fitted[i] > max_scribe_fitted
-                    max_scribe_fitted = chrom.scribe_fitted[i]
-                end
-                if chrom.city_block_fitted[i] > max_city_fitted
-                    max_city_fitted = chrom.city_block_fitted[i]
-                end
                 if chrom.scribe[i]>max_scribe_score
                     max_scribe_score = chrom.scribe[i]
                 end
-                if max(chrom.entropy_score[i])>max_entropy
-                    max_entropy=max(chrom.entropy_score[i])
-                end
-                if chrom.matched_ratio[i]>max_ratio
-                    max_ratio = chrom.matched_ratio[i]
-                end
-                if chrom.spectral_contrast[i]>max_spectral_contrast
-                    max_spectral_contrast= chrom.spectral_contrast[i]
-                end
-                if chrom.weight[i]>max_weight
-                    max_weight = chrom.weight[i]
-                end
-                if chrom.total_ions[i] > ions_sum
-                    ions_sum = chrom.total_ions[i]
+
+                if chrom.matched_ratio[i]>max_matched_ratio
+                    max_matched_ratio = chrom.matched_ratio[i]
                 end
 
-                ion_count = (chrom.b_count[i] + chrom.y_count[i])
-                ions_sum += ion_count
-
-                if ion_count > max_ions
-                    max_ions = ion_count
+                if chrom.entropy_score[i]>max_entropy
+                    max_entropy=chrom.entropy_score[i]
                 end
 
+                if chrom.city_block_fitted[i]>max_city_fitted
+                    max_city_fitted=chrom.max_city_fitted[i]
+                end
+
+                if chrom.score[i]>max_score
+                    max_score = chrom.score[i]
+                end
+
+                mean_score += chrom.score[i]
+
+                y_ion_count = (chrom.b_count[i] + chrom.y_count[i])
+                y_ions_sum += y_ion_count
+
+                if y_ion_count > max_y_ions
+                    max_y_ions = y_ion_count
+                end
                 #sum_log_probability += log2(chrom.prob[i])
                 mean_city_fitted += chrom.city_block_fitted[i]
                 count += 1
             end
         end    
 
-        #chrom.log_sum_of_weights[best_scan] = log_sum_of_weights
-        #chrom.max_spectral_contrast[best_scan] = max_spectral_contrast
-        chrom.max_entropy[best_scan] = max_entropy
         chrom.max_scribe_score[best_scan] = max_scribe_score
-
-        #chrom.mean_log_probability[best_scan] = sum_log_probability/count
-
-        #if isnan(chrom.mean_log_probability[best_scan])
-        #    chrom.mean_log_probability[best_scan] = missing
-        #end
-
-        chrom.max_weight[best_scan] = log2(max_weight)
-
-        chrom.max_matched_ratio[best_scan] = max_ratio
-        chrom.ions_sum[best_scan] = ions_sum
-        chrom.max_ions[best_scan] = max_ions
-        chrom.max_scribe_fitted[best_scan] = max_scribe_fitted
+        chrom.max_matched_ratio[best_scan] = max_matched_ratio
+        chrom.max_entropy[best_scan] = max_entropy
         chrom.max_city_fitted[best_scan] = max_city_fitted
         chrom.mean_city_fitted[best_scan] = mean_city_fitted/count
+        chrom.max_score[best_scan] = max_score
+        chrom.mean_score[best_scan] = mean_score/count
+        chrom.y_ions_sum[best_scan] = y_ions_sum
+        chrom.max_y_ions[best_scan] = max_y_ions
+
     end
 
     getSummaryScores!(state, chrom);

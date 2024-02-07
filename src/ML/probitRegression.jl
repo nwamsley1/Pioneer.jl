@@ -167,3 +167,46 @@ function ModelPredict!(scores::Vector{U},
     end
 
 end
+
+function ModelPredictCVFold!(scores::Vector{U}, 
+                        cv_folds::Vector{UInt8},
+                        cv_fold::UInt8,
+                        psms::DataFrame,
+                        β::Vector{T}, 
+                        data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat}
+    
+    function fillColumn!(scores::Vector{T},   
+                            cv_folds::Vector{UInt8},
+                            cv_fold::UInt8,
+                            X::Vector{R}, 
+                            β::U, 
+                            data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
+        tasks = map(data_chunks) do row_chunk
+            Threads.@spawn begin
+                for row in row_chunk
+                    if cv_folds[row] != cv_fold
+                        scores[row] += X[row]*β
+                    end
+                end
+            end
+        end
+        fetch.(tasks)
+    end
+
+    for col in range(1, size(psms, 2))
+        fillColumn!(scores, cv_folds, cv_fold, psms[!,col], β[col], data_chunks)
+    end
+
+    tasks = map(data_chunks) do row_chunk
+        Threads.@spawn begin
+            for row in row_chunk
+                if cv_folds[row] != cv_fold
+                    scores[row] = (1 + SpecialFunctions.erf(scores[row]/sqrt(2)))/2
+                end
+            end
+        end
+    end
+    fetch.(tasks)
+
+end
+

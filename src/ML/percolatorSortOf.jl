@@ -219,13 +219,13 @@ function rankPSMs2!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3,
                 psms_train_sub[i,:prob_temp] = (1 - ŷ[i])
             end
             println("start grouping")
-            grouped_psms = groupby(psms_train_sub, :precursor_idx); #
+            grouped_psms = groupby(psms_train_sub, [:precursor_idx,:iso_rank]); #
             println("stop grouping")
             for i in ProgressBar(range(1, length(grouped_psms)))
                 median_prob = median(grouped_psms[i][!,:prob_temp])
-                if train_iter == 1
-                    insert!(prec_to_prob, first(grouped_psms[i].precursor_idx), median_prob)
-                end
+                #if train_iter == 1
+                #    insert!(prec_to_prob, first(grouped_psms[i].precursor_idx), median_prob)
+                #end
                 for j in range(1, size(grouped_psms[i], 1))
                     grouped_psms[i][j,:max_prob] = median_prob
                 end
@@ -238,13 +238,13 @@ function rankPSMs2!(PSMs::DataFrame, features::Vector{Symbol}; n_folds::Int = 3,
             end
 
             println("start grouping")
-            grouped_psms = groupby(psms_test_sub, :precursor_idx); #
+            grouped_psms = groupby(psms_test_sub, [:precursor_idx,:iso_rank]); #
             println("stop grouping")
             for i in ProgressBar(range(1, length(grouped_psms)))
                 median_prob = median(grouped_psms[i][!,:prob])
-                if train_iter == 1
-                    insert!(prec_to_prob, first(grouped_psms[i].precursor_idx), median_prob)
-                end
+                #if train_iter == 1
+                #    insert!(prec_to_prob, first(grouped_psms[i].precursor_idx), median_prob)
+                #end
                 for j in range(1, size(grouped_psms[i], 1))
                     grouped_psms[i][j,:max_prob] = median_prob
                 end

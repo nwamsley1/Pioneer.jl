@@ -80,6 +80,9 @@ SPEC_LIB_DIR = ARGS["spec_lib_dir"];
 
 #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+MS_TABLE_PATH_TO_ID = Dictionary(MS_TABLE_PATHS, UInt32.(collect(range(1,length(MS_TABLE_PATHS)))))
+MS_TABLE_ID_TO_PATH = Dictionary(UInt32.(collect(range(1,length(MS_TABLE_PATHS)))), MS_TABLE_PATHS)
+
 MS_DATA_DIR = joinpath(MS_DATA_DIR, EXPERIMENT_NAME);
 out_folder = joinpath(MS_DATA_DIR, "Search")
 if !isdir(out_folder)
@@ -510,6 +513,13 @@ precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
 end
 
+#get CV folds for each precursor
+precID_to_cv_fold = Dictionary{UInt32, UInt8}()
+for (prec_id, irt) in pairs(precID_to_iRT)
+    insert!(precID_to_cv_fold,
+    prec_id,
+    rand(UInt8[0, 1]))
+end
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
@@ -518,10 +528,14 @@ unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ i
 spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
 end
 
+features = [:intercept, :charge, :total_ions, :err_norm, 
+:scribe, :city_block, :city_block_fitted, 
+:spectral_contrast, :entropy_score, :weight]
+
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
-    PSMS = vcat(integrateMS2_(MS_TABLE, 
+    @time PSMS = vcat(integrateMS2_(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
@@ -542,20 +556,25 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     scan_range = (1, length(MS_TABLE[:scanNumber])),
                     )...);
 
-    filter!(x->x.weight>0.0, PSMS);
-    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"]);
-    getIsoRanks!(PSMS, MS_TABLE, 8.0036/2)
-    addIntegrationFeatures!(PSMS)
-    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
-    integratePrecursors(MS2_CHROMS, 
+    
+    @time begin
+    @time filter!(x->x.weight>0.0, PSMS);
+    @time addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);    
+    @time scoreSecondSearchPSMs!(PSMS,features);
+    @time getIsoRanks!(PSMS, MS_TABLE, 8.0036/2);
+    @time addIntegrationFeatures!(PSMS);
+    @time MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
+    @time integratePrecursors(MS2_CHROMS, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
                                         intensity_filter_fraction = params_[:intensity_filter_fraction],
                                         α = 0.001f0,
                                         LsqFit_tol = params_[:LsqFit_tol],
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance]
-                        )
-    filter!(x -> x.best_scan, PSMS);
+                        );
+    @time filter!(x -> x.best_scan, PSMS);
+    @time filter!(x -> x.data_points>0, PSMS);
+    end;
     PSMS[!,:ms_file_idx].=ms_file_idx
     BPSMS[ms_file_idx] = PSMS;
     GC.gc()
@@ -566,8 +585,10 @@ best_psms = vcat(values(BPSMS)...)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_020224.jld2"); best_psms)
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
 @time begin
-getBestTrace!(best_psms)
+
+3    getBestTrace!(best_psms)
 addChromatogramFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"],
+                MS_TABLE_ID_TO_PATH,
                 RT_iRT,
                 precID_to_iRT);
 #=
@@ -579,74 +600,72 @@ best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld
 
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
 features = [ 
-    #:iRT_diff,
     :max_prob,
     :iso_rank,
-    :max_city_fitted,
-    :mean_city_fitted,
-    #:max_scribe_fitted,
-    :max_ions,
-    :isotope_fraction,
     :assymetry,
     :fraction_censored,
     :FWHM,
     :FWHM_01,
     :GOF,
     :H,
+    :base_width_min,
+    :peak_area,
+    :points_above_FWHM,
+    :points_above_FWHM_01,
+
+    :missed_cleavage,
     :Mox,
-    :iRT_predicted,
-    :iRT_error,
+    :prec_mz,
+    :sequence_length,
+    :charge,
+
+    :irt_pred,
+    :irt_error,
+    :irt_obs,
     :RT,
-    #:RT_error,
-    :iRT_diff,
+    :irt_diff,
+
+    :max_y_ions,
+    :y_ions_sum,
     :longest_y,
     :y_count,
     :b_count,
-    :base_width_min,
+    :isotope_count,
+    :total_ions,
     :best_rank,
-    :charge,
+    :topn,
+
+    :max_score,
+    :mean_score,
+    :max_city_fitted,
+    :mean_city_fitted,
     :city_block,
     :city_block_fitted,
-    :data_points,
     :entropy_score,
-    :err_norm,
-    :error,
-    :hyperscore,
-    #:intensity_explained,
-    :ions_sum,
-    #:log_sum_of_weights,
-    :matched_ratio,
     :max_entropy,
-    #:mean_log_probability,
-    :max_spectral_contrast,
-    :max_matched_ratio,
-    :max_scribe_score,
-    :missed_cleavage,
-    #:ms1_ms2_diff,
-    :peak_area,
-    #:peak_area_ms1,
-    :points_above_FWHM,
-    :points_above_FWHM_01,
-    :poisson,
-    :prec_mz,
     :scribe,
     :scribe_corrected,
     :scribe_fitted,
-    :sequence_length,
     :spectral_contrast,
     :spectral_contrast_corrected,
-    #:spectrum_peaks,
-    :topn,
-    :total_ions,
+    :max_matched_ratio,
+    :max_scribe_score,
+    
+    :data_points,
+    :err_norm,
+    :error,
+    :matched_ratio,
+    :poisson,
+
     :weight,
-    #:y_ladder,
-    #:ρ,
     :log2_intensity_explained,
     :TIC,
     :adjusted_intensity_explained
-    ]
+];
+
 
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
+best_psms[!,:decoy] = best_psms[!,:target].==false
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
 xgboost_time = @timed bst = rankPSMs2!(best_psms, 
                         features,
@@ -663,9 +682,9 @@ xgboost_time = @timed bst = rankPSMs2!(best_psms,
                         n_iters = 2);
 best_psms = bst[3]
 best_psms[!,:prob] = Float32.(best_psms[!,:prob])
-getQvalues!(best_psms[!,:prob], best_psms[:,:decoy], best_psms[!,:q_value]);
+getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
 value_counts(df, col) = combine(groupby(df, col), nrow)
-IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
+IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:ms_file_idx])
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers

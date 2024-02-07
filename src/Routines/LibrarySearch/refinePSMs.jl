@@ -182,6 +182,30 @@ function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
     return 
 end
 
+function scoreSecondSearchPSMs!(psms::DataFrame, 
+                                features::Vector{Symbol},
+                                max_iter::Int64 = 20,
+                                k_cv_folds::Int64 = 2,
+                                tasks_per_thread::Int = 1)
+    cv_folds = psms[!,:cv_fold]::Vector{UInt8}
+    M = size(PSMS, 1)
+    allcv_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    allcv_data_chunks = partition(1:M, allcv_chunk_size) # partition your data into chunks that
+    β = zeros(Float64, length(features));
+    fill!(PSMS[!,:score], zero(eltype(PSMS[!,:score])))
+    for k in range(0, k_cv_folds - 1)
+        cv_fold = cv_folds.==UInt8(k)
+        M = sum(cv_fold)#size(PSMS, 1)
+        println("k $k, M $M")
+        chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+        data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+        β = zeros(Float64, length(features));
+        β = ProbitRegression(β, PSMS[cv_fold,features], PSMS[cv_fold,:target], data_chunks, max_iter = max_iter);
+        ModelPredictCVFold!(PSMS[!,:score], PSMS[!,:cv_fold], UInt8(k), PSMS[!,features], β, allcv_data_chunks)
+        println("sum(PSMs[cv_fold,:score]) ", sum(PSMS[cv_fold,:score]))
+    end
+end
+
 function getBestPSMs!(psms::DataFrame,
                         precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_q_value::Float64 = 0.10) where {T<:AbstractFloat}
@@ -212,8 +236,8 @@ function getBestPSMs!(psms::DataFrame,
 end
 
 function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, 
-                                    precursors::Vector{LibraryPrecursorIon{T}}
-                                    ) where {T<:AbstractFloat}
+                                    precursors::Vector{LibraryPrecursorIon{T}},
+                                    prec_id_to_cv_fold::Dictionary{UInt32, UInt8}) where {T<:AbstractFloat}
     ###########################
     #Allocate new columns
     N = size(PSMs)[1]
@@ -224,6 +248,7 @@ function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table,
     targets = zeros(Bool, N);
     charge = zeros(UInt8, N);
     prec_mz = zeros(Float32, N);
+    cv_fold = zeros(UInt8, N);
     scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
     precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
     y_count::Vector{UInt8} = PSMs[!,:y_count]
@@ -252,6 +277,7 @@ function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table,
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
                 end
+                cv_fold[i] = prec_id_to_cv_fold[precursor_idx[i]]
             end
         end
     end
@@ -264,15 +290,18 @@ function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table,
     PSMs[!,:target] = targets
     PSMs[!,:charge] = charge
     PSMs[!,:prec_mz] = prec_mz
-
-    sort!(PSMs,:RT); #Sorting before grouping is critical. 
+    PSMs[!,:cv_fold] = cv_fold
+    PSMs[!,:score] = zeros(Float32, N)
+    PSMs[!,:intercept] = ones(UInt8, N)
+    #sort!(PSMs,:RT); #Sorting before grouping is critical. 
 
 end
 
 function addIntegrationFeatures!(PSMs::DataFrame)
     ###########################
     #Add columns
-    new_cols = [(:peak_area,                   Union{Float32, Missing})
+    new_cols = [
+    (:peak_area,                   Union{Float32, Missing})
     (:GOF,                      Union{Float16, Missing})
     (:FWHM,                     Union{Float16, Missing})
     (:FWHM_01,                  Union{Float16, Missing})
@@ -283,20 +312,20 @@ function addIntegrationFeatures!(PSMs::DataFrame)
     (:tᵣ,                       Union{Float16, Missing})
     (:τ,                        Union{Float32, Missing})
     (:H,                        Union{Float32, Missing})
-    (:max_weight,           Union{Float16, Missing})
-    (:max_spectral_contrast,   Union{Float16, Missing})
+    (:max_score,           Union{Float16, Missing})
+    (:mean_score,           Union{Float16, Missing})
     (:max_entropy,              Union{Float16, Missing})
     (:max_scribe_score,     Union{Float16, Missing})
-    (:max_scribe_fitted,     Union{Float16, Missing})
     (:max_city_fitted,     Union{Float16, Missing})
-    (:mean_city_fitted,     Union{Float16, Missing})
-    (:ions_sum,                 Union{UInt32, Missing})
-    (:max_ions,                 Union{UInt16, Missing})
+    (:mean_city_fitted,           Union{Float16, Missing})
+    (:y_ions_sum,                 Union{UInt16, Missing})
+    (:max_y_ions,                 Union{UInt16, Missing})
     (:data_points,              Union{UInt32, Missing})
     (:fraction_censored,              Union{Float16, Missing})
-    (:max_matched_ratio,       Union{Float32, Missing})
+    (:max_matched_ratio,       Union{Float16, Missing})
     (:base_width_min,           Union{Float16, Missing})
-    (:best_scan, Union{Bool, Missing})];
+    (:best_scan, Union{Bool, Missing})
+    ];
 
     for column in new_cols
         col_type = last(column);
@@ -355,29 +384,30 @@ end
 function addChromatogramFeatures!(psms::DataFrame, 
                                     MS_TABLE::Arrow.Table, 
                                     precursors::Vector{LibraryPrecursorIon{T}},
+                                    ms_id_to_file_path::Dictionary{UInt32, String},
                                     rt_to_irt_interp::Any,
                                     prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
     ###########################
     #Allocate new columns
     N = size(psms, 1)
     missed_cleavage = zeros(UInt8, N);
-    sequence = Vector{String}(undef, 10);
-    stripped_sequence = Vector{String}(undef, 10);
+    sequence = Vector{String}(undef, N);
+    stripped_sequence = Vector{String}(undef, N);
     adjusted_intensity_explained = zeros(Float16, N);
     charge = zeros(UInt8, N)
     sequence_length = zeros(UInt8, N);
     b_y_overlap = zeros(Bool, N);
-    stripped_sequence =  Vector{String}(undef, 10);
     spectrum_peak_count = zeros(Float16, N);
     prec_mz = zeros(Float32, N);
     Mox = zeros(UInt8, N)
     TIC = zeros(Float16, N);
-
+    #cv_fold = zeros(UInt8, N);
     irt_diff = zeros(Float32, N)
-    irt_observed = zeros(Float32, N)
-    irt_predicted = zeros(Float32, N)
+    irt_obs = zeros(Float32, N)
+    irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
 
+    ms_file_idx::Vector{UInt32} = psms[!,:ms_file_idx]
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     longest_y::Vector{UInt8} = psms[!,:longest_y]
@@ -423,24 +453,37 @@ function addChromatogramFeatures!(psms::DataFrame,
                 charge[i]= getPrecCharge(prec);
                 prec_mz[i] = getMZ(prec)
                 sequence_length[i] = getLength(prec);
-                b_y_overlap = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
+                b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
 
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
                 adjusted_intensity_explained[i] = Float16(TIC[i]  + log2_intensity_explained[i]);
                 spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
 
-                
-                irt_observed[i] = rt_to_irt_interp[ms_file_path](rt[i])
+                irt_obs[i] = rt_to_irt_interp[ms_id_to_file_path[ms_file_idx[i]]](rt[i])
                 irt_pred[i] = getIRT(prec)
-                irt_diff[i] = abs(irt_observed[i] - first(prec_id_to_irt[precursor_idx[i]]))
-                irt_error[i] = abs(irt_observed[i] - irt_predicted[i])
+                irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[precursor_idx[i]]))
+                irt_error[i] = abs(irt_obs[i] - irt_pred[i])
+
+                #cv_fold[i] = UInt8(rand(Bool))
             end
         end
     end
     fetch.(tasks)
+    psms[!,:irt_obs] = irt_obs
+    psms[!,:irt_pred] = irt_pred
+    psms[!,:irt_diff] = irt_diff
+    psms[!,:irt_error] = irt_error
 
-    
-
+    psms[!,:spectrum_peak_count] = spectrum_peak_count
+    psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
+    psms[!,:tic] = TIC
+    psms[!,:b_y_overlap] = b_y_overlap
+    psms[!,:sequence_length] = sequence_length
+    psms[!,:sequence] = sequence
+    psms[!,:stripped_sequence] = stripped_sequence
+    psms[!,:missed_cleavage] = missed_cleavage
+    psms[!,:Mox] = Mox
+    psms[!,:max_prob] = zeros(Float16, N);
     return 
 end
 
