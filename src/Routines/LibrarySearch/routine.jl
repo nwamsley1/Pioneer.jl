@@ -544,7 +544,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
 
     filter!(x->x.weight>0.0, PSMS);
     addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"]);
-    getIsoRanks!(PSMS, MS_TABLE)
+    getIsoRanks!(PSMS, MS_TABLE, 8.0036/2)
     addIntegrationFeatures!(PSMS)
     MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
     integratePrecursors(MS2_CHROMS, 
@@ -555,8 +555,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance]
                         )
-
-    addFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"]);
+    filter!(x -> x.best_scan, PSMS);
     PSMS[!,:ms_file_idx].=ms_file_idx
     BPSMS[ms_file_idx] = PSMS;
     GC.gc()
@@ -568,31 +567,16 @@ jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_0202
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
 @time begin
 getBestTrace!(best_psms)
+addChromatogramFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"],
+                RT_iRT,
+                precID_to_iRT);
 #=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
 best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
 =#
 #best_psms = copy(MS2_CHROMS)
 #getBestTrace!(best_psms)
-best_psms[!,:iRT_diff] .= zero(Float32)
-best_psms[!,:iRT_observed] .= zero(Float32)
-best_psms[!,:sequence] .= ""
-best_psms[!,:stripped_sequence] .= ""
-for i in ProgressBar(range(1, size(best_psms)[1]))
-    best_psms[i,:iRT_observed] = RT_iRT[best_psms[i,:file_path]](best_psms[i,:RT])
-    best_psms[i,:sequence] = precursors[best_psms.precursor_idx[i]].sequence;
-    best_psms[i,:stripped_sequence] = replace.(best_psms[i,:sequence] , "M(ox)" => "M");
-end
-for i in ProgressBar(range(1, size(best_psms)[1]))
-    best_psms[i,:iRT_predicted] = precursors[best_psms.precursor_idx[i]].irt
-    #irt = IDtoiRT_IMPUTED[best_psms[i,:precursor_idx]]
-    #best_psms[i,:iRT_diff] = abs(best_psms[i,:iRT_observed]- mean([first(irt), irt[2]]))
-    best_psms[i,:iRT_diff] = abs(best_psms[i,:iRT_observed]- first(precID_to_iRT[best_psms[i,:precursor_idx]]))
-end
-best_psms[!,:iRT_error] .= zero(Float32)
-for i in ProgressBar(range(1, size(best_psms)[1]))
-    best_psms[i,:iRT_error] = abs(best_psms[i,:iRT_observed]- best_psms[i,:iRT_predicted])
-end
+
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
 features = [ 
     #:iRT_diff,
@@ -661,8 +645,7 @@ features = [
     :TIC,
     :adjusted_intensity_explained
     ]
-best_psms[:,"sequence_length"] = length.(replace.(best_psms[:,"sequence"], "M(ox)" => "M"));
-best_psms[!,:isotope_fraction] = best_psms[!,:isotope_count]./(best_psms[!,:b_count] .+ best_psms[!,:y_count])
+
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
 #best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
 xgboost_time = @timed bst = rankPSMs2!(best_psms, 

@@ -212,12 +212,12 @@ function getBestPSMs!(psms::DataFrame,
 end
 
 function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, 
-                                    precursors::Vector{LibraryPrecursorIon{T}}) where {T<:AbstractFloat}
+                                    precursors::Vector{LibraryPrecursorIon{T}}
+                                    ) where {T<:AbstractFloat}
     ###########################
     #Allocate new columns
     N = size(PSMs)[1]
-    iRT_pred = zeros(Float32, N);
-    RT = zeros(Float32, N);
+    rt = zeros(Float32, N);
     TIC = zeros(Float16, N);
     total_ions = zeros(UInt16, N);
     err_norm = zeros(Float16, N);
@@ -243,7 +243,7 @@ function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table,
         Threads.@spawn begin
             for i in chunk
                 targets[i] = isDecoy(precursors[precursor_idx[i]]) == false;
-                RT[i] = Float32(scan_retention_time[scan_idx[i]]);
+                rt[i] = Float32(scan_retention_time[scan_idx[i]]);
                 charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
                 prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
@@ -257,9 +257,7 @@ function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table,
     end
     fetch.(tasks)
     PSMs[!,:matched_ratio] = matched_ratio
-    PSMs[!,:decoy] = decoys
-    PSMs[!,:iRT_predicted] = iRT_pred
-    PSMs[!,:RT] = RT
+    PSMs[!,:RT] = rt
     PSMs[!,:TIC] = TIC
     PSMs[!,:total_ions] = total_ions
     PSMs[!,:err_norm] = err_norm
@@ -308,7 +306,9 @@ function addIntegrationFeatures!(PSMs::DataFrame)
     PSMs[!,:best_scan] .= false;
 end
 
-function getIsoRanks!(psms::DataFrame, MS_TABLE::Arrow.Table)
+function getIsoRanks!(psms::DataFrame, 
+                        MS_TABLE::Arrow.Table,
+                        window_width::Float64)
 
     psms[!,:iso_rank] = zeros(UInt8, size(psms, 1))
 
@@ -321,9 +321,9 @@ function getIsoRanks!(psms::DataFrame, MS_TABLE::Arrow.Table)
         Threads.@spawn begin
             for i in chunk
 
-                charge = PSMs[i,:charge]
-                mz = PSMs[i,:prec_mz]
-                scan_id = PSMs[i,:scan_idx]
+                charge = psms[i,:charge]
+                mz = psms[i,:prec_mz]
+                scan_id = psms[i,:scan_idx]
                 scan_mz = MS_TABLE[:precursorMZ][scan_id]
 
                 window = (Float32(scan_mz-window_width/2), 
@@ -344,7 +344,7 @@ function getIsoRanks!(psms::DataFrame, MS_TABLE::Arrow.Table)
                 else
                     rank = UInt8(4)
                 end
-                PSMs[i,:iso_rank] = rank
+                psms[i,:iso_rank] = rank
             end
         end
     end
@@ -352,56 +352,94 @@ function getIsoRanks!(psms::DataFrame, MS_TABLE::Arrow.Table)
     return 
 end
 
-function addFeatures!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}) where {T<:AbstractFloat}
-    
-    filter!(x -> x.best_scan, PSMs);
-    filter!(x->x.weight>0, PSMs);
+function addChromatogramFeatures!(psms::DataFrame, 
+                                    MS_TABLE::Arrow.Table, 
+                                    precursors::Vector{LibraryPrecursorIon{T}},
+                                    rt_to_irt_interp::Any,
+                                    prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
     ###########################
     #Allocate new columns
-    #println("TEST")
-    PSMs[!,:missed_cleavage] .= zero(UInt8);
-    PSMs[!,:sequence] .= "";
-    PSMs[!,:log2_base_peak_intensity] .= zero(Float16);
-    PSMs[!,:adjusted_intensity_explained] .= zero(Float16);
-    PSMs[!,:charge] .= zero(UInt8);
-    PSMs[!,:sequence_length] .= zero(UInt8);
-    PSMs[!,:b_y_overlap] .= false;
-    PSMs[!,:weight_log2] .= zero(Float16)
-    PSMs[!,:max_weight] .= zero(Float32)
-    PSMs[!,:stripped_sequence] .= "";
-    PSMs[!,:spectrum_peak_count] .= zero(UInt16);
-    PSMs[!,:sequence_length] .= zero(UInt8);
-    PSMs[!,:Mox] .= zero(UInt8);
-    @Threads.threads for i in range(1, size(PSMs)[1])
-        PSMs[i,:missed_cleavage] = precursors[PSMs[i,:precursor_idx]].missed_cleavages
-    #transform!(PSMs, AsTable(:) => ByRow(psm -> UInt8(length(collect(eachmatch(r"ox", psm[:sequence]))))) => [:Mox])
-        PSMs[i,:sequence] = precursors[PSMs[i,:precursor_idx]].sequence;
-        PSMs[i,:Mox] = UInt8(length(collect(eachmatch(r"ox",  PSMs[i,:sequence]))))
-        PSMs[i,:adjusted_intensity_explained] = Float16(log2(MS_TABLE[:TIC][PSMs[i,:scan_idx]]*(2^PSMs[i,:log2_intensity_explained])));
-        PSMs[i,:charge] = UInt8((precursors[PSMs[i,:precursor_idx]].prec_charge));
-        #println(precursors[PSMs[i,:precursor_idx]].length)
-        PSMs[i,:sequence_length] = UInt8(precursors[PSMs[i,:precursor_idx]].length);
-        PSMs[i,:b_y_overlap] = ((PSMs[i,:sequence_length] - PSMs[i,:longest_y])>PSMs[i,:longest_b]) &  (PSMs[i,:longest_b] > 0) & (PSMs[i,:longest_y] > 0);
-        PSMs[i,:weight_log2] = max(Float16(0.0), Float16(log2(PSMs[i,:weight])))
-        PSMs[i,:spectrum_peak_count] = length(MS_TABLE[:masses][PSMs[i,:scan_idx]])
-        if isinf(PSMs[i,:adjusted_intensity_explained])
-            PSMs[i,:adjusted_intensity_explained] = Float16(6000)
-        end
-        #if isinf(coalesce(PSMs[i,:mean_log_probability], 0.0))
-        #    PSMs[i,:mean_log_probability] = Float16(6000)*sign(PSMs[i,:mean_log_probability])
-        #end
+    N = size(psms, 1)
+    missed_cleavage = zeros(UInt8, N);
+    sequence = Vector{String}(undef, 10);
+    stripped_sequence = Vector{String}(undef, 10);
+    adjusted_intensity_explained = zeros(Float16, N);
+    charge = zeros(UInt8, N)
+    sequence_length = zeros(UInt8, N);
+    b_y_overlap = zeros(Bool, N);
+    stripped_sequence =  Vector{String}(undef, 10);
+    spectrum_peak_count = zeros(Float16, N);
+    prec_mz = zeros(Float32, N);
+    Mox = zeros(UInt8, N)
+    TIC = zeros(Float16, N);
 
-        PSMs[i,:stripped_sequence] = replace.(PSMs[i,:sequence], "M(ox)" => "M");
+    irt_diff = zeros(Float32, N)
+    irt_observed = zeros(Float32, N)
+    irt_predicted = zeros(Float32, N)
+    irt_error = zeros(Float32, N)
+
+    scan_idx::Vector{UInt32} = psms[!,:scan_idx]
+    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
+    longest_y::Vector{UInt8} = psms[!,:longest_y]
+    longest_b::Vector{UInt8} = psms[!,:longest_b]
+    rt::Vector{Float32} = psms[!,:RT]
+    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
+    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
+    
+    function countMOX(seq::String)::UInt8
+        mox = zero(UInt8)
+        in_mox = false
+        for aa in seq
+            if in_mox
+                if aa == 'x'
+                    mox += one(UInt8)
+                end
+                in_mox = false
+            end
+            if aa == 'o'
+                in_mox = true
+            end
+        end
+        return mox
     end
-    #######################
-    #Clean Features
-    #######################    
-    prec_mz = zeros(Float32, size(PSMs, 1));
-    precursor_idx = PSMs[!,:precursor_idx]::Vector{UInt32}
-    Threads.@threads for i in range(1, size(PSMs)[1])
-        prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
+
+    #Split data into chunk ranges
+    tasks_per_thread = 10
+    chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
+
+
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            for i in chunk
+                prec = precursors[precursor_idx[i]]
+
+                missed_cleavage[i] = getMissedCleavages(prec)#.missed_cleavages
+                sequence[i] = getSequence(prec);
+                stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
+                Mox[i] = countMOX(prec.sequence)
+
+                charge[i]= getPrecCharge(prec);
+                prec_mz[i] = getMZ(prec)
+                sequence_length[i] = getLength(prec);
+                b_y_overlap = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
+
+                TIC[i] = Float16(log2(tic[scan_idx[i]]));
+                adjusted_intensity_explained[i] = Float16(TIC[i]  + log2_intensity_explained[i]);
+                spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
+
+                
+                irt_observed[i] = rt_to_irt_interp[ms_file_path](rt[i])
+                irt_pred[i] = getIRT(prec)
+                irt_diff[i] = abs(irt_observed[i] - first(prec_id_to_irt[precursor_idx[i]]))
+                irt_error[i] = abs(irt_observed[i] - irt_predicted[i])
+            end
+        end
     end
-    PSMs[!,:prec_mz] = prec_mz
+    fetch.(tasks)
+
+    
 
     return 
 end
