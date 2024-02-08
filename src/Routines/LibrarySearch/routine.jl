@@ -497,16 +497,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 end
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020224_M0.jld2"); PSMs_Dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"); PSMs_Dict)
 
-rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
-filter!(x -> x.q_value<=0.01, best_psms)
-rows_ = best_psms[!,:file_path] .== "C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow"
-precs_ = Set(best_psms[rows_,:precursor_idx])
-Set(PSMs[!,:precursor_idx]) ∩ precs_
-Set(PSMs_Dict.values[1][!,:precursor_idx]) ∩ precs_
-x = 1
-PSMs_Dict = load(joinpath("C:\\Users\\n.t.wamsley\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS", "PSMs_Dict_013024_M0.jld2"))["PSMs_Dict"]
 @time begin
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
@@ -520,18 +512,17 @@ for (prec_id, irt) in pairs(precID_to_iRT)
     prec_id,
     rand(UInt8[0, 1]))
 end
+
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-end
 
 features = [:intercept, :charge, :total_ions, :err_norm, 
 :scribe, :city_block, :city_block_fitted, 
 :spectral_contrast, :entropy_score, :weight]
-
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
@@ -558,13 +549,13 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
 
     
     @time begin
-    @time filter!(x->x.weight>0.0, PSMS);
-    @time addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);    
-    @time scoreSecondSearchPSMs!(PSMS,features);
-    @time getIsoRanks!(PSMS, MS_TABLE, 8.0036/2);
-    @time addIntegrationFeatures!(PSMS);
-    @time MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
-    @time integratePrecursors(MS2_CHROMS, 
+    filter!(x->x.weight>0.0, PSMS);
+    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);    
+    scoreSecondSearchPSMs!(PSMS,features);
+    getIsoRanks!(PSMS, MS_TABLE, 8.0036/2);
+    addIntegrationFeatures!(PSMS);
+    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
+    integratePrecursors(MS2_CHROMS, 
                                         n_quadrature_nodes = params_[:n_quadrature_nodes],
                                         intensity_filter_fraction = params_[:intensity_filter_fraction],
                                         α = 0.001f0,
@@ -572,8 +563,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                                         Lsq_max_iter = params_[:Lsq_max_iter],
                                         tail_distance = params_[:tail_distance]
                         );
-    @time filter!(x -> x.best_scan, PSMS);
-    @time filter!(x -> x.data_points>0, PSMS);
+    filter!(x -> x.best_scan, PSMS);
+    filter!(x -> x.data_points>0, PSMS);
     end;
     PSMS[!,:ms_file_idx].=ms_file_idx
     BPSMS[ms_file_idx] = PSMS;
@@ -581,26 +572,19 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
 end
 
 best_psms = vcat(values(BPSMS)...)
-
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_020224.jld2"); best_psms)
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_020124.jld2"))["best_psms"]
-@time begin
-
-3    getBestTrace!(best_psms)
-addChromatogramFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"],
+addChromatogramFeatures!(best_psms, MS_TABLE, prosit_lib["precursors"],
                 MS_TABLE_ID_TO_PATH,
                 RT_iRT,
                 precID_to_iRT);
-#=
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"); best_psms)
-best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "all_psms_012524.jld2"))["best_psms"];
-=#
-#best_psms = copy(MS2_CHROMS)
-#getBestTrace!(best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_020224.jld2"); best_psms)
 
-#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_00_lambda0_topn2_total4_minimpute_siblingtest_5m_penalty50_011824.jld2"))["best_psms"]
+
+best_psms = copy(PSMS_OLD);
 features = [ 
     :max_prob,
+    :median_prob,
+    #:max_prob,
+    #:q90_prob,
     :iso_rank,
     :assymetry,
     :fraction_censored,
@@ -662,33 +646,36 @@ features = [
     :TIC,
     :adjusted_intensity_explained
 ];
-
-
-best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1))
-best_psms[!,:decoy] = best_psms[!,:target].==false
-#best_psms = best_psms[best_psms[:,:file_path] .== "/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition_A_Sample_Alpha_01.arrow",:]
-xgboost_time = @timed bst = rankPSMs2!(best_psms, 
+best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
+best_psms[!,:decoy] = best_psms[!,:target].==false;
+xgboost_time = @timed bst = rankPSMs!(best_psms, 
                         features,
-                        colsample_bytree = 1.0, 
+                        colsample_bytree = 0.5, 
+                        colsample_bynode = 0.5,
                         min_child_weight = 5, 
                         gamma = 1, 
-                        subsample = 0.5, 
-                        n_folds = 2, 
-                        num_round = 200, 
+                        subsample = 0.25, 
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
                         train_fraction = 9.0/9.0,
-                        n_iters = 2);
-best_psms = bst[3]
-best_psms[!,:prob] = Float32.(best_psms[!,:prob])
+                        iter_scheme = [100, 100, 200],
+                        print_importance = false);
+best_psms = bst[2];
+best_psms[!,:prob] =Float32.(best_psms[!,:prob]);
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-value_counts(df, col) = combine(groupby(df, col), nrow)
+value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:ms_file_idx])
+length(unique(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:precursor_idx]))
+println("file specific ids ", sum(IDs_PER_FILE[!,:nrow]))
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
+
+histogram(best_psms[best_psms[!,:target],:prob], alpha = 0.5, normalize =:pdf)
+histogram!(best_psms[best_psms[!,:decoy],:prob], alpha = 0.5, normalize = :pdf)
+
 end
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020224_q99min5max25.jld2"); best_psms)
 end
