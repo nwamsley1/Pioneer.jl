@@ -99,6 +99,7 @@ function setNearest!(matches::Vector{M},
                     Ion::DetailedFrag{Float32},
                     max_mz::Float32,
                     ppm_tol_param::Float32,
+                    min_max_ppm::Tuple{Float32, Float32},
                     δ::Float32,
                     peak_idx::Int64,
                     scan_idx::UInt32,
@@ -108,9 +109,12 @@ function setNearest!(matches::Vector{M},
                     )::Int64 where {M<:MatchIon{Float32}}
 
                     
-    function getMzBounds(mz::Float32, ppm_tol_param::Float32, intensity::Float32)
-        #ppm = max(min(ppm_tol_param/sqrt(intensity), 16.1f0), 5.0f0)
-        ppm = Float32(16.1)
+    function getMzBounds(mz::Float32, ppm_tol_param::Float32, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
+        ppm = max(
+            min(ppm_tol_param/sqrt(intensity), last(min_max_ppm)), 
+            first(min_max_ppm)
+            )
+        #ppm = Float32(16.1)
         #ppm = max(ppm_tol_param/sqrt(intensity), 5.0f0)
         tol = ppm*mz/Float32(1e6)
         return mz - tol, mz + tol        
@@ -118,18 +122,12 @@ function setNearest!(matches::Vector{M},
 
     smallest_diff = Float32(Inf)#abs(masses[peak]-δ - frag_mz)
     best_peak, i = 0, 0
-
-
-    #if (peak_idx + 1 + i > length(masses)) 
-    #    i = -1 
-    #end
-
     theoretical_mz = getMZ(Ion)
     #Iterate through peaks in  `masses` until a peak is encountered that is 
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
     while (masses[peak_idx + i]-δ<= max_mz)
-        low, high = getMzBounds(theoretical_mz, ppm_tol_param, intensities[peak_idx + i])
+        low, high = getMzBounds(theoretical_mz, ppm_tol_param, intensities[peak_idx + i], min_max_ppm)
         if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
             mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
             if mz_diff < smallest_diff
@@ -212,7 +210,7 @@ function matchPeaks!(matches::Vector{M},
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
                     ppm_tol_param::Float32,
-                    max_ppm_tol::Float32,
+                    min_max_ppm::Tuple{Float32, Float32},
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
                     ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
@@ -233,7 +231,7 @@ function matchPeaks!(matches::Vector{M},
 
     δ = Float32(ppm_err*(masses[peak]/1e6)) #ppm offset determined in calibration
     corrected_empirical_mz = masses[peak] - δ #corrected empirical mass
-    low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol) #max and min m/z of a matching empirical ion
+    low, high = getMaxErrBounds(getMZ(Ions[ion]), last(min_max_ppm)) #max and min m/z of a matching empirical ion
 
     while (peak <= length(masses)) & (ion <= ion_idx)
         #Is the peak within the tolerance of the transition m/z?
@@ -247,6 +245,7 @@ function matchPeaks!(matches::Vector{M},
                                             Ions[ion], 
                                             high, 
                                             ppm_tol_param,
+                                            min_max_ppm,
                                             δ,
                                             peak, 
                                             scan_idx,
@@ -256,7 +255,7 @@ function matchPeaks!(matches::Vector{M},
 
                 #Progress to the next theoretical ion
                 ion += 1
-                low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol)
+                low, high = getMaxErrBounds(getMZ(Ions[ion]), last(min_max_ppm))
                 if ion > ion_idx
                     return matched_idx, unmatched_idx
                 end
@@ -273,7 +272,7 @@ function matchPeaks!(matches::Vector{M},
                                         unmatched_idx
                                         );
             ion += 1
-            low, high = getMaxErrBounds(getMZ(Ions[ion]), max_ppm_tol)
+            low, high = getMaxErrBounds(getMZ(Ions[ion]), last(min_max_ppm))
             if ion > ion_idx
                 return matched_idx, unmatched_idx
             end

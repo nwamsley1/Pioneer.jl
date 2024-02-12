@@ -185,15 +185,21 @@ function searchScan!(precs::Counter{UInt32, UInt8},
                     iRT_low::Float32, iRT_high::Float32, 
                     ppm_err::Float32, 
                     ppm_tol_param::Float32,
+                    min_max_ppm::Tuple{Float32, Float32},
                     prec_mz::Float32, 
                     prec_tol::Float32, 
                     isotope_err_bounds::Tuple{Int64, Int64}; 
                     topN::Int = 20, min_frag_count::Int = 3, min_score::UInt8 = zero(UInt8)) where {U<:AbstractFloat}
     
-    function getFragTol(mass::Float32, ppm_err::Float32, intensity::Float32, ppm_tol_param::Float32)
+    function getFragTol(mass::Float32, ppm_err::Float32, 
+                        intensity::Float32, ppm_tol_param::Float32,
+                        min_max_ppm::Tuple{Float32, Float32})
         mass -= Float32(ppm_err*mass/1e6)
-        #ppm = max(min(ppm_tol_param/sqrt(intensity), 16.1), 5.0)
-        ppm = 16.1
+        ppm = max(
+                    min(ppm_tol_param/sqrt(intensity), last(min_max_ppm)), 
+                    first(min_max_ppm)
+                    )
+        #ppm = 16.1
         tol = ppm*mass/1e6
         return Float32(mass - tol), Float32(mass + tol)
        #return Float32(mass*(1 - 16.1*mass/1e6)), Float32(mass*(1 + 16.1*mass/1e6))
@@ -218,7 +224,7 @@ function searchScan!(precs::Counter{UInt32, UInt8},
             continue
         end
 
-        FRAGMIN, FRAGMAX = getFragTol(mass, ppm_err, intensity, ppm_tol_param)
+        FRAGMIN, FRAGMAX = getFragTol(mass, ppm_err, intensity, ppm_tol_param, min_max_ppm)
         #println(typeof(width))
         #println("TEST")
         min_frag_bin = queryFragment!(precs, iRT_low, iRT_high, f_index, min_frag_bin, FRAGMIN, FRAGMAX, (prec_min, prec_max))

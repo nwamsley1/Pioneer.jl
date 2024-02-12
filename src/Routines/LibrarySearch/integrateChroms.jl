@@ -355,7 +355,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         start = max(1, best_scan - 2)
         stop = min(length(chrom.weight), best_scan + 2)
 
-        for i in range(start, stop)
+        for i in range(1, length(chrom.weight))#range(start, stop)
             if !state.mask[i]
                 if chrom.scribe[i]>max_scribe_score
                     max_scribe_score = chrom.scribe[i]

@@ -198,13 +198,6 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
         #Update each variable once 
         max_diff = 0.0
         for col in range(1, Hs.n)
-            #If matched ratio for this column is bad then skip. Make sure that colum of Hs is overwritten to all zeros first. 
-            #if mask[col] < 0.5
-                #println("skpped")
-            #    continue
-            #end
-            #δx = abs(newtonRaphson!(Hs, r, X₁, col, δ, max_iter_inner = (min(1 + i*2, max_iter_inner)), accuracy = T(100)))
-            #δx = abs(newton_bisection!(Hs, r, X₁, col, δ, max_iter = max_iter_inner, accuracy = T(100)))
             δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ, max_iter = 100, accuracy = T(100)))
             if !iszero(X₁) 
                 if δx/X₁[col] > max_diff
@@ -214,9 +207,6 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
             
             ΔX += δx
         end
-        #println("ΔX $ΔX")
-        #println("i $i")
-        #println("max_diff $max_diff")
         if max_diff < 0.01
             break
         end

@@ -187,9 +187,9 @@ function getBestTrace!(psms::DataFrame)
         for rank in iso_ranks
             for j in range(1, size(grouped_psms[i], 1))
                 if grouped_psms[i][j,:iso_rank] == rank
-                    #if grouped_psms[i][j,:q_value] <=0.01
+                    if grouped_psms[i][j,:q_value] <=0.01
                         score += grouped_psms[i][j,:weight]
-                    #end
+                    end
                 end
             end
             if score == best_score

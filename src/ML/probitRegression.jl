@@ -168,6 +168,40 @@ function ModelPredict!(scores::Vector{U},
 
 end
 
+function ModelPredictProbs!(scores::Vector{U}, 
+                        psms::DataFrame,
+                        β::Vector{T}, 
+                        data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat}
+    
+    function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
+        tasks = map(data_chunks) do row_chunk
+            Threads.@spawn begin
+                @turbo for row in row_chunk
+                    scores[row] += X[row]*β
+                end
+            end
+        end
+        fetch.(tasks)
+    end
+
+    fill!(scores, zero(U));
+    for col in range(1, size(psms, 2))
+        fillColumn!(scores, psms[!,col], β[col], data_chunks)
+    end
+
+    
+    tasks = map(data_chunks) do row_chunk
+        Threads.@spawn begin
+            for row in row_chunk
+                scores[row] = (1 + SpecialFunctions.erf(scores[row]/sqrt(2)))/2
+            end
+        end
+    end
+    fetch.(tasks)
+
+
+end
+
 function ModelPredictCVFold!(scores::Vector{U}, 
                         cv_folds::Vector{UInt8},
                         cv_fold::UInt8,

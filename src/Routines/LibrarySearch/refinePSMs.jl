@@ -3,7 +3,7 @@
 #println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_rt_error::Float64 = 20.0,  
-                        min_prob::Float64 = 0.95, 
+                        min_prob::Float64 = 0.9, 
                         n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
     
     N = size(PSMs, 1)
@@ -43,10 +43,21 @@ function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors
     PSMs[!,:iRT_predicted] = iRT_pred
     PSMs[!,:RT] = RT
     PSMs[!,:TIC] = TIC
-    PSMs[!,:total_ions] = total_ions
     PSMs[!,:target] = targets
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
+    PSMs[!,:intercept] = ones(Float16, size(PSMs, 1))
+
+    features = [:entropy_score,:city_block,:scribe,:spectral_contrast,:y_count,:error,:topn,:TIC,:intercept]
+    PSMs[!,:prob] = zeros(Float32, size(PSMs, 1))
+
+    M = size(PSMs, 1)
+    chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+    β = zeros(Float64, length(features))
+    β = ProbitRegression(β, PSMs[!,features], PSMs[!,:target], data_chunks, max_iter = 20)
+    ModelPredictProbs!(PSMs[!,:prob], PSMs[!,features], β, data_chunks)
+    filter!(:prob => x -> x>=min_prob, PSMs)
 end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
@@ -122,6 +133,8 @@ function addMainSearchColumns!(PSMs::DataFrame,
     PSMs[!,:Mox] = Mox
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
+    PSMs[!,:score] = zeros(Float32, N);
+    PSMs[!,:q_value] = zeros(Float16, N);
     PSMs[!,:intercept] = ones(Float16, N)
 end
 
@@ -176,7 +189,7 @@ function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
       
         getQvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
         if i < n_train_rounds #Get Data to train on during subsequent round
-            best_psms = ((psms[!,:q_value].<=max_q_value).&(PSMs[!,:target])) .| (psms[!,:target].==false);
+            best_psms = ((psms[!,:q_value].<=max_q_value).&(psms[!,:target])) .| (psms[!,:target].==false);
         end
     end
     return 
@@ -188,11 +201,11 @@ function scoreSecondSearchPSMs!(psms::DataFrame,
                                 k_cv_folds::Int64 = 2,
                                 tasks_per_thread::Int = 1)
     cv_folds = psms[!,:cv_fold]::Vector{UInt8}
-    M = size(PSMS, 1)
+    M = size(psms, 1)
     allcv_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
     allcv_data_chunks = partition(1:M, allcv_chunk_size) # partition your data into chunks that
     β = zeros(Float64, length(features));
-    fill!(PSMS[!,:score], zero(eltype(PSMS[!,:score])))
+    fill!(psms[!,:score], zero(eltype(psms[!,:score])))
     for k in range(0, k_cv_folds - 1)
         cv_fold = cv_folds.==UInt8(k)
         M = sum(cv_fold)#size(PSMS, 1)
@@ -200,9 +213,9 @@ function scoreSecondSearchPSMs!(psms::DataFrame,
         chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
         data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
         β = zeros(Float64, length(features));
-        β = ProbitRegression(β, PSMS[cv_fold,features], PSMS[cv_fold,:target], data_chunks, max_iter = max_iter);
-        ModelPredictCVFold!(PSMS[!,:score], PSMS[!,:cv_fold], UInt8(k), PSMS[!,features], β, allcv_data_chunks)
-        println("sum(PSMs[cv_fold,:score]) ", sum(PSMS[cv_fold,:score]))
+        β = ProbitRegression(β, psms[cv_fold,features], psms[cv_fold,:target], data_chunks, max_iter = max_iter);
+        ModelPredictCVFold!(psms[!,:score], psms[!,:cv_fold], UInt8(k), psms[!,features], β, allcv_data_chunks)
+        println("sum(PSMs[cv_fold,:score]) ", sum(psms[cv_fold,:score]))
     end
 end
 
@@ -222,7 +235,7 @@ function getBestPSMs!(psms::DataFrame,
         prec_psms[best_psm_idx,:best_psm] = true
     end
 
-    filter!(x->x.best_psm, PSMs);
+    filter!(x->x.best_psm, psms);
     select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score])
 
     prec_mz = zeros(Float32, size(psms, 1));
@@ -345,7 +358,6 @@ function getIsoRanks!(psms::DataFrame,
     tasks_per_thread = 10
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
-
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
