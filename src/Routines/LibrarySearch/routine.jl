@@ -580,15 +580,15 @@ for (key, psms) in ProgressBar(pairs(BPSMS))
                 precID_to_iRT);
 end
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_05.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_06.jld2"); best_psms)
 println("TEST")
-best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_03.jld2"))["best_psms"]
+#best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0_q99min5max25_021324_01.jld2"))["best_psms"]
 #getBestTrace!(best_psms)
 best_psms[!,:cv_fold] = zeros(UInt8, size(best_psms, 1))
 for i in range(1, size(best_psms, 1))
     best_psms[i,:cv_fold] = precID_to_cv_fold[best_psms[i,:precursor_idx]]
 end
-best_psms = copy(PSMS_OLD);
+#best_psms = copy(PSMS_OLD);
 features = [ 
     #:max_prob,
     :median_prob,
@@ -723,7 +723,10 @@ features = [
     :adjusted_intensity_explained
 ];
 =#
-
+#best_psms[!,:file_path] .= ""
+#for i in ProgressBar(range(1, size(best_psms, 1)))
+#    best_psms[i,:file_path] = MS_TABLE_PATHS[best_psms[i,:ms_file_idx]]
+#end
 #best_psms[!,features]
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
 best_psms[!,:decoy] = best_psms[!,:target].==false;
@@ -752,17 +755,14 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021224_02.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021324_01.jld2"); best_psms)
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_febredo3.jld2"))["best_psms"]
 getBestTrace!(best_psms)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021224_05.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021324_01.jld2"); best_psms)
 histogram(best_psms[best_psms[!,:target],:prob], alpha = 0.5, normalize =:pdf)
 histogram!(best_psms[best_psms[!,:decoy],:prob], alpha = 0.5, normalize = :pdf)
 
-best_psms[!,:file_path] .= ""
-for i in ProgressBar(range(1, size(best_psms, 1)))
-    best_psms[i,:file_path] = MS_TABLE_PATHS[best_psms[i,:ms_file_idx]]
-end
+
 
 end
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020224_q99min5max25.jld2"); best_psms)
