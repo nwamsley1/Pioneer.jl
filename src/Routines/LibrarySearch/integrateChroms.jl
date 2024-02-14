@@ -1,57 +1,78 @@
-function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, state::GD_state{HuberParams{U}, V, I, J}, gauss_quad_x::Vector{Float64}, gauss_quad_w::Vector{Float64}; intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
+function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
+                                state::GD_state{HuberParams{U}, V, I, J}, 
+                                gauss_quad_x::Vector{Float64}, 
+                                gauss_quad_w::Vector{Float64}; 
+                                intensity_filter_fraction::Float32 = 0.1f0, α::Float32 = 0.01f0, half_width_at_α::Float32 = 0.15f0, LsqFit_tol::Float64 = 1e-3, Lsq_max_iter::Int = 100, tail_distance::Float32 = 0.05f0, isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
     
-    function getBestPSM(filter::BitVector,  hyperscore::AbstractVector{<:AbstractFloat}, weights::AbstractVector{<:AbstractFloat}, total_ions::AbstractVector{<:Integer}, q_values::AbstractVector{<:AbstractFloat}, RT_error::AbstractVector{<:AbstractFloat})
+    function getBestPSM(weights::AbstractVector{<:AbstractFloat}, probs::AbstractVector{<:AbstractFloat}, min_prob::Float32)
         best_scan_idx = 1
-        best_scan_score = zero(Float32)
-        has_reached_fdr = false
+        max_weight = zero(Float32)
+        best_scan_under_prob_thresh_idx = 1 
+        max_weight_over_prob_thresh = zero(Float32)
         for i in range(1, length(weights))
-
-            #Could be a better hueristic?
-            score = #hyperscore[i]*sqrt(weights[i])#weights[i]*total_ions[i]/RT_error[i]
-            #Don't consider because deconvolusion set weights to zero
-            #Or because it is filtered out 
-            if iszero(weights[i]) #| filter[i]
-                continue
-            end
             #If passing a threshold based on the logistic regression model
             #Automatically give priority. Could choose a better heuristic.
-            #Possibly take into account retention time accuracy
-            if q_values[i] <= 0.1
-                #println("score $score, i $i, best_scan_score $best_scan_score ")
-                #If this is the first scan reached to pass the 
-                #logistic regression model threshold
-                #then reset the best score to zero
-                if has_reached_fdr == false
-                    best_scan_score = zero(Float32)
-                    has_reached_fdr = true
+            if probs[i] <= min_prob
+                if weights[i] > max_weight_over_prob_thresh
+                    max_weight_over_prob_thresh = weights[iu[]]
+                    best_scan_under_prob_thresh_idx = i
                 end
-
-                #Is best score? If yes then set new best score and scan index
-                if score > best_scan_score
-                    best_scan_score = score
+            else
+                if weights[i] > max_weight
+                    max_weight = weights[iu[]]
                     best_scan_idx = i
                 end
-
-            elseif has_reached_fdr == false
-
-                #Is best score? If yes then set new best score and scan index
-                if score > best_scan_score
-                    best_scan_score = score
-                    best_scan_idx = i
-                end
-
             end
+        end
+
+        if max_weight > max_weight_over_prob_thresh
+            return max_weight, best_scan_idx
+        else
+            return max_weight_over_prob_thresh, best_scan_under_prob_thresh_idx
         end
         #println("best_scan_idx $best_scan_idx")
         return best_scan_idx
     end
+
+    function fillState!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, max_weight::Float32) where {T,U<:AbstractFloat, I,J<:Integer}
+        for i in range(1, length(chrom.weight))
+            state.t[i] = chrom.RT[i]
+            state.data[i] = chrom.weight[i]/max_weight
+        end
+        state.max_index = length(chrom.weight)
+        return max_weight
+    end
+
+    function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, 
+                                best_scan::Int64, 
+                                rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false},
+                                max_scan_gap::Float32) where {T,U<:AbstractFloat, I,J<:Integer}
+        
+        
+        for i in range(best_scan, length(rts)-1)
+            if (rts[i+ 1] - rts[i]) > max_scan_gap
+                for n in range(i + 1, length(rts))
+                    state.mask[n] = true
+                end
+            end
+        end
+        
+        for i in range(1, best_scan - 1)
+            if (rts[best_scan - i + 1] - rts[best_scan - i]) > max_scan_gap
+                for n in range(1, best_scan-i)
+                    state.mask[n] = true
+                end
+            end
+        end
+
+        return 
+
+    end
     #Same precursor may be isolated multiple times within a single cycle_idx
     #Retain only most abundant within each cycle .
+    #=
     function setFilter!(state::GD_state{HuberParams{T}, U, I, J}, weights::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}, scan_idxs::SubArray{UInt32, 1, Vector{UInt32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
         for i in range(1, length(weights)-1)
-            #println("scan_idxs[i] ", scan_idxs[i])
-            #println("scan_idxs[i + 1] ", scan_idxs[i + 1])
-            #println(" abs(scan_idxs[i]-scan_idxs[i + 1]) ", abs(scan_idxs[i]-scan_idxs[i + 1]))
             if abs(scan_idxs[i+1]-scan_idxs[i]) == 1
                 #May not be appropriate criterion to choose between competing scans
                 if weights[i] > weights[i + 1]
@@ -64,6 +85,19 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             end
         end
     end
+    =#
+
+    #=
+    function filterOnRT!(state::GD_state{HuberParams{T}, U, I, J}, best_rt::T, rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
+        for i in eachindex(rts)
+            if (rts[i] > (best_rt - 1.0)) & (rts[i] < (best_rt + 1.0))
+                continue
+            else
+                state.mask[i] = true
+            end
+        end
+    end
+    =#
 
     function getDataPoints(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
         data_points = 0
@@ -94,6 +128,18 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         end 
     end
 
+    function filterOnMatchedRatio!(state::GD_state{HuberParams{T}, U, I, J}, best_scan_idx::Int64, matched_ratios::SubArray{V, 1, Vector{V}, Tuple{Vector{Int64}}, false}) where {T,U,V<:AbstractFloat, I,J<:Integer}
+        for i in range(1, state.max_index)
+            if (matched_ratios[i] < (matched_ratios[best_scan_idx] - 1)) & (matched_ratios[i] < 0)
+                state.mask[i] = true
+            end
+            if matched_ratios[i] < -1
+                state.mask[i] = true
+            end
+        end
+    end
+
+    #=
     function fillLsqFitWeights!(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
 
         intensity = state.data
@@ -115,72 +161,18 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             #println("state.mask[1:state.max_index] ", state.mask[1:state.max_index])
         end
     end
+    =#
 
-    function filterOnRT!(state::GD_state{HuberParams{T}, U, I, J}, best_rt::T, rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
-        for i in eachindex(rts)
-            if (rts[i] > (best_rt - 1.0)) & (rts[i] < (best_rt + 1.0))
-                continue
-            else
-                state.mask[i] = true
-            end
-        end
-    end
-   
-    function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, best_scan::Int64, rts::SubArray{Float32, 1, Vector{Float32}, Tuple{Vector{Int64}}, false}) where {T,U<:AbstractFloat, I,J<:Integer}
-        
-        
-        for i in range(best_scan, length(rts)-1)
-            if (rts[i+ 1] - rts[i]) > 0.3
-                for n in range(i + 1, length(rts))
-                    state.mask[n] = true
-                end
-            end
-        end
-        
-        for i in range(1, best_scan - 1)
-            if (rts[best_scan - i + 1] - rts[best_scan - i]) > 0.3
-                for n in range(1, best_scan-i)
-                    state.mask[n] = true
-                end
-            end
-        end
-
-        return 
-
-    end
-
-    function filterOnMatchedRatio!(state::GD_state{HuberParams{T}, U, I, J}, best_scan_idx::Int64, matched_ratios::SubArray{V, 1, Vector{V}, Tuple{Vector{Int64}}, false}) where {T,U,V<:AbstractFloat, I,J<:Integer}
-        for i in range(1, state.max_index)
-            if (matched_ratios[i] < (matched_ratios[best_scan_idx] - 1)) & (matched_ratios[i] < 0)
-                state.mask[i] = true
-            end
-            if matched_ratios[i] < -1
-                state.mask[i] = true
-            end
-        end
-    end
-
-    function fillState!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}) where {T,U<:AbstractFloat, I,J<:Integer}
-        max_weight = maximum(chrom.weight)
-        for i in range(1, length(chrom.weight))
-            state.t[i] = chrom.RT[i]
-            state.data[i] = chrom.weight[i]/max_weight
-        end
-        state.max_index = length(chrom.weight)
-        return max_weight
-    end
 
     T = eltype(chrom.weight)
 
     #Initialize state with observed data 
-    norm_factor = fillState!(state, chrom)
-    #best_scan = getBestPSM(filter, chrom.matched_ratio, chrom.weight, chrom.total_ions, chrom.q_value, chrom.RT_error)
-    best_scan = argmax(chrom.weight)
-    truncateAfterSkip!(state, best_scan, chrom.RT) #Only allow a fixed ammount of time without a scan
-    setFilter!(state, chrom.weight, chrom.scan_idx) #For adjacent scans, choose only the most abundant
+    max_weight, best_scan = getBestPSM(chrom.weight, chrom.prob, min_prob)
+    norm_factor = fillState!(state, chrom, max_weight)
+    truncateAfterSkip!(state, best_scan, chrom.RT, max_scan_gap) #Only allow a fixed ammount of time without a scan
+    #setFilter!(state, chrom.weight, chrom.scan_idx) #For adjacent scans, choose only the most abundant
     best_rt, best_height = chrom.RT[best_scan], chrom.weight[best_scan] #Height and rt of scan with largest coefficient
-    filterOnRT!(state, best_rt, chrom.RT) #Remove scans greater than a certain distance from the best scan 
-    #Maybe don't need this?
+    #filterOnRT!(state, best_rt, chrom.RT) #Remove scans greater than a certain distance from the best scan 
     filterLowIntensity!(state, best_height*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
     filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio) #Remove scans with matched ratios significantly lower than that of the best scan
     fillLsqFitWeights!(state) #Enforce smoothness 
@@ -202,10 +194,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     #println("state.mask ", state.mask[1:state.max_index])
     ########
     #Fit EGH Curve to data 
-    #println("data_points $data_points")
     #Parameter constraints
-    #lower, upper = HuberParams(T(0.001), T(0), T(-1), T(0.05)), HuberParams(T(1), T(Inf), T(1), T(2.0));
-    if data_points > 6
+    if data_points > 2
         lower, upper = HuberParams(T(0.001), T(0), T(-1), T(1.0)), HuberParams(T(1), T(Inf), T(1), T(1.0));
     else
         lower, upper = HuberParams(T(0.01), T(0), T(-0.01), T(1.0)), HuberParams(T(0.025), T(Inf), T(0.05), T(1.0));
@@ -218,6 +208,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                             T(best_height),
                             lower, upper)
 
+    #Zero at boundaries 
     state.t[state.max_index + 1], state.t[state.max_index + 2] = T(best_rt - 0.5), T(best_rt + 0.5)
     state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
     state.max_index += 2
@@ -232,7 +223,6 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 β1 = 0.9,
                 β2 = 0.999,
                 ϵ = 1e-8)
-    #println("area first ", Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
     ##########
     #Plots                                           
     if isplot
@@ -300,12 +290,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         println("peak_area $peak_area")
     end
 
-    ############
-    #Calculate Features
-    
-    #MODEL_INTENSITY = EGH(rt, Tuple(EGH_FIT.param))
+
     peak_area = Integrate(state, gauss_quad_x, gauss_quad_w, α = α)
-   
     sum_of_residuals = zero(Float32)
     points_above_FWHM = zero(Int32)
     points_above_FWHM_01 = zero(Int32)
@@ -355,7 +341,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         start = max(1, best_scan - 2)
         stop = min(length(chrom.weight), best_scan + 2)
 
-        for i in range(1, length(chrom.weight))#range(start, stop)
+        for i in range(start, stop)
             if !state.mask[i]
                 if chrom.scribe[i]>max_scribe_score
                     max_scribe_score = chrom.scribe[i]

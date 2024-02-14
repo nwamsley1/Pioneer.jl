@@ -477,8 +477,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
 
         scoreMainSearchPSMs!(PSMs,
                                     column_names,
-                                    n_train_rounds = 3,
-                                    max_iter_per_round = 10,
+                                    n_train_rounds = 2,
+                                    max_iter_per_round = 20,
                                     max_q_value = 0.01);
 
         getProbs!(PSMs);
@@ -502,31 +502,17 @@ println("Finished main search in ", main_search_time, "seconds")
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_02024_M0.jld2"); PSMs_Dict)
 
 
-#SMs_DictNew = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
-
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
-for (key, psms) in pairs(PSMs_Dict)
-    for i in range(1, size(psms, 1))
-        psms[i,:score] = (1/2)*(1 + erf(psms[i,:score]/sqrt(2)))
-    end
-end
-
-for (key, psms) in pairs(PSMs_Dict)
-    psms[!,:prob] = psms[!,:score]
-end
-#PSMs_DictNew = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
+#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
+############
+#Build Retention Time Index
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
+precID_to_cv_fold = getCVFolds(precID_to_iRT)
 
-#get CV folds for each precursor
-precID_to_cv_fold = Dictionary{UInt32, UInt8}()
-for (prec_id, irt) in pairs(precID_to_iRT)
-    insert!(precID_to_cv_fold,
-    prec_id,
-    rand(UInt8[0, 1]))
-end
 
+############
+#New Inplace Arrays for Integration
 BPSMS = Dict{Int64, DataFrame}()
 PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
@@ -537,6 +523,7 @@ spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in 
 features = [:intercept, :charge, :total_ions, :err_norm, 
 :scribe, :city_block, :city_block_fitted, 
 :spectral_contrast, :entropy_score, :weight]
+
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
@@ -559,28 +546,28 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     )...);
     @time begin
-    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
-    addIntegrationFeatures!(PSMS);
-    getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
-    scoreSecondSearchPSMs!(PSMS,features);
-    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
-    integratePrecursors(MS2_CHROMS, 
-                        n_quadrature_nodes = params_[:n_quadrature_nodes],
-                        intensity_filter_fraction = params_[:intensity_filter_fraction],
-                        α = 0.001f0,
-                        LsqFit_tol = params_[:LsqFit_tol],
-                        Lsq_max_iter = params_[:Lsq_max_iter],
-                        tail_distance = params_[:tail_distance]);
-    addPostIntegrationFeatures!(PSMS, 
-                                MS_TABLE, prosit_lib["precursors"],
-                                ms_file_idx,
-                                MS_TABLE_ID_TO_PATH,
-                                RT_iRT,
-                                precID_to_iRT
-                                );
-    PSMS[!,:file_path].=MS_TABLE_PATH
-    BPSMS[ms_file_idx] = PSMS;
-    GC.gc()
+        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
+        addIntegrationFeatures!(PSMS);
+        getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
+        scoreSecondSearchPSMs!(PSMS,features);
+        MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
+        integratePrecursors(MS2_CHROMS, 
+                            n_quadrature_nodes = params_[:n_quadrature_nodes],
+                            intensity_filter_fraction = params_[:intensity_filter_fraction],
+                            α = 0.001f0,
+                            LsqFit_tol = params_[:LsqFit_tol],
+                            Lsq_max_iter = params_[:Lsq_max_iter],
+                            tail_distance = params_[:tail_distance]);
+        addPostIntegrationFeatures!(PSMS, 
+                                    MS_TABLE, prosit_lib["precursors"],
+                                    ms_file_idx,
+                                    MS_TABLE_ID_TO_PATH,
+                                    RT_iRT,
+                                    precID_to_iRT
+                                    );
+        PSMS[!,:file_path].=MS_TABLE_PATH
+        BPSMS[ms_file_idx] = PSMS;
+        GC.gc()
     end
 end
 

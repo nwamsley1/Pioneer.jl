@@ -216,3 +216,13 @@ function getBestTrace!(psms::DataFrame)
     end
     filter!(x->x.best_scan, psms);
 end
+
+function getCVFolds(precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}})
+    precID_to_cv_fold = Dictionary{UInt32, UInt8}()
+    for (prec_id, irt) in pairs(precID_to_iRT)
+        insert!(precID_to_cv_fold,
+        prec_id,
+        rand(UInt8[0, 1]))
+    end
+    return nothing
+end
