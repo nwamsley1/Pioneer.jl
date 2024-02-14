@@ -434,8 +434,13 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
     N = 500
     dtype = eltype(grouped_precursor_df[1].weight)
     thread_count = Threads.nthreads()
+
+    tasks_per_thread = 10
+    n_chroms = size(grouped_precursor_df)
+    chunk_size = max(1, n_chroms ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:n_chroms, chunk_size) # partition your data into chunks that
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))
-    tasks = map(range(1,thread_count)) do thread_task
+    tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             state = GD_state(
                 HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
@@ -446,8 +451,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                 0, #number of iterations
                 N #max index
                 )
-            i = thread_task
-            while i <= length(grouped_precursor_df)
+            for i in chunk
         #for i in range(1, length(grouped_precursor_df))
                 integratePrecursorMS2(grouped_precursor_df[i]::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},
                                         state,
@@ -462,7 +466,6 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                                         isplot = isplot
                                         )
                 reset!(state)
-                i += thread_count + 1
             end
         end
     end

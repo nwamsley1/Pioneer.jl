@@ -390,7 +390,7 @@ function getIsoRanks!(psms::DataFrame,
         end
     end
     fetch.(tasks)
-    return 
+    return nothing
 end
 
 function addChromatogramFeatures!(psms::DataFrame, 
@@ -496,7 +496,7 @@ function addChromatogramFeatures!(psms::DataFrame,
     psms[!,:missed_cleavage] = missed_cleavage
     psms[!,:Mox] = Mox
     psms[!,:max_prob] = zeros(Float16, N);
-    return 
+    return nothing
 end
 
 
