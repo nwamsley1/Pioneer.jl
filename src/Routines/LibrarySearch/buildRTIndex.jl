@@ -67,7 +67,7 @@ buildRTIndex(PSMs::DataFrame, bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(P
 function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
                        precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
                        iRT_RT::Any;
-                       min_prob::AbstractFloat = 0.75)
+                       min_prob::AbstractFloat = 0.5)
     #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
     rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
     #iRT dict

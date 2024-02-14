@@ -433,10 +433,8 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
     gx, gw = gausslegendre(n_quadrature_nodes)
     N = 500
     dtype = eltype(grouped_precursor_df[1].weight)
-    thread_count = Threads.nthreads()
-
     tasks_per_thread = 10
-    n_chroms = size(grouped_precursor_df)
+    n_chroms = length(grouped_precursor_df)
     chunk_size = max(1, n_chroms ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = partition(1:n_chroms, chunk_size) # partition your data into chunks that
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))

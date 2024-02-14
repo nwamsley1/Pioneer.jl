@@ -500,9 +500,19 @@ println("Finished main search in ", main_search_time, "seconds")
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_02024_M0.jld2"); PSMs_Dict)
 
 
-PSMs_DictNew = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
+#SMs_DictNew = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
 
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020224_M0.jld2"))["PSMs_Dict"]
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
+for (key, psms) in pairs(PSMs_Dict)
+    for i in range(1, size(psms, 1))
+        psms[i,:score] = (1/2)*(1 + erf(psms[i,:score]/sqrt(2)))
+    end
+end
+
+for (key, psms) in pairs(PSMs_Dict)
+    psms[!,:prob] = psms[!,:score]
+end
+#PSMs_DictNew = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
 iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict)
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, RT_iRT)
 RT_INDICES = makeRTIndices(PSMs_Dict,precID_to_iRT,iRT_RT)
@@ -547,7 +557,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     )...);
 
-    
+    #=
     @time begin
     filter!(x->x.weight>0.0, PSMS);
     addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);    
@@ -570,8 +580,28 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     PSMS[!,:ms_file_idx].=ms_file_idx
     BPSMS[ms_file_idx] = PSMS;
     GC.gc()
+    =#
+
+    filter!(x->x.weight>0.0, PSMS);
+    _refinePSMs!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold,
+     window_width = ms2_integration_params[:quadrupole_isolation_width]);
+    scoreSecondSearchPSMs!(PSMS,features);
+    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
+    integratePrecursors(MS2_CHROMS, 
+                                        n_quadrature_nodes = params_[:n_quadrature_nodes],
+                                        intensity_filter_fraction = params_[:intensity_filter_fraction],
+                                        α = 0.001f0,
+                                        LsqFit_tol = params_[:LsqFit_tol],
+                                        Lsq_max_iter = params_[:Lsq_max_iter],
+                                        tail_distance = params_[:tail_distance])
+    addFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"]);
+    PSMS[!,:file_path].=MS_TABLE_PATH
+    BPSMS[ms_file_idx] = PSMS;
+    GC.gc()
+
 end
 BPSMS = groupby(best_psms,:ms_file_idx)
+println("finished")
 for (key, psms) in ProgressBar(pairs(BPSMS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATHS[key])
     addChromatogramFeatures!(psms, MS_TABLE, prosit_lib["precursors"],
@@ -580,7 +610,7 @@ for (key, psms) in ProgressBar(pairs(BPSMS))
                 precID_to_iRT);
 end
 best_psms = vcat(values(BPSMS)...)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_03.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_06.jld2"); best_psms)
 println("TEST")
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0_q99min5max25_021324_04.jld2"))["best_psms"]
 #getBestTrace!(best_psms)
@@ -763,10 +793,10 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021324_04.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021324_06.jld2"); best_psms)
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_febredo3.jld2"))["best_psms"]
 getBestTrace!(best_psms)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021324_04.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021324_06.jld2"); best_psms)
 println("finished")
 histogram(best_psms[best_psms[!,:target],:prob], alpha = 0.5, normalize =:pdf)
 histogram!(best_psms[best_psms[!,:decoy],:prob], alpha = 0.5, normalize = :pdf)
