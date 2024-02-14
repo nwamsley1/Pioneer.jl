@@ -480,6 +480,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
                                     n_train_rounds = 3,
                                     max_iter_per_round = 10,
                                     max_q_value = 0.01);
+
+        getProbs!(PSMs);
                                     
         getBestPSMs!(PSMs,
                         prosit_lib["precursors"],
@@ -582,15 +584,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     end
 end
 
-BPSMS = groupby(best_psms,:ms_file_idx)
-println("finished")
-for (key, psms) in ProgressBar(pairs(BPSMS))
-    MS_TABLE = Arrow.Table(MS_TABLE_PATHS[key])
-    addChromatogramFeatures!(psms, MS_TABLE, prosit_lib["precursors"],
-                MS_TABLE_ID_TO_PATH,
-                RT_iRT,
-                precID_to_iRT);
-end
 best_psms = vcat(values(BPSMS)...)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_M0M1_q995to25_021224_06.jld2"); best_psms)
 println("TEST")
@@ -623,18 +616,18 @@ features = [
     :sequence_length,
     :charge,
 
-    #:irt_pred,
-    #:irt_error,
-    #:irt_obs,
-    #:RT,
-    #:irt_diff,
+    :irt_pred,
+    :irt_error,
+    :irt_obs,
+    :RT,
+    :irt_diff,
 
         
-    :iRT_predicted,
-    :iRT_error,
-    :iRT_observed,
-    :RT,
-    :iRT_diff,
+    #:iRT_predicted,
+    #:iRT_error,
+    #:iRT_observed,
+    #:RT,
+    #:iRT_diff,
 
     :max_y_ions,
     :y_ions_sum,
@@ -775,10 +768,10 @@ transform!(best_psms, AsTable(:) => ByRow(psm ->
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021324_06.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_021324_07.jld2"); best_psms)
 #best_psms = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_alltraces_febredo3.jld2"))["best_psms"]
 getBestTrace!(best_psms)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021324_06.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_020824_q99min5max25_besttrace_021324_07.jld2"); best_psms)
 println("finished")
 histogram(best_psms[best_psms[!,:target],:prob], alpha = 0.5, normalize =:pdf)
 histogram!(best_psms[best_psms[!,:decoy],:prob], alpha = 0.5, normalize = :pdf)

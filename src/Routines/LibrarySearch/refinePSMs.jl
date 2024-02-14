@@ -1,6 +1,3 @@
-#println("Target PSMs at 25% FDR: ", sum((PSMs.q_value.<=0.25).&(PSMs.decoy.==false))
-#println("Target PSMs at 10% FDR: ", sum((PSMs.q_value.<=0.1).&(PSMs.decoy.==false)))
-#println("Target PSMs at 1% FDR: ", sum((PSMs.q_value.<=0.01).&(PSMs.decoy.==false)))
 function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_rt_error::Float64 = 20.0,  
                         min_prob::Float64 = 0.9, 
@@ -195,6 +192,23 @@ function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
     return 
 end
 
+function getProbs!(psms::DataFrame)
+    psms[!,:prob] = zeros(Float16, size(psms, 1))
+    tasks_per_thread = 10
+    M = size(psms, 1)
+    chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+    tasks = map(data_chunks) do chunk
+        Threads.@spawn begin
+            for i in chunk
+                psms[i,:prob] = (1 + SpecialFunction.erf(psms[i,:score]/sqrt(2)))/2
+            end
+        end
+    end
+    fetch.(tasks)
+    return nothing
+end
+
 function getBestPSMs!(psms::DataFrame,
                         precursors::Vector{LibraryPrecursorIon{T}}; 
                         max_q_value::Float64 = 0.10) where {T<:AbstractFloat}
@@ -223,7 +237,6 @@ function getBestPSMs!(psms::DataFrame,
 
     return
 end
-
 
 function addSecondSearchColumns!(psms::DataFrame, 
                         MS_TABLE::Arrow.Table, 
@@ -523,176 +536,3 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     psms[!,:ms_file_idx] .= ms_file_idx
     return nothing
 end
-
-#=
-function addSecondSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, 
-                                    precursors::Vector{LibraryPrecursorIon{T}},
-                                    prec_id_to_cv_fold::Dictionary{UInt32, UInt8}) where {T<:AbstractFloat}
-    ###########################
-    #Allocate new columns
-    N = size(PSMs)[1]
-    rt = zeros(Float32, N);
-    TIC = zeros(Float16, N);
-    total_ions = zeros(UInt16, N);
-    err_norm = zeros(Float16, N);
-    targets = zeros(Bool, N);
-    charge = zeros(UInt8, N);
-    prec_mz = zeros(Float32, N);
-    cv_fold = zeros(UInt8, N);
-    scan_idx::Vector{UInt32} = PSMs[!,:scan_idx]
-    precursor_idx::Vector{UInt32} = PSMs[!,:precursor_idx]
-    y_count::Vector{UInt8} = PSMs[!,:y_count]
-    b_count::Vector{UInt8} = PSMs[!,:b_count]
-    error::Vector{Float32} = PSMs[!,:error]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    matched_ratio::Vector{Float16} = PSMs[!,:matched_ratio]
-
-    #Split data into chunk ranges
-    tasks_per_thread = 10
-    chunk_size = max(1, size(PSMs, 1) ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:size(PSMs, 1), chunk_size) # partition your data into chunks that
-
-
-    tasks = map(data_chunks) do chunk
-        Threads.@spawn begin
-            for i in chunk
-                targets[i] = isDecoy(precursors[precursor_idx[i]]) == false;
-                rt[i] = Float32(scan_retention_time[scan_idx[i]]);
-                charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
-                prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
-                TIC[i] = Float16(log2(tic[scan_idx[i]]));
-                total_ions[i] = UInt16(y_count[i] + b_count[i]);
-                err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
-                if isinf(matched_ratio[i])
-                    matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
-                end
-                cv_fold[i] = prec_id_to_cv_fold[precursor_idx[i]]
-            end
-        end
-    end
-    fetch.(tasks)
-    PSMs[!,:matched_ratio] = matched_ratio
-    PSMs[!,:RT] = rt
-    PSMs[!,:TIC] = TIC
-    PSMs[!,:total_ions] = total_ions
-    PSMs[!,:err_norm] = err_norm
-    PSMs[!,:target] = targets
-    PSMs[!,:charge] = charge
-    PSMs[!,:prec_mz] = prec_mz
-    PSMs[!,:cv_fold] = cv_fold
-    PSMs[!,:score] = zeros(Float32, N)
-    PSMs[!,:intercept] = ones(UInt8, N)
-    #sort!(PSMs,:RT); #Sorting before grouping is critical. 
-
-end
-=#
-
-
-#=
-function addChromatogramFeatures!(psms::DataFrame, 
-                                    MS_TABLE::Arrow.Table, 
-                                    precursors::Vector{LibraryPrecursorIon{T}},
-                                    ms_id_to_file_path::Dictionary{UInt32, String},
-                                    rt_to_irt_interp::Any,
-                                    prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
-    ###########################
-    #Allocate new columns
-    N = size(psms, 1)
-    missed_cleavage = zeros(UInt8, N);
-    sequence = Vector{String}(undef, N);
-    stripped_sequence = Vector{String}(undef, N);
-    adjusted_intensity_explained = zeros(Float16, N);
-    charge = zeros(UInt8, N)
-    sequence_length = zeros(UInt8, N);
-    b_y_overlap = zeros(Bool, N);
-    spectrum_peak_count = zeros(Float16, N);
-    prec_mz = zeros(Float32, N);
-    Mox = zeros(UInt8, N)
-    TIC = zeros(Float16, N);
-    #cv_fold = zeros(UInt8, N);
-    irt_diff = zeros(Float32, N)
-    irt_obs = zeros(Float32, N)
-    irt_pred = zeros(Float32, N)
-    irt_error = zeros(Float32, N)
-
-    ms_file_idx::Vector{UInt32} = psms[!,:ms_file_idx]
-    scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
-    longest_y::Vector{UInt8} = psms[!,:longest_y]
-    longest_b::Vector{UInt8} = psms[!,:longest_b]
-    rt::Vector{Float32} = psms[!,:RT]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
-    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
-    
-    function countMOX(seq::String)::UInt8
-        mox = zero(UInt8)
-        in_mox = false
-        for aa in seq
-            if in_mox
-                if aa == 'x'
-                    mox += one(UInt8)
-                end
-                in_mox = false
-            end
-            if aa == 'o'
-                in_mox = true
-            end
-        end
-        return mox
-    end
-
-    #Split data into chunk ranges
-    tasks_per_thread = 10
-    chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
-
-
-    tasks = map(data_chunks) do chunk
-        Threads.@spawn begin
-            for i in chunk
-                prec = precursors[precursor_idx[i]]
-
-                missed_cleavage[i] = getMissedCleavages(prec)#.missed_cleavages
-                sequence[i] = getSequence(prec);
-                stripped_sequence[i] = replace.(sequence[i], "M(ox)" => "M");
-                Mox[i] = countMOX(prec.sequence)
-
-                charge[i]= getPrecCharge(prec);
-                prec_mz[i] = getMZ(prec)
-                sequence_length[i] = getLength(prec);
-                b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
-
-                TIC[i] = Float16(log2(tic[scan_idx[i]]));
-                adjusted_intensity_explained[i] = Float16(TIC[i]  + log2_intensity_explained[i]);
-                spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
-
-                irt_obs[i] = rt_to_irt_interp[ms_id_to_file_path[ms_file_idx[i]]](rt[i])
-                irt_pred[i] = getIRT(prec)
-                irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[precursor_idx[i]]))
-                irt_error[i] = abs(irt_obs[i] - irt_pred[i])
-
-                #cv_fold[i] = UInt8(rand(Bool))
-            end
-        end
-    end
-    fetch.(tasks)
-    psms[!,:irt_obs] = irt_obs
-    psms[!,:irt_pred] = irt_pred
-    psms[!,:irt_diff] = irt_diff
-    psms[!,:irt_error] = irt_error
-
-    psms[!,:spectrum_peak_count] = spectrum_peak_count
-    psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
-    psms[!,:tic] = TIC
-    psms[!,:b_y_overlap] = b_y_overlap
-    psms[!,:sequence_length] = sequence_length
-    psms[!,:sequence] = sequence
-    psms[!,:stripped_sequence] = stripped_sequence
-    psms[!,:missed_cleavage] = missed_cleavage
-    psms[!,:Mox] = Mox
-    psms[!,:max_prob] = zeros(Float16, N);
-    return nothing
-end
-=#
