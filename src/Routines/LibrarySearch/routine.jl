@@ -556,50 +556,32 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     spectral_scores,
                     precursor_weights,
                     )...);
-
-    #=
     @time begin
-    filter!(x->x.weight>0.0, PSMS);
-    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);    
-    sort!(PSMS, :RT);  #important!!!!
-    scoreSecondSearchPSMs!(PSMS,features);
-    getIsoRanks!(PSMS, MS_TABLE, 8.0036/2);
+    addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
     addIntegrationFeatures!(PSMS);
-    MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
-    integratePrecursors(MS2_CHROMS, 
-                                        n_quadrature_nodes = params_[:n_quadrature_nodes],
-                                        intensity_filter_fraction = params_[:intensity_filter_fraction],
-                                        α = 0.001f0,
-                                        LsqFit_tol = params_[:LsqFit_tol],
-                                        Lsq_max_iter = params_[:Lsq_max_iter],
-                                        tail_distance = params_[:tail_distance]
-                        );
-    filter!(x -> x.best_scan, PSMS);
-    filter!(x -> x.data_points>0, PSMS);
-    end;
-    PSMS[!,:ms_file_idx].=ms_file_idx
-    BPSMS[ms_file_idx] = PSMS;
-    GC.gc()
-    =#
-
-    filter!(x->x.weight>0.0, PSMS);
-    _refinePSMs!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold,
-     window_width = ms2_integration_params[:quadrupole_isolation_width]);
+    getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
     scoreSecondSearchPSMs!(PSMS,features);
     MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
     integratePrecursors(MS2_CHROMS, 
-                                        n_quadrature_nodes = params_[:n_quadrature_nodes],
-                                        intensity_filter_fraction = params_[:intensity_filter_fraction],
-                                        α = 0.001f0,
-                                        LsqFit_tol = params_[:LsqFit_tol],
-                                        Lsq_max_iter = params_[:Lsq_max_iter],
-                                        tail_distance = params_[:tail_distance])
-    addFeatures!(PSMS, MS_TABLE, prosit_lib["precursors"]);
+                        n_quadrature_nodes = params_[:n_quadrature_nodes],
+                        intensity_filter_fraction = params_[:intensity_filter_fraction],
+                        α = 0.001f0,
+                        LsqFit_tol = params_[:LsqFit_tol],
+                        Lsq_max_iter = params_[:Lsq_max_iter],
+                        tail_distance = params_[:tail_distance]);
+    addPostIntegrationFeatures!(PSMS, 
+                                MS_TABLE, prosit_lib["precursors"],
+                                ms_file_idx,
+                                MS_TABLE_ID_TO_PATH,
+                                RT_iRT,
+                                precID_to_iRT
+                                );
     PSMS[!,:file_path].=MS_TABLE_PATH
     BPSMS[ms_file_idx] = PSMS;
     GC.gc()
-
+    end
 end
+
 BPSMS = groupby(best_psms,:ms_file_idx)
 println("finished")
 for (key, psms) in ProgressBar(pairs(BPSMS))
