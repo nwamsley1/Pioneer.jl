@@ -1,4 +1,4 @@
-function SearchRAW(
+function searchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::Union{FragmentIndex{Float32}, Missing},
@@ -29,7 +29,6 @@ function SearchRAW(
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     max_peak_width::Float64 = 2.0,
-                    max_peaks::Union{Int64,Bool} = false, 
                     min_frag_count::Int64 = 4,
                     min_frag_count_index_search::Int64 = 0,
                     min_matched_ratio::Float32 = Float32(0.8),
@@ -62,42 +61,31 @@ function SearchRAW(
     #For example if there are 10,000 scans and two threads, choose n so that
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
-    peaks = sum(length.(spectra[:masses]))
-    peaks_per_thread = peaks÷(Threads.nthreads())#Threads.nthreads()÷2)
-    thread_tasks = []
-    n = 0
-    start = 1
-    #Incorperate sacn range here 
-    for i in range(1, length(spectra[:masses]))
-        n += length(spectra[:masses][i])
-        if (n > peaks_per_thread) | ((i + 1) == length(spectra[:masses]))
-            push!(thread_tasks, (start, length(thread_tasks) + 1, i))
-            start = i + 1
-            n = 0
-        end
-    end
-    println("length(thread_tasks) ", length(thread_tasks))
-    pbar = ProgressBar(total = peaks)
+    thread_tasks, total_peaks = paritionScansToThreads(spetra[:masses], 
+                                                        Threads.nthreads(),
+                                                        10)
+    pbar = ProgressBar(total = total_peaks)
     lk = ReentrantLock()
 
     if ismissing(precs)
-        precs = [missing for _ in range(1, length(thread_tasks))]
+        precs = [missing for _ in range(1, Threads.nthreads())]
     end
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
+            thread_id = getThreadID(thread_task)
             return searchRAW(
                                 spectra,lk,pbar,
-                                (first(thread_task), last(thread_task)),
+                                getRange(thread_task),
                                 frag_index,precursors,
                                 ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
                                 selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
                                 huber_δ, unmatched_penalty_factor,
-                                ionMatches[thread_task[2]],ionMisses[thread_task[2]],all_fmatches[thread_task[2]],IDtoCOL[thread_task[2]],ionTemplates[thread_task[2]],
-                                iso_splines, scored_PSMs[thread_task[2]],unscored_PSMs[thread_task[2]],spectral_scores[thread_task[2]],precursor_weights[thread_task[2]],
-                                precs[thread_task[2]],
+                                ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
+                                iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
+                                precs[thread_id],
                                 isotope_dict,
                                 isotope_err_bounds,
-                                max_peak_width,max_peaks,min_frag_count, min_frag_count_index_search,
+                                max_peak_width,min_frag_count, min_frag_count_index_search,
                                 min_matched_ratio,min_index_search_score,min_spectral_contrast,min_topn_of_m,min_max_ppm,filter_by_rank,
                                 min_weight,n_frag_isotopes,quadrupole_isolation_width,
                                 rt_bounds,rt_index, rt_tol,sample_rate,
@@ -113,7 +101,7 @@ function searchRAW(
                     lk::ReentrantLock,
                     #isprecs::Bool,
                     pbar::ProgressBar,
-                    thread_task::Tuple{Int64, Int64},
+                    thread_task::UnitRange{Int64},
                     frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Vector{LibraryPrecursorIon{Float32}}, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
@@ -144,7 +132,6 @@ function searchRAW(
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing},
                     isotope_err_bounds::Tuple{Int64, Int64},
                     max_peak_width::Float64,
-                    max_peaks::Union{Int64,Bool},
                     min_frag_count::Int64,
                     min_frag_count_index_search::Int64,
                     min_matched_ratio::Float32,
@@ -185,7 +172,7 @@ function searchRAW(
     scans_processed = 0
     isotopes = zeros(Float64, n_frag_isotopes)
     #ncols = 0
-    for i in range(first(thread_task), last(thread_task))
+    for i in thread_task
         thread_peaks += length(spectra[:masses][i])
 
         if thread_peaks > 100000
@@ -429,7 +416,7 @@ function firstSearch(
     xs = 0:1
     A = collect(xs)
     err_dist = MassErrorModel((zero(Float32), zero(Float32), zero(Float32)), zero(Float32))
-    return SearchRAW(
+    return searchRAW(
         spectra, 
         frag_index,
         precursors, 
@@ -455,7 +442,6 @@ function firstSearch(
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         frag_ppm_err = Float32(params[:frag_ppm_err]),
-        max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
         min_frag_count_index_search = params[:min_frag_count_index_search],
         min_matched_ratio = params[:min_matched_ratio],
@@ -501,7 +487,7 @@ function mainLibrarySearch(
 
     frag_ppm_err = getLocation(err_dist)
     
-    return SearchRAW(
+    return searchRAW(
         spectra, 
         frag_index, 
         precursors,
@@ -527,7 +513,6 @@ function mainLibrarySearch(
         expected_matches = params[:expected_matches],
         frag_ppm_err = frag_ppm_err,
         isotope_err_bounds = params[:isotope_err_bounds],
-        max_peaks = params[:max_peaks],
         min_frag_count = params[:min_frag_count],
         min_frag_count_index_search = params[:min_frag_count_index_search],
         min_matched_ratio = params[:min_matched_ratio_main_search],
@@ -545,7 +530,7 @@ function mainLibrarySearch(
     )
 end
 
-function integrateMS2_(
+function quantitationSearch(
     #Mandatory Args
     spectra::Arrow.Table,
     precursors::Vector{LibraryPrecursorIon{Float32}},
@@ -571,7 +556,7 @@ function integrateMS2_(
     println("frag_ppm_err $frag_ppm_err")
     
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-    return SearchRAW(
+    return searchRAW(
         spectra, 
         missing,
         precursors,
@@ -598,7 +583,6 @@ function integrateMS2_(
         unmatched_penalty_factor = params[:unmatched_penalty_factor],
         isotope_err_bounds = params[:isotope_err_bounds],
         max_peak_width = params[:max_peak_width],
-        max_peaks = params[:max_peaks],
         min_topn_of_m = params[:min_topn_of_m],
         filter_by_rank = true,
         huber_δ = params[:huber_δ],
