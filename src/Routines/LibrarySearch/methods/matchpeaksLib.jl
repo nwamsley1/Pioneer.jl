@@ -108,7 +108,8 @@ function setNearest!(matches::Vector{M},
                     unmatched_idx::Int64
                     )::Int64 where {M<:MatchIon{Float32}}
 
-                    
+    #Get maximum and minimum m/z of a theoretical ion that could match a peak given 
+    #the intensity. (tolerance is inversely proportional to the sqrt of the intensity)       
     function getMzBounds(mz::Float32, ppm_tol_param::Float32, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
         ppm = max(
             min(ppm_tol_param/sqrt(intensity), last(min_max_ppm)), 
@@ -140,7 +141,7 @@ function setNearest!(matches::Vector{M},
     end
 
     if best_peak > 0
-        return setMatch!(matches, 
+        matched_idx = setMatch!(matches, 
                                 Ion, 
                                 masses[best_peak]-δ, 
                                 intensities[best_peak], 
@@ -149,7 +150,7 @@ function setNearest!(matches::Vector{M},
                                 ms_file_idx,
                                 matched_idx);
     else
-        setMatch!(unmatched,
+        unmatched_idx = setMatch!(unmatched,
                     Ion, 
                     zero(Float32), 
                     zero(Float32),
@@ -158,9 +159,8 @@ function setNearest!(matches::Vector{M},
                     ms_file_idx,
                     unmatched_idx
                     );
-        return matched_idx
     end
-     
+    return matched_idx, unmatched_idx
 end
 
 """
@@ -206,7 +206,7 @@ each fragment ion is only assigned to 0 or 1 peaks.
 function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Ions
                     unmatched::Vector{M}, #Pre-allocated container for Unmatched Ions
                     Ions::Vector{I}, #Library Ion Templates to match to the spectrum
-                    ion_idx::Int64, 
+                    ion_idx::Int64, #Maximum elemtn in Ions to consider
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
                     ppm_tol_param::Float32,
@@ -214,17 +214,19 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
                     ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
-    #match is a running count of the number of transitions that have been matched to a peak
-    #This is not necessarily the same as `transition` because some (perhaps most)
-    #transitions will not match to any peak. 
-    peak, ion, matched_idx = 1, 1, 0
-    unmatched_idx = 0
 
+    #matched_idx is a running count of the number of transitions that have been matched to a peak
+    #peak is the index of the peak in the spectrum masses[peak]/intensities[peak]
+    #ion is the index of the template being compared to the spectrum Ions[ion]
+    peak, ion, matched_idx, unmatched_idx = 1, 1, 0, 0
+
+    #Maximum m/z match window for a theoretical fragment ion. Returns a tuple of the minimum and 
+    #maximum posible m/z's of a matching peak
     function getMaxErrBounds(theoretical_mz::Float32, max_ppm_tol::Float32)
         mz_tol = Float32(max_ppm_tol*theoretical_mz/1e6)
         return theoretical_mz - mz_tol, theoretical_mz + mz_tol
     end
-    #if length(Ions)<1
+
     if ion_idx<1
         return matched_idx, unmatched_idx
     end
@@ -235,10 +237,13 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
 
     while (peak <= length(masses)) & (ion <= ion_idx)
         #Is the peak within the tolerance of the transition m/z?
-        if (corrected_empirical_mz>=low)
+        if (corrected_empirical_mz>=low) 
             if (corrected_empirical_mz<=high) #Empirical peak is within maximum mass tolerance
-
-                matched_idx = setNearest!(  matches,
+                #Set nearest matching peak if there are any.
+                #Mass tolerance is intensity dependent,
+                #so is it possible for there to be none.
+                #In that case, sets an unmatched ion. 
+                matched_idx, unmatched_idx = setNearest!(  matches,
                                             unmatched,
                                             masses, 
                                             intensities, 
