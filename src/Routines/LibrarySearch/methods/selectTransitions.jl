@@ -5,8 +5,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             #precursors::Vector{LibraryPrecursor{Float32}}
-                            counter::Counter{UInt32,UInt8}, 
-                            topN::Int64, 
+                            counter::Counter{UInt32,UInt8},
                             iRT::Float32, 
                             iRT_tol::Float32, 
                             mz_bounds::Tuple{Float32, Float32};
@@ -16,7 +15,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
     i = 1
     transition_idx = 0
     #NEUTRON = Float64(1.00335)
-    while i <= min(topN, counter.matches)
+    while i <= counter.matches
 
        
         prec_idx = getID(counter, i)

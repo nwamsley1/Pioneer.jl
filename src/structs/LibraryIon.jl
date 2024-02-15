@@ -34,6 +34,12 @@ getPrecID(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_id
 getPrecMZ(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.prec_mz
 getIntensity(f::LibraryFragmentIon{T}) where {T<:AbstractFloat} = f.intensity
 
+function reset!(lf::Vector{L}, last_non_empty::Int64) where {L<:LibraryFragmentIon{Float32}}
+    for i in range(1, last_non_empty)
+        lf[i] = L()
+    end
+end
+
 struct SimpleFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     mz::T
     prec_id::UInt32

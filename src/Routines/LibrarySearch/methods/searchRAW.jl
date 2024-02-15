@@ -4,7 +4,7 @@ function searchRAW(
                     frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Vector{LibraryPrecursorIon{Float32}}, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
-                    iRT_to_RT_spline::Any,
+                    rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     err_dist::MassErrorModel{Float32},
                     selectIons!::Function,
@@ -29,27 +29,21 @@ function searchRAW(
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     max_peak_width::Float64 = 2.0,
-                    min_frag_count::Int64 = 4,
-                    min_frag_count_index_search::Int64 = 0,
-                    min_matched_ratio::Float32 = Float32(0.8),
+                    min_frag_count::Int64 = 1,
+                    min_log2_matched_ratio::Float32 = -Inf32,
                     min_index_search_score::UInt8 = zero(UInt8),
-                    min_spectral_contrast::Float32 = Float32(0.65),
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
                     min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
                     filter_by_rank::Bool = false, 
                     min_weight::Float32 = zero(Float32),
                     n_frag_isotopes::Int64 = 1,
-                    #precs::Counter{UInt32, UInt8, Float32} = Counter(UInt32, UInt8, Float32, 0),
-                    #_precs::Union{Counter{UInt32, Float32}, Missing} = missing,
                     quadrupole_isolation_width::Float64 = 8.5,
                     rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
-                    rt_tol::Float64 = 30.0,
-                    sample_rate::Float64 = 1.0,
-                    #scored_PSMs::Union{Dict{Symbol, Vector}, Missing} = missing,
-                    spec_order::Set{Int64} = Set(2),
-                    topN::Int64 = 20,
-                    topN_index_search::Int64 = 1000) where {T,U<:AbstractFloat, 
+                    irt_tol::Float64 = Inf,
+                    sample_rate::Float64 = Inf,
+                    spec_order::Set{Int64} = Set(2)
+                    ) where {T,U<:AbstractFloat, 
                                                             L<:LibraryIon{Float32}, 
                                                             S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
@@ -77,7 +71,7 @@ function searchRAW(
                                 spectra,lk,pbar,
                                 getRange(thread_task),
                                 frag_index,precursors,
-                                ion_list, iRT_to_RT_spline,ms_file_idx,err_dist,
+                                ion_list, rt_to_irt_spline,ms_file_idx,err_dist,
                                 selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
                                 huber_δ, unmatched_penalty_factor,
                                 ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
@@ -85,11 +79,11 @@ function searchRAW(
                                 precs[thread_id],
                                 isotope_dict,
                                 isotope_err_bounds,
-                                max_peak_width,min_frag_count, min_frag_count_index_search,
-                                min_matched_ratio,min_index_search_score,min_spectral_contrast,min_topn_of_m,min_max_ppm,filter_by_rank,
+                                max_peak_width,min_frag_count,
+                                min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,
                                 min_weight,n_frag_isotopes,quadrupole_isolation_width,
-                                rt_bounds,rt_index, rt_tol,sample_rate,
-                                spec_order,topN,topN_index_search
+                                rt_bounds,rt_index, irt_tol,sample_rate,
+                                spec_order
                             )
         end
     end
@@ -105,7 +99,7 @@ function searchRAW(
                     frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Vector{LibraryPrecursorIon{Float32}}, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
-                    iRT_to_RT_spline::Any,
+                    rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel{Float32},
                     selectIons!::Function,
@@ -133,10 +127,8 @@ function searchRAW(
                     isotope_err_bounds::Tuple{Int64, Int64},
                     max_peak_width::Float64,
                     min_frag_count::Int64,
-                    min_frag_count_index_search::Int64,
-                    min_matched_ratio::Float32,
+                    min_log2_matched_ratio::Float32,
                     min_index_search_score::UInt8,
-                    min_spectral_contrast::Float32,
                     min_topn_of_m::Tuple{Int64, Int64},
                     min_max_ppm::Tuple{Float32, Float32},
                     filter_by_rank::Bool,
@@ -145,11 +137,9 @@ function searchRAW(
                     quadrupole_isolation_width::Float64,
                     rt_bounds::Tuple{Float64, Float64},
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
-                    rt_tol::Float64,
+                    irt_tol::Float64,
                     sample_rate::Float64,
                     spec_order::Set{Int64},
-                    topN::Int64,
-                    topN_index_search::Int64,
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
@@ -161,7 +151,6 @@ function searchRAW(
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    minimum_rt, maximum_rt = first(rt_bounds), last(rt_bounds) #only consider scans in the bounds
     ###########
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
     Hs = SparseArray(5000);
@@ -174,7 +163,6 @@ function searchRAW(
     #ncols = 0
     for i in thread_task
         thread_peaks += length(spectra[:masses][i])
-
         if thread_peaks > 100000
             lock(lk) do 
                 update(pbar, thread_peaks)
@@ -191,13 +179,8 @@ function searchRAW(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
         
-        #(i >= first(thread_task)) & (i <= last(thread_task)) ? nothing : continue #Skip if outside the scan range
-        
         first(rand(1)) <= sample_rate ? nothing : continue #dice-roll. Usefull for random sampling of scans. 
-
-        min_intensity = 0.0# getMinIntensity(spectra[:intensities][i], max_peaks) #Ignore peaks in the spectrum below this minimum intensity
-
-        iRT_low, iRT_high = getRTWindow(iRT_to_RT_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, maximum_rt, minimum_rt, rt_tol) #Convert RT to expected iRT window
+        iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
         ##########
         #Ion Template Selection
@@ -207,7 +190,6 @@ function searchRAW(
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
-                        min_intensity, 
                         spectra[:masses][i], spectra[:intensities][i],
                         iRT_low, iRT_high,
                         frag_ppm_err,
@@ -216,11 +198,8 @@ function searchRAW(
                         spectra[:precursorMZ][i],
                         Float32(quadrupole_isolation_width/2.0),
                         isotope_err_bounds,
-                        min_frag_count = min_frag_count_index_search, 
                         min_score = min_index_search_score,
-                        topN = topN_index_search,#topN
                         )
-            #println("prec_count $prec_count match_count $match_count ")
         end
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
@@ -231,9 +210,8 @@ function searchRAW(
                                                 iso_splines,
                                                 isotopes,
                                                 precs,
-                                                topN,
-                                                Float32(iRT_to_RT_spline(spectra[:retentionTime][i])),
-                                                Float32(rt_tol), #rt_tol
+                                                Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
+                                                Float32(irt_tol), #rt_tol
                                                 (
                                                 spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                 spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
@@ -294,32 +272,32 @@ function searchRAW(
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
-            
-
+        
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL,
-                                unmatched_penalty_factor = unmatched_penalty_factor)
-            #println("Hs.n ", Hs.n)
+            #Reduce predicted intensities for unmatched ions by this factor
+                                unmatched_penalty_factor = unmatched_penalty_factor 
+                                )
+            #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
                 append!(_weights_, zeros(eltype(_weights_), IDtoCOL.size - length(_weights_) + 1000 ))
                 append!(spectral_scores, Vector{SpectralScores{Float16}}(undef, IDtoCOL.size - length(spectral_scores) + 1000 ))
                 append!(unscored_PSMs, [LXTandem(Float32) for _ in 1:(IDtoCOL.size - length(unscored_PSMs) + 1000)]);
             end
-            #Get most recently determined weights for eahc precursors
+            #Get most recently determined weights for each precursors
             #"Hot" start
             for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
-
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
             if ismissing(precs) 
-                #Spectral deconvolution.
+                #Spectral deconvolution. Hybrid bisection/newtowns method
                 solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
             end
-            #Remember determined weights for eahc precursors
+            #Remember determined weights for each precursors
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
@@ -356,8 +334,7 @@ function searchRAW(
                     Hs.n,
                     Float32(sum(spectra[:intensities][i])), 
                     i,
-                    min_spectral_contrast = min_spectral_contrast, #Remove precursors with spectral contrast lower than this ammount
-                    min_matched_ratio = min_matched_ratio,
+                    min_log2_matched_ratio = min_log2_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
                     min_weight = min_weight,
                     min_topn = first(min_topn_of_m),
@@ -389,223 +366,10 @@ function searchRAW(
 
 end
 
-function firstSearch(
-    #Mandatory Args
-    spectra::Arrow.Table, 
-    frag_index::FragmentIndex{Float32},
-    precursors::Vector{LibraryPrecursorIon{Float32}},
-    ion_list::LibraryFragmentLookup{Float32},
-    iRT_to_RT_spline::Any,
-    ms_file_idx::UInt32,
-    params::Dict,
-    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
-    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
-    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
-    ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{S}},
-    unscored_PSMs::Vector{Vector{Q}},
-    spectral_scores::Vector{Vector{R}},
-    precursor_weights::Vector{Vector{Float32}},
-    precs::Vector{Counter{UInt32, UInt8}}
-    ) where {S<:ScoredPSM{Float32, Float16},
-    Q<:UnscoredPSM{Float32},
-    R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
-
-    xs = 0:1
-    A = collect(xs)
-    err_dist = MassErrorModel((zero(Float32), zero(Float32), zero(Float32)), zero(Float32))
-    return searchRAW(
-        spectra, 
-        frag_index,
-        precursors, 
-        ion_list,
-        iRT_to_RT_spline,
-        ms_file_idx,
-        err_dist,
-        selectTransitions!,
-        searchScan!,
-
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        precs,
-
-        collect_fmatches = true,
-        expected_matches = params[:expected_matches],
-        frag_ppm_err = Float32(params[:frag_ppm_err]),
-        min_frag_count = params[:min_frag_count],
-        min_frag_count_index_search = params[:min_frag_count_index_search],
-        min_matched_ratio = params[:min_matched_ratio],
-        min_index_search_score = params[:min_index_search_score],
-        min_spectral_contrast = params[:min_spectral_contrast],
-        min_topn_of_m = params[:min_topn_of_m],
-        min_max_ppm = (40.0f0, 40.0f0),
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        rt_bounds = params[:rt_bounds],
-        rt_tol = params[:rt_tol],
-        sample_rate = params[:sample_rate],
-        #scored_PSMs = makePSMsDict(XTandem(Float32)),
-        topN = params[:topN],
-        topN_index_search = params[:topN_index_search],
-    )
-end
-
-function mainLibrarySearch(
-    #Mandatory Args
-    spectra::Arrow.Table, 
-    frag_index::FragmentIndex{Float32},
-    precursors::Vector{LibraryPrecursorIon{Float32}},
-    ion_list::LibraryFragmentLookup{Float32},
-    iRT_to_RT_spline::Any,
-    ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Float32},
-    fragment_tolerance::Float64,
-    params::Dict,
-    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
-    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
-    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
-    ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{S}},
-    unscored_PSMs::Vector{Vector{Q}},
-    spectral_scores::Vector{Vector{R}},
-    precursor_weights::Vector{Vector{Float32}},
-    precs::Vector{Counter{UInt32, UInt8}};
-    scan_range::Tuple{Int64, Int64} = (0, 0)) where {S<:ScoredPSM{Float32, Float16},
-                                                            Q<:UnscoredPSM{Float32},
-                                                            R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
-
-    frag_ppm_err = getLocation(err_dist)
-    
-    return searchRAW(
-        spectra, 
-        frag_index, 
-        precursors,
-        ion_list,
-        iRT_to_RT_spline,
-        ms_file_idx,
-        err_dist,
-        selectTransitions!,
-        searchScan!,
-
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        precs,
-
-        expected_matches = params[:expected_matches],
-        frag_ppm_err = frag_ppm_err,
-        isotope_err_bounds = params[:isotope_err_bounds],
-        min_frag_count = params[:min_frag_count],
-        min_frag_count_index_search = params[:min_frag_count_index_search],
-        min_matched_ratio = params[:min_matched_ratio_main_search],
-        min_index_search_score = params[:min_index_search_score],
-        min_spectral_contrast = params[:min_spectral_contrast],
-        min_topn_of_m = params[:min_topn_of_m],
-        min_max_ppm = (10.0f0, 20.0f0),
-        n_frag_isotopes = params[:n_frag_isotopes],
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        rt_bounds = params[:rt_bounds],
-        rt_tol = params[:rt_tol],
-        sample_rate = 1.0,
-        topN = params[:topN],
-        topN_index_search = params[:topN_index_search]
-    )
-end
-
-function quantitationSearch(
-    #Mandatory Args
-    spectra::Arrow.Table,
-    precursors::Vector{LibraryPrecursorIon{Float32}},
-    ion_list::LibraryFragmentLookup{Float32},
-    rt_index::retentionTimeIndex{Float32, Float32},
-    ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Float32},
-    params::Dict,
-    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
-    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
-    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
-    ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float64},
-    scored_PSMs::Vector{Vector{S}},
-    unscored_PSMs::Vector{Vector{Q}},
-    spectral_scores::Vector{Vector{R}},
-    precursor_weights::Vector{Vector{Float32}}
-    ) where {S<:ScoredPSM{Float32, Float16},
-                                            Q<:UnscoredPSM{Float32},
-                                            R<:SpectralScores{Float16}}
-    frag_ppm_err = Float32(getLocation(err_dist))
-    println("frag_ppm_err $frag_ppm_err")
-    
-    #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-    return searchRAW(
-        spectra, 
-        missing,
-        precursors,
-        ion_list, 
-        x->x,
-        ms_file_idx,
-        err_dist,
-        selectRTIndexedTransitions!,
-        missing,
-        
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        missing,
-        
-        frag_ppm_err = Float32(frag_ppm_err),
-        unmatched_penalty_factor = params[:unmatched_penalty_factor],
-        isotope_err_bounds = params[:isotope_err_bounds],
-        max_peak_width = params[:max_peak_width],
-        min_topn_of_m = params[:min_topn_of_m],
-        filter_by_rank = true,
-        huber_δ = params[:huber_δ],
-        min_frag_count = params[:min_frag_count],
-        min_matched_ratio = params[:min_matched_ratio],
-        min_index_search_score = zero(UInt8),#params[:min_index_search_score],
-        min_spectral_contrast = params[:min_spectral_contrast], 
-        min_weight = params[:min_weight],
-        min_max_ppm = (5.0f0, 25.0f0),
-        n_frag_isotopes = params[:n_frag_isotopes],
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        rt_index = rt_index,
-        rt_bounds = params[:rt_bounds],
-        rt_tol = params[:rt_tol],
-        sample_rate = Inf,
-        topN = params[:topN],
-    )
-end
-
 function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
     nmatches_all, nmisses_all = nmatches, nmisses
 
-    for i in range(1, nmatches_all)
+    @inbounds for i in range(1, nmatches_all)
         match = ionMatches[i]
         prec_id = getPrecID(match)
         if match.is_isotope 
@@ -620,7 +384,7 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
             end
     end
     nmatches, nmisses = 0, 0
-    for i in range(1, nmatches_all)
+    @inbounds for i in range(1, nmatches_all)
         if IDtoNMatches[getPrecID(ionMatches[i])] < min_matched_ions
 
             continue
@@ -630,7 +394,7 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
         end
     end
 
-    for i in range(1, nmisses_all)
+    @inbounds for i in range(1, nmisses_all)
         if IDtoNMatches[getPrecID(ionMisses[i])] < min_matched_ions
             continue
         else
@@ -642,12 +406,6 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
     reset!(IDtoNMatches)
 
     return nmatches_all, nmisses_all, nmatches, nmisses
-end
-
-function reset!(lf::Vector{L}, last_non_empty::Int64) where {L<:LibraryFragmentIon{Float32}}
-    for i in range(1, last_non_empty)
-        lf[i] = L()
-    end
 end
 
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {M<:MatchIon{Float32}}
@@ -664,23 +422,8 @@ function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatc
     return n
 end
 
-function getRTWindow(irt::U, max_rt::T, min_rt::T, rt_tol::T) where {T,U<:AbstractFloat}
-    #(irt < min_rt) ? irt_low = Float32(-Inf) : irt_low = Float32(irt - rt_tol)
-    #(irt > max_rt) ? irt_high = Float32(Inf) : irt_high = Float32(irt + rt_tol)
-    #return irt_low, irt_high
-    return Float32(irt - rt_tol), Float32(irt + rt_tol)
+function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
+    return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end
 
-function getMinIntensity(intensities::AbstractArray{Union{T, Missing}}, max_peaks::Int) where {T<:AbstractFloat}
-    return intensities[sortperm(intensities, rev = true)[min(max_peaks, length(intensities))]]
-end
 
-function getMinIntensity(intensities::AbstractArray{Union{T, Missing}}, max_peaks::Bool) where {T<:AbstractFloat}
-    return zero(T)
-end
-
-function reset!(fms::Vector{M}, last_non_empty::Int64) where {M<:MatchIon{Float32}}
-    for i in range(1, last_non_empty)
-        fms[i] = M()
-    end
-end

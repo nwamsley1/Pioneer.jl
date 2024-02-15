@@ -63,12 +63,12 @@ end
 
 
 import Base.sort!
-function sort!(counter::Counter{I,C}, topN::Int) where {I,C<:Unsigned}
+function sortCounter!(counter::Counter{I,C}) where {I,C<:Unsigned}
     sort!(
                 @view(counter.ids[1:counter.matches]), 
                 by = id -> counter.counts[id],
                 rev = true,
-                alg=PartialQuickSort(topN)
+                alg=PartialQuickSort(counter.matches)
         )
     return nothing
 end

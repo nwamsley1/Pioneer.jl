@@ -1,4 +1,11 @@
 abstract type MatchIon{T<:AbstractFloat} <: Ion{T} end
+
+function reset!(fms::Vector{M}, last_non_empty::Int64) where {M<:MatchIon{Float32}}
+    for i in range(1, last_non_empty)
+        fms[i] = M()
+    end
+end
+
 """
     FragmentMatch
 

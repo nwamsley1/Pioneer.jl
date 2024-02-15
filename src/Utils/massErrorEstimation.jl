@@ -3,19 +3,9 @@ struct MassErrorModel{T<:AbstractFloat}
     location::T
 end
 
-#function (mem::MassErrorModel)(x::T)::T where {T<:AbstractFloat} 
-#    mem.intensity_to_shape_param(x) 
-#end
-
-
 function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
     return mem.location
 end
-
-#function getMassErrorLogLik(model::MassErrorModel{Laplace{T}, T}, intensity::T, err::T) where {T<:AbstractFloat}
-#    b = model(intensity)
-#    return -log(b*2) - abs(err)/b
-#end
 
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          err_model::Type{D}, #Distribution to model error
@@ -104,12 +94,6 @@ function ModelMassErrs(intensities::Vector{T},
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
-        #println("L.θ ", L.θ, " z ", z)
-        #println("median_intensities[bin_idx] ", 2^median_intensities[bin_idx] )
-        #println("cutof, ", L.θ*log(1*z*2*L.θ*80/(1-z)))
-        #println("quantile ", quantile(Laplace(0.0, L.θ), 0.975))
-        #shape_estimates[bin_idx] =  quantile(Laplace(0.0, L.θ), 0.975)# L.θ
-        #println("quantile ", quantile(Laplace(0.0, L.θ), 0.975))
         quantiles_ = (0.95, 0.975, 0.99)
         for i in range(1, length(quantiles_))
         shape_estimates[bin_idx, i] = quantile(Laplace(0.0, L.θ), quantiles_[i])# L.θ
@@ -118,68 +102,10 @@ function ModelMassErrs(intensities::Vector{T},
 
 
     intensities = 2 .^ median_intensities;
-    #=
-    return extrapolate(
-            Interpolations.scale(
-                interpolate(hcat(intensities, shape_estimates), 
-                            #(BSpline(Quadratic(Natural(OnGrid()))), NoInterp())
-                            BSpline(Quadratic(InPlace(OnGrid())))
-                            ),
-                LinRange(0, intensities, 100), 1:2), Flat()
-            )
-            intensities = Float32[11034.614, 15646.866, 20811.754, 27601.855, 36833.156, 49842.383, 70764.81, 106766.65, 192568.69, 661740.94]
-                plot([x for x in intensities],
-        [mass_err_model(x) for x in intensities])
-                        plot!([x for x in intensities],
-        [mass_err_model(x) for x in intensities], seriestype=:scatter)
-
-        plot_range = LinRange(8000, 100000, 100)
-
-                        plot( plot_range,
-        [ 2405/sqrt(x) for x in  plot_range]
-    )
-                            plot!( plot_range,
-        [3129/sqrt(x) for x in  plot_range]
-    )
-                            plot!( plot_range,
-        [4085/sqrt(x) for x in  plot_range]
-    )
-
-                            plot( plot_range,
-        [ 2776/sqrt(x) for x in  plot_range]
-    )
-                            plot!( plot_range,
-        [3260/sqrt(x) for x in  plot_range]
-    )
-
-                            plot!( plot_range,
-        [4085/sqrt(x) for x in  plot_range]
-    )
-    vline!([36833.156])
-    hline!([16.0])
-    hline!([10.0])
-
-(1 ./sqrt.(intensities))\errs
-    errs = [mass_err_model(x) for x in intensities]
-    sqr
-    vline!([intensities[5]])
-    vline!([intensities[6]])
-    =##
 
     MassErrorModel(
         Tuple((1 ./sqrt.(intensities))\shape_estimates),
         Float32(μ)
         )
 end
-
-
-#=
-@time intensity_to_scale = ModelMassErrs(frag_ppm_intensities,
-       frag_ppm_errs,
-       40.0)
-getMassErrorLogLik(testmodel, Float32(1e6), 1.0f0)
-
-
-
-=#
 
