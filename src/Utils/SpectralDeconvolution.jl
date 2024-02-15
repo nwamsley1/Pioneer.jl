@@ -1,13 +1,9 @@
 function getDerivatives!(Hs::SparseArray{Ti, T}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float32) where {Ti<:Integer,T<:AbstractFloat}
-    #L0 = zero(Float32)
     L1 = zero(Float32)
     L2 = zero(Float32)
     @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
-        #Huber
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
-        #R = (1 + (rval/δ)^2)^(-1/2)
         RS = (1 + (rval/δ)^2)
         #Quake's Fast Inverse Square Root Algorighm
         #Different magic for float64. 
@@ -20,14 +16,6 @@ function getDerivatives!(Hs::SparseArray{Ti, T}, r::Vector{Float32}, col::Int64,
 
         L1 += HSVAL_R * rval
         L2 += (hsval) * HSVAL_R * ((R)^(2))
-        #L0 += (δ^2)*((1/R) - 1)
-
-        #=
-        #R = Hs.nzval[i]*(1 + (r[Hs.rowval[i]]/δ)^2)^(-1/2)
-        #L1 += r[Hs.rowval[i]]*((R))
-        #L2 += ((R)^(3))/Hs.nzval[i]
-        #r[Hs.rowval[i]] += Hs.nzval[i]*(X₁[col] - X0)
-        =#
     end
     return L1 + λ, L2
 end
@@ -82,8 +70,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
     n = 0
     X_init = X₁[col] #Estimate prior to optimiztion
     X0 = X₁[col] #Keeps track of previous etimate at each iteration
-    #λ = Float32(5e-3)
-    #sum_X = sum(X₁)
     #Maximum Estimates X₁[col] and L1. Used as uper bound if newton-raphson fails to converge
     #And bisection method is neede. 
     max_l1, max_x1 = typemax(T), typemax(T)
@@ -95,7 +81,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
         #First and second derivatives 
         L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
         update_rule = (L1)/L2
-        #update_rule = L1/L2
 
         #Switch to bisection method
         if isnan(update_rule)
@@ -113,7 +98,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
 
         #Newton-Raphson update. Contrain X₁[col] to be non-negative
         @fastmath X₁[col] = max(X₁[col] - update_rule, zero(T))
-       # sum_X = sum_X - X0 + X₁[col]
         n += 1
 
         #Update residuals given new estimate, X₁[col], and prior estimate, X0
@@ -132,10 +116,8 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
         #Lower bound is always X₁[col] == 0
         X0 = X₁[col]
         X₁[col] = zero(T)
-        #sum_X = sum_X - X0 + X₁[col]
         updateResiduals!(Hs, r, col, X₁[col], X0)
-       # L1 = getL1(Hs, r, col, δ)
-        L1 = getL1(Hs, r, col, δ, λ) #+ λ*sum_X
+        L1 = getL1(Hs, r, col, δ, λ)
         if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
             bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
                         min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
@@ -159,13 +141,11 @@ function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::
     updateResiduals!(Hs, r, col, c, X₁[col])
 
     X₁[col] = c
-   # sum_X  = sum(X₁)
     X_init, X0 = X₁[col],  X₁[col]
-    #λ = Float32(5e-3)
     while (n < max_iter_inner)
 
         #Evaluate first partial derivative
-        fc = getL1(Hs, r, col, δ, λ) #+ λ*sum_X
+        fc = getL1(Hs, r, col, δ, λ)
         #Bisection Rule
         if (sign(fc) != sign(fa))
             b, fb = c, fc
@@ -175,7 +155,6 @@ function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::
 
         c, X0 = (a + b)/2, X₁[col]
         X₁[col] = c
-        #sum_X = sum_X - X0 + X₁[col]
         #Update residuals given new estimate, X₁[col], and prior estimate, X0
         updateResiduals!(Hs, r, col, X₁[col], X0)
 
@@ -212,7 +191,6 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
         end
        i += 1
     end
-    #println(i)
     return
 end
 
