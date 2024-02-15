@@ -35,7 +35,6 @@ function mainLibrarySearch(
         iRT_to_RT_spline,
         ms_file_idx,
         err_dist,
-        selectTransitions!,
         searchScan!,
 
         ionMatches,

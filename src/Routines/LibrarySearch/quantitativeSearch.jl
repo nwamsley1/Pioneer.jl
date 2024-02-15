@@ -32,7 +32,6 @@ function quantitationSearch(
         x->x,
         ms_file_idx,
         err_dist,
-        selectRTIndexedTransitions!,
         missing,
         
         ionMatches,

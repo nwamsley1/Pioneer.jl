@@ -7,7 +7,6 @@ function searchRAW(
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     err_dist::MassErrorModel{Float32},
-                    selectIons!::Function,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -72,7 +71,7 @@ function searchRAW(
                                 getRange(thread_task),
                                 frag_index,precursors,
                                 ion_list, rt_to_irt_spline,ms_file_idx,err_dist,
-                                selectIons!,searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
+                                searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
                                 huber_δ, unmatched_penalty_factor,
                                 ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
                                 iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
@@ -102,7 +101,6 @@ function searchRAW(
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel{Float32},
-                    selectIons!::Function,
                     searchScan!::Union{Function, Missing},
                     collect_fmatches::Bool,
                     expected_matches::Int64,
@@ -151,16 +149,13 @@ function searchRAW(
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    ###########
     prec_ids = [zero(UInt32) for _ in range(1, expected_matches)]
     Hs = SparseArray(5000);
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
+    isotopes = zeros(Float64, n_frag_isotopes)
     ##########
     #Iterate through spectra
-    scans_processed = 0
-    isotopes = zeros(Float64, n_frag_isotopes)
-    #ncols = 0
     for i in thread_task
         thread_peaks += length(spectra[:masses][i])
         if thread_peaks > 100000
@@ -179,14 +174,16 @@ function searchRAW(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
         
-        first(rand(1)) <= sample_rate ? nothing : continue #dice-roll. Usefull for random sampling of scans. 
+        first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
         ##########
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
 
-        if !ismissing(searchScan!) | !ismissing(frag_index)
+        if !ismissing(precs)
+            #searchScan! is the MsFragger style fragment index search
+            #Loads `precs` with scores for each potential precursor matching the spectrum
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
@@ -200,20 +197,13 @@ function searchRAW(
                         isotope_err_bounds,
                         min_score = min_index_search_score,
                         )
-        end
-        #selectIons! 
-        #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
-        
-        
-        selectTransitions!(ionTemplates,
-                            precursors,
-                            ion_list,
-                            iso_splines,
-                            isotopes,
-                            precs,
-                            )
-        if !ismissing(precs) 
-            ion_idx, prec_idx = selectIons!(ionTemplates, 
+            #For candidate precursors exceeding the score threshold in the fragment index search...
+            #Get a sorted list by m/z of fragment ion templates. The spectrum will be searched for matches to these ions only.
+            #Searching with p, n, and k  precursors, theoretical fragments, and peaks, 
+            #searching this way is O(n + k + n*log(n))
+            #searching each precursor's fragments against the spectrum individually
+            #would be O(p*n + p*k) assuming each individual precursor fragment list was already sorted
+            ion_idx, prec_idx = selectTransitions!(ionTemplates, 
                                                 precursors,
                                                 ion_list,
                                                 iso_splines,
@@ -228,7 +218,10 @@ function searchRAW(
                                                 isotope_err_bounds = isotope_err_bounds
                                                 )::Tuple{Int64, Bool}
         else
-            ion_idx, prec_idx = selectIons!(
+            #Candidate precursors and their retention time estimates have already been determined from
+            #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
+            #the retention time and m/z tolerance constraints
+            ion_idx, prec_idx = selectRTIndexedTransitions!(
                                             ionTemplates,
                                             precursors,
                                             ion_list,
@@ -244,8 +237,11 @@ function searchRAW(
                                             ),
                                         isotope_err_bounds = isotope_err_bounds)
         end
-        ion_idx < 2 ? continue : nothing 
-        scans_processed += 1
+        #If one or fewer fragment ions matched to the spectrum, don't bother
+        if ion_idx < 2
+            reset!(ionTemplates, ion_idx)
+            continue
+        end 
         ##########
         #Match sorted list of plausible ions to the observed spectra
         nmatches, nmisses = matchPeaks!(ionMatches, 
@@ -272,7 +268,9 @@ function searchRAW(
                                                                        
         if filter_by_rank
         #println("nmatches_all $nmatches_all, nmatches $nmatches")
-            _, _, nmatches, nmisses = filterMatchedIons!(IDtoCOL, ionMatches, ionMisses, nmatches, nmisses, 
+            _, _, nmatches, nmisses = filterMatchedIons!(IDtoCOL, 
+                                                        ionMatches, ionMisses, 
+                                                        nmatches, nmisses, 
                                                         last(min_topn_of_m), 
                                                         first(min_topn_of_m),
                                                         )
