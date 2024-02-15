@@ -127,7 +127,7 @@ function setNearest!(matches::Vector{M},
     #Iterate through peaks in  `masses` until a peak is encountered that is 
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
-    while (masses[peak_idx + i]-δ<= max_mz)
+    @inbounds while (masses[peak_idx + i]-δ<= max_mz)
         low, high = getMzBounds(theoretical_mz, ppm_tol_param, intensities[peak_idx + i], min_max_ppm)
         if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
             mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
@@ -291,6 +291,8 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
         end
     end
 
+    #Remaining templates with higher m/z than the highest
+    #m/z peak in the spectrum are written to 'unmatched'
     while ion <= ion_idx#length(Ions)
         unmatched_idx = setMatch!(unmatched,
                                     Ions[ion], 

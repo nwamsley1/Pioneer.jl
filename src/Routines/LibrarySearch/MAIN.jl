@@ -22,8 +22,6 @@ combine_results_time = @timed begin
     include("combineMainSearchResults.jl")
 end
 println("Combined main search results in ", combine_results_time.time, " seconds")
-
-
 ############
 #New Inplace Arrays for Integration
 println("Begining Quantitative Search...")

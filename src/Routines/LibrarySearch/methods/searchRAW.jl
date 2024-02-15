@@ -203,6 +203,15 @@ function searchRAW(
         end
         #selectIons! 
         #Get a sorted list by m/z of ion templates (fills ionTemplates). The spectrum will be searched for matches to these ions only.
+        
+        
+        selectTransitions!(ionTemplates,
+                            precursors,
+                            ion_list,
+                            iso_splines,
+                            isotopes,
+                            precs,
+                            )
         if !ismissing(precs) 
             ion_idx, prec_idx = selectIons!(ionTemplates, 
                                                 precursors,

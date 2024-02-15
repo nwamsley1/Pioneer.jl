@@ -14,7 +14,6 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
 
     i = 1
     transition_idx = 0
-    #NEUTRON = Float64(1.00335)
     while i <= counter.matches
 
        
@@ -26,7 +25,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
              continue
         end
 
-        #Manage isotope errors
+        #Manage isotope errors. NEUTRON is global constant. 
         mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
         mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
 
