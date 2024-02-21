@@ -58,7 +58,7 @@ function quantitationSearch(
         min_log2_matched_ratio = params[:min_log2_matched_ratio],
         min_index_search_score = zero(UInt8),#params[:min_index_search_score],
         min_weight = params[:min_weight],
-        min_max_ppm = (5.0f0, 25.0f0),
+        min_max_ppm = (15.0f0, 40.0f0),
         n_frag_isotopes = params[:n_frag_isotopes],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
@@ -82,7 +82,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
-                    RT_INDICES[MS_TABLE_PATH],
+                    RT_INDICES_many[MS_TABLE_PATH],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
                     irt_errs[ms_file_idx],
@@ -99,7 +99,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     )...);
     @time begin
-        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
+        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold_many);
         addIntegrationFeatures!(PSMS);
         getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
         PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
@@ -122,12 +122,14 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
         GC.gc()
     end
 end
-
 best_psms = vcat(values(BPSMS)...)
+passing_gdf = groupby(best_psms, [:precursor_idx])
+sort!(passing_gdf[(precursor_idx = 0x005102bb,)][!,[:prob,:sequence,:b_count,:y_count,:isotope_count,:weight,:H,:matched_ratio,:entropy_score,:scribe,:city_block_fitted,:file_path]],:file_path)
+
 BPSMS = nothing
 GC.gc()
 println("Finished quant search in ", quantitation_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS_022024.jld2"); BPSMS)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS_K_022124.jld2"); BPSMS)
 
 best_psms_passing = best_psms[best_psms[!,:q_value].<=0.01,:]
 

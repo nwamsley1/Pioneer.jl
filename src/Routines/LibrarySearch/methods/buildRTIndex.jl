@@ -136,7 +136,9 @@ function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; min_prob::Abstrac
     return iRT_RT, RT_iRT
 end
 
-function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; max_q_value::AbstractFloat = 0.1)
+function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; 
+                        max_q_value::AbstractFloat = 0.1,
+                        max_precursors::Int = 250000)
     psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment
     #Only consider precursors with a q_value passing the threshold
     # at least once accross the entire experiment
@@ -146,24 +148,30 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; m
     psms[!,:best_scan] .= false #Best scan for a given precursor_idx accross the experiment
     psms[!,:iRT_observed] .= zero(Float64) #Observed iRT for each psm
     #psms[!,:iRT_observed_best] .= zero(Float64) #Best iRT accross the experiment for a given precursor
-    grouped_psms = groupby(psms, :precursor_idx); #Groupby precursor idx
-
-    for i in ProgressBar(range(1, length(grouped_psms))) #For each precursor 
-
+    grouped_psms = groupby(psms, :precursor_idx); #Groupby precursor id
+    prec_to_count = Dictionary{UInt32, Float32}()
+    for (prec_idx, psms) in pairs(grouped_psms)
+        insert!(prec_to_count, 
+                prec_idx.precursor_idx,
+                maximum(psms.prob))
+    end
+    sort!(prec_to_count, rev = true)
+    best_precs = collect(keys(prec_to_count))#[1:max_precursors]
+    for prec_idx in ProgressBar(best_precs) #For each precursor 
+        prec_psms = grouped_psms[(precursor_idx = prec_idx,)]
         #Best scan for the precursor accross the experiment
-        best_scan = argmax(grouped_psms[i].prob) 
-        grouped_psms[i].best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
+        best_scan = argmax(prec_psms.prob) 
+        prec_psms.best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
         #irt = RT_iRT[grouped_psms[i].file_path[best_scan]](grouped_psms[i].RT[best_scan])
         #grouped_psms[i].iRT_observed[best_scan] = irt
 
         #Could alternatively estimate the iRT using the best-n scans 
-        for j in range(1, size(grouped_psms[i])[1])
+        for j in range(1, size(prec_psms)[1])
             #Get empirical iRT for the psm given the empirical RT
-            irt = RT_iRT[grouped_psms[i].file_path[j]](grouped_psms[i].RT[j])
-            grouped_psms[i].iRT_observed[j] = irt
+            irt = RT_iRT[prec_psms.file_path[j]](prec_psms.RT[j])
+            prec_psms.iRT_observed[j] = irt
         end
-
-        grouped_psms[i].iRT_observed[best_scan] = median(grouped_psms[i].iRT_observed)
+        prec_psms.iRT_observed[best_scan] = median(prec_psms.iRT_observed)
     end
 
     filter!(x->x.best_scan, psms); #Filter out non-best scans 

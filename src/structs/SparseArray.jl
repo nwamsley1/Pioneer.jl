@@ -171,8 +171,8 @@ function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
         sa.rowval[i] = 0
         sa.x[i] = zero(T)
         sa.nzval[i] = zero(T)
-        sa.mask[i] = true
-        sa.matched[i] = true
+        sa.mask[i] = false
+        sa.matched[i] = false
         sa.colptr[i] = 0
     end
     sa.n_vals = 0
@@ -180,6 +180,7 @@ function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     sa.n = 0
     return 
 end
+
 
 function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     #Get sorted indices by column

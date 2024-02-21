@@ -92,6 +92,7 @@ end
 function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresComplex{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
 
     for col in range(1, H.n)
+        
         H_sqrt_sum = zero(T)
         X_sqrt_sum = zero(T)
 
@@ -134,25 +135,25 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
     
         N = 0
         N_corrected = 0
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             X_sum += H.x[i]
             H_sqrt_sum += sqrt(H.nzval[i])
-            #H_sqrt_sum_fitted += sqrt(w[col]*H.nzval[i])
-            X_sqrt_sum += sqrt(H.x[i] + 1e-10)#/Xsum
+            #X_sqrt_sum += sqrt(H.x[i] + 1e-10)#/Xsum
+            X_sqrt_sum += sqrt(H.x[i])#/Xsum
             scribe_score_fitted += (w[col]*H.nzval[i] - H.x[i])^2
             city_block_fitted += abs(w[col]*H.nzval[i] - H.x[i])
             H_sqrt_sum_corrected += sqrt(H.nzval[i]*H.mask[i])
             X_sqrt_sum_corrected += sqrt(H.x[i]*H.mask[i] + 1e-10)#/Xsum
 
-            H2_norm += (H.nzval[i])^2 + 1e-10
+            H2_norm += (H.nzval[i])^2# + 1e-10
             #H2_norm_fitted += (w[col]*H.nzval[i])^2 + 1e-10
-            X2_norm += (H.x[i])^2 + 1e-10
+            X2_norm += (H.x[i])^2# + 1e-10
             dot_product += H.nzval[i]*H.x[i]
 
-            H2_norm_corrected += (H.nzval[i]*H.mask[i])^2 + 1e-10
-            X2_norm_corrected += (H.x[i]*H.mask[i])^2 + 1e-10
+            H2_norm_corrected += (H.nzval[i]*H.mask[i])^2# + 1e-10
+            X2_norm_corrected += (H.x[i]*H.mask[i])^2# + 1e-10
             dot_product_corrected += H.nzval[i]*H.x[i]*H.mask[i]
 
             matched_sum += H.nzval[i]*H.matched[i]
@@ -169,8 +170,8 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         H2_norm_corrected = sqrt(H2_norm_corrected)
         X2_norm_corrected = sqrt(X2_norm_corrected)
 
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-        #for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
@@ -182,30 +183,11 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
                 (sqrt(H.x[i]*H.mask[i])/X_sqrt_sum)
                 )^2  
 
-            #scribe_score_fitted +=  (
-            #    (sqrt(w[col]*H.nzval[i])/H_sqrt_sum_fitted) - 
-            #    (sqrt(H.x[i])/X_sqrt_sum)
-            #    )^2  
-
             city_block_dist += abs(
                 (H.nzval[i]/H2_norm) -
                 (H.x[i]/X2_norm)
-            )        
-
-            #city_block_fitted += abs(
-            #    (H.nzval[i]*w[col]/H2_norm_fitted) -
-            #    (H.x[i]/X2_norm)
-            #)   
-
+            )          
         end
-        #=
-        scribe_scores[col] = -log((scribe_score)/N)
-        scribe_scores_corrected[col] = -log((scribe_score_corrected)/N_corrected)
-        city_block_scores[col] = -log((city_block_dist)/N)
-        spectral_contrast_scores[col] = dot_product/(H2_norm*X2_norm)
-        spectral_contrast_scores_corrected[col] = dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)
-        matched_ratio[col] = matched_sum/unmatched_sum
-        =#
 
         spectral_scores[col] = SpectralScoresComplex(
             Float16(-log((scribe_score)/N)), #scribe_score
@@ -219,23 +201,6 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             Float16(getEntropy(H, col)) #entropy
         )
     end
-
-    #entropy_scores = getEntropy(H)
-    #H = SparseMatrixCSC(Hs.m, Hs.n, H.colptr, H.rowval, H.nzval.*mask.nzval);
-    #entropy_scores_corrected = getEntropy(X, H, mask)
-
-    #=
-    return (scribe = scribe_scores, 
-            scribe_corrected = scribe_scores_corrected,
-            city_block = city_block_scores, 
-            spectral_contrast = spectral_contrast_scores, 
-            spectral_contrast_corrected = spectral_contrast_scores_corrected,
-            matched_ratio = matched_ratio,
-            entropy_sim = entropy_scores
-            )
-    =#
-            #entropy_sim_corrected = entropy_scores_corrected)
-
 end
     
 function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:AbstractFloat}

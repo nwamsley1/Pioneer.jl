@@ -77,7 +77,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         max_depth = 10, 
                         eta = 0.05, 
                         #eta = 0.0175,
-                        train_fraction = 4.5/9.0,
+                        train_fraction = 9.0/9.0,
                         iter_scheme = [100, 100, 200],
                         print_importance = false);
 best_psms = bst[2];
@@ -85,7 +85,7 @@ best_psms[!,:prob] =Float32.(best_psms[!,:prob]);
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
 value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022024_alltrace.jld2"); best_psms)
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022124_K_alltrace.jld2"); best_psms)
 
 length(unique(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:precursor_idx]))
 println("file specific ids ", sum(IDs_PER_FILE[!,:nrow]))
@@ -96,8 +96,15 @@ prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 getBestTrace!(best_psms)
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022024_besttrace.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_K_022124_besttrace.jld2"); best_psms)
 println("TEST")
 
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022024_bestpsmspassing.jld2"); best_psms_passing)
 println("TEST")
+
+
+passing_gdf = groupby(best_psms, [:precursor_idx])
+sort!(passing_gdf[(precursor_idx = 0x005102bb,)][!,[:prob,:sequence,:b_count,:y_count,:isotope_count,:weight,:H,:matched_ratio,:entropy_score,:scribe,:city_block_fitted,:file_path]],:file_path)
+
+
+passing_gdf[(precursor_idx = 0x005102bb,)][!,[:prob,:sequence,:b_count,:y_count,:isotope_count,:weight,:H]]
