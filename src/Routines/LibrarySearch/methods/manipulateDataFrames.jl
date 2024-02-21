@@ -55,6 +55,15 @@ function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors
     β = ProbitRegression(β, PSMs[!,features], PSMs[!,:target], data_chunks, max_iter = 20)
     ModelPredictProbs!(PSMs[!,:prob], PSMs[!,features], β, data_chunks)
     filter!(:prob => x -> x>=min_prob, PSMs)
+
+    PSMs[!,:best_psms] .= false
+    grouped_psms = groupby(PSMs,:precursor_idx)
+    for psms in grouped_psms
+        best_idx = argmax(psms.prob)
+        psms[best_idx,:best_psms] = true
+    end
+    filter!(x->x.best_psms, PSMs)
+
 end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
@@ -193,7 +202,7 @@ function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
 end
 
 function getProbs!(psms::DataFrame)
-    psms[!,:prob] = zeros(Float16, size(psms, 1))
+    psms[!,:prob] = zeros(Float32, size(psms, 1))
     tasks_per_thread = 10
     M = size(psms, 1)
     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
@@ -201,7 +210,7 @@ function getProbs!(psms::DataFrame)
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
-                psms[i,:prob] = (1 + SpecialFunction.erf(psms[i,:score]/sqrt(2)))/2
+                psms[i,:prob] = (1 + SpecialFunctions.erf(psms[i,:score]/sqrt(2)))/2
             end
         end
     end
@@ -226,7 +235,7 @@ function getBestPSMs!(psms::DataFrame,
     end
 
     filter!(x->x.best_psm, psms);
-    select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score])
+    select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])
 
     prec_mz = zeros(Float32, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
@@ -416,7 +425,7 @@ function scoreSecondSearchPSMs!(psms::DataFrame,
         data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
         β = zeros(Float64, length(features));
         β = ProbitRegression(β, psms[cv_fold,features], psms[cv_fold,:target], data_chunks, max_iter = max_iter);
-        ModelPredictCVFold!(psms[!,:score], psms[!,:cv_fold], UInt8(k), psms[!,features], β, allcv_data_chunks)
+        ModelPredictCVFold!(psms[!,:prob], psms[!,:cv_fold], UInt8(k), psms[!,features], β, allcv_data_chunks)  
         println("sum(PSMs[cv_fold,:score]) ", sum(psms[cv_fold,:score]))
     end
 end

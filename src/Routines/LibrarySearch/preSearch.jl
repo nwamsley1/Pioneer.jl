@@ -48,19 +48,20 @@ function firstSearch(
         expected_matches = params[:expected_matches],
         frag_ppm_err = Float32(params[:frag_ppm_err]),
         min_frag_count = params[:min_frag_count],
-        min_log2_matched_ratio = params[:min_log2_matched_ratio],
+        min_spectral_contrast = params[:min_spectral_contrast],
+        min_log2_matched_ratio = -Inf32,#params[:min_log2_matched_ratio],
         min_index_search_score = params[:min_index_search_score],
         min_topn_of_m = params[:min_topn_of_m],
         min_max_ppm = (40.0f0, 40.0f0),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_bounds = params[:rt_bounds],
-        irt_tol = params[:irt_tol],
         sample_rate = params[:sample_rate],
     )
 end
 
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
+irt_errs = Dict{Int64, Float64}()
 lk = ReentrantLock()
 for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
@@ -73,7 +74,6 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
                                             prosit_lib["f_det"],
                                             x->x, #RT to iRT map'
                                             UInt32(ms_file_idx), #MS_FILE_IDX
-                                            Laplace(zero(Float64), first_search_params[:frag_tol_presearch]),
                                             first_search_params,
                                             ionMatches,
                                             ionMisses,
@@ -86,13 +86,15 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
                                             spectral_scores,
                                             precursor_weights,
                                             precs,
-                                            #scan_range = (100000, 110000)
-                                            scan_range = (1, length(MS_TABLE[:masses]))
                                             );
+
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
     #@time begin
-    @time addPreSearchColumns!(rtPSMs, MS_TABLE, precursors)
+    @time addPreSearchColumns!(rtPSMs, 
+                                MS_TABLE, 
+                                precursors,
+                                min_prob = 0.95)
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
         (a-b)/(a/1e6)
     end
@@ -113,18 +115,38 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         frag_ppm_errs,
         40.0
     )
-    
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
+    rtPSMs[!,:best_psms] .= false
+    grouped_psms = groupby(rtPSMs,:precursor_idx)
+    for psms in grouped_psms
+        best_idx = argmax(psms.prob)
+        psms[best_idx,:best_psms] = true
+    end
+    filter!(x->x.best_psms, rtPSMs)
+
     lock(lk) do 
         PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        @time RT_to_iRT_map = KDEmapping(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], n = 50, bandwidth = 4.0);
+        @time RT_to_iRT_map, x_grid, y_grid, z, ys, w= KDEmapping(rtPSMs[1:end,:RT], rtPSMs[1:end,:iRT_predicted], 
+                                        n = 200, bandwidth = 0.5);
         @time plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
                     f_out = PLOT_PATH);
+        rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
+        irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
+        irt_σ = 1.4826*irt_MAD 
+        println("irt_σ $irt_σ")
+        #histogram(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted], alpha = 0.5, normalize = :pdf)
+        #histogram!(rand(Normal(0.0, irt_σ), 10000), alpha = 0.5, normalize = :pdf)
+        #histogram!(rand(Normal(0.0, std(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])), 10000), alpha = 0.5, normalize = :pdf)
+        irt_errs[ms_file_idx] = 3*irt_σ
         RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
         frag_err_dist_dict[ms_file_idx] = mass_err_model
     end
 end
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_020824.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_020824.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_021924.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_021924.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_021924.jld2"); irt_errs)
 
+RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_021924.jld2"))["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_021924.jld2"))["frag_err_dist_dict"]
+irt_errs= load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_021924.jld2"))["irt_errs"]

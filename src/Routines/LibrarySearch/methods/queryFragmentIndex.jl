@@ -82,8 +82,8 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8}, precursor_bin::Precu
 
     function addFragmentMatches!(precs::Counter{UInt32, UInt8}, precursor_bin::PrecursorBin{Float32}, start::Int, stop::Int)# where {T,U<:AbstractFloat}
         @inline @inbounds for precursor_idx in start:stop
-            prec = getPrecursor(precursor_bin, precursor_idx)
-            inc!(precs, getPrecID(prec), getScore(prec))
+            frag = getPrecursor(precursor_bin, precursor_idx)
+            inc!(precs, getPrecID(frag), getScore(frag))
         end
     end
     
@@ -98,6 +98,7 @@ function searchPrecursorBin!(precs::Counter{UInt32, UInt8}, precursor_bin::Precu
 end
 
 function queryFragment!(precs::Counter{UInt32, UInt8}, 
+                        min_frag_bin::Int64, 
                         frag_index::FragmentIndex{Float32}, 
                         irt_low::Float32, irt_high::Float32, 
                         frag_min::Float32, frag_max::Float32, 
@@ -107,13 +108,16 @@ function queryFragment!(precs::Counter{UInt32, UInt8},
     frag_bin = findFirstFragmentBin(getFragBins(frag_index), frag_min, frag_max) 
     #No fragment bins contain the fragment m/z
     if (frag_bin === nothing)
-        return nothing
+        return min_frag_bin
+    elseif frag_bin <= min_frag_bin
+        return min_frag_bin
     end
     #Search subsequent frag bins until no more bins or untill a bin is outside the fragment tolerance
     while (frag_bin < length(getFragBins(frag_index)))
+        #println("frag_bin $frag_bin")
         #Fragment bin is outside the fragment tolerance
         if (getLowMZ(getFragmentBin(frag_index, frag_bin)) > frag_max)
-            return nothing
+            return frag_bin
         else
 
             rt_bin_idx = frag_index.fragment_bins[frag_bin].sub_bin
@@ -128,6 +132,7 @@ function queryFragment!(precs::Counter{UInt32, UInt8},
             #Search subsequent rt bins untill no more rt bins or untill an rt bin is outside the retention time tolerance 
             while (getLow(frag_index.rt_bins[rt_bin_idx][rt_sub_bin]) < irt_high)
                 prec_bin = frag_index.rt_bins[rt_bin_idx][rt_sub_bin].sub_bin
+                #println("prec_bin $prec_bin")
                 #Modify precs to include all precursors in the 'prec_bin' within the 'prec_bounds'/precursor tolerance
                 #(should be the quadrupole isolation width in most scenarios)
                 searchPrecursorBin!(precs, getPrecursorBin(frag_index, prec_bin), first(prec_bounds), last(prec_bounds))
@@ -142,7 +147,7 @@ function queryFragment!(precs::Counter{UInt32, UInt8},
 
     end
     #Only reach this point if frag_bin exceeds length(frag_index)
-    return nothing
+    return frag_bin - 1
 end
 
 function searchScan!(precs::Counter{UInt32, UInt8}, 
@@ -175,16 +180,19 @@ function searchScan!(precs::Counter{UInt32, UInt8},
         sortCounter!(precs);
         return match_count, prec_count
     end
-
+    min_frag_bin = 0
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
+    #println("prec_min $prec_min prec_max $prec_max")
     for (mass, intensity) in zip(masses, intensities)
         mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
         #Get intensity dependent fragment tolerance
         frag_min, frag_max = getFragTol(mass, ppm_err, intensity, ppm_tol_param, min_max_ppm)
-        queryFragment!(precs, f_index, irt_low, irt_high, frag_min, frag_max, (prec_min, prec_max))
+        #println("FRAGMIN_MAX $frag_min $frag_max")
+        #println("frag_min $frag_min, frag_max $frag_max")
+        min_frag_bin = queryFragment!(precs, min_frag_bin, f_index, irt_low, irt_high, frag_min, frag_max, (prec_min, prec_max))
     end 
-
+    #return 0
     return filterPrecursorMatches!(precs, min_score)
 end
 

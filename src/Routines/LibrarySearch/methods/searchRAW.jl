@@ -29,6 +29,7 @@ function searchRAW(
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     max_peak_width::Float64 = 2.0,
                     min_frag_count::Int64 = 1,
+                    min_spectral_contrast::Float32  = 0f0,
                     min_log2_matched_ratio::Float32 = -Inf32,
                     min_index_search_score::UInt8 = zero(UInt8),
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
@@ -54,9 +55,9 @@ function searchRAW(
     #For example if there are 10,000 scans and two threads, choose n so that
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
-    thread_tasks, total_peaks = paritionScansToThreads(spetra[:masses], 
+    thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses], 
                                                         Threads.nthreads(),
-                                                        10)
+                                                        1)
     pbar = ProgressBar(total = total_peaks)
     lk = ReentrantLock()
 
@@ -78,7 +79,7 @@ function searchRAW(
                                 precs[thread_id],
                                 isotope_dict,
                                 isotope_err_bounds,
-                                max_peak_width,min_frag_count,
+                                max_peak_width,min_frag_count,min_spectral_contrast,
                                 min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,
                                 min_weight,n_frag_isotopes,quadrupole_isolation_width,
                                 rt_bounds,rt_index, irt_tol,sample_rate,
@@ -125,6 +126,7 @@ function searchRAW(
                     isotope_err_bounds::Tuple{Int64, Int64},
                     max_peak_width::Float64,
                     min_frag_count::Int64,
+                    min_spectral_contrast::Float32,
                     min_log2_matched_ratio::Float32,
                     min_index_search_score::UInt8,
                     min_topn_of_m::Tuple{Int64, Int64},
@@ -173,8 +175,10 @@ function searchRAW(
         end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-        
-        first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
+        #if i != 88421
+        #    continue
+        #end
+        #first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
         ##########
@@ -197,6 +201,11 @@ function searchRAW(
                         isotope_err_bounds,
                         min_score = min_index_search_score,
                         )
+            #return precs
+            #println("scan_idx $i precs.matches ", precs.matches)
+            #println("precs.matches ", precs.matches)
+            #println("precs.size ", precs.size)
+            #return precs
             #For candidate precursors exceeding the score threshold in the fragment index search...
             #Get a sorted list by m/z of fragment ion templates. The spectrum will be searched for matches to these ions only.
             #Searching with p, n, and k  precursors, theoretical fragments, and peaks, 
@@ -230,16 +239,21 @@ function searchRAW(
                                             prec_ids,
                                             rt_index,
                                             spectra[:retentionTime][i],
-                                            Float32(max_peak_width/2),
+                                            Float32(irt_tol),#Float32(max_peak_width/2),
                                             (
                                                 spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
                                                 spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
                                             ),
                                         isotope_err_bounds = isotope_err_bounds)
         end
+        #println("ion_idx $ion_idx prec_idx $prec_idx")
+        #return precs
         #If one or fewer fragment ions matched to the spectrum, don't bother
         if ion_idx < 2
             reset!(ionTemplates, ion_idx)
+            if !ismissing(precs)
+            reset!(precs)
+            end
             continue
         end 
         ##########
@@ -256,6 +270,7 @@ function searchRAW(
                                         UInt32(i), 
                                         ms_file_idx)
         
+        #println("nmatches $nmatches nmisses $nmisses")
         nmisses_all = nmisses
         nmatches_all = nmatches    
  
@@ -275,7 +290,8 @@ function searchRAW(
                                                         first(min_topn_of_m),
                                                         )
         end
-
+        #println("post filter nmatches $nmatches nmisses $nmisses")
+        
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
@@ -289,9 +305,11 @@ function searchRAW(
                                 )
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
-                append!(_weights_, zeros(eltype(_weights_), IDtoCOL.size - length(_weights_) + 1000 ))
-                append!(spectral_scores, Vector{SpectralScores{Float16}}(undef, IDtoCOL.size - length(spectral_scores) + 1000 ))
-                append!(unscored_PSMs, [LXTandem(Float32) for _ in 1:(IDtoCOL.size - length(unscored_PSMs) + 1000)]);
+                new_entries = IDtoCOL.size - length(_weights_) + 1000 
+                append!(_weights_, zeros(eltype(_weights_), new_entries))
+                append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, new_entries))
+                #append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, (IDtoCOL.size - length(spectral_scores) + 1000 )))
+                append!(unscored_PSMs, [eltype(unscored_PSMs)() for _ in 1:new_entries]);
             end
             #Get most recently determined weights for each precursors
             #"Hot" start
@@ -341,6 +359,7 @@ function searchRAW(
                     Hs.n,
                     Float32(sum(spectra[:intensities][i])), 
                     i,
+                    min_spectral_contrast = min_spectral_contrast,
                     min_log2_matched_ratio = min_log2_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
                     min_weight = min_weight,

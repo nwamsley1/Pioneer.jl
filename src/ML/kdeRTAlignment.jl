@@ -1,10 +1,16 @@
 using KernelDensity
+kernel_dist(::Type{Laplace}, w::Real) = Laplace(0.0, w)
+
 function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::AbstractFloat = 1.0, w = 11) where {T<:AbstractFloat}
     x_grid = LinRange(minimum(X), maximum(X), n)
     y_grid = LinRange(minimum(Y), maximum(Y), n)
     ys = zeros(T, n)
     z = zeros(T, (n, n))
-    B = kde((X, Y), bandwidth = (bandwidth, bandwidth)) #Uses Silverman's rule by default
+    min_x, max_x = minimum(X), maximum(X)
+    bound_x = (max_x - min_x)/5
+    min_y, max_y = minimum(Y), maximum(Y)
+    bound_y = (max_y - min_y)/5
+    B = kde((X, Y), bandwidth = (bandwidth, bandwidth), boundary = ((min_x - bound_x, max_x + bound_x), (min_y - bound_y, max_y + bound_y)), kernel = Laplace) #Uses Silverman's rule by default
     ik = KernelDensity.InterpKDE(B)
     #Get KDE
     for i in eachindex(x_grid), j in eachindex(y_grid)
@@ -14,9 +20,9 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     max_j = 1
     for i in eachindex(x_grid)
         j = argmax(@view(z[i,:]))
-        if y_grid[j] > y_grid[max_j]
+        #if y_grid[j] > y_grid[max_j]
             max_j = j
-        end
+        #end
         ys[i] = y_grid[max_j]
     end
     w = isodd(n÷5) ? n÷5 : n÷5 + 1

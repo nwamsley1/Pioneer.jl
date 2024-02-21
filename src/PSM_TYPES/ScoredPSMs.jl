@@ -84,6 +84,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
                 n_vals::Int64,
                 spectrum_intensity::H,
                 scan_idx::Int64;
+                min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -Inf32,
                 min_frag_count::Int64 = 1,
                 min_weight::H = 0f0,
@@ -96,6 +97,8 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
     for i in range(1, n_vals)
 
         passing_filter = (
+            (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
+        )&(
             (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
@@ -149,6 +152,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 n_vals::Int64,
                 spectrum_intensity::H,
                 scan_idx::Int64;
+                min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -1f0,
                 min_frag_count::Int64 = 4,
                 min_weight::H = 100f0,
@@ -182,6 +186,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
 
         passing_filter = (
             (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
+        )&(
+            (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(

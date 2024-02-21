@@ -10,16 +10,17 @@
     "max_peaks": false,
     "max_peak_width": 5.0,
 
-    "min_index_search_score": 2,
+    "min_index_search_score": 3,
+    "min_index_search_score_presearch": 4,
 
     "min_frag_count": 5,
     "min_frag_count_presearch": 7,
     "min_frag_count_integration": 1,
     "min_frag_count_index_search": 0,
-    "min_matched_ratio_presearch": 0.0,
+    "min_log2_matched_ratio_presearch": 0,
     
-    "min_matched_ratio_integration": -1.7,
-    "min_matched_ratio_main_search": -1.0,
+    "min_log2_matched_ratio_integration": -1.7,
+    "min_log2_matched_ratio_main_search": -1.0,
     "min_spectral_contrast": 0.0,
     "min_spectral_contrast_presearch": 0.9,
     "min_spectral_contrast_integration": 0.0,

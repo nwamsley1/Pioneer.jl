@@ -51,19 +51,20 @@ ARGS = parse_commandline();
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012723_sulfur"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012724_sulfur"
+SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
-MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
-#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/mzXML/"
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD028735/"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 #MS_TABLE_PATHS = MS_TABLE_PATHS[1:4]
 EXPERIMENT_NAME = "TEST_y4b3_nOf5"
 =#
 #=
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR = pwd()*"\\..\\data\\nOf3_y4b3_012724_sulfur"#"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012724_sulfur"
+SPEC_LIB_DIR = ""pwd()*"\\..\\data\\nOf3_y4b3_012724_sulfur"#"/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_012724_sulfur"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_y4b3_102123"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf5_ally3b2/"
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf1_indy6b5_ally3b2/"
@@ -116,16 +117,16 @@ params_ = (
     max_peak_width = Float64(params["max_peak_width"]),
 
     min_index_search_score = UInt8(params["min_index_search_score"]),
-
+    min_index_search_score_presearch = UInt8(params["min_index_search_score_presearch"]),
     min_frag_count = Int64(params["min_frag_count"]),
     min_frag_count_presearch = Int64(params["min_frag_count_presearch"]),
     min_frag_count_integration = Int64(params["min_frag_count_integration"]),
     min_frag_count_index_search = Int64(params["min_frag_count_index_search"]),
 
-    min_matched_ratio_presearch = Float32(params["min_matched_ratio_presearch"]),
+    min_log2_matched_ratio_presearch = Float32(params["min_log2_matched_ratio_presearch"]),
   
-    min_matched_ratio_main_search = Float32(params["min_matched_ratio_main_search"]),
-    min_matched_ratio_integration = Float32(params["min_matched_ratio_integration"]),
+    min_log2_matched_ratio_main_search = Float32(params["min_log2_matched_ratio_main_search"]),
+    min_log2_matched_ratio_integration = Float32(params["min_log2_matched_ratio_integration"]),
 
     min_spectral_contrast = Float32(params["min_spectral_contrast"]),
     min_spectral_contrast_presearch = Float32(params["min_spectral_contrast_presearch"]),
@@ -163,8 +164,8 @@ first_search_params = Dict(
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count_presearch],
     :min_frag_count_index_search => params_[:min_frag_count_index_search],
-    :min_matched_ratio => params_[:min_matched_ratio_presearch],
-    :min_index_search_score => params_[:min_index_search_score],
+    :min_log2_matched_ratio => params_[:min_log2_matched_ratio_presearch],
+    :min_index_search_score => params_[:min_index_search_score_presearch],
     :min_spectral_contrast => params_[:min_spectral_contrast_presearch],
     :min_topn_of_m => params_[:min_topn_of_m],
     :most_intense => params_[:most_intense],
@@ -188,7 +189,7 @@ main_search_params = Dict(
     :max_peaks => params_[:max_peaks],
     :min_frag_count => params_[:min_frag_count],
     :min_frag_count_index_search => params_[:min_frag_count_index_search],
-    :min_matched_ratio_main_search => params_[:min_matched_ratio_main_search],
+    :min_log2_matched_ratio_main_search => params_[:min_log2_matched_ratio_main_search],
     :min_index_search_score => params_[:min_index_search_score],
     :min_spectral_contrast => params_[:min_spectral_contrast],
     :min_topn_of_m => params_[:min_topn_of_m],
@@ -213,7 +214,7 @@ ms2_integration_params = Dict(
     :max_peaks => params_[:max_peaks],
     :max_peak_width => params_[:max_peak_width],
     :min_frag_count => params_[:min_frag_count_integration],
-    :min_matched_ratio => params_[:min_matched_ratio_integration],
+    :min_log2_matched_ratio => params_[:min_log2_matched_ratio_integration],
     :min_spectral_contrast => params_[:min_spectral_contrast_integration],
     :min_topn_of_m => params_[:min_topn_of_m],
     :min_weight => params_[:min_weight],
@@ -250,8 +251,10 @@ end
 #                                                                    #"precursorDatabase.jl"
 #                                                                    ]];
 
-[include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in ["Ion.jl",
-                                                                    
+[include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
+                                                                    "ArrayDict.jl",
+                                                                    "Counter.jl",
+                                                                    "Ion.jl",
                                                                     "LibraryIon.jl",
                                                                     "MatchIon.jl",
                                                                     "LibraryFragmentIndex.jl",
@@ -270,23 +273,25 @@ end
 
 
 #Utilities
-[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in ["counter.jl",
-                                                                    "exponentialGaussianHybrid.jl",
+[include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in [
+                                                                    "ExponentialGaussianHybrid.jl",
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
                                                                     "isotopeSplines.jl",
                                                                     "massErrorEstimation.jl",
-                                                                    "spectralDeconvolution.jl"]];
+                                                                    "SpectralDeconvolution.jl",
+                                                                    
+                                                                    "partitionThreadTasks.jl"]];
 
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
 #Files needed for PRM routines
-[include(joinpath(pwd(), "src", "Routines","LibrarySearch", jl_file)) for jl_file in [
+[include(joinpath(pwd(), "src", "Routines","LibrarySearch","methods",jl_file)) for jl_file in [
                                                                                         #"buildFragmentIndex.jl",
                                                                                     "matchpeaksLib.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     #"spectralDistanceMetrics.jl",
-                                                                                    "refinePSMs.jl",
+                                                                                    "manipulateDataFrames.jl",
                                                                                     "buildRTIndex.jl",
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
@@ -296,19 +301,33 @@ end
                                              
 ##########
 #Load Spectral Library
-library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lookup_table\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"index\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+#=
+library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_7ppm_2hi\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+=#
+#library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lookup_table\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+#f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"index\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+#precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors\.jld2$", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+
 #prosit_lib_path = "/Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/PrositINDEX_HumanYeastEcoli_NCE33_corrected_100723_nOf3_indexStart3_2ratios_allStart2.jld2"
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
 spec_load_time = @timed begin
+    @time const f_index = load(f_index_path)["f_index"];
+    prosit_lib["f_index"] = f_index;#["f_index"]
+    @time const library_fragment_lookup_table = load(library_fragment_lookup_path)["lib_frag_lookup"]
+    prosit_lib["f_det"] = library_fragment_lookup_table; #["f_det"];
+    @time const precursors = load(precursors_path)["precursors"]
+    prosit_lib["precursors"] = precursors;#["precursors"];
+end
+spec_load_time = @timed begin
     @time const f_index = load(f_index_path)["library_fragment_index"];
-    prosit_lib["f_index"] = f_index#["f_index"]
+    prosit_lib["f_index"] = f_index;#["f_index"]
     @time const library_fragment_lookup_table = load(library_fragment_lookup_path)["library_fragment_lookup_table"]
-    prosit_lib["f_det"] = library_fragment_lookup_table #["f_det"];
+    prosit_lib["f_det"] = library_fragment_lookup_table; #["f_det"];
     @time const precursors = load(precursors_path)["library_precursors"]
-    prosit_lib["precursors"] = precursors#["precursors"];
+    prosit_lib["precursors"] = precursors;#["precursors"];
 end
 ###########
 #Load RAW File
@@ -331,7 +350,7 @@ MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/mzXML/LFQ_Orbitrap_AIF_Condition
 println("Begin processing: "*string(length(MS_TABLE_PATHS))*" files")
 println("Starting Pre Search...")
 @time begin
-N = 24
+N = Threads.nthreads()
 ionMatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 ionMisses = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
 all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
@@ -346,4 +365,4 @@ precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
 complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-end
+end;

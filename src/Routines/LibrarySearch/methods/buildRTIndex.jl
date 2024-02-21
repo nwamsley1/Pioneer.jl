@@ -224,5 +224,18 @@ function getCVFolds(precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}})
         prec_id,
         rand(UInt8[0, 1]))
     end
-    return nothing
+    return precID_to_cv_fold
 end
+#=
+N = 100000
+
+good_precs = unique(PSMS[PSMS[!,:prob].>0.75,:precursor_idx])
+
+N = 10000
+test = MS2_CHROMS[(precursor_idx = good_precs[N], iso_rank = 1)][!,[:precursor_idx,:topn,:best_rank,:y_count,:b_count,:target,:scribe,
+:city_block_fitted,:entropy_score,:matched_ratio,:RT,:weight,:prob]]
+size(PSMS[PSMS[!,:precursor_idx].== good_precs[N],:])
+plot(test[!,:RT],
+    test[!,:weight], seriestype=:scatter)
+N += 1
+=#

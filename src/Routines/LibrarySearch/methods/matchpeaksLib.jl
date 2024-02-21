@@ -106,7 +106,7 @@ function setNearest!(matches::Vector{M},
                     ms_file_idx::UInt32,
                     matched_idx::Int64,
                     unmatched_idx::Int64
-                    )::Int64 where {M<:MatchIon{Float32}}
+                    )::Tuple{Int64,Int64} where {M<:MatchIon{Float32}}
 
     #Get maximum and minimum m/z of a theoretical ion that could match a peak given 
     #the intensity. (tolerance is inversely proportional to the sqrt of the intensity)       
@@ -243,7 +243,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                 #Mass tolerance is intensity dependent,
                 #so is it possible for there to be none.
                 #In that case, sets an unmatched ion. 
-                matched_idx, unmatched_idx = setNearest!(  matches,
+                matched_idx, unmatched_idx = setNearest!(matches,
                                             unmatched,
                                             masses, 
                                             intensities, 

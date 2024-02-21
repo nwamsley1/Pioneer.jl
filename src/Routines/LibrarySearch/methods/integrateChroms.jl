@@ -4,7 +4,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                 gauss_quad_w::Vector{Float64}; 
                                 intensity_filter_fraction::Float32 = 0.1f0, 
                                 α::Float32 = 0.01f0, 
-                                half_width_at_α::Float32 = 0.15f0) where {U,V<:AbstractFloat, I,J<:Integer}
+                                half_width_at_α::Float32 = 0.15f0,
+                                min_prob = 0f0,
+                                max_scan_gap = 0.2f0,
+                                max_peak_width = 1.0f0) where {U,V<:AbstractFloat, I,J<:Integer}
     
     #########
     #Helper Functions  
@@ -19,24 +22,22 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             #Automatically give priority. Could choose a better heuristic.
             if probs[i] <= min_prob
                 if weights[i] > max_weight_over_prob_thresh
-                    max_weight_over_prob_thresh = weights[iu[]]
+                    max_weight_over_prob_thresh = weights[i]
                     best_scan_under_prob_thresh_idx = i
                 end
             else
                 if weights[i] > max_weight
-                    max_weight = weights[iu[]]
+                    max_weight = weights[i]
                     best_scan_idx = i
                 end
             end
         end
 
-        if max_weight > max_weight_over_prob_thresh
-            return max_weight, best_scan_idx
-        else
+        if iszero(max_weight)#max_weight > max_weight_over_prob_thresh
             return max_weight_over_prob_thresh, best_scan_under_prob_thresh_idx
+        else
+            return max_weight, best_scan_idx
         end
-        #println("best_scan_idx $best_scan_idx")
-        return best_scan_idx
     end
 
     function fillState!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, max_weight::Float32) where {T,U<:AbstractFloat, I,J<:Integer}
@@ -45,7 +46,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             state.data[i] = chrom.weight[i]/max_weight
         end
         state.max_index = length(chrom.weight)
-        return max_weight
+        return nothing
     end
 
     function truncateAfterSkip!(state::GD_state{HuberParams{T}, U, I, J}, 
@@ -147,8 +148,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
         state.max_index += 2
         GD(state,
-                lower,
-                upper,
+                lower_bounds,
+                upper_bounds,
                 tol = 1e-3, 
                 max_iter = 200, 
                 δ = 1e-3, #Huber loss parameter. 
@@ -198,7 +199,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                 matched_ratio::AbstractVector{Float16},
                                 entropy::AbstractVector{Float16},
                                 city_block_fitted::AbstractVector{Float16},
-                                combined_score::AbstractVector{Float16},
+                                combined_score::AbstractVector{Float32},
                                 y_count::AbstractVector{UInt8}) where {T,U<:AbstractFloat, I,J<:Integer}
         max_scribe_score = -100.0
         max_matched_ratio = -100.0
@@ -229,7 +230,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 end
 
                 if city_block_fitted[i]>max_city_fitted
-                    max_city_fitted=max_city_fitted[i]
+                    max_city_fitted = city_block_fitted[i]
                 end
 
                 if combined_score[i]>max_score
@@ -265,11 +266,15 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     ##########
     #Initialize state with observed data 
-    max_weight, best_scan = getBestPSM(chrom.weight, chrom.prob, min_prob)
-    norm_factor = fillState!(state, chrom, max_weight)
+    max_peak_width = 1.0f0
+    best_height, best_scan = getBestPSM(chrom.weight, chrom.prob, min_prob)
+    norm_factor = best_height 
+    fillState!(state, chrom, best_height)
     truncateAfterSkip!(state, best_scan, chrom.RT, max_scan_gap) #Only allow a fixed ammount of time without a scan
-    filterOnRT!(state, chrom.RT[best_scan], max_peak_width, chrom.RT) #Remove scans greater than a certain distance from the best scan 
-    filterLowIntensity!(state, max_weight*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
+    filterOnRT!(state, chrom.RT[best_scan], 
+        max_peak_width, 
+        chrom.RT) #Remove scans greater than a certain distance from the best scan 
+    filterLowIntensity!(state, best_height*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
     filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio) #Remove scans with matched ratios significantly lower than that of the best scan
     data_points = getDataPoints(state)
     ##########
@@ -335,6 +340,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame};
     dtype = eltype(grouped_precursor_df[1].weight)
     thread_tasks = partitionThreadTasks(length(grouped_precursor_df), 10, Threads.nthreads())
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))
+    println("thread_tasks $thread_tasks")
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
             state = GD_state(
