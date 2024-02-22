@@ -115,13 +115,13 @@ end
 function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; min_prob::AbstractFloat = 0.9)
 
     #Dictionaries mapping fild_id names to data
-    prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
+    #prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
     iRT_RT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
     RT_iRT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
     for (key, psms) in ProgressBar(pairs(psms_dict)) #For each data frame 
         psms[!,:file_path] .= key #Add column for file name
 
-        insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
+        #insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
 
         best_hits = psms[!,:q_value].<0.01#.>min_prob#Map RTs using only the best psms
         
@@ -139,6 +139,7 @@ end
 function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; 
                         max_q_value::AbstractFloat = 0.1,
                         max_precursors::Int = 250000)
+
     psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment
     #Only consider precursors with a q_value passing the threshold
     # at least once accross the entire experiment
@@ -156,15 +157,12 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any;
                 maximum(psms.prob))
     end
     sort!(prec_to_count, rev = true)
-    best_precs = collect(keys(prec_to_count))#[1:max_precursors]
+    best_precs = collect(keys(prec_to_count))[1:min(max_precursors, length(keys(prec_to_count)))]
     for prec_idx in ProgressBar(best_precs) #For each precursor 
         prec_psms = grouped_psms[(precursor_idx = prec_idx,)]
         #Best scan for the precursor accross the experiment
         best_scan = argmax(prec_psms.prob) 
         prec_psms.best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
-        #irt = RT_iRT[grouped_psms[i].file_path[best_scan]](grouped_psms[i].RT[best_scan])
-        #grouped_psms[i].iRT_observed[best_scan] = irt
-
         #Could alternatively estimate the iRT using the best-n scans 
         for j in range(1, size(prec_psms)[1])
             #Get empirical iRT for the psm given the empirical RT

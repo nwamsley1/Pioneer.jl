@@ -82,7 +82,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
-                    RT_INDICES_many[MS_TABLE_PATH],
+                    RT_INDICES[MS_TABLE_PATH],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
                     irt_errs[ms_file_idx],
@@ -99,7 +99,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
                     precursor_weights,
                     )...);
     @time begin
-        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold_many);
+        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
         addIntegrationFeatures!(PSMS);
         getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
         PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
@@ -123,15 +123,12 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate
     end
 end
 best_psms = vcat(values(BPSMS)...)
+
+
 passing_gdf = groupby(best_psms, [:precursor_idx])
-sort!(passing_gdf[(precursor_idx = 0x005102bb,)][!,[:prob,:sequence,:b_count,:y_count,:isotope_count,:weight,:H,:matched_ratio,:entropy_score,:scribe,:city_block_fitted,:file_path]],:file_path)
 
-BPSMS = nothing
-GC.gc()
-println("Finished quant search in ", quantitation_time, "seconds")
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "BPSMS_K_022124.jld2"); BPSMS)
 
-best_psms_passing = best_psms[best_psms[!,:q_value].<=0.01,:]
+ssing = best_psms[best_psms[!,:q_value].<=0.01,:]
 
 best_psms_passing[!,:condition] = [split(x,"_")[end - 1] for x in best_psms_passing[!,:file_path]]
 passing_gdf = groupby(best_psms_passing, [:precursor_idx,:condition])

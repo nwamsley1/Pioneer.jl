@@ -46,17 +46,15 @@ function buildDesignMatrix!(H::SparseArray{Int64,Float32}, matches::Vector{m},  
             X[row] = getIntensity(match)
         end
 
-        #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(match)])), getPredictedIntenisty(match), X[row])
         H.colval[i] = Int64(precID_to_col[getPrecID(match)])
+
         H.rowval[i] = row
         H.nzval[i] = getPredictedIntenisty(match)
         H.x[i] = X[row]
         H.matched[i] = true
         H.n_vals += 1
-            #println("i ", i)
+
     end
-    H_nrow = row
-    #col = 0
     last_peak_ind = 0
     for i in range(nmatches + 1, nmatches + nmisses)
         miss = misses[i - nmatches]
@@ -84,5 +82,6 @@ function buildDesignMatrix!(H::SparseArray{Int64,Float32}, matches::Vector{m},  
     #end
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
     #sortSparse!(H)
+
     sortSparse!(H)
 end

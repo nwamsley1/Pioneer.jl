@@ -18,7 +18,6 @@ end
 @inline function selectpivot!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
     @inbounds begin
         mi = Base.midpoint(lo, hi)
-
         # sort v[mi] <= v[lo] <= v[hi] such that the pivot is immediately in place
         if lt(o, v.colval[lo], v.colval[mi])
             v.colval[mi], v.colval[lo] = v.colval[lo], v.colval[mi]
@@ -31,7 +30,6 @@ end
         if lt(o, v.colval[hi], v.colval[lo])
             if lt(o, v.colval[hi], v.colval[mi])
                 #v[hi], v[lo], v[mi] = v[lo], v[mi], v[hi]
-
                 v.colval[hi], v.colval[lo], v.colval[mi] = v.colval[lo], v.colval[mi], v.colval[hi]
                 v.rowval[hi], v.rowval[lo], v.rowval[mi] = v.rowval[lo], v.rowval[mi], v.rowval[hi]
                 v.nzval[hi], v.nzval[lo], v.nzval[mi] = v.nzval[lo], v.nzval[mi], v.nzval[hi]
@@ -40,12 +38,11 @@ end
 
             else
                 #v[hi], v[lo] = v[lo], v[hi]
-
                 v.colval[hi], v.colval[lo] = v.colval[lo], v.colval[hi]
                 v.rowval[hi], v.rowval[lo] = v.rowval[lo], v.rowval[hi]
                 v.nzval[hi], v.nzval[lo] = v.nzval[lo], v.nzval[hi] 
-                v.x[hi], v.x[lo] = v.x[hi], v.x[lo] 
-                v.matched[hi], v.matched[lo] = v.matched[hi], v.matched[lo] 
+                v.x[hi], v.x[lo] = v.x[lo], v.x[hi] 
+                v.matched[hi], v.matched[lo] = v.matched[lo], v.matched[hi] 
             end
         end
 
@@ -155,13 +152,13 @@ SparseArray(N::Int) = SparseArray(
                     0,
                     0,
                     0,
-                    Vector{Int64}(undef, N), #rowval 
-                    Vector{Int64}(undef, N), #colval 
-                    Vector{Float32}(undef, N), #nzval
+                    zeros(Int64, N), #rowval 
+                    zeros(Int64, N), #colval 
+                    zeros(Float32, N), #nzval
                     ones(Bool, N), #mask
                     ones(Bool, N), #matched,
-                    Vector{Float32}(undef, N), #x
-                    Vector{Int64}(undef, N), #colptr
+                    zeros(Float32, N), #x
+                    zeros(Int64, N), #colptr
                     
 )
 
@@ -171,8 +168,8 @@ function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
         sa.rowval[i] = 0
         sa.x[i] = zero(T)
         sa.nzval[i] = zero(T)
-        sa.mask[i] = false
-        sa.matched[i] = false
+        sa.mask[i] = true
+        sa.matched[i] = true
         sa.colptr[i] = 0
     end
     sa.n_vals = 0
@@ -180,6 +177,7 @@ function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     sa.n = 0
     return 
 end
+
 
 
 function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}

@@ -40,12 +40,13 @@ function ScoreFragmentMatches!(results::Vector{P},
                                  m_rank::Int64) where {P<:UnscoredPSM}
     for i in range(1, nmatches)
         match = matches[i]
-        col = IDtoCOL.vals[getPrecID(match)]
-        results[col] = ModifyFeatures!(results[col], match, errdist, m_rank)
+        prec_id = getPrecID(match)
+        col = IDtoCOL[prec_id]
+        results[col] = ModifyFeatures!(results[col], prec_id, match, errdist, m_rank)
     end
 end
 
-function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -53,7 +54,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, e
     y_count = score.y_count
     intensity = score.intensity
     error = score.error
-    precursor_idx = score.precursor_idx
+    precursor_idx = prec_id
 
     if getIonType(match) == 'b'
         b_count += 1
@@ -88,7 +89,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, match::FragmentMatch{T}, e
     )
 end
 
-function ModifyFeatures!(score::ComplexUnscoredPSM{T}, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -100,7 +101,7 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T}, match::FragmentMatch{T}, 
     y_count = score.y_count
     y_int = score.y_int
     error = score.error
-    precursor_idx = score.precursor_idx
+    precursor_idx = prec_id
 
     if isIsotope(match)
         #score.isotope_count += 1

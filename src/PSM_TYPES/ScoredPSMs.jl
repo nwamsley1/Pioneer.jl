@@ -147,6 +147,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 unscored_PSMs::Vector{ComplexUnscoredPSM{H}}, 
                 spectral_scores::Vector{SpectralScoresComplex{L}},
                 weight::Vector{H}, 
+                IDtoCOL::ArrayDict{UInt32, UInt16},
                 expected_matches::Float64,
                 last_val::Int64,
                 n_vals::Int64,
@@ -209,6 +210,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
 
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
 
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
         scored_psms[start_idx + i - skipped] = ComplexScoredPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].topn,
@@ -224,16 +227,16 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),
             unscored_PSMs[i].error,
             
-            spectral_scores[i].scribe,
-            spectral_scores[i].scribe_corrected,
-            spectral_scores[i].scribe_fitted,
-            spectral_scores[i].city_block,
-            spectral_scores[i].city_block_fitted,
-            spectral_scores[i].spectral_contrast,
-            spectral_scores[i].spectral_contrast_corrected,
-            spectral_scores[i].matched_ratio,
-            spectral_scores[i].entropy_score,
-            weight[i],
+            spectral_scores[scores_idx].scribe,
+            spectral_scores[scores_idx].scribe_corrected,
+            spectral_scores[scores_idx].scribe_fitted,
+            spectral_scores[scores_idx].city_block,
+            spectral_scores[scores_idx].city_block_fitted,
+            spectral_scores[scores_idx].spectral_contrast,
+            spectral_scores[scores_idx].spectral_contrast_corrected,
+            spectral_scores[scores_idx].matched_ratio,
+            spectral_scores[scores_idx].entropy_score,
+            weight[scores_idx],
 
             
             UInt32(unscored_PSMs[i].precursor_idx),

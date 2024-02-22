@@ -96,10 +96,11 @@ prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 getBestTrace!(best_psms)
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_K_022124_besttrace.jld2"); best_psms)
+jldsave(joinpath(MS_DATA_DIR, "TEST_y4b3_nOf5", "Search", "RESULTS", "best_psms_scored_M0M1_250K_022124_besttrace.jld2"); best_psms)
 println("TEST")
 
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022024_bestpsmspassing.jld2"); best_psms_passing)
+best_psms_passing = best_psms[best_psms[!,:q_value].<=0.01, :]
+jldsave(joinpath(MS_DATA_DIR, "TEST_y4b3_nOf5","Search", "RESULTS", "best_psms_scored_M0M1_250K_022124_bestpsmspassing.jld2"); best_psms_passing)
 println("TEST")
 
 

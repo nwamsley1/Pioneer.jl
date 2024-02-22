@@ -175,9 +175,7 @@ function searchRAW(
         end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-        #if i != 88421
-        #    continue
-        #end
+
         #first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
@@ -327,13 +325,12 @@ function searchRAW(
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
 
-            for col in range(1, Hs.n)
-                for k in range(Hs.colptr[col], Hs.colptr[col + 1]-1)
-                    if iszero(Hs.matched[k])
-                        Hs.nzval[k] = unmatched_penalty_factor*Hs.nzval[k]
-                    end
+            for i in range(1, Hs.n_vals)
+                if iszero(Hs.matched[i])
+                    Hs.nzval[i] = unmatched_penalty_factor*Hs.nzval[i]
                 end
             end
+
             if ismissing(isotope_dict) 
                 getDistanceMetrics(_weights_, Hs, spectral_scores)
             end
@@ -353,6 +350,7 @@ function searchRAW(
                     unscored_PSMs,
                     spectral_scores,
                     _weights_,
+                    IDtoCOL,
                     #match_count/prec_count,
                     nmatches/(nmatches + nmisses),
                     last_val,
