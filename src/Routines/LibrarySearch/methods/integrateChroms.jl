@@ -6,13 +6,14 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                                 α::Float32 = 0.01f0, 
                                 half_width_at_α::Float32 = 0.15f0,
                                 min_prob = 0f0,
-                                max_scan_gap = 0.2f0,
-                                max_peak_width = 1.0f0) where {U,V<:AbstractFloat, I,J<:Integer}
+                                max_scan_gap = 0.2f0, #Needs to be between 3 and4 cycles. 
+                                max_peak_width = 1.0f0,
+                                isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
     
     #########
     #Helper Functions  
     #########
-    function getBestPSM(weights::AbstractVector{<:AbstractFloat}, probs::AbstractVector{<:AbstractFloat}, min_prob::Float32)
+    function getBestPSM(weights::AbstractVector{<:AbstractFloat}, topn::AbstractVector{UInt8}, y_count::AbstractVector{UInt8}, min_prob::Float32)
         best_scan_idx = 1
         max_weight = zero(Float32)
         best_scan_under_prob_thresh_idx = 1 
@@ -20,7 +21,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         for i in range(1, length(weights))
             #If passing a threshold based on the logistic regression model
             #Automatically give priority. Could choose a better heuristic.
-            if probs[i] <= min_prob
+            if (y_count[i] < 3) | (topn[i] < 2)# (probs[i] <= min_prob) | 
                 if weights[i] > max_weight_over_prob_thresh
                     max_weight_over_prob_thresh = weights[i]
                     best_scan_under_prob_thresh_idx = i
@@ -32,7 +33,6 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 end
             end
         end
-
         if iszero(max_weight)#max_weight > max_weight_over_prob_thresh
             return max_weight_over_prob_thresh, best_scan_under_prob_thresh_idx
         else
@@ -135,24 +135,42 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                     half_width_at_α::T,
                     best_rt::T) where {T,U<:AbstractFloat, I,J<:Integer}
 
+        #half_width_at_α = 0.15
         #Initial Parameter Guesses
         state.params = getP0(T(α), 
                             T(half_width_at_α), 
                             T(half_width_at_α),
                             T(best_rt),
-                            T(best_height),
+                            T(1.0),
+                            #T(best_height),
                             lower_bounds, upper_bounds)
 
         #Zero at boundaries 
-        state.t[state.max_index + 1], state.t[state.max_index + 2] = T(best_rt - max_peak_width), T(best_rt + max_peak_width)
+        #start = state.t[1] - (state.t[2] - state.t[1])
+        #start = state.t[max_index] - (state.t[state.max_index - 1] - state.t[state.max_index - 1])
+        max_peak_width = 0.062*2
+        start, stop = 0, state.max_index
+        found_start = false
+        for i in range(1, state.max_index)
+            if (!state.mask[i])
+                if !found_start
+                    start = state.t[i]
+                    found_start = true
+                end
+                stop = state.t[i]
+            end
+        end
+        println("start $start stop $stop")
+        state.t[state.max_index + 1], state.t[state.max_index + 2] = T(start - max_peak_width), T(stop + max_peak_width)
         state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
+        #state.mask[state.max_index + 1], state.mask[state.max_index + 2] = true, true
         state.max_index += 2
         GD(state,
                 lower_bounds,
                 upper_bounds,
                 tol = 1e-3, 
                 max_iter = 200, 
-                δ = 1e-3, #Huber loss parameter. 
+                δ = 1e-1,#1e-3, #Huber loss parameter. 
                 α=0.01,
                 β1 = 0.9,
                 β2 = 0.999,
@@ -267,18 +285,31 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     ##########
     #Initialize state with observed data 
     max_peak_width = 1.0f0
-    best_height, best_scan = getBestPSM(chrom.weight, chrom.prob, min_prob)
+    best_height, best_scan = getBestPSM(chrom.weight, chrom.topn, chrom.y_count, min_prob)
     norm_factor = best_height 
     fillState!(state, chrom, best_height)
+    println(state.t[1:10], " ", state.mask[1:10])
     truncateAfterSkip!(state, best_scan, chrom.RT, max_scan_gap) #Only allow a fixed ammount of time without a scan
+    println(state.t[1:10], " ", state.mask[1:10])
     filterOnRT!(state, chrom.RT[best_scan], 
         max_peak_width, 
         chrom.RT) #Remove scans greater than a certain distance from the best scan 
     filterLowIntensity!(state, best_height*intensity_filter_fraction, chrom.weight) #Remove scans with intensity less than a fixed fraction of the most intense scan 
-    filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio) #Remove scans with matched ratios significantly lower than that of the best scan
+    #filterOnMatchedRatio!(state, best_scan, chrom.matched_ratio) #Remove scans with matched ratios significantly lower than that of the best scan
     data_points = getDataPoints(state)
     ##########
     #Fit EGH Curve to data 
+    println("data_points $data_points")
+    points_above_half_max = 0
+    for i in range(1, state.max_index)
+        if !state.mask[i]
+            if state.data[i] >= 0.1
+                points_above_half_max += 1
+            end
+        end
+    end
+    println("points_above_half_max ", points_above_half_max)
+    if points_above_half_max < 5
     fitEGH(state, 
             HuberParams(T(0.001), T(0), T(-1), T(1.0)),
             HuberParams(T(1), T(Inf), T(1), T(1.0)),
@@ -287,7 +318,30 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             half_width_at_α,
             chrom.RT[best_scan]
             )
+    else
+        fitEGH(state, 
+        HuberParams(T(0.001), T(0), T(-1), T(0.9)),
+        HuberParams(T(1), T(Inf), T(1), T(1.25)),
+        max_peak_width,
+        α,
+        half_width_at_α,
+        chrom.RT[best_scan]
+        )
+    end
+    if isplot
+        println("TEST2")
+        #p = plot()
+        mi = state.max_index
+        #plot(state.t[1:mi], state.data[1:mi], seriestype=:scatter, show = true)
 
+        plot(state.t[1:mi][state.mask[1:mi].==false], norm_factor .* state.data[1:mi][state.mask[1:mi].==false], seriestype=:scatter, alpha = 0.5, show = true)
+        #plot!(state.t[1:mi][state.mask[1:mi]], state.data[1:mi][state.mask[1:mi]], seriestype=:scatter, alpha = 0.5)
+        xbins = LinRange(state.t[1] - 0.5, state.t[state.max_index] + .5, 100)
+        plot!(xbins, [norm_factor*F(state, x) for x in xbins])
+        println("area = ", norm_factor*Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
+        println("norm_factor ", norm_factor)
+        println("H ", norm_factor*state.params.H)
+    end
     ##########
     #Fit EGH Curve to data
     peak_area = Integrate(state, gauss_quad_x, gauss_quad_w, α = α)
@@ -308,6 +362,19 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 
     ##########
     #Fill Features 
+
+    start = max(1, best_scan - 1)
+    stop = min(length(chrom.scribe), best_scan + 1)
+    total = 0.0
+    n = 0
+    for i in start:stop
+        if !state.mask[i]
+            total += chrom.weight[i]
+            n += 1
+        end
+    end
+    chrom.H[best_scan] = total/n#state.params.H*norm_factor
+
     chrom.peak_area[best_scan] = peak_area*norm_factor
     chrom.GOF[best_scan] = GOF
     chrom.FWHM[best_scan] = FWHM
@@ -318,7 +385,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     chrom.σ[best_scan] = state.params.σ
     chrom.tᵣ[best_scan] = state.params.tᵣ
     chrom.τ[best_scan] = state.params.τ
-    chrom.H[best_scan] = state.params.H*norm_factor
+    #chrom.H[best_scan] = state.params.H*norm_factor
     chrom.data_points[best_scan] = data_points#getDataPoints(state) - 4
     chrom.fraction_censored[best_scan] =  Float16(((state.max_index - 2) - data_points)/(state.max_index - 2))
     chrom.base_width_min[best_scan] = state.t[state.max_index-2] - state.t[1]

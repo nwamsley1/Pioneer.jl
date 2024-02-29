@@ -161,9 +161,9 @@ function searchRAW(
     for i in thread_task
         thread_peaks += length(spectra[:masses][i])
         if thread_peaks > 100000
-            lock(lk) do 
-                update(pbar, thread_peaks)
-            end
+            #lock(lk) do 
+            #    update(pbar, thread_peaks)
+            #end
             thread_peaks = 0
         end
 
@@ -400,10 +400,12 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
             continue
         end
             if getRank(match) <= max_rank
-                if iszero(IDtoNMatches[prec_id])
-                    update!(IDtoNMatches, prec_id, one(UInt16))
-                else
-                    IDtoNMatches.vals[prec_id] += one(UInt16)
+                if getIonType(match) == 'y'
+                    if iszero(IDtoNMatches[prec_id])
+                        update!(IDtoNMatches, prec_id, one(UInt16))
+                    else
+                        IDtoNMatches.vals[prec_id] += one(UInt16)
+                    end
                 end
             end
     end

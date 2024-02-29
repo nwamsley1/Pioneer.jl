@@ -58,7 +58,7 @@ function quantitationSearch(
         min_log2_matched_ratio = params[:min_log2_matched_ratio],
         min_index_search_score = zero(UInt8),#params[:min_index_search_score],
         min_weight = params[:min_weight],
-        min_max_ppm = (15.0f0, 40.0f0),
+        min_max_ppm = (25.0f0, 40.0f0),
         n_frag_isotopes = params[:n_frag_isotopes],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
