@@ -171,7 +171,7 @@ function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::
     ΔX = Inf
     i = 0
     stay_in_loop = true
-    λ = Float32(0)
+    λ = Float32(2.5e4)
     while (i < max_iter_outer) & (ΔX > tol) & stay_in_loop
         ΔX = 0.0
         #Update each variable once 

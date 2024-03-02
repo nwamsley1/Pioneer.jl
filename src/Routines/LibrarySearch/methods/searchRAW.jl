@@ -278,10 +278,10 @@ function searchRAW(
                                                                             10000, #Arbitrarily hight
                                                                             min_frag_count #Remove precursors matching fewer than this many fragments
                                                                         )
-                                                                       
+                                                                     
         if filter_by_rank
         #println("nmatches_all $nmatches_all, nmatches $nmatches")
-            _, _, nmatches, nmisses = filterMatchedIons!(IDtoCOL, 
+            _, _, nmatches, nmisses = filterMatchedIonsTop!(IDtoCOL, 
                                                         ionMatches, ionMisses, 
                                                         nmatches, nmisses, 
                                                         last(min_topn_of_m), 
@@ -390,6 +390,50 @@ function searchRAW(
 
 end
 
+function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
+    nmatches_all, nmisses_all = nmatches, nmisses
+
+    @inbounds for i in range(1, nmatches_all)
+        match = ionMatches[i]
+        prec_id = getPrecID(match)
+        if match.is_isotope 
+            continue
+        end
+            if (getRank(match) <= max_rank) .& (match.is_isotope==false)
+                #if getIonType(match) == 'y' | (filter_y==false)
+                    if iszero(IDtoNMatches[prec_id])
+                        update!(IDtoNMatches, prec_id, one(UInt16))
+                    else
+                        IDtoNMatches.vals[prec_id] += one(UInt16)
+                    end
+                #end
+            end
+    end
+    nmatches, nmisses = 0, 0
+    @inbounds for i in range(1, nmatches_all)
+        if IDtoNMatches[getPrecID(ionMatches[i])] <= min_matched_ions
+
+            continue
+        else
+            nmatches += 1
+            ionMatches[nmatches] = ionMatches[i]
+        end
+    end
+
+    @inbounds for i in range(1, nmisses_all)
+        if IDtoNMatches[getPrecID(ionMisses[i])] <= min_matched_ions
+            continue
+        else
+            nmisses += 1
+            ionMisses[nmisses] = ionMisses[i]
+        end
+    end
+
+    reset!(IDtoNMatches)
+
+    return nmatches_all, nmisses_all, nmatches, nmisses
+end
+
 function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
     nmatches_all, nmisses_all = nmatches, nmisses
 
@@ -399,15 +443,15 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
         if match.is_isotope 
             continue
         end
-            if getRank(match) <= max_rank
-                if getIonType(match) == 'y'
+            #if getRank(match) <= max_rank
+                #if (getIonType(match) == 'y') & (match.is_isotope==false)
                     if iszero(IDtoNMatches[prec_id])
                         update!(IDtoNMatches, prec_id, one(UInt16))
                     else
                         IDtoNMatches.vals[prec_id] += one(UInt16)
                     end
-                end
-            end
+                #end
+            #end
     end
     nmatches, nmisses = 0, 0
     @inbounds for i in range(1, nmatches_all)
@@ -433,6 +477,7 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
 
     return nmatches_all, nmisses_all, nmatches, nmisses
 end
+
 
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {M<:MatchIon{Float32}}
     if collect_fmatches

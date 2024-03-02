@@ -420,13 +420,13 @@ function scoreSecondSearchPSMs!(psms::DataFrame,
     for k in range(0, k_cv_folds - 1)
         cv_fold = cv_folds.==UInt8(k)
         M = sum(cv_fold)#size(PSMS, 1)
-        println("k $k, M $M")
+        #println("k $k, M $M")
         chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
         data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
         β = zeros(Float64, length(features));
         β = ProbitRegression(β, psms[cv_fold,features], psms[cv_fold,:target], data_chunks, max_iter = max_iter);
         ModelPredictCVFold!(psms[!,:prob], psms[!,:cv_fold], UInt8(k), psms[!,features], β, allcv_data_chunks)  
-        println("sum(PSMs[cv_fold,:score]) ", sum(psms[cv_fold,:score]))
+        #println("sum(PSMs[cv_fold,:score]) ", sum(psms[cv_fold,:score]))
     end
 end
 

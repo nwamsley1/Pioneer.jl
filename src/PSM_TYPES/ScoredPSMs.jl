@@ -189,24 +189,24 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         #    println("scan_idx ", scan_idx)
         #end
         passing_filter = (
-            #(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
-            (unscored_PSMs[i].y_count) >= 2
+            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
+           #(unscored_PSMs[i].y_count) >= min_frag_count
         )&(
             (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
         )&(
-            true#spectral_scores[i].matched_ratio > min_log2_matched_ratio
+            spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
             weight[i] >= min_weight
         )&(
             UInt8(unscored_PSMs[i].topn) >= min_topn
         )&(
-            true#UInt8(unscored_PSMs[i].best_rank) == 1
+            UInt8(unscored_PSMs[i].best_rank) == 1
         )
         #=
-        if UInt32(unscored_PSMs[i].precursor_idx) == 10274537
+        if UInt32(unscored_PSMs[i].precursor_idx) == 11083883
             println("scan_idx passing? ", scan_idx, " ", passing_filter)
         end
-        if (scan_idx == 117220) .& (UInt32(unscored_PSMs[i].precursor_idx) == 10274537)
+        if (scan_idx == 119733) .& (UInt32(unscored_PSMs[i].precursor_idx) == 11083883)
             println("min_frag_count $min_frag_count ", unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
             println("min_spectral_contrast $min_spectral_contrast ", (spectral_scores[i].spectral_contrast))
             println("min_log2_matched_ratio $min_log2_matched_ratio ", spectral_scores[i].matched_ratio)
