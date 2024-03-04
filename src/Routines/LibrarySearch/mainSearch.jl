@@ -55,7 +55,7 @@ function mainLibrarySearch(
         min_log2_matched_ratio = params[:min_log2_matched_ratio_main_search],
         min_index_search_score = params[:min_index_search_score],
         min_topn_of_m = params[:min_topn_of_m],
-        min_max_ppm = (10.0f0, 25.0f0),
+        min_max_ppm = (10.0f0, 30.0f0),
         n_frag_isotopes = params[:n_frag_isotopes],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_bounds = params[:rt_bounds],
@@ -64,7 +64,7 @@ function mainLibrarySearch(
 end
 
 PSMs_Dict = Dictionary{String, DataFrame}()
-main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         println("starting file $ms_file_idx")
         @time begin
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
@@ -122,7 +122,14 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         );
         end
 end
+
+
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"); PSMs_Dict)
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"))["PSMs_Dict"]
+#=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_021924_M0.jld2"); PSMs_Dict)
 PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_021924_M0.jld2"))["PSMs_Dict"]
+=#

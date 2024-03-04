@@ -176,7 +176,7 @@ function searchRAW(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
 
-        #first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
+        first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
         ##########
@@ -399,7 +399,7 @@ function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatch
         if match.is_isotope 
             continue
         end
-            if (getRank(match) <= max_rank) .& (match.is_isotope==false)
+            if (getRank(match) <= max_rank) #.& (match.is_isotope==false)
                 #if getIonType(match) == 'y' | (filter_y==false)
                     if iszero(IDtoNMatches[prec_id])
                         update!(IDtoNMatches, prec_id, one(UInt16))
@@ -444,13 +444,13 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
             continue
         end
             #if getRank(match) <= max_rank
-                #if (getIonType(match) == 'y') & (match.is_isotope==false)
+                if (getIonType(match) == 'y') #& (match.is_isotope==false)
                     if iszero(IDtoNMatches[prec_id])
                         update!(IDtoNMatches, prec_id, one(UInt16))
                     else
                         IDtoNMatches.vals[prec_id] += one(UInt16)
                     end
-                #end
+                end
             #end
     end
     nmatches, nmisses = 0, 0

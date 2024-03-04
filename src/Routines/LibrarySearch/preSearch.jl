@@ -59,11 +59,12 @@ function firstSearch(
     )
 end
 
+test_time = @time begin
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
 lk = ReentrantLock()
-for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
+for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
@@ -126,8 +127,8 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
 
     lock(lk) do 
         PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        @time RT_to_iRT_map, x_grid, y_grid, z, ys, w= KDEmapping(rtPSMs[1:end,:RT], rtPSMs[1:end,:iRT_predicted], 
-                                        n = 200, bandwidth = 0.5);
+        @time RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], rtPSMs[1:end,:iRT_predicted], 
+                                        n = 200, bandwidth = 0.25);
         @time plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
                     f_out = PLOT_PATH);
         rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
@@ -142,7 +143,19 @@ for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))
         frag_err_dist_dict[ms_file_idx] = mass_err_model
     end
 end
+end
 
+merge_pdfs([x for x in readdir(joinpath(MS_DATA_DIR,"Search","QC_PLOTS")) if endswith(x, ".pdf")], 
+joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "mergedpdf.pdf"))
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_030224.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_030224.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_030224.jld2"); irt_errs)
+
+RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_030224.jld2"))["RT_to_iRT_map_dict"]
+frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_030224.jld2"))["frag_err_dist_dict"]
+irt_errs= load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_030224.jld2"))["irt_errs"]
+#=
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_021924.jld2"); RT_to_iRT_map_dict)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_021924.jld2"); frag_err_dist_dict)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_021924.jld2"); irt_errs)
@@ -150,3 +163,4 @@ jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_021924.jld2"); irt_
 RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_021924.jld2"))["RT_to_iRT_map_dict"]
 frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_021924.jld2"))["frag_err_dist_dict"]
 irt_errs= load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_021924.jld2"))["irt_errs"]
+=#

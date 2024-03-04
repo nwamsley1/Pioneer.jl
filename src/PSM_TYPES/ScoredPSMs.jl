@@ -79,6 +79,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
                 unscored_PSMs::Vector{SimpleUnscoredPSM{H}}, 
                 spectral_scores::Vector{SpectralScoresSimple{L}},
                 weight::Vector{H}, 
+                IDtoCOL::ArrayDict{UInt32, UInt16},
                 expected_matches::Float64,
                 last_val::Int64,
                 n_vals::Int64,
@@ -119,6 +120,8 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             growScoredPSMs!(scored_psms, block_size);
         end
 
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
         scored_psms[start_idx + i - skipped] = SimpleScoredPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].topn,
@@ -128,12 +131,12 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
 
             unscored_PSMs[i].error,
             
-            spectral_scores[i].scribe,
-            spectral_scores[i].city_block,
-            spectral_scores[i].spectral_contrast,
-            spectral_scores[i].matched_ratio,
+            spectral_scores[scores_idx].scribe,
+            spectral_scores[scores_idx].city_block,
+            spectral_scores[scores_idx].spectral_contrast,
+            spectral_scores[scores_idx].matched_ratio,
             Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
-            spectral_scores[i].entropy_score,
+            spectral_scores[scores_idx].entropy_score,
             
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(scan_idx)
