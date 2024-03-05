@@ -444,7 +444,7 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
             continue
         end
             #if getRank(match) <= max_rank
-                if (getIonType(match) == 'y') #& (match.is_isotope==false)
+                if (getIonType(match) == 'y') & (match.is_isotope==false)
                     if iszero(IDtoNMatches[prec_id])
                         update!(IDtoNMatches, prec_id, one(UInt16))
                     else

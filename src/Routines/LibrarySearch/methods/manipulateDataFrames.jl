@@ -45,7 +45,9 @@ function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
     PSMs[!,:intercept] = ones(Float16, size(PSMs, 1))
 
-    features = [:entropy_score,:city_block,:scribe,:spectral_contrast,:y_count,:error,:topn,:TIC,:intercept]
+    features = [:entropy_score,:city_block,:scribe,:spectral_contrast,:y_count,:error,
+    #:topn,
+    :TIC,:intercept]
     PSMs[!,:prob] = zeros(Float32, size(PSMs, 1))
 
     M = size(PSMs, 1)
@@ -220,7 +222,8 @@ end
 
 function getBestPSMs!(psms::DataFrame,
                         precursors::Vector{LibraryPrecursorIon{T}}; 
-                        max_q_value::Float64 = 0.10) where {T<:AbstractFloat}
+                        max_q_value::Float64 = 0.10,
+                        max_psms::Int64 = 250000) where {T<:AbstractFloat}
 
     #Remove psms below q_value threshold
     #psms = psms[!,[:precursor_idx,:RT,:iRT_predicted,:q_value,:score]]
@@ -235,6 +238,9 @@ function getBestPSMs!(psms::DataFrame,
     end
 
     filter!(x->x.best_psm, psms);
+    sort!(PSMs,:prob, rev = true)
+    n = size(PSMs, 1)
+    delete!(PSMs, min(n, max_psms + 1):n)
     select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])
 
     prec_mz = zeros(Float32, size(psms, 1));
@@ -387,6 +393,7 @@ function getIsoRanks!(psms::DataFrame,
                 isotopes = getPrecursorIsotopeSet(mz, charge, window)
 
                 rank = zero(UInt8)
+                
                 if iszero(first(isotopes))
                     if last(isotopes) > 1
                         rank = UInt8(1)
@@ -398,6 +405,7 @@ function getIsoRanks!(psms::DataFrame,
                 else
                     rank = UInt8(4)
                 end
+                
                 psms[i,:iso_rank] = rank
             end
         end

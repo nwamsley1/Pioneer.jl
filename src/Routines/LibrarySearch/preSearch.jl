@@ -148,6 +148,10 @@ end
 merge_pdfs([x for x in readdir(joinpath(MS_DATA_DIR,"Search","QC_PLOTS")) if endswith(x, ".pdf")], 
 joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "mergedpdf.pdf"))
 
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_030424.jld2"); RT_to_iRT_map_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_030424.jld2"); frag_err_dist_dict)
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_030424.jld2"); irt_errs)
+
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "rt_map_dict_030224.jld2"); RT_to_iRT_map_dict)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict_030224.jld2"); frag_err_dist_dict)
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs_030224.jld2"); irt_errs)

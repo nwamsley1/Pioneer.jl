@@ -110,7 +110,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                     
         getBestPSMs!(PSMs,
                         prosit_lib["precursors"],
-                        max_q_value = 0.10);
+                        max_q_value = 0.25,
+                        max_psms = 250000);
 
         println("retained ", size(PSMs, 1), " psms")
 
@@ -126,6 +127,18 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_minfrag3ynoiso_030424_M0.jld2"); PSMs_Dict)
+
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"))["PSMs_Dict"]
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030424_M0.jld2"); PSMs_Dict)
+
+jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"); PSMs_Dict)
+PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"))["PSMs_Dict"]
+#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030424_M0.jld2"); PSMs_Dict)
+#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"))["PSMs_Dict"]
+
 
 jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"); PSMs_Dict)
 PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"))["PSMs_Dict"]

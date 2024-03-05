@@ -137,7 +137,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         #Zero at boundaries 
         #start = state.t[1] - (state.t[2] - state.t[1])
         #start = state.t[max_index] - (state.t[state.max_index - 1] - state.t[state.max_index - 1])
-        max_peak_width = 0.062*3
+        #max_peak_width = 0.062*3 #cal curve
+        max_peak_width = 0.0482*3
         start, stop = 0, state.max_index
         found_start = false
         for i in range(1, state.max_index)
