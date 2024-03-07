@@ -386,6 +386,9 @@ function getIsoRanks!(psms::DataFrame,
                         )
                 isotopes = getPrecursorIsotopeSet(mz, charge, window)
 
+                
+                #rank = one(UInt8)
+                
                 rank = zero(UInt8)
                 if iszero(first(isotopes))
                     if last(isotopes) > 1
@@ -398,6 +401,7 @@ function getIsoRanks!(psms::DataFrame,
                 else
                     rank = UInt8(4)
                 end
+                
                 psms[i,:iso_rank] = rank
             end
         end

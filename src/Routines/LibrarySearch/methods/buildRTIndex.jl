@@ -7,7 +7,6 @@ end
 function compare_lb(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat}
     return rb.lb
 end
-
 getLB(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat} = rb.lb
 getMZ(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = last(rb.prec)
 getPrecID(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = first(rb.prec)

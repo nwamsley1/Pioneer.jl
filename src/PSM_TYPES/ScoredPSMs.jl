@@ -192,8 +192,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         #    println("scan_idx ", scan_idx)
         #end
         passing_filter = (
-            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
-           #(unscored_PSMs[i].y_count) >= min_frag_count
+           # (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
+           (unscored_PSMs[i].y_count) >= min_frag_count
         )&(
             (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
         )&(
