@@ -24,7 +24,7 @@ algorithm and heuristics to statistically infer the identification status and ab
 - We are excited to present preiminary results at US HUPO 2024 in Portland, Oregon! See a copy of the poster below.
 - Pioneer is in an early stage of development and not yet ready for use in research. If curious, please contact us at n.t.wamsley@wustl.edu.
 - Pioneer is developing rapidly. Updates will be continuously added to github as the project progresses. 
-- Cross-platform onversion of Thermo RAW files to Pioneer compatible Apache Arrow tables. https://github.com/nwamsley1/ThermoRawFileToParquetConverter
+- Cross-platform conversion of Thermo RAW files to Pioneer compatible Apache Arrow tables. https://github.com/nwamsley1/ThermoRawFileToParquetConverter
 
 ## US HUPO 2024
 <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/HUPO_POSTER_2024_FORFEDEX.jpg"/>
