@@ -142,7 +142,8 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any;
     psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment
     #Only consider precursors with a q_value passing the threshold
     # at least once accross the entire experiment
-    filter!(x->x.q_value<=max_q_value,psms); 
+
+    #filter!(x->x.q_value<=max_q_value,psms); TRYING THIS 03/04/24
 
     #For each precursor, what was the best scan, maximum q-value, and observed iRT for the best scan
     psms[!,:best_scan] .= false #Best scan for a given precursor_idx accross the experiment

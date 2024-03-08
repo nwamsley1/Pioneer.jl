@@ -58,7 +58,7 @@ function quantitationSearch(
         min_log2_matched_ratio = params[:min_log2_matched_ratio],
         min_index_search_score = zero(UInt8),#params[:min_index_search_score],
         min_weight = params[:min_weight],
-        min_max_ppm = (15.0f0, 40.0f0),
+        min_max_ppm = (10.0f0, 40.0f0),
         n_frag_isotopes = params[:n_frag_isotopes],
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
@@ -222,6 +222,7 @@ getBestTrace!(best_psms)
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
 
 jldsave(joinpath(MS_DATA_DIR,"Search", "RESULTS", "best_psms_scored_HUPO_huber1e4_lasso0_030624.jld2"); best_psms)
+
 println("TEST")
 
 
