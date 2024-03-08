@@ -18,8 +18,8 @@
 - Estimates peak area ratios using an MM-Estimator (https://github.com/getzze/RobustModels.jl/blob/main/docs/make.jl). Enables accurate par estimation in the pressence of noisy or interfered transitions. High uncertainty in estimation can be used as grounds for exclusion. 
 - Summarizaiton of peptide-level quantitation to protein-level quantitation using the MaxLFQ Algorithm without normalization [2].
 - Generates a multi-page pdf for each experiment file including chromatogram plots.
-![alt text]([https://github.com/nwamsley1/Pioneer.jl/tree/main/figures/goldfarb.png](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png))
-![alt text]([https://github.com/nwamsley1/Pioneer.jl/tree/main/figures/PIONEER_LOGO.svg](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.svg))
+![alt text](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png)
+![alt text](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.svg)
 ![alt text](https://github.com/nwamsley1/Titus.jl/blob/main/figures/AADLLVNLDPR.png)
 
 ## Future Additions/In-Progress 
