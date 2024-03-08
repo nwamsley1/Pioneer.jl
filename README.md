@@ -19,7 +19,7 @@
 - Summarizaiton of peptide-level quantitation to protein-level quantitation using the MaxLFQ Algorithm without normalization [2].
 - Generates a multi-page pdf for each experiment file including chromatogram plots.
 ![alt text](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png)
-![alt text](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.svg)
+![alt text](https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.jpeg)
 ![alt text](https://github.com/nwamsley1/Titus.jl/blob/main/figures/AADLLVNLDPR.png)
 
 ## Future Additions/In-Progress 
