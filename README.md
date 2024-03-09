@@ -13,11 +13,11 @@
   Pioneer is a cross-platform and open-source tool fully implemented 
 in Juilia that identifies and quantifies proteins and peptides from data independent acquisition (DIA) experiments. Given a 
 spectral library of fragment ion intensities and retention time estimates on an arbitrary scale, Pioneer employs a spectrum-centric 
-algorithm and heuristics to statistically infer the identification status and abundance of each library precursor in the data. We develop Pioneer under the following principles:
+algorithm and heuristics to statistically infer the identification status and abundance of each library precursor in the data. We develop Pioneer with the following goals:
 
-- **Open-Source:** Methods should be understood and open to scrutiny by the proteomics community. Pioneer operates under an MIT license such that all source code is freely available. 
+- **Open-Source:** Methods should be understood and open to scrutiny by users. Pioneer operates under an MIT license such that all source code is freely available. 
 - **Cross-Platform:** All steps of analysis, including vendor file conversion, should run on all major operating systems.  
-- **High-Performance:** The by sensitivity, FDR control, and quantitative precision and accuracy, should be competitive with state-of-the-art commercial software packages
+- **High-Performance:** The by sensitivity, FDR control, and quantitative precision and accuracy, should be competitive with state-of-the-art commercial software packages.
 - **Fast:** Use of simple heuristics and carefully implemented, efficient algorithms should ensure that data can be analyzed many times faster than it is aquired for typical experiments. 
 
 ## Status
