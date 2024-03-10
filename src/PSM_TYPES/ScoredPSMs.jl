@@ -197,7 +197,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
-            weight[i] >= min_weight
+            weight[i] >= -1.0
         )&(
             UInt8(unscored_PSMs[i].topn) >= min_topn
         )&(

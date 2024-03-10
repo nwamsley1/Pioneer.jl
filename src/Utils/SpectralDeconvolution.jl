@@ -109,7 +109,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
         ########
         #Stopping Criterion for single variable Newton-Raphson
         ########
-        abs(X₁[col] - X0) < accuracy ? break : nothing
+        abs(X₁[col] - X0) < tol ? break : nothing
     end
 
     #If newtons method fails to converge, switch to bisection method
@@ -126,7 +126,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
                         min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
                         L1,  
                         max_iter = max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
-                        accuracy = T(tol*100))#accuracy)
+                        tol = T(10000))#accuracy)
         end
 
         return X₁[col] - X_init
@@ -135,7 +135,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
     end
 end
 
-function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T, a::T, b::T, fa::T; max_iter::Int64 = 20, accuracy::T = 0.01) where {Ti<:Integer,T<:AbstractFloat}
+function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T, a::T, b::T, fa::T; max_iter::Int64 = 20, tol::T = 0.01) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     c = (a + b)/2
     #Since first guess for X₁[col] will change to "c"
@@ -163,7 +163,7 @@ function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::
         ########
         #Stopping Criterion
         ########
-        abs(X₁[col] - X0) < accuracy ? break : nothing
+        abs(X₁[col] - X0) < tol ? break : nothing
         n += 1
     end
     return X₁[col] - X_init
@@ -176,6 +176,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         λ::T; 
                         max_iter_newton::Int = 100, 
                         max_iter_bisection::Int = 20, 
+                        max_iter_outer = 100,
+                        accuracy::T = 100.0f0,
                         tol::U = 100) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
     i = 0
@@ -188,7 +190,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
                                         max_iter_newton = max_iter_newton, 
                                         max_iter_bisection = max_iter_bisection,
-                                        tol = tol))
+                                        tol = accuracy))
             if !iszero(X₁) 
                 if δx/X₁[col] > max_diff
                     max_diff =  δx/X₁[col]

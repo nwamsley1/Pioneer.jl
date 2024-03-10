@@ -8,7 +8,7 @@ function quantitationSearch(
     ms_file_idx::UInt32,
     err_dist::MassErrorModel{Float32},
     irt_tol::Float64,
-    params::Dict,
+    params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -22,8 +22,7 @@ function quantitationSearch(
     ) where {S<:ScoredPSM{Float32, Float16},
                                             Q<:UnscoredPSM{Float32},
                                             R<:SpectralScores{Float16}}
-    frag_ppm_err = Float32(getLocation(err_dist))
-    
+
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
     return searchRAW(
         spectra, 
@@ -47,22 +46,25 @@ function quantitationSearch(
         precursor_weights,
         missing,
         
-        frag_ppm_err = Float32(frag_ppm_err),
-        unmatched_penalty_factor = params[:unmatched_penalty_factor],
         isotope_err_bounds = params[:isotope_err_bounds],
-        max_peak_width = params[:max_peak_width],
-        min_topn_of_m = params[:min_topn_of_m],
         filter_by_rank = true,
-        huber_δ = params[:huber_δ],
-        min_frag_count = params[:min_frag_count],
-        min_log2_matched_ratio = params[:min_log2_matched_ratio],
-        min_index_search_score = zero(UInt8),#params[:min_index_search_score],
-        min_weight = params[:min_weight],
-        min_max_ppm = (10.0f0, 40.0f0),
-        n_frag_isotopes = params[:n_frag_isotopes],
+        min_index_search_score = zero(UInt8),
+
+        δ = Float32(params[:deconvolution_params]["huber_delta"]),
+        λ = Float32(params[:deconvolution_params]["huber_delta"]),
+        deconvolution_tolerance = Float32(params[:deconvolution_params]["deconvolution_tolerance"]),
+        max_iter_newton = Int64(params[:deconvolution_params]["max_iter_newton"]),
+        max_iter_bisection = Int64(params[:deconvolution_params]["max_iter_bisection"]),
+
+        min_topn_of_m = Tuple([Int64(x) for x in params[:quant_search_params]["min_topn_of_m"]]),
+        min_frag_count = Int64(params[:quant_search_params]["min_frag_count"]),
+        min_log2_matched_ratio = Float32(params[:quant_search_params]["min_log2_matched_ratio"]),
+        min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),
+        n_frag_isotopes = Int64(params[:quant_search_params]["n_frag_isotopes"]),
+        max_best_rank = Int64(params[:quant_search_params]["max_best_rank"]),
+
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
-        rt_bounds = params[:rt_bounds],
         irt_tol = irt_tol
     )
 end
@@ -86,7 +88,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
                     irt_errs[ms_file_idx],
-                    ms2_integration_params,  
+                    params_,  
                     ionMatches,
                     ionMisses,
                     all_fmatches,
@@ -98,15 +100,16 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     complex_spectral_scores,
                     precursor_weights,
                     )...);
+
         addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
         addIntegrationFeatures!(PSMS);
-        getIsoRanks!(PSMS, MS_TABLE, ms2_integration_params[:quadrupole_isolation_width]);
+        getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
         PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
         scoreSecondSearchPSMs!(PSMS,features);
         MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
         integratePrecursors(MS2_CHROMS, 
-                            n_quadrature_nodes = params_[:n_quadrature_nodes],
-                            intensity_filter_fraction = params_[:intensity_filter_fraction],
+                            n_quadrature_nodes = Int64(params_[:integration_params]["n_quadrature_nodes"]),
+                            intensity_filter_fraction = Float32(params_[:integration_params]["intensity_filter_threshold"]),
                             α = 0.001f0);
         addPostIntegrationFeatures!(PSMS, 
                                     MS_TABLE, prosit_lib["precursors"],

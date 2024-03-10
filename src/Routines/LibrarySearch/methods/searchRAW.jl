@@ -23,8 +23,13 @@ function searchRAW(
                     collect_fmatches = false,
                     expected_matches::Int64 = 100000,
                     frag_ppm_err::Float32 = 0.0f0,
-                    huber_δ::Float32 = 1000f0,
-                    unmatched_penalty_factor::Float64 = 1.0,
+
+                    δ::Float32 = 10000f0,
+                    λ::Float32 = 0f0,
+                    deconvolution_tolerance::Float32 = 100f0,
+                    max_iter_newton = 100,
+                    max_iter_bisection = 100,
+
                     isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     max_peak_width::Float64 = 2.0,
@@ -72,7 +77,11 @@ function searchRAW(
                                 frag_index,precursors,
                                 ion_list, rt_to_irt_spline,ms_file_idx,err_dist,
                                 searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
-                                huber_δ, unmatched_penalty_factor,
+                                δ,
+                                λ,
+                                deconvolution_tolerance,
+                                max_iter_newton,
+                                max_iter_bisection,
                                 ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
                                 iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
                                 precs[thread_id],
@@ -105,8 +114,11 @@ function searchRAW(
                     collect_fmatches::Bool,
                     expected_matches::Int64,
                     frag_ppm_err::Float32,
-                    huber_δ::Float32,
-                    unmatched_penalty_factor::Float64,
+                    δ::Float32,
+                    λ::Float32,
+                    deconvolution_tolerance::Float32,
+                    max_iter_newton,
+                    max_iter_bisection,
 
 
                     ionMatches::Vector{FragmentMatch{Float32}},
@@ -315,11 +327,11 @@ function searchRAW(
             initResiduals!(_residuals_, Hs, _weights_);
             if ismissing(precs) 
                 #Spectral deconvolution. Hybrid bisection/newtowns method
-                solveHuber!(Hs, _residuals_, _weights_, huber_δ, λ, 
+                solveHuber!(Hs, _residuals_, _weights_, δ, λ, 
                                 max_iter_newton = max_iter_newton, 
                                 max_iter_bisection = max_iter_bisection,
-                                tol = deconvolution_tolerance,
-                                #tol = Hs.n
+                                accuracy = deconvolution_tolerance,
+                                tol = Hs.n
                                 );
             end
             #Remember determined weights for each precursors
