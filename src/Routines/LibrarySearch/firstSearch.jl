@@ -22,7 +22,7 @@ function mainLibrarySearch(
     precursor_weights::Vector{Vector{Float32}},
     precs::Vector{Counter{UInt32, UInt8}}) where {S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
-                                                            R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
+                                                            R<:SpectralScores{Float16}}
 
     frag_ppm_err = getLocation(err_dist)
     
@@ -72,7 +72,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
             MS_TABLE,
             prosit_lib["f_index"],
             prosit_lib["precursors"],
-            #prosit_lib["f_det"],
             library_fragment_lookup_table,
             RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
             UInt32(ms_file_idx), #MS_FILE_IDX
@@ -117,9 +116,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 
         insert!(PSMs_Dict, 
             MS_TABLE_PATH, 
-            PSMs#[!,
-                #[:precursor_idx,:RT,:iRT_predicted,:prec_mz,:q_value,:score]
-                #]
+            PSMs
         );
         end
 end
@@ -127,22 +124,3 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-
-
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_minfrag3ynoiso_030424_M0.jld2"); PSMs_Dict)
-
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"))["PSMs_Dict"]
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030424_M0.jld2"); PSMs_Dict)
-
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"); PSMs_Dict)
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_max250000_q25_030424_M0.jld2"))["PSMs_Dict"]
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030424_M0.jld2"); PSMs_Dict)
-#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"))["PSMs_Dict"]
-
-
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"); PSMs_Dict)
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_030224_M0.jld2"))["PSMs_Dict"]
-#=
-jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_021924_M0.jld2"); PSMs_Dict)
-PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_021924_M0.jld2"))["PSMs_Dict"]
-=#

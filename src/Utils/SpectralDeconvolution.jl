@@ -66,7 +66,10 @@ function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, 
     end
 end
 
-function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T; max_iter::Int64 = 20, accuracy::T = 0.01) where {Ti<:Integer,T<:AbstractFloat}
+function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T; 
+                            max_iter_newton::Int64 = 100, 
+                            max_iter_bisection::Int64 = 20,
+                            tol::T = 100) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     X_init = X₁[col] #Estimate prior to optimiztion
     X0 = X₁[col] #Keeps track of previous etimate at each iteration
@@ -76,7 +79,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
 
     #Newton-Raphson Method Iterations until convergence or maximum iterations. 
     #If convergence fails in maximum iterations, switch to bisection method for guaranteed convergence
-    while (n < max_iter)
+    while (n < max_iter_newton)
 
         #First and second derivatives 
         L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
@@ -84,7 +87,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
 
         #Switch to bisection method
         if isnan(update_rule)
-            n = max_iter
+            n = max_iter_newton
             break
         end
 
@@ -110,7 +113,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
     end
 
     #If newtons method fails to converge, switch to bisection method
-    if n == max_iter
+    if n == max_iter_newton
         #println("bisection")
         #######
         #Lower bound is always X₁[col] == 0
@@ -122,9 +125,8 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
             bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
                         min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
                         L1,  
-                        max_l1, 
-                        max_iter_inner = 100, #Should never reach this. Convergence in (max_x1)/2^n
-                        accuracy = T(10000))#accuracy)
+                        max_iter = max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
+                        accuracy = T(tol*100))#accuracy)
         end
 
         return X₁[col] - X_init
@@ -133,7 +135,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}
     end
 end
 
-function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T, a::T, b::T, fa::T, fb::T; max_iter_inner::Int64 = 20, accuracy::T = 0.01) where {Ti<:Integer,T<:AbstractFloat}
+function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::Int64, δ::T, λ::T, a::T, b::T, fa::T; max_iter::Int64 = 20, accuracy::T = 0.01) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     c = (a + b)/2
     #Since first guess for X₁[col] will change to "c"
@@ -142,7 +144,7 @@ function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::
 
     X₁[col] = c
     X_init, X0 = X₁[col],  X₁[col]
-    while (n < max_iter_inner)
+    while (n < max_iter)
 
         #Evaluate first partial derivative
         fc = getL1(Hs, r, col, δ, λ)
@@ -167,17 +169,26 @@ function bisection!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, col::
     return X₁[col] - X_init
 end
 
-function solveHuber!(Hs::SparseArray{Ti, T}, r::Vector{T}, X₁::Vector{T}, δ::T; max_iter_outer::Int = 1000, max_iter_inner::Int = 20, tol::U = 100) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
+function solveHuber!(Hs::SparseArray{Ti, T}, 
+                        r::Vector{T}, 
+                        X₁::Vector{T}, 
+                        δ::T,
+                        λ::T; 
+                        max_iter_newton::Int = 100, 
+                        max_iter_bisection::Int = 20, 
+                        tol::U = 100) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
     i = 0
     stay_in_loop = true
-    λ = Float32(0e1)
     while (i < max_iter_outer) & (ΔX > tol) & stay_in_loop
         ΔX = 0.0
         #Update each variable once 
         max_diff = 0.0
         for col in range(1, Hs.n)
-            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ, max_iter = 100, accuracy = T(100)))
+            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
+                                        max_iter_newton = max_iter_newton, 
+                                        max_iter_bisection = max_iter_bisection,
+                                        tol = tol))
             if !iszero(X₁) 
                 if δx/X₁[col] > max_diff
                     max_diff =  δx/X₁[col]

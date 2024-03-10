@@ -1,8 +1,16 @@
 include("loadParamsAndData.jl")
 
+
+###########
+#Pre-Search
+#Need to Estimate the following from a random sample of high-confidence targets
+#1) Fragment Mass error/correction
+#2) Fragment Mass tolerance
+#3) iRT to RT conversion spline
+###########
 println("Begining Presearch")
 presearch_time = @timed begin
-    include("preSearch.jl")
+    include("parameterTuningSearch.jl")
 end
 println("Finished presearch in ", presearch_time.time, " seconds")
 

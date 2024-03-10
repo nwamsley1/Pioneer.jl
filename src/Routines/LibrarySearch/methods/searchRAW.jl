@@ -299,7 +299,6 @@ function searchRAW(
             #IDtoCOL maps precursor ids to their corresponding columns. 
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL,
             #Reduce predicted intensities for unmatched ions by this factor
-                                unmatched_penalty_factor = unmatched_penalty_factor 
                                 )
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
@@ -318,17 +317,16 @@ function searchRAW(
             initResiduals!(_residuals_, Hs, _weights_);
             if ismissing(precs) 
                 #Spectral deconvolution. Hybrid bisection/newtowns method
-                solveHuber!(Hs, _residuals_, _weights_, huber_δ, max_iter_outer = 100, max_iter_inner = 20, tol = Hs.n);
+                solveHuber!(Hs, _residuals_, _weights_, huber_δ, λ, 
+                                max_iter_newton = max_iter_newton, 
+                                max_iter_bisection = max_iter_bisection,
+                                tol = deconvolution_tolerance,
+                                #tol = Hs.n
+                                );
             end
             #Remember determined weights for each precursors
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
-            end
-
-            for i in range(1, Hs.n_vals)
-                if iszero(Hs.matched[i])
-                    Hs.nzval[i] = unmatched_penalty_factor*Hs.nzval[i]
-                end
             end
 
             if ismissing(isotope_dict) 
