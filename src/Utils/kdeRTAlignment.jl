@@ -1,7 +1,7 @@
 using KernelDensity
 kernel_dist(::Type{Laplace}, w::Real) = Laplace(0.0, w)
 
-function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::AbstractFloat = 1.0, w = 11) where {T<:AbstractFloat}
+function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::AbstractFloat = 1.0) where {T<:AbstractFloat}
     x_grid = LinRange(minimum(X), maximum(X), n)
     y_grid = LinRange(minimum(Y), maximum(Y), n)
     ys = zeros(T, n)
@@ -11,7 +11,10 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     min_y, max_y = minimum(Y), maximum(Y)
     min_x, min_y = zero(T), zero(T)
     bound_y = (max_y - min_y)/2
-    B = kde((X, Y), bandwidth = (bandwidth, bandwidth), boundary = ((min_x - bound_x, max_x + bound_x), (min_y - bound_y, max_y + bound_y)), kernel = Laplace) #Uses Silverman's rule by default
+    B = kde((X, Y), 
+                bandwidth = (bandwidth, bandwidth), 
+                boundary = ((min_x - bound_x, max_x + bound_x), (min_y - bound_y, max_y + bound_y)), 
+                kernel = Laplace) #Uses Silverman's rule by default
     ik = KernelDensity.InterpKDE(B)
     #Get KDE
     for i in eachindex(x_grid), j in eachindex(y_grid)
@@ -33,7 +36,7 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
         end
         ys[i] = y_grid[max_j]
     end
-    w = isodd(n÷5) ? n÷5 : n÷5 + 1
+    #w = isodd(n÷5) ? n÷5 : n÷5 + 1
     return LinearInterpolation(x_grid, 
                                     ys,
                                     #savitzky_golay(ys, w, 3).y, 

@@ -1,7 +1,7 @@
-function addPreSearchColumns!(PSMs::DataFrame, MS_TABLE::Arrow.Table, precursors::Vector{LibraryPrecursorIon{T}}; 
-                        max_rt_error::Float64 = 20.0,  
-                        min_prob::Float64 = 0.9, 
-                        n_bins::Int = 200, granularity::Int = 50) where {T<:AbstractFloat}
+function addPreSearchColumns!(PSMs::DataFrame, 
+                                MS_TABLE::Arrow.Table, 
+                                precursors::Vector{LibraryPrecursorIon{T}}; 
+                                min_prob::Float64 = 0.9) where {T<:AbstractFloat}
     
     N = size(PSMs, 1)
     decoys = zeros(Bool, N);
@@ -146,28 +146,25 @@ function addMainSearchColumns!(PSMs::DataFrame,
     PSMs[!,:intercept] = ones(Float16, N)
 end
 
+#=
 function getRTErrs!(psms::DataFrame; 
-                    n_bins::Int = 200, bandwidth::Float64 = 1.0, w::Int = 11,
-                    min_spectral_contrast::Float64 = 0.9,
-                    min_entropy_score::Float64 = 0.9,
-                    min_total_ions::Int64 = 6)
+                    n_bins::Int = 200, 
+                    bandwidth::Float64 = 1.0,
+                    min_prob::Float64 = 0.95)
 
-    best_psms_bool = (psms[!,:spectral_contrast].>min_spectral_contrast
-    ) .& (psms[!,:target]
-    ) .& (psms[!,:entropy_score].>min_entropy_score
-    ) .& (psms[!,:total_ions].>min_total_ions)
+    best_psms_bool = psms[!,:prob].>= min_prob
 
     linear_spline = KDEmapping(
                                 psms[best_psms_bool,:RT],
                                 psms[best_psms_bool,:iRT_predicted],
                                 n = n_bins,
                                 bandwidth = bandwidth,
-                                w = w
                             )
 
-    psms[:,:iRT_observed] = Float16.(linear_spline(psms[:,:RT]))
+    psms[!,:iRT_observed] = Float16.(linear_spline(psms[!,:RT]))
     psms[!,:iRT_error] = Float16.(abs.(psms[!,:iRT_observed] .- psms[!,:iRT_predicted]))
 end
+=#
 
 function scoreMainSearchPSMs!(psms::DataFrame, column_names::Vector{Symbol};
                              n_train_rounds::Int64 = 2,
@@ -238,9 +235,9 @@ function getBestPSMs!(psms::DataFrame,
     end
 
     filter!(x->x.best_psm, psms);
-    sort!(PSMs,:prob, rev = true)
-    n = size(PSMs, 1)
-    delete!(PSMs, min(n, max_psms + 1):n)
+    sort!(psms,:prob, rev = true)
+    n = size(psms, 1)
+    delete!(psms, min(n, max_psms + 1):n)
     select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])
 
     prec_mz = zeros(Float32, size(psms, 1));

@@ -52,8 +52,11 @@ params = JSON.parse(read(ARGS["params_json"], String));
 #=
 3-protome PC test March 4th 2024 for hupo
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
-SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
-MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
+
+SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/"
+#SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
+#MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 EXPERIMENT_NAME = "HUPO_THREE_PROTEOME_Mar4_2024"
 =#
@@ -86,14 +89,6 @@ if !isdir(out_folder)
     mkpath(out_folder)
 end
 
-presearch_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-first_search_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-quant_search_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-frag_tol_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-integration_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["nnls_params"]);
-
 params_ = (
     expected_matches = Int64(params["expected_matches"]),
     isotope_err_bounds = Tuple([Int64(bound) for bound in params["isotope_err_bounds"]]),
@@ -101,15 +96,14 @@ params_ = (
     quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
     irt_err_sigma = params["irt_err_sigma"],
 
-    presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]);
-    first_search_params = Dict{String, Any}(k => v for (k, v) in params["first_search_params"]);
-    quant_search_params = Dict{String, Any}(k => v for (k, v) in params["quant_search_params"]);
-    frag_tol_params = Dict{String, Any}(k => v for (k, v) in params["frag_tol_params"]);
-    irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]);
-    integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]);
-    deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]);
-    
-
+    presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]),
+    first_search_params = Dict{String, Any}(k => v for (k, v) in params["first_search_params"]),
+    quant_search_params = Dict{String, Any}(k => v for (k, v) in params["quant_search_params"]),
+    frag_tol_params = Dict{String, Any}(k => v for (k, v) in params["frag_tol_params"]),
+    irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]),
+    integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
+    deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
+    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"])
 );
 
 ##########

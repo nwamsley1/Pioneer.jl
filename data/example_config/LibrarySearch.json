@@ -6,39 +6,51 @@
     "quadrupole_isolation_width": 8.0036, 
     "presearch_params":
     {
-        "min_index_search_score_presearch": 4,
-        "min_frag_count_presearch": 7,
-        "min_log2_matched_ratio_presearch": 0,
-        "min_spectral_contrast_presearch": 0.9,
-        "min_topn_of_m_presearch": [3, 3],
-        "max_best_rank_presearch": 1,
-        "sample_rate": 0.05
+        "min_index_search_score": 4,
+        "min_frag_count": 7,
+        "min_log2_matched_ratio": 0,
+        "min_spectral_contrast": 0.9,
+        "min_topn_of_m": [3, 3],
+        "max_best_rank": 1,
+        "sample_rate": 0.05,
+        "frag_tol_ppm": 40.0,
+        "min_prob": 0.95
     },
     "first_search_params":
     {
-        "min_index_search_score_first_search": 3,
-        "min_frag_count_first_search": 5,
-        "min_log2_matched_ratio_first_search": -1.0,
-        "min_topn_of_m_first_search": [2, 3],
-        "max_best_rank_first_search": 1
+        "min_index_search_score": 3,
+        "min_frag_count": 5,
+        "min_log2_matched_ratio": -1.0,
+        "min_topn_of_m": [2, 3],
+        "max_best_rank": 1,
+        "n_train_rounds_probit": 2,
+        "max_iter_probit":20,
+        "max_q_value_probit_rescore": 0.01,
+        "max_q_value_filter": 0.25,
+        "max_precursors_passing": 250000
+    },
+    "summarize_first_search_params":
+    {
+        "max_precursors": 250000
     },
     "quant_search_params":
     {
-        "min_frag_count_first_search": 1,
-        "min_log2_matched_ratio_first_search": -1.7,
-        "min_topn_of_m_first_search": [1, 3],
+        "min_frag_count": 1,
+        "min_log2_matched_ratio": -1.7,
+        "min_topn_of_m": [1, 3],
         "n_frag_isotopes": 2
     },
     "frag_tol_params":
     {
         "frag_tol_quantile": 0.99,
-        "frag_tol_presearch": 40.0,
         "frag_tol_bounds":[10.0, 40.0]
     },
     "irt_mapping_params": 
     {
         "n_bins": 200,
-        "bandwidth": 0.25
+        "bandwidth": 0.25,
+        "n_sigma_tol":4,
+        "min_prob": 0.95
     },
     "integration_params":
     {

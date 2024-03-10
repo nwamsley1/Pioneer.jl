@@ -8,7 +8,7 @@ function firstSearch(
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
-    params::Dict,
+    params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -24,6 +24,8 @@ function firstSearch(
     Q<:UnscoredPSM{Float32},
     R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
     err_dist = MassErrorModel((zero(Float32), zero(Float32), zero(Float32)), zero(Float32))
+    
+    frag_ppm_err = Float32(params[:presearch_params]["frag_tol_ppm"]),
     return searchRAW(
         spectra, 
         frag_index,
@@ -48,16 +50,18 @@ function firstSearch(
 
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
-        frag_ppm_err = Float32(params[:frag_ppm_err]),
-        min_frag_count = params[:min_frag_count],
-        min_spectral_contrast = params[:min_spectral_contrast],
-        min_log2_matched_ratio = -Inf32,#params[:min_log2_matched_ratio],
-        min_index_search_score = params[:min_index_search_score],
-        min_topn_of_m = params[:min_topn_of_m],
-        min_max_ppm = (40.0f0, 40.0f0),
+
+        min_index_search_score = UInt8(params[:presearch_params]["min_index_search_score"]),
+        min_frag_count = Int64(params[:presearch_params]["min_frag_count"]),
+        min_log2_matched_ratio = Float32(params[:presearch_params]["min_log2_matched_ratio"]),
+        min_spectral_contrast = Float32(params[:presearch_params]["min_spectral_contrast"]),
+        min_topn_of_m = Tuple([Int64(x) for x in params[:presearch_params]["min_topn_of_m"]]),
+        min_max_ppm = ( Float32(params[:presearch_params]["frag_tol_ppm"]),  
+                        Float32(params[:presearch_params]["frag_tol_ppm"])
+                     ),
+        max_best_rank = Int64(params[:presearch_params]["max_best_rank"]),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        rt_bounds = params[:rt_bounds],
-        sample_rate = params[:sample_rate],
+        sample_rate = Float64(params[:presearch_params]["sample_rate"]),
     )
 end
 
@@ -65,19 +69,18 @@ test_time = @time begin
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
-lk = ReentrantLock()
 for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    @time RESULT =  firstSearch(
+    RESULT =  firstSearch(
                                             MS_TABLE,
                                             prosit_lib["f_index"],
                                             prosit_lib["precursors"],
                                             prosit_lib["f_det"],
                                             x->x, #RT to iRT map'
                                             UInt32(ms_file_idx), #MS_FILE_IDX
-                                            first_search_params,
+                                            params_,
                                             ionMatches,
                                             ionMisses,
                                             all_fmatches,
@@ -94,10 +97,10 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
     #@time begin
-    @time addPreSearchColumns!(rtPSMs, 
+    addPreSearchColumns!(rtPSMs, 
                                 MS_TABLE, 
                                 precursors,
-                                min_prob = 0.95)
+                                min_prob = params_[:presearch_params]["min_prob"])
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
         (a-b)/(a/1e6)
     end
@@ -106,17 +109,15 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     #Use best_psms to estimate 
     #1) RT to iRT curve and 
     #2) mass error (ppm) distribution 
-    @time begin
     best_precursors = Set(rtPSMs[:,:precursor_idx]);
     best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
     frag_ppm_intensities = [match.intensity for match in best_matches];
-    end
 
     mass_err_model = ModelMassErrs(
         frag_ppm_intensities,
         frag_ppm_errs,
-        40.0
+        params_[:presearch_params]["frag_tol_ppm"]
     )
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     rtPSMs[!,:best_psms] .= false
@@ -127,23 +128,20 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     end
     filter!(x->x.best_psms, rtPSMs)
 
-    lock(lk) do 
-        PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        @time RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], rtPSMs[1:end,:iRT_predicted], 
-                                        n = 200, bandwidth = 0.25);
-        @time plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
-                    f_out = PLOT_PATH);
-        rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
-        irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
-        irt_σ = 1.4826*irt_MAD 
-        println("irt_σ $irt_σ")
-        #histogram(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted], alpha = 0.5, normalize = :pdf)
-        #histogram!(rand(Normal(0.0, irt_σ), 10000), alpha = 0.5, normalize = :pdf)
-        #histogram!(rand(Normal(0.0, std(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])), 10000), alpha = 0.5, normalize = :pdf)
-        irt_errs[ms_file_idx] = 3*irt_σ
-        RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
-        frag_err_dist_dict[ms_file_idx] = mass_err_model
-    end
+    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
+    RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], 
+                                rtPSMs[1:end,:iRT_predicted], 
+                                n = params_[:irt_mapping_params]["n_bins"], 
+                                bandwidth = params_[:irt_mapping_params]["bandwidth"]);
+
+    plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
+                f_out = PLOT_PATH);
+    rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
+    irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
+    irt_σ = 1.4826*irt_MAD #Robust estimate of standard deviation
+    irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
+    RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
+    frag_err_dist_dict[ms_file_idx] = mass_err_model
 end
 end
 

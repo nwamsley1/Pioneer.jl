@@ -88,7 +88,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
                 min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -Inf32,
                 min_frag_count::Int64 = 1,
-                min_weight::H = 0f0,
+                max_best_rank::Int64 = 1,
                 min_topn::Int64 = 1,
                 block_size::Int64 = 10000
                 ) where {L,H<:AbstractFloat}
@@ -104,11 +104,9 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
-            weight[i] >= min_weight
-        )&(
             UInt8(unscored_PSMs[i].topn) >= min_topn
         )&(
-            UInt8(unscored_PSMs[i].best_rank) == 1
+            UInt8(unscored_PSMs[i].best_rank) == max_best_rank
         )
 
         if !passing_filter #Skip this scan
@@ -159,7 +157,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -1f0,
                 min_frag_count::Int64 = 4,
-                min_weight::H = 100f0,
+                max_best_rank::Int64 = 1,
                 min_topn::Int64 = 2,
                 block_size::Int64 = 10000
                 ) where {L,H<:AbstractFloat}

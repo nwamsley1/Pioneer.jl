@@ -111,7 +111,10 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     return rt_indices
 end
 
-function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; min_prob::AbstractFloat = 0.9)
+function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; 
+                        min_prob::AbstractFloat = 0.9,
+                        bandwidth::AbstractFloat = 0.25,
+                        n_bins::Int64 = 200)
 
     #Dictionaries mapping fild_id names to data
     #prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
@@ -122,21 +125,33 @@ function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; min_prob::Abstrac
 
         #insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
 
-        best_hits = psms[!,:q_value].<0.01#.>min_prob#Map RTs using only the best psms
-        
+        best_hits = psms[!,:prob].>min_prob#Map RTs using only the best psms
+        irt_to_rt_spline = KDEmapping(
+                                    psms[best_hits,:iRT_predicted],
+                                    psms[best_hits,:RT],
+                                    n = n_bins,
+                                    bandwidth = bandwidth,
+        )
+        rt_to_irt_spline = KDEmapping(
+            psms[best_hits,:RT],
+            psms[best_hits,:iRT_predicted],
+            n = n_bins,
+            bandwidth = bandwidth,
+        )
         #Build RT=>iRT and iRT=> RT mappings for the file and add to the dictionaries 
-        insert!(iRT_RT, key, KDEmapping(psms[best_hits,:iRT_predicted],
-        psms[best_hits,:RT]
-        ))
-        insert!(RT_iRT, key, KDEmapping(psms[best_hits,:RT],
-        psms[best_hits,:iRT_predicted]
-        ))
+        insert!(iRT_RT, key, irt_to_rt_spline)
+        insert!(RT_iRT, key, rt_to_irt_spline)
+
+        #Update iRT error and iRT observed based on first search results
+        psms[!,:iRT_observed] = Float16.(rt_to_irt_spline(psms[!,:RT]))
+        psms[!,:iRT_error] = Float16.(abs.(psms[!,:iRT_observed] .- psms[!,:iRT_predicted]))
+
     end
     return iRT_RT, RT_iRT
 end
 
-function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, RT_iRT::Any; 
-                        max_q_value::AbstractFloat = 0.1,
+function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, 
+                        RT_iRT::Any; 
                         max_precursors::Int = 250000)
 
     psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment

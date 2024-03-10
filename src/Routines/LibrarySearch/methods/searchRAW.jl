@@ -35,10 +35,9 @@ function searchRAW(
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
                     min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
                     filter_by_rank::Bool = false, 
-                    min_weight::Float32 = zero(Float32),
+                    max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
                     quadrupole_isolation_width::Float64 = 8.5,
-                    rt_bounds::Tuple{Float64, Float64} = (0.0, 0.0),
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     irt_tol::Float64 = Inf,
                     sample_rate::Float64 = Inf,
@@ -81,8 +80,8 @@ function searchRAW(
                                 isotope_err_bounds,
                                 max_peak_width,min_frag_count,min_spectral_contrast,
                                 min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,
-                                min_weight,n_frag_isotopes,quadrupole_isolation_width,
-                                rt_bounds,rt_index, irt_tol,sample_rate,
+                                max_best_rank,n_frag_isotopes,quadrupole_isolation_width,
+                                rt_index, irt_tol,sample_rate,
                                 spec_order
                             )
         end
@@ -132,10 +131,9 @@ function searchRAW(
                     min_topn_of_m::Tuple{Int64, Int64},
                     min_max_ppm::Tuple{Float32, Float32},
                     filter_by_rank::Bool,
-                    min_weight::Float32,
+                    max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     quadrupole_isolation_width::Float64,
-                    rt_bounds::Tuple{Float64, Float64},
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
                     sample_rate::Float64,
@@ -358,7 +356,7 @@ function searchRAW(
                     min_spectral_contrast = min_spectral_contrast,
                     min_log2_matched_ratio = min_log2_matched_ratio,
                     min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
-                    min_weight = min_weight,
+                    max_best_rank = max_best_rank,
                     min_topn = first(min_topn_of_m),
                     block_size = 500000,
                     )
