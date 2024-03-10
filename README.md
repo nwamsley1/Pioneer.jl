@@ -17,7 +17,7 @@ algorithm and heuristics to statistically infer the identification status and ab
 
 - **Open-Source:** Methods should be understood and open to scrutiny by users. Pioneer operates under an MIT license, and all source code is freely available. 
 - **Cross-Platform:** All steps of analysis, including vendor file conversion, should run on all major operating systems.  
-- **High-Performance:** The by sensitivity, FDR control, and quantitative precision and accuracy, should be competitive with state-of-the-art commercial software packages.
+- **High-Performance:** The sensitivity, FDR control, and quantitative precision and accuracy should be competitive with state-of-the-art commercial software packages.
 - **Fast:** Use of simple heuristics and carefully implemented, efficient algorithms should ensure that data can be analyzed many times faster than it is aquired for typical experiments. 
 
 ## Status
