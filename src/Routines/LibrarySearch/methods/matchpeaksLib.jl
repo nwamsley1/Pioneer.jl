@@ -98,7 +98,7 @@ function setNearest!(matches::Vector{M},
                     intensities::AbstractArray{Union{Missing, Float32}},
                     Ion::DetailedFrag{Float32},
                     max_mz::Float32,
-                    ppm_tol_param::Float32,
+                    mass_err_model::MassErrorModel{Float32},
                     min_max_ppm::Tuple{Float32, Float32},
                     δ::Float32,
                     peak_idx::Int64,
@@ -110,9 +110,10 @@ function setNearest!(matches::Vector{M},
 
     #Get maximum and minimum m/z of a theoretical ion that could match a peak given 
     #the intensity. (tolerance is inversely proportional to the sqrt of the intensity)       
-    function getMzBounds(mz::Float32, ppm_tol_param::Float32, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
+    function getMzBounds(mz::Float32, mass_err_model::MassErrorModel{Float32}, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
+        ppm = mass_err_model(intensity)
         ppm = max(
-            min(ppm_tol_param/sqrt(intensity), last(min_max_ppm)), 
+            min(ppm, last(min_max_ppm)), 
             first(min_max_ppm)
             )
         #ppm = Float32(16.1)
@@ -128,7 +129,7 @@ function setNearest!(matches::Vector{M},
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
     @inbounds while (masses[peak_idx + i]-δ<= max_mz)
-        low, high = getMzBounds(theoretical_mz, ppm_tol_param, intensities[peak_idx + i], min_max_ppm)
+        low, high = getMzBounds(theoretical_mz, mass_err_model, intensities[peak_idx + i], min_max_ppm)
         if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
             mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
             if mz_diff < smallest_diff
@@ -209,7 +210,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                     ion_idx::Int64, #Maximum elemtn in Ions to consider
                     masses::AbstractArray{Union{Missing, Float32}}, intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
-                    ppm_tol_param::Float32,
+                    mass_err_model::MassErrorModel{Float32},
                     min_max_ppm::Tuple{Float32, Float32},
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
@@ -249,7 +250,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                                             intensities, 
                                             Ions[ion], 
                                             high, 
-                                            ppm_tol_param,
+                                            mass_err_model,
                                             min_max_ppm,
                                             δ,
                                             peak, 
