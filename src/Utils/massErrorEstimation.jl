@@ -1,5 +1,6 @@
 struct MassErrorModel{T<:AbstractFloat}
-    err_qantiles::Tuple{T, T, T}
+    power::T
+    factor::T
     location::T
 end
 
@@ -7,6 +8,9 @@ function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
     return mem.location
 end
 
+function (mem::MassErrorModel{T})(intensity::T) where {T<:AbstractFloat}
+    return mem.factor*(intensity^(mem.power))
+end
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          err_model::Type{D}, #Distribution to model error
                                          μ::T, #Fixed/known location parameter
@@ -67,7 +71,8 @@ end
 function ModelMassErrs(intensities::Vector{T},
                        ppm_errs::Vector{U},
                        frag_tol::U;
-                       n_intensity_bins::Int = 10) where {T,U<:AbstractFloat}
+                       n_intensity_bins::Int = 10,
+                       frag_err_quantile::Float64 = 0.999) where {T,U<:AbstractFloat}
     log2_intensities = log2.(intensities)
 
     bins = cut(log2_intensities, n_intensity_bins)
@@ -78,7 +83,7 @@ function ModelMassErrs(intensities::Vector{T},
             )
     err_df[!,:γ] .= false
     median_intensities = zeros(T, n_intensity_bins)
-    shape_estimates = Array{Float32}(undef, (10, 3))#zeros(T, n_intensity_bins)
+    shape_estimates = Vector{Float32}(undef, n_intensity_bins)#zeros(T, n_intensity_bins)
     μ = median(err_df[!,:ppm_errs]) #global location estimate
     bin_idx = 0
     for (int_bin, subdf) in pairs(groupby(err_df, :bins))
@@ -94,18 +99,13 @@ function ModelMassErrs(intensities::Vector{T},
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
-        quantiles_ = (0.95, 0.975, 0.99)
-        for i in range(1, length(quantiles_))
-        shape_estimates[bin_idx, i] = quantile(Laplace(0.0, L.θ), quantiles_[i])# L.θ
-        end
+        shape_estimates[bin_idx] = quantile(Laplace(0.0, L.θ), frag_err_quantile)# L.θ
     end
 
 
     intensities = 2 .^ median_intensities;
 
-    MassErrorModel(
-        Tuple((1 ./sqrt.(intensities))\shape_estimates),
-        Float32(μ)
-        )
+    intensities = hcat(log.(intensities), ones(length(intensities)))
+    m, b = intensities\log.(shape_estimates)
+    return MassErrorModel(Float32(m), Float32(exp(b)), Float32(μ))
 end
-

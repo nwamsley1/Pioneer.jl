@@ -155,19 +155,22 @@ function searchScan!(precs::Counter{UInt32, UInt8},
                     masses::AbstractArray{Union{Missing, U}}, intensities::AbstractArray{Union{Missing, U}}, 
                     irt_low::Float32, irt_high::Float32, 
                     ppm_err::Float32, 
-                    ppm_tol_param::Float32,
+                    mass_err_model::MassErrorModel{Float32},
                     min_max_ppm::Tuple{Float32, Float32},
                     prec_mz::Float32, 
                     prec_tol::Float32, 
                     isotope_err_bounds::Tuple{Int64, Int64}; 
                     min_score::UInt8 = zero(UInt8)) where {U<:AbstractFloat}
     
-    function getFragTol(mass::Float32, ppm_err::Float32, 
-                        intensity::Float32, ppm_tol_param::Float32,
+    function getFragTol(mass::Float32, 
+                        ppm_err::Float32, 
+                        intensity::Float32, 
+                        mass_err_model::MassErrorModel{Float32},
                         min_max_ppm::Tuple{Float32, Float32})
         mass -= Float32(ppm_err*mass/1e6)
+        ppm = mass_err_model(intensity)
         ppm = max(
-                    min(ppm_tol_param/sqrt(intensity), last(min_max_ppm)), 
+                    min(ppm, last(min_max_ppm)), 
                     first(min_max_ppm)
                     )
         tol = ppm*mass/1e6
@@ -187,7 +190,7 @@ function searchScan!(precs::Counter{UInt32, UInt8},
     for (mass, intensity) in zip(masses, intensities)
         mass, intensity = coalesce(mass, 0.0),  coalesce(intensity, 0.0)
         #Get intensity dependent fragment tolerance
-        frag_min, frag_max = getFragTol(mass, ppm_err, intensity, ppm_tol_param, min_max_ppm)
+        frag_min, frag_max = getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
         #println("FRAGMIN_MAX $frag_min $frag_max")
         #println("frag_min $frag_min, frag_max $frag_max")
         min_frag_bin = queryFragment!(precs, min_frag_bin, f_index, irt_low, irt_high, frag_min, frag_max, (prec_min, prec_max))

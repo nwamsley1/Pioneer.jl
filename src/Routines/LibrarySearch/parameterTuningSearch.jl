@@ -23,9 +23,8 @@ function firstSearch(
     ) where {S<:ScoredPSM{Float32, Float16},
     Q<:UnscoredPSM{Float32},
     R<:SpectralScores{Float16}}#where {S<:ScoredPSM{Float32, Float16}, LibraryIon{Float32}}
-    err_dist = MassErrorModel((zero(Float32), zero(Float32), zero(Float32)), zero(Float32))
+    err_dist = MassErrorModel(zero(Float32), zero(Float32), zero(Float32))
     
-    frag_ppm_err = Float32(params[:presearch_params]["frag_tol_ppm"]),
     return searchRAW(
         spectra, 
         frag_index,
@@ -50,6 +49,7 @@ function firstSearch(
 
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
+        isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
 
         min_index_search_score = UInt8(params[:presearch_params]["min_index_search_score"]),
         min_frag_count = Int64(params[:presearch_params]["min_frag_count"]),
@@ -117,7 +117,10 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     mass_err_model = ModelMassErrs(
         frag_ppm_intensities,
         frag_ppm_errs,
-        params_[:presearch_params]["frag_tol_ppm"]
+        params_[:presearch_params]["frag_tol_ppm"],
+        n_intensity_bins = Int64(params_[:presearch_params]["n_mass_err_bins"]),
+        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"]
+
     )
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     rtPSMs[!,:best_psms] .= false

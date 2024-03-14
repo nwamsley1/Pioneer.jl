@@ -51,10 +51,13 @@ function quantitationSearch(
         min_index_search_score = zero(UInt8),
 
         δ = Float32(params[:deconvolution_params]["huber_delta"]),
-        λ = Float32(params[:deconvolution_params]["huber_delta"]),
-        deconvolution_tolerance = Float32(params[:deconvolution_params]["deconvolution_tolerance"]),
+        λ = Float32(params[:deconvolution_params]["lambda"]),
         max_iter_newton = Int64(params[:deconvolution_params]["max_iter_newton"]),
         max_iter_bisection = Int64(params[:deconvolution_params]["max_iter_bisection"]),
+        max_iter_outer = Int64(params[:deconvolution_params]["max_iter_outer"]),
+        accuracy_newton = Float32(params[:deconvolution_params]["accuracy_newton"]),
+        accuracy_bisection = Float32(params[:deconvolution_params]["accuracy_bisection"]),
+        max_diff = Float32(params[:deconvolution_params]["max_diff"]),
 
         min_topn_of_m = Tuple([Int64(x) for x in params[:quant_search_params]["min_topn_of_m"]]),
         min_frag_count = Int64(params[:quant_search_params]["min_frag_count"]),
@@ -81,7 +84,7 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     println("starting file $ms_file_idx")
-    PSMS = vcat(quantitationSearch(MS_TABLE, 
+    @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[MS_TABLE_PATH],
@@ -125,3 +128,6 @@ end
 
 best_psms = vcat(values(BPSMS)...)
 
+jldsave("/Users/n.t.wamsley/TEST_DATA/HEIL_2023/TEST_y4b3_nOf5/Search/RESULTS/PSMs_Dict_030924"; PSMs_Dict)
+
+PSMs_Dict = load("/Users/n.t.wamsley/TEST_DATA/HEIL_2023/TEST_y4b3_nOf5/Search/RESULTS/PSMs_Dict_PD1_030624.jld2")

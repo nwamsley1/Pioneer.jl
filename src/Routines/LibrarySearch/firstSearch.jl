@@ -47,6 +47,7 @@ function mainLibrarySearch(
         precursor_weights,
         precs,
 
+        isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
         expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
         min_log2_matched_ratio = Float32(params[:first_search_params]["min_log2_matched_ratio"]),
