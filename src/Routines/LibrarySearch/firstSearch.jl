@@ -56,6 +56,7 @@ function mainLibrarySearch(
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         irt_tol = irt_tol,
+        filter_by_count = Bool(params[:first_search_params]["filter_on_frag_count"])
     )
 end
 
@@ -122,3 +123,5 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+
+

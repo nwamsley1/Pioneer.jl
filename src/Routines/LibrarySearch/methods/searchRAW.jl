@@ -42,6 +42,7 @@ function searchRAW(
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
                     min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
                     filter_by_rank::Bool = false, 
+                    filter_by_count::Bool = true,
                     max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
                     quadrupole_isolation_width::Float64 = 8.5,
@@ -93,7 +94,7 @@ function searchRAW(
                                 isotope_dict,
                                 isotope_err_bounds,
                                 min_frag_count,min_spectral_contrast,
-                                min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,
+                                min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,filter_by_count,
                                 max_best_rank,n_frag_isotopes,quadrupole_isolation_width,
                                 rt_index, irt_tol,sample_rate,
                                 spec_order
@@ -147,6 +148,7 @@ function searchRAW(
                     min_topn_of_m::Tuple{Int64, Int64},
                     min_max_ppm::Tuple{Float32, Float32},
                     filter_by_rank::Bool,
+                    filter_by_count::Bool,
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     quadrupole_isolation_width::Float64,
@@ -286,13 +288,15 @@ function searchRAW(
         nmisses_all = nmisses
         nmatches_all = nmatches    
  
-        nmatches_all, nmisses_all, nmatches, nmisses = filterMatchedIons!(IDtoCOL, 
-                                                                            ionMatches, ionMisses, 
-                                                                            nmatches, nmisses, 
-                                                                            10000, #Arbitrarily hight
-                                                                            min_frag_count #Remove precursors matching fewer than this many fragments
-                                                                        )
-                                                                     
+        if filter_by_count
+            nmatches_all, nmisses_all, nmatches, nmisses = filterMatchedIons!(IDtoCOL, 
+                                                                                ionMatches, 
+                                                                                ionMisses, 
+                                                                                nmatches, 
+                                                                                nmisses,
+                                                                                min_frag_count #Remove precursors matching fewer than this many fragments
+                                                                            )
+        end                                                       
         if filter_by_rank
         #println("nmatches_all $nmatches_all, nmatches $nmatches")
             _, _, nmatches, nmisses = filterMatchedIonsTop!(IDtoCOL, 
@@ -449,7 +453,13 @@ function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatch
     return nmatches_all, nmisses_all, nmatches, nmisses
 end
 
-function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
+function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, 
+                                ionMatches::Vector{FragmentMatch{Float32}}, 
+                                ionMisses::Vector{FragmentMatch{Float32}}, 
+                                nmatches::Int64, 
+                                nmisses::Int64, 
+                                min_matched_ions::Int64
+                                )
     nmatches_all, nmisses_all = nmatches, nmisses
 
     @inbounds for i in range(1, nmatches_all)
@@ -459,13 +469,12 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches:
             continue
         end
             #if getRank(match) <= max_rank
-                if (getIonType(match) == 'y') & (match.is_isotope==false)
+                #if ((getIonType(match) == 'y') | (filter_on_y==false)) & ((match.is_isotope==false) | (filter_on_mono == false))
                     if iszero(IDtoNMatches[prec_id])
                         update!(IDtoNMatches, prec_id, one(UInt16))
                     else
                         IDtoNMatches.vals[prec_id] += one(UInt16)
                     end
-                end
             #end
     end
     nmatches, nmisses = 0, 0

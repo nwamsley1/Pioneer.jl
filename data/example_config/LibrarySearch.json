@@ -6,7 +6,7 @@
     "quadrupole_isolation_width": 8.0036, 
     "presearch_params":
     {
-        "min_index_search_score": 4,
+        "min_index_search_score": 10,
         "min_frag_count": 7,
         "min_log2_matched_ratio": 0,
         "min_spectral_contrast": 0.9,
@@ -15,12 +15,13 @@
         "sample_rate": 0.05,
         "frag_tol_ppm": 50.0,
         "min_prob": 0.95,
-        "n_mass_err_bins": 20
+        "samples_per_mass_err_bin": 1500
     },
     "first_search_params":
     {
-        "min_index_search_score": 3,
-        "min_frag_count": 5,
+        "min_index_search_score": 7,
+        "filter_on_frag_count": false,
+        "min_frag_count": 0,
         "min_log2_matched_ratio": -1.0,
         "min_topn_of_m": [2, 3],
         "max_best_rank": 1,

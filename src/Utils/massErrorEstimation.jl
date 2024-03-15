@@ -72,7 +72,9 @@ function ModelMassErrs(intensities::Vector{T},
                        ppm_errs::Vector{U},
                        frag_tol::U;
                        n_intensity_bins::Int = 10,
-                       frag_err_quantile::Float64 = 0.999) where {T,U<:AbstractFloat}
+                       frag_err_quantile::Float64 = 0.999,
+                       out_fdir::String = "./",
+                       out_fname = "mass_err_estimate") where {T,U<:AbstractFloat}
     log2_intensities = log2.(intensities)
 
     bins = cut(log2_intensities, n_intensity_bins)
@@ -107,5 +109,24 @@ function ModelMassErrs(intensities::Vector{T},
 
     intensities = hcat(log.(intensities), ones(length(intensities)))
     m, b = intensities\log.(shape_estimates)
+
+    p = Plots.plot(exp.(intensities[:,1]), 
+                    shape_estimates,
+                    seriestype=:scatter,
+                    title = out_fname,
+                    xlabel = "Median intensity in Bin",
+                    ylabel = "$frag_err_quantile quantile of laplace \n distributed mass errors",
+                    label = nothing)
+    bins = LinRange(0, 
+                        maximum(exp.(intensities[:,1])), 
+                        1000
+                    )
+    Plots.plot!(p, 
+    bins,
+    [exp(b)*(x^m) for x in bins]
+    )
+
+    savefig(p, joinpath(out_fdir, out_fname)*".pdf")
+
     return MassErrorModel(Float32(m), Float32(exp(b)), Float32(μ))
 end

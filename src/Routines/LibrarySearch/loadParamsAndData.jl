@@ -13,6 +13,7 @@ using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, Lin
 using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
 using Base.Order
 using Base.Iterators: partition
+using PDFmerger
 
 ##########
 #Parse Arguments 
@@ -80,13 +81,21 @@ out_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
 if !isdir(out_folder)
     mkpath(out_folder)
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "RESULTS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+const rt_alignment_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","rt_alignment")
+if !isdir(rt_alignment_folder)
+    mkpath(rt_alignment_folder)
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+const mass_err_estimation_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","mass_error_estimation")
+if !isdir(mass_err_estimation_folder)
+    mkpath(mass_err_estimation_folder)
+end
+const results_folder = joinpath(MS_DATA_DIR, "Search", "RESULTS")
+if !isdir(results_folder)
+    mkpath(results_folder)
+end
+const params_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
+if !isdir(params_folder )
+    mkpath(params_folder)
 end
 
 params_ = (
@@ -148,9 +157,9 @@ params_ = (
                                                                                     "integrateChroms.jl"]];
                                              
 
-library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_7ppm_2hi", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_2hi_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
 
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()

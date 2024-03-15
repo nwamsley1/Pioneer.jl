@@ -48,6 +48,7 @@ function quantitationSearch(
         
         isotope_err_bounds = params[:isotope_err_bounds],
         filter_by_rank = true,
+        filter_by_count = false,
         min_index_search_score = zero(UInt8),
 
         δ = Float32(params[:deconvolution_params]["huber_delta"]),
@@ -68,7 +69,7 @@ function quantitationSearch(
 
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
-        irt_tol = irt_tol
+        irt_tol = irt_tol,
     )
 end
 
@@ -127,7 +128,3 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 end
 
 best_psms = vcat(values(BPSMS)...)
-
-jldsave("/Users/n.t.wamsley/TEST_DATA/HEIL_2023/TEST_y4b3_nOf5/Search/RESULTS/PSMs_Dict_030924"; PSMs_Dict)
-
-PSMs_Dict = load("/Users/n.t.wamsley/TEST_DATA/HEIL_2023/TEST_y4b3_nOf5/Search/RESULTS/PSMs_Dict_PD1_030624.jld2")
