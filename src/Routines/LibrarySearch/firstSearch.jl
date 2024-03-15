@@ -66,7 +66,6 @@ end
 
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
-    println("starting file $ms_file_idx")
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
@@ -116,10 +115,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
 
-    println("retained ", size(PSMs, 1), " psms")
-
     insert!(PSMs_Dict, 
-        MS_TABLE_PATH, 
+        file_id_to_parsed_name[ms_file_idx], 
         PSMs
     );
 end

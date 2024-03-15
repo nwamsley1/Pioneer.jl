@@ -77,9 +77,9 @@ out_folder = joinpath(MS_DATA_DIR, "Search")
 if !isdir(out_folder)
     mkpath(out_folder)
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+qc_plot_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
+if !isdir(qc_plot_folder)
+    mkpath(qc_plot_folder)
 end
 const rt_alignment_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","rt_alignment")
 if !isdir(rt_alignment_folder)
@@ -112,8 +112,10 @@ params_ = (
     irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]),
     integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
     deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
-    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"])
-);
+    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
+    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"])
+
+    );
 
 ##########
 #Load Dependencies 
@@ -192,3 +194,42 @@ complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) f
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
 end;
+
+
+###########
+#File Names Parsing 
+###########
+file_names = first.(split.(basename.(MS_TABLE_PATHS), '.'))
+split_file_names = split.(file_names, "_")
+
+
+
+#If file names have inconsistnat number of delimiters, give up on parsing and use the entire file name
+unique_split_file_name_lengths = unique(length.(split_file_names))
+if unique_split_file_name_lengths == 1
+    N = first(unique_split_file_name_lengths)
+    M = length(file_names)
+    split_strings = Array{String}(undef, (M, N))
+    for i in 1:N
+        for j in 1:M
+            split_strings[j, i] = split_file_names[j][i]
+        end
+    end
+    cols_to_keep = zeros(Bool, N)
+    for (col_idx, col) in enumerate(eachcol(split_strings))
+        if length(unique(col))>1
+            cols_to_keep[col_idx] = true
+        end
+    end
+    parsed_file_names = Vector{String}(undef, M)
+    split_strings = split_strings[:, cols_to_keep]
+    for i in 1:M
+        parsed_file_names[i] = join(split_strings[i,:], "_")
+    end
+else
+    parsed_file_names = file_names
+end
+
+const file_id_to_parsed_name = Dict(zip(1:M, parsed_file_names))
+#Parsed file names 
+const parsed_fnames = sort(collect(values(file_id_to_parsed_name)))

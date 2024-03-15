@@ -38,6 +38,8 @@
     },
     "quant_search_params":
     {
+        "filter_by_rank": false,
+        "filter_on_frag_count": false,
         "min_frag_count": 1,
         "min_log2_matched_ratio": -1.7,
         "min_topn_of_m": [1, 3],
@@ -71,5 +73,9 @@
         "accuracy_newton": 100,
         "accuracy_bisection": 100,
         "max_diff": 0.01
+    },
+    "qc_plot_params":
+    {
+        "n_files_per_plot": 12
     }
 }

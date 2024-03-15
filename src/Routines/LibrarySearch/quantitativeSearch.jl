@@ -47,8 +47,8 @@ function quantitationSearch(
         missing,
         
         isotope_err_bounds = params[:isotope_err_bounds],
-        filter_by_rank = true,
-        filter_by_count = false,
+        filter_by_rank = Bool(params[:quant_search_params]["filter_by_rank"]),
+        filter_by_count = Bool(params[:quant_search_params]["filter_on_frag_count"]),
         min_index_search_score = zero(UInt8),
 
         δ = Float32(params[:deconvolution_params]["huber_delta"]),
@@ -75,8 +75,8 @@ end
 
 
 BPSMS = Dict{Int64, DataFrame}()
-PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
-PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
+#PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
+#PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 
 features = [:intercept, :charge, :total_ions, :err_norm, 
 :scribe, :city_block, :city_block_fitted, 
@@ -84,7 +84,6 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    println("starting file $ms_file_idx")
     @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
@@ -122,7 +121,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                     RT_iRT,
                                     precID_to_iRT
                                     );
-        PSMS[!,:file_path].=MS_TABLE_PATH
+        PSMS[!,:file_path].=file_id_to_parsed_name[ms_file_idx]
         BPSMS[ms_file_idx] = PSMS;
         GC.gc()
 end

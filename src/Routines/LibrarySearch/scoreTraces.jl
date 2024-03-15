@@ -83,15 +83,10 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
 best_psms = bst[2];
 best_psms[!,:prob] =Float32.(best_psms[!,:prob]);
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-value_counts(df, col) = combine(groupby(df, col), nrow);
-IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
-#jldsave(joinpath(MS_DATA_DIR, "Search", "RESULTS", "best_psms_scored_M0M1_022124_K_alltrace.jld2"); best_psms)
-
-length(unique(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:precursor_idx]))
-println("file specific ids ", sum(IDs_PER_FILE[!,:nrow]))
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][psm[:precursor_idx]].accession_numbers
 ) => :accession_numbers
 );
 getBestTrace!(best_psms)
-IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
+#value_counts(df, col) = combine(groupby(df, col), nrow);
+#IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_path])
