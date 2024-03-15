@@ -47,6 +47,10 @@ function mainLibrarySearch(
         precursor_weights,
         precs,
 
+        filter_by_count = Bool(params[:first_search_params]["filter_on_frag_count"]),
+        filter_by_rank = Bool(params[:first_search_params]["filter_by_rank"]),
+
+
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
         expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
@@ -55,8 +59,8 @@ function mainLibrarySearch(
         min_topn_of_m = Tuple([Int64(x) for x in params[:first_search_params]["min_topn_of_m"]]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        irt_tol = irt_tol,
-        filter_by_count = Bool(params[:first_search_params]["filter_on_frag_count"])
+        irt_tol = irt_tol
+       
     )
 end
 

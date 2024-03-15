@@ -22,13 +22,14 @@
         "min_index_search_score": 7,
         "filter_on_frag_count": false,
         "min_frag_count": 0,
-        "min_log2_matched_ratio": -1.0,
-        "min_topn_of_m": [2, 3],
+        "filter_by_rank": false,
+        "min_topn_of_m": [2, 3],       
+        "min_log2_matched_ratio": -10,
         "max_best_rank": 1,
         "n_train_rounds_probit": 2,
         "max_iter_probit":20,
         "max_q_value_probit_rescore": 0.01,
-        "max_q_value_filter": 0.25,
+        "max_q_value_filter": 1.0,
         "max_precursors_passing": 250000
     },
     "summarize_first_search_params":
