@@ -65,6 +65,10 @@ function firstSearch(
     )
 end
 
+#Clear directory of previous QC Plots
+[rm(joinpath(rt_alignment_folder, x)) for x in readdir(rt_alignment_folder)]
+[rm(joinpath(mass_err_estimation_folder, x)) for x in readdir(mass_err_estimation_folder)]
+
 test_time = @time begin
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
@@ -114,13 +118,17 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
     frag_ppm_intensities = [match.intensity for match in best_matches];
 
+
+    out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
+
     mass_err_model = ModelMassErrs(
         frag_ppm_intensities,
         frag_ppm_errs,
         params_[:presearch_params]["frag_tol_ppm"],
-        n_intensity_bins = Int64(params_[:presearch_params]["n_mass_err_bins"]),
-        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"]
-
+        n_intensity_bins = length(frag_ppm_errs)÷Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
+        out_fdir = mass_err_estimation_folder,
+        out_fname = out_fname
     )
     #Model fragment errors with a mixture model of a uniform and laplace distribution 
     rtPSMs[!,:best_psms] .= false
@@ -132,21 +140,36 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     filter!(x->x.best_psms, rtPSMs)
 
     PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
+
+    #File name but remove file type
+
     RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], 
                                 rtPSMs[1:end,:iRT_predicted], 
                                 n = params_[:irt_mapping_params]["n_bins"], 
                                 bandwidth = params_[:irt_mapping_params]["bandwidth"]);
 
-    plotRTAlign(rtPSMs[:,:RT], rtPSMs[:,:iRT_predicted], RT_to_iRT_map, 
-                f_out = PLOT_PATH);
+
+    
+
+    plotRTAlign(rtPSMs[:,:RT], 
+                rtPSMs[:,:iRT_predicted], 
+                RT_to_iRT_map, 
+                out_fdir = rt_alignment_folder,
+                out_fname = out_fname
+                );
     rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
     irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
+
     irt_σ = 1.4826*irt_MAD #Robust estimate of standard deviation
+
     irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
     RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
     frag_err_dist_dict[ms_file_idx] = mass_err_model
 end
 end
 
-#merge_pdfs([x for x in readdir(joinpath(MS_DATA_DIR,"Search","QC_PLOTS")) if endswith(x, ".pdf")], 
-#joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", "mergedpdf.pdf"))
+#Merge Quality Control PDFs 
+merge_pdfs([joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) if endswith(x, ".pdf")], 
+                joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), cleanup=true)
+merge_pdfs([joinpath(mass_err_estimation_folder, x) for x in readdir(mass_err_estimation_folder) if endswith(x, ".pdf")], 
+    joinpath(mass_err_estimation_folder, "mass_err_estimation_folder.pdf"), cleanup=true)

@@ -392,7 +392,6 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame};
     dtype = eltype(grouped_precursor_df[1].weight)
     thread_tasks = partitionThreadTasks(length(grouped_precursor_df), 10, Threads.nthreads())
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))
-    println("thread_tasks $thread_tasks")
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
             state = GD_state(

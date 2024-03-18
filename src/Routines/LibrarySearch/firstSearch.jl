@@ -47,6 +47,10 @@ function mainLibrarySearch(
         precursor_weights,
         precs,
 
+        filter_by_count = Bool(params[:first_search_params]["filter_on_frag_count"]),
+        filter_by_rank = Bool(params[:first_search_params]["filter_by_rank"]),
+
+
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
         expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
@@ -55,13 +59,13 @@ function mainLibrarySearch(
         min_topn_of_m = Tuple([Int64(x) for x in params[:first_search_params]["min_topn_of_m"]]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
-        irt_tol = irt_tol,
+        irt_tol = irt_tol
+       
     )
 end
 
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
-    println("starting file $ms_file_idx")
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
@@ -111,10 +115,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
 
-    println("retained ", size(PSMs, 1), " psms")
-
     insert!(PSMs_Dict, 
-        MS_TABLE_PATH, 
+        file_id_to_parsed_name[ms_file_idx], 
         PSMs
     );
 end
@@ -122,3 +124,5 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
+
+

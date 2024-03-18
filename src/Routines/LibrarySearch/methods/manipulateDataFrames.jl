@@ -276,6 +276,7 @@ function addSecondSearchColumns!(psms::DataFrame,
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
     y_count::Vector{UInt8} = psms[!,:y_count]
     b_count::Vector{UInt8} = psms[!,:b_count]
+    isotope_count::Vector{UInt8} = psms[!,:isotope_count]
     error::Vector{Float32} = psms[!,:error]
     #PSMs[!,:total_ions]
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
@@ -295,7 +296,7 @@ function addSecondSearchColumns!(psms::DataFrame,
                 charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
                 prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
-                total_ions[i] = UInt16(y_count[i] + b_count[i]);
+                total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
                 err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
@@ -442,10 +443,10 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                                     MS_TABLE::Arrow.Table, 
                                     precursors::Vector{LibraryPrecursorIon{T}},
                                     ms_file_idx::Integer,
-                                    ms_id_to_file_path::Dictionary{UInt32, String},
+                                    ms_id_to_file_path::Dict{Int64, String},
                                     rt_to_irt_interp::Any,
                                     prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
-    println("ms_file_idx test $ms_file_idx")
+
     filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);
     filter!(x->x.data_points>0, psms)

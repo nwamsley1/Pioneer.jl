@@ -13,15 +13,16 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     bound_y = (max_y - min_y)/2
     B = kde((X, Y), 
                 bandwidth = (bandwidth, bandwidth), 
-                boundary = ((min_x - bound_x, max_x + bound_x), (min_y - bound_y, max_y + bound_y)), 
-                kernel = Laplace) #Uses Silverman's rule by default
+                boundary = ((min_x - bound_x, max_x + bound_x), (min_y - bound_y, max_y + bound_y))#, 
+                #kernel = Laplace
+                ) #Uses Silverman's rule by default
     ik = KernelDensity.InterpKDE(B)
     #Get KDE
     for i in eachindex(x_grid), j in eachindex(y_grid)
         z[i, j] = Distributions.pdf(ik, x_grid[i], y_grid[j])
     end
 
-    min_z = sum(z)/length(z)
+    min_z = 3*sum(z)/length(z)
     for i in eachindex(z)
         if z[i] < min_z
             z[i] = zero(eltype(z))
@@ -44,8 +45,14 @@ function KDEmapping(X::Vector{T}, Y::Vector{T}; n::Int = 200, bandwidth::Abstrac
     #return LinearInterpolation(x_grid, ys, extrapolation_bc = Line())
 end
 
-function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any; f_out::String = "./") where {T<:AbstractFloat}
+function plotRTAlign(RT::Vector{T}, 
+                    iRT::Vector{T}, 
+                    rt_map::Any; 
+                    out_fdir::String = "./",
+                    out_fname::String = "rt_align_plot") where {T<:AbstractFloat}
+    n = length(RT)
     p = Plots.plot(RT, iRT, seriestype=:scatter,
+                        title = out_fname*"\n n = $n",
                         xlabel = "Retention Time RT (min)",
                         ylabel ="Indexed Retention Time iRT (min)",
                         label = nothing,
@@ -63,7 +70,8 @@ function plotRTAlign(RT::Vector{T}, iRT::Vector{T}, rt_map::Any; f_out::String =
             rt_map.(LinRange(minimum(RT), maximum(RT), 100)),
             lw = 6.0,
             label = "RT Spline")
-    savefig(p, f_out*"_rt_alignment.pdf")
+
+    savefig(p, joinpath(out_fdir, out_fname)*".pdf")
 
 
 end

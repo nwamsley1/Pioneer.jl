@@ -13,6 +13,7 @@ using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, Lin
 using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
 using Base.Order
 using Base.Iterators: partition
+using PDFmerger
 
 ##########
 #Parse Arguments 
@@ -61,7 +62,6 @@ MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(
 EXPERIMENT_NAME = "HUPO_THREE_PROTEOME_Mar4_2024"
 =#
 
-println("ARGS ", ARGS)
 MS_DATA_DIR = ARGS["data_dir"];
 EXPERIMENT_NAME = ARGS["experiment_name"];
 SPEC_LIB_DIR = ARGS["spec_lib_dir"];
@@ -76,17 +76,31 @@ out_folder = joinpath(MS_DATA_DIR, "Search")
 if !isdir(out_folder)
     mkpath(out_folder)
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+qc_plot_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
+if !isdir(qc_plot_folder)
+    mkpath(qc_plot_folder)
+else
+    [rm(joinpath(qc_plot_folder, x)) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "RESULTS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+const rt_alignment_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","rt_alignment")
+if !isdir(rt_alignment_folder)
+    mkpath(rt_alignment_folder)
 end
-out_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
-if !isdir(out_folder)
-    mkpath(out_folder)
+const mass_err_estimation_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","mass_error_estimation")
+if !isdir(mass_err_estimation_folder)
+    mkpath(mass_err_estimation_folder)
+end
+const results_folder = joinpath(MS_DATA_DIR, "Search", "RESULTS")
+if !isdir(results_folder)
+    mkpath(results_folder)
+end
+const params_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
+if !isdir(params_folder )
+    mkpath(params_folder)
+end
+#Write params to folder 
+open(joinpath(params_folder, "config.json"),"w") do f 
+    JSON.print(f, params)
 end
 
 params_ = (
@@ -103,8 +117,10 @@ params_ = (
     irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]),
     integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
     deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
-    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"])
-);
+    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
+    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"])
+
+    );
 
 ##########
 #Load Dependencies 
@@ -148,9 +164,9 @@ params_ = (
                                                                                     "integrateChroms.jl"]];
                                              
 
-library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_7ppm_2hi", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_2hi_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
 
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
@@ -183,3 +199,45 @@ complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) f
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
 end;
+
+
+###########
+#File Names Parsing 
+###########
+file_names = first.(split.(basename.(MS_TABLE_PATHS), '.'))
+split_file_names = split.(file_names, "_")
+
+
+
+#If file names have inconsistnat number of delimiters, give up on parsing and use the entire file name
+unique_split_file_name_lengths = unique(length.(split_file_names))
+parsed_file_names = copy(split_file_names)
+M = length(parsed_file_names)
+
+if length(unique_split_file_name_lengths) == 1
+    N = first(unique_split_file_name_lengths)
+    M = length(file_names)
+    split_strings = Array{String}(undef, (M, N))
+    for i in 1:N
+        for j in 1:M
+            split_strings[j, i] = split_file_names[j][i]
+        end
+    end
+    cols_to_keep = zeros(Bool, N)
+    for (col_idx, col) in enumerate(eachcol(split_strings))
+        if length(unique(col))>1
+            cols_to_keep[col_idx] = true
+        end
+    end
+    parsed_file_names = Vector{String}(undef, M)
+    split_strings = split_strings[:, cols_to_keep]
+    for i in 1:M
+        parsed_file_names[i] = join(split_strings[i,:], "_")
+    end
+else
+    parsed_file_names = file_names
+end
+
+const file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
+#Parsed file names 
+const parsed_fnames = sort(collect(values(file_id_to_parsed_name)))
