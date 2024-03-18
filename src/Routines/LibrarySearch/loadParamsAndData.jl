@@ -62,7 +62,6 @@ MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(
 EXPERIMENT_NAME = "HUPO_THREE_PROTEOME_Mar4_2024"
 =#
 
-println("ARGS ", ARGS)
 MS_DATA_DIR = ARGS["data_dir"];
 EXPERIMENT_NAME = ARGS["experiment_name"];
 SPEC_LIB_DIR = ARGS["spec_lib_dir"];
@@ -80,6 +79,8 @@ end
 qc_plot_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
 if !isdir(qc_plot_folder)
     mkpath(qc_plot_folder)
+else
+    [rm(joinpath(qc_plot_folder, x)) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
 end
 const rt_alignment_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","rt_alignment")
 if !isdir(rt_alignment_folder)
@@ -96,6 +97,10 @@ end
 const params_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
 if !isdir(params_folder )
     mkpath(params_folder)
+end
+#Write params to folder 
+open(joinpath(params_folder, "config.json"),"w") do f 
+    JSON.print(f, params)
 end
 
 params_ = (
@@ -206,7 +211,10 @@ split_file_names = split.(file_names, "_")
 
 #If file names have inconsistnat number of delimiters, give up on parsing and use the entire file name
 unique_split_file_name_lengths = unique(length.(split_file_names))
-if unique_split_file_name_lengths == 1
+parsed_file_names = copy(split_file_names)
+M = length(parsed_file_names)
+
+if length(unique_split_file_name_lengths) == 1
     N = first(unique_split_file_name_lengths)
     M = length(file_names)
     split_strings = Array{String}(undef, (M, N))
@@ -230,6 +238,6 @@ else
     parsed_file_names = file_names
 end
 
-const file_id_to_parsed_name = Dict(zip(1:M, parsed_file_names))
+const file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
 #Parsed file names 
 const parsed_fnames = sort(collect(values(file_id_to_parsed_name)))

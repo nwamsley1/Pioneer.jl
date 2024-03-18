@@ -4,6 +4,10 @@ struct MassErrorModel{T<:AbstractFloat}
     location::T
 end
 
+function getMassCorrection(mem::MassErrorModel{T}) where {T<:AbstractFloat}
+    return mem.location
+end
+
 function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
     return mem.location
 end

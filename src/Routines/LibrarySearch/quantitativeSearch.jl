@@ -84,10 +84,10 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    @time PSMS = vcat(quantitationSearch(MS_TABLE, 
+    PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
-                    RT_INDICES[MS_TABLE_PATH],
+                    RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
                     irt_errs[ms_file_idx],
@@ -117,11 +117,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         addPostIntegrationFeatures!(PSMS, 
                                     MS_TABLE, prosit_lib["precursors"],
                                     ms_file_idx,
-                                    MS_TABLE_ID_TO_PATH,
+                                    file_id_to_parsed_name,
                                     RT_iRT,
                                     precID_to_iRT
                                     );
-        PSMS[!,:file_path].=file_id_to_parsed_name[ms_file_idx]
+        PSMS[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
         BPSMS[ms_file_idx] = PSMS;
         GC.gc()
 end

@@ -1,8 +1,6 @@
-const methods_path = joinpath("src","Routines","LibrarySearch")
-
-include("src/loadParamsAndData.jl")
-
-
+println("pwd ", pwd())
+const methods_path = joinpath(pwd(), "src","Routines","LibrarySearch")
+include(joinpath(methods_path,"loadParamsAndData.jl"))
 ###########
 #Pre-Search
 #Need to Estimate the following from a random sample of high-confidence targets

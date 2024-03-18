@@ -1,10 +1,10 @@
 #Group psms by file of origin
-grouped_precursors = groupby(best_psms_passing, :parsed_fname)
+grouped_precursors = groupby(best_psms_passing, :file_name)
 #Number of files to parse
 n_files = length(grouped_precursors)
 n_files_per_plot = Int64(params_[:qc_plot_params]["n_files_per_plot"])
 #Number of QC plots to build 
-n_qc_plots = Int64(round(n_files/n_files_per_plot))
+n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
 ###############
 #Plot precursor abundance distribution
 function plotAbundanceECDF(
@@ -18,7 +18,7 @@ function plotAbundanceECDF(
     legend=:outertopright, layout = (1, 1), show = true)
 
     for parsed_fname in parsed_fnames
-        psms = gpsms[(parsed_fname = parsed_fname,)]
+        psms = gpsms[(file_name = parsed_fname,)]
 
         sorted_precursor_abundances = sort(psms[!,column], 
                                             rev = true)
@@ -61,7 +61,7 @@ function plotPrecursorIDBarPlot(
 
     ids = Vector{Int64}(undef, length(parsed_fnames))
     for (i, parsed_fname) in enumerate(parsed_fnames)
-        ids[i] = size(gpsms[(parsed_fname = parsed_fname,)], 1)
+        ids[i] = size(gpsms[(file_name = parsed_fname,)], 1)
     end
 
     Plots.bar!(p, 
@@ -105,7 +105,7 @@ function plotMissedCleavageRate(
     missed_cleavage_rates = Vector{Float64}(undef, length(parsed_fnames))
 
     for (i, parsed_fname) in enumerate(parsed_fnames)
-        psms = gpsms[(parsed_fname = parsed_fname,)]
+        psms = gpsms[(file_name = parsed_fname,)]
     
         missed_abundance = sum(psms[!,:missed_cleavage].*psms[!,abundance_col])
 
@@ -117,7 +117,7 @@ function plotMissedCleavageRate(
     parsed_fnames,
     missed_cleavage_rates,
     subplot = 1,
-    texts = [text(string(x)[1:4], valign = :vcenter, halign = :right, rotation = 90) for x in  missed_cleavage_rates],
+    texts = [text(string(x)[1:min(4, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in  missed_cleavage_rates],
     xrotation = 45,
     )
 
@@ -220,5 +220,145 @@ for n in 1:n_qc_plots
 end
 
 
-merge_pdfs([joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")], 
-    joinpath(qc_plot_folder, "QC_PLOTS.pdf"), cleanup=true)
+###############
+#Plot precursor IDs
+function plotMS2MassErrors(
+    gpsms::GroupedDataFrame,
+    parsed_fnames::Vector{<:Any};
+    title::String = "precursor_abundance_qc",
+    f_out::String = "./test.pdf"
+    )
+
+    p = Plots.plot(title = title,
+                    legend=:none, layout = (1, 1), show = true)
+
+    for parsed_fname in parsed_fnames
+        Plots.boxplot!(p, 
+        [parsed_fname],
+        gpsms[(file_name = parsed_fname,)][!,:err_norm],
+        subplot = 1,
+        outliers = false,
+        fill = :white,
+        color = :black,
+        lw = 3,
+        #texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+        xrotation = 45
+        )
+    end
+
+    savefig(p, f_out)
+end
+
+
+for n in 1:n_qc_plots
+    start = (n - 1)*n_files_per_plot + 1
+    stop = min(n*n_files_per_plot, length(parsed_fnames))
+
+    plotMS2MassErrors(
+        grouped_precursors,
+        parsed_fnames[start:stop],
+        title = "MS2 Mass Errors Distribution",
+        f_out = joinpath(qc_plot_folder, "mass_err_boxplots_"*string(n)*".pdf")
+    )
+
+end
+
+
+###############
+#Plot precursor IDs
+function plotMS2MassErrorCorrection(
+    file_id_to_parsed_name::Dict{Int64, String},
+    frag_err_dist_dict::Dict{Int64, MassErrorModel},
+    file_ids::Vector{Int64};
+    title::String = "precursor_abundance_qc",
+    f_out::String = "./test.pdf"
+    )
+
+    p = Plots.plot(title = title,
+                    legend=:none, layout = (1, 1), show = true)
+
+    parsed_fnames = [file_id_to_parsed_name[file_id] for file_id in file_ids]
+    mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
+
+    Plots.bar!(p, 
+    parsed_fnames,
+    mass_corrections,
+    subplot = 1,
+    yflip = true,
+    texts = [text(string(x)[1:min(5, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in mass_corrections],
+    xrotation = 45,
+    )
+
+    savefig(p, f_out)
+end
+
+
+for n in 1:n_qc_plots
+    start = (n - 1)*n_files_per_plot + 1
+    stop = min(n*n_files_per_plot, length(parsed_fnames))
+
+    plotMS2MassErrorCorrection(
+        file_id_to_parsed_name,
+        frag_err_dist_dict,
+        collect(start:stop),
+        title = "MS2 Mass Error Correction",
+        f_out = joinpath(qc_plot_folder, "mass_err_correction_"*string(n)*".pdf")
+    )
+
+end
+
+
+###############
+#Plot precursor IDs
+function plotFWHM(
+    gpsms::GroupedDataFrame,
+    parsed_fnames::Vector{<:Any};
+    title::String = "fwhm_qc",
+    f_out::String = "./test.pdf"
+    )
+
+    p = Plots.plot(title = title,
+                    legend=:none, layout = (1, 1), show = true)
+
+
+    for parsed_fname in parsed_fnames
+        psms =  gpsms[(file_name = parsed_fname,)]
+        Plots.boxplot!(p, 
+        [parsed_fname],
+        psms[psms[!,:data_points].>1,:FWHM],
+        subplot = 1,
+        outliers = false,
+        fill = :white,
+        color = :black,
+        ylabel = "FWHM (min)",
+        lw = 3,
+        #texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+        xrotation = 45
+        )
+    end
+
+    savefig(p, f_out)
+end
+
+
+for n in 1:n_qc_plots
+    start = (n - 1)*n_files_per_plot + 1
+    stop = min(n*n_files_per_plot, length(parsed_fnames))
+
+    plotFWHM(
+        grouped_precursors,
+        parsed_fnames[start:stop],
+        title = "FWHM Distribution",
+        f_out = joinpath(qc_plot_folder, "FWHM_"*string(n)*".pdf")
+    )
+
+end
+
+println("qc_plot_folder ", qc_plot_folder)
+plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
+println("plots_to_merge ", plots_to_merge)
+
+if length(plots_to_merge)>1
+    merge_pdfs(plots_to_merge, 
+                joinpath(qc_plot_folder, "QC_PLOTS.pdf"), cleanup=true)
+end
