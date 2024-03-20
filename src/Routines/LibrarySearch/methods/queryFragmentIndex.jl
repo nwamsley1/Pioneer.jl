@@ -1,30 +1,47 @@
 function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
                                 frag_bin_range::UnitRange{UInt32},
+                                upper_bound_guess::UInt32,
                                 frag_min::Float32, 
                                 frag_max::Float32) #where {T<:AbstractFloat}
     #Binary Search
     lo, hi = first(frag_bin_range), last(frag_bin_range)
-    potential_match = nothing
+    potential_match = zero(UInt32)
     #mid = max((lo + hi) ÷ 8, lo + 1) #Should be closer to the begining of the range
+    #=
+    bound_inc = UInt32(4)#one(UInt32)
+    @inbounds @fastmath while getLow(frag_index_bins[upper_bound_guess])<frag_max #(upper_bound_guess < hi) 
+        #if (getLow(frag_index_bins[upper_bound_guess])>frag_max)
+        #    break
+        #end
+        bound_inc += one(UInt32)
+        upper_bound_guess = lo + bound_inc*UInt32(2)
+        if upper_bound_guess > hi
+            break
+        end
+    end
+    #println("lo $lo ubg $upper_bound_guess hi $hi")
+    @fastmath hi = min(hi, upper_bound_guess)
+    =#
+    @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
     @inbounds @fastmath while lo <= hi
-
-        mid = (lo + hi) ÷ 2
 
         if (frag_min) <= getHigh(frag_index_bins[mid])
             if (frag_max) >= getHigh(frag_index_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
                 potential_match = UInt32(mid)
             end
-            hi = mid - 1
+            hi = mid - one(UInt32)
+            #mid = (lo + hi)÷2
         elseif (frag_max) >= getLow(frag_index_bins[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
             if (frag_min) <= getLow(frag_index_bins[mid])
                 potential_match = UInt32(mid)
             end
-            lo = mid + 1
+            lo = mid + one(UInt32)
+            #mid = hi - (hi - lo)÷10
         end
-
+        mid = (lo + hi) >>> 0x01
     end
 
-    return potential_match
+    return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
 end
 
 function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
@@ -40,11 +57,11 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         lo, hi = first(frag_id_range), N
         @inbounds @fastmath begin 
             while lo <= hi
-                mid = (lo + hi) ÷ 2
+                mid = (lo + hi) >>> 0x01
                 if getPrecMZ(fragments[mid]) < window_min
-                    lo = mid + 1
+                    lo = mid + one(UInt32)
                 else
-                    hi = mid - 1
+                    hi = mid - one(UInt32)
                 end
             end
 
@@ -58,11 +75,11 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
             lo, hi = window_start, N
 
             while lo <= hi
-                mid = (lo + hi) ÷ 2
+                mid = (lo + hi) >>> 0x01
                 if getPrecMZ(fragments[mid]) > window_max
-                    hi = mid - 1
+                    hi = mid - UInt32(1)
                 else
-                    lo = mid + 1
+                    lo = mid + UInt32(1)
                 end
             end
 
@@ -86,7 +103,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     
     #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
     #Could be used for testing purposes. 
-    addFragmentMatches!(prec_id_to_score, fragments, UInt32(window_start):UInt32(window_stop))
+    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
 
     return 
 
@@ -94,28 +111,30 @@ end
 
 function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8}, 
                         frag_bin_range::UnitRange{UInt32},
+                        upper_bound_guess::UInt32,
                         frag_index::FragmentIndex{Float32}, 
                         frag_min::Float32, frag_max::Float32, 
                         prec_bounds::Tuple{Float32, Float32})# where {T,U<:AbstractFloat}
     
     #First frag_bin matching fragment tolerance
-    frag_bin_idx = findFirstFragmentBin(getFragBins(frag_index), 
+    frag_bin_idx, upper_bound_guess = findFirstFragmentBin(getFragBins(frag_index), 
                                     frag_bin_range, #Range of Fragment Bins to Search
+                                    upper_bound_guess,
                                     frag_min, frag_max)
 
     #No fragment bins contain the fragment m/z
     #println("no frags")
-    if (frag_bin_idx === nothing)
-        return first(frag_bin_range)
+    if iszero(frag_bin_idx)
+        return first(frag_bin_range), upper_bound_guess
     end
     #println("some frags $frag_bin_idx")
     #Search subsequent frag bins until no more bins or untill a bin is outside the fragment tolerance
-    while (frag_bin_idx <= last(frag_bin_range))
+    @inbounds while (frag_bin_idx <= last(frag_bin_range))
         #Fragment bin is outside the fragment tolerance
         frag_bin = getFragmentBin(frag_index, frag_bin_idx)
         if (getLow(frag_bin) > frag_max)
             #println("last frag bin $frag_bin_idx")
-            return UInt32(frag_bin_idx)
+            return UInt32(frag_bin_idx), upper_bound_guess
         else
             frag_id_range = getSubBinRange(frag_bin)
             #Search the fragment range for fragments with precursors in the precursor tolerance
@@ -130,7 +149,7 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
         end
     end
     #Only reach this point if frag_bin exceeds length(frag_index)
-    return UInt32(frag_bin_idx - 1)
+    return UInt32(frag_bin_idx - 1), upper_bound_guess
 end
 
 function searchScan!(prec_id_to_score::Counter{UInt32, UInt8}, 
@@ -176,7 +195,8 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         sub_bin_range = getSubBinRange(getRTBin(frag_index, rt_bin_idx))
         min_frag_bin, max_frag_bin = first(sub_bin_range), last(sub_bin_range)
         old_min_frag_bin = min_frag_bin
-        for (mass, intensity) in zip(masses, intensities)
+        upper_bound_guess = UInt32((min_frag_bin + max_frag_bin)÷2)#UInt32(min_frag_bin + 1)
+        @inbounds for (mass, intensity) in zip(masses, intensities)
             mass, intensity = coalesce(mass, zero(U)),  coalesce(intensity, zero(U))
             #Get intensity dependent fragment tolerance
             frag_min, frag_max, MIN_ALL_FRAGS = getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
@@ -187,8 +207,9 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
             #println("frag_min $frag_min, frag_max $frag_max, MIN_ALL_FRAGS $MIN_ALL_FRAGS")
             old_min_frag_bin = min_frag_bin
 
-            min_frag_bin = queryFragment!(prec_id_to_score, 
+            min_frag_bin, upper_bound_guess = queryFragment!(prec_id_to_score, 
                                             min_frag_bin:max_frag_bin, 
+                                            upper_bound_guess,
                                             frag_index, 
                                             frag_min, frag_max, 
                                             (prec_min, prec_max)

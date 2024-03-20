@@ -73,10 +73,11 @@ function searchRAW(
     end
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
-            thread_id = getThreadID(thread_task)
+            #thread_id = getThreadID(thread_task)
+            thread_id = first(thread_task)
             return searchRAW(
                                 spectra,
-                                getRange(thread_task),
+                                last(thread_task), #getRange(thread_task),
                                 frag_index,precursors,
                                 ion_list, rt_to_irt_spline,ms_file_idx,mass_err_model,
                                 searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
@@ -106,7 +107,7 @@ end
 
 function searchRAW(
                     spectra::Arrow.Table,
-                    thread_task::UnitRange{Int64},
+                    thread_task::Vector{Int64},#UnitRange{Int64},
                     frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
@@ -177,6 +178,9 @@ function searchRAW(
     ##########
     #Iterate through spectra
     for i in thread_task
+        if i > length(spectra[:masses])
+            continue
+        end
         thread_peaks += length(spectra[:masses][i])
         if thread_peaks > 100000
             #lock(lk) do 
@@ -193,6 +197,7 @@ function searchRAW(
         end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
+        
         #if i != 100000
         #    continue
         #end
