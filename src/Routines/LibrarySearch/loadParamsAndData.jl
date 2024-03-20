@@ -165,7 +165,7 @@ params_ = (
                                              
 
 library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_2hi_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_1hi_031924", file) != nothing, readdir(SPEC_LIB_DIR))][1];
 precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
 
 println("Loading spectral libraries into main memory...")

@@ -191,7 +191,9 @@ function searchRAW(
         end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-
+        #if i != 100000
+        #    continue
+        #end
         first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
 
@@ -202,6 +204,8 @@ function searchRAW(
         if !ismissing(precs)
             #searchScan! is the MsFragger style fragment index search
             #Loads `precs` with scores for each potential precursor matching the spectrum
+            #println("length(spectra[:masses][i]) ", length(spectra[:masses][i]))
+            #println("spec_order", spec_order)
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
@@ -263,13 +267,14 @@ function searchRAW(
         #println("ion_idx $ion_idx prec_idx $prec_idx")
         #return precs
         #If one or fewer fragment ions matched to the spectrum, don't bother
+        #continue
         if ion_idx < 2
             reset!(ionTemplates, ion_idx)
             if !ismissing(precs)
             reset!(precs)
             end
             continue
-        end 
+        end
         ##########
         #Match sorted list of plausible ions to the observed spectra
         nmatches, nmisses = matchPeaks!(ionMatches, 
