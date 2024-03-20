@@ -38,35 +38,43 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         N =  last(frag_id_range)
         #lo, hi = 1, N
         lo, hi = first(frag_id_range), N
-
-        @inbounds @fastmath while lo <= hi
-            mid = (lo + hi) ÷ 2
-            if getPrecMZ(fragments[mid]) < window_min
-                lo = mid + 1
-            else
-                hi = mid - 1
+        @inbounds @fastmath begin 
+            while lo <= hi
+                mid = (lo + hi) ÷ 2
+                if getPrecMZ(fragments[mid]) < window_min
+                    lo = mid + 1
+                else
+                    hi = mid - 1
+                end
             end
-        end
 
-        window_start = (lo <= N ? lo : return)
+            window_start = (lo <= N ? lo : return)
 
-        if getPrecMZ(fragments[window_start]) > window_max
-            return 
-        end
 
-        lo, hi = window_start, N
-
-        @inbounds @fastmath while lo <= hi
-            mid = (lo + hi) ÷ 2
-            if getPrecMZ(fragments[mid]) > window_max
-                hi = mid - 1
-            else
-                lo = mid + 1
+            if getPrecMZ(fragments[window_start]) > window_max
+                return 
             end
+            
+            lo, hi = window_start, N
+
+            while lo <= hi
+                mid = (lo + hi) ÷ 2
+                if getPrecMZ(fragments[mid]) > window_max
+                    hi = mid - 1
+                else
+                    lo = mid + 1
+                end
+            end
+
+            window_stop = hi
         end
-
-        window_stop = hi
-
+        #=
+        window_stop = window_start
+        @inbounds @fastmath while getPrecMZ(fragments[window_stop]) < window_max
+            window_stop += 1
+        end
+        window_stop = max(window_stop - 1, window_start)
+        =#
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
                                     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
                                     matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}

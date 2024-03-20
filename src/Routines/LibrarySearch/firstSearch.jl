@@ -67,7 +67,7 @@ end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(mainLibrarySearch(
+    @time PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -91,7 +91,12 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #scan_range = (100000, 100010)
     )...);
 
-    addMainSearchColumns!(PSMs, MS_TABLE, prosit_lib["precursors"]);
+    addMainSearchColumns!(PSMs, MS_TABLE, 
+                        prosit_lib["precursors"][:sequence],
+                        prosit_lib["precursors"][:missed_cleavages],
+                        prosit_lib["precursors"][:is_decoy],
+                        prosit_lib["precursors"][:irt],
+                        prosit_lib["precursors"][:prec_charge]);
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
@@ -107,10 +112,9 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
-                       
     
     getBestPSMs!(PSMs,
-                    prosit_lib["precursors"],
+                    prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )

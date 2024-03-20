@@ -66,6 +66,10 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     sulfur_count::UInt8
 end
 
+ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
+ArrowTypes.JuliaType(::Val{:DetailedFrag}) = DetailedFrag
+
+
 getIntensity(f::DetailedFrag) = f.intensity
 isyIon(f::DetailedFrag) = f.is_y_ion
 getIonIndex(f::DetailedFrag) = f.ion_index
@@ -90,6 +94,28 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8), #rank
                 zero(UInt8)  #sulfur_count
  )
+#=
+struct PrecFragRange
+    lb::UInt64
+    ub::UInt64
+end
+ArrowTypes.arrowname(::Type{PrecFragRange}) = :PrecFragRange
+ArrowTypes.JuliaType(::Val{:PrecFragRange}) = PrecFragRange
+
+
+struct LibraryFragmentLookup{T<:AbstractFloat}
+    frags::Arrow.Struct{DetailedFrag, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{Float16, Vector{Float16}}, Arrow.BoolVector{Bool}, Arrow.BoolVector{Bool}, Vararg{Arrow.Primitive{UInt8, Vector{UInt8}}, 5}}, (:prec_id, :mz, :intensity, :is_y_ion, :is_isotope, :frag_charge, :ion_position, :prec_charge, :rank, :sulfur_count)}
+    prec_frag_ranges:: Arrow.Struct{PrecFragRange, Tuple{Arrow.Primitive{UInt64, Vector{UInt64}}, Arrow.Primitive{UInt64, Vector{UInt64}}}, (:lb, :ub)}
+end
+
+getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
+
+function getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} 
+    prec_frag_range = lfp.prec_frag_ranges[prec_idx]
+    return prec_frag_range.lb:prec_frag_range.ub
+end
+=#
+
 
 struct LibraryFragmentLookup{T<:AbstractFloat}
     frags::Vector{DetailedFrag{T}}
@@ -99,7 +125,6 @@ end
 getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
 
 getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt32} = lfp.prec_frag_ranges[prec_idx]
-
 
 """
     PrecursorBinItem{T<:AbstractFloat}
