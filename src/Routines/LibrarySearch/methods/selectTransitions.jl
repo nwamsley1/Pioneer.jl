@@ -1,5 +1,7 @@
 function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
-                            precursors::Vector{LibraryPrecursorIon{Float32}},
+                            prec_mzs::Arrow.Primitive{Float32, Vector{Float32}},
+                            prec_charges::Arrow.Primitive{UInt8, Vector{UInt8}},
+                            prec_irts::Arrow.Primitive{Float32, Vector{Float32}},
                             #fragment_list::Vector{Vector{DetailedFrag{Float32}}}, 
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             iso_splines::IsotopeSplineModel{Float64},
@@ -18,18 +20,19 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
 
        
         prec_idx = getID(counter, i)
-        prec = precursors[prec_idx]
+        prec_charge = prec_charges[prec_idx]
+        prec_mz = prec_mzs[prec_idx]
         #Enforce iRT tolerance on precursors
-        if abs(getIRT(prec) - iRT) > iRT_tol
+        if abs(prec_irts[prec_idx] - iRT) > iRT_tol
             i += 1
              continue
         end
 
         #Manage isotope errors. NEUTRON is global constant. 
-        mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
-        mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/getPrecCharge(prec)
+        mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/prec_charge
+        mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/prec_charge
 
-        if (getMZ(prec) < mz_low) | (getMZ(prec) > mz_high)
+        if (prec_mz < mz_low) | (prec_mz > mz_high)
             i += 1
             continue
         end

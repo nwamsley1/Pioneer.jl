@@ -3,7 +3,7 @@ function mainLibrarySearch(
     #Mandatory Args
     spectra::Arrow.Table, 
     frag_index::FragmentIndex{Float32},
-    precursors::Vector{LibraryPrecursorIon{Float32}},
+    precursors::Arrow.Table,
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,

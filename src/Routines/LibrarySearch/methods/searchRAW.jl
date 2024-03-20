@@ -2,7 +2,7 @@ function searchRAW(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::Union{FragmentIndex{Float32}, Missing},
-                    precursors::Union{Vector{LibraryPrecursorIon{Float32}}, Missing},
+                    precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
@@ -108,7 +108,7 @@ function searchRAW(
                     spectra::Arrow.Table,
                     thread_task::UnitRange{Int64},
                     frag_index::Union{FragmentIndex{Float32}, Missing},
-                    precursors::Union{Vector{LibraryPrecursorIon{Float32}}, Missing},
+                    precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
@@ -172,6 +172,8 @@ function searchRAW(
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float64, n_frag_isotopes)
+    
+    rt_bin_idx = 1
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -196,7 +198,20 @@ function searchRAW(
         #end
         first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
+        
+        #Get correct rt_bin_idx 
+        while getHigh(getRTBin(frag_index, rt_bin_idx)) < iRT_low
+            rt_bin_idx += 1
+            if rt_bin_idx >length(getRTBins(frag_index))
+                rt_bin_idx = length(getRTBins(frag_index))
+                break
+            end 
+        end
 
+        #if i != 100000
+        #    continue
+        #end
+        #println("rt_bin_idx $rt_bin_idx iRT_low $iRT_low getRTBin(frag_index, rt_bin_idx) ", getRTBin(frag_index, rt_bin_idx))
         ##########
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
@@ -210,7 +225,8 @@ function searchRAW(
                         precs, #counter which keeps track of plausible matches 
                         frag_index, 
                         spectra[:masses][i], spectra[:intensities][i],
-                        iRT_low, iRT_high,
+                        rt_bin_idx, 
+                        iRT_high,
                         frag_ppm_err,
                         mass_err_model,
                         min_max_ppm,
@@ -231,7 +247,9 @@ function searchRAW(
             #searching each precursor's fragments against the spectrum individually
             #would be O(p*n + p*k) assuming each individual precursor fragment list was already sorted
             ion_idx, prec_idx = selectTransitions!(ionTemplates, 
-                                                precursors,
+                                                precursors[:mz],
+                                                precursors[:prec_charge],
+                                                precursors[:irt],
                                                 ion_list,
                                                 iso_splines,
                                                 isotopes,
