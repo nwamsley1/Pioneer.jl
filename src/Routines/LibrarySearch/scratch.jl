@@ -78,3 +78,59 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
 )...);
 pprof(;webport=58600)
 #pprof(;webport=58599)
+
+FragmentIndex
+
+describe(precursors[:mz])
+
+minimum([x for x in MS_TABLE[:precursorMZ] if ismissing(x)==false])
+maximum([x for x in MS_TABLE[:precursorMZ] if ismissing(x)==false])
+
+
+function getPrecursorBins(
+    min_prec_mz::T,
+    max_prec_mz::T,
+    bin_width::T,
+    fragment_bins::Arrow.Struct{FragIndexBin, 
+        Tuple{Arrow.Primitive{T, Vector{T}}, 
+        Arrow.Primitive{T, Vector{T}}, 
+        Arrow.Primitive{UInt32, Vector{UInt32}}, 
+        Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)},
+    fragments:: Arrow.Struct{IndexFragment, 
+        Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, 
+        Arrow.Primitive{T, Vector{T}}, 
+        Arrow.Primitive{UInt8, Vector{UInt8}}, 
+        Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}
+    ) where {T<:AbstractFloat}
+    frag_bin_mzs = collect(range(
+                            min_prec_mz, 
+                            max_prec_mz, 
+                            step = bin_width)
+                            )
+    M = length(frag_bin_mzs)
+    N = length(fragment_bins)
+    precursor_bins = Vector{UInt32}(undef, M*N)
+    for (n, frag_bin) in ProgressBar(enumerate(fragment_bins))
+        frag_range = getSubBinRange(frag_bin)
+        idx = first(frag_range)
+        for (m, prec_mz) in enumerate(frag_bin_mzs)
+            while idx < last(frag_range)
+                if getPrecMZ(fragments[idx]) > prec_mz
+                    break
+                end
+                idx += 1
+            end
+            precursor_bins[(n-1)*m + m] = idx
+        end
+    end
+    return precursor_bins
+end
+
+precursor_bins = getPrecursorBins(396.0f0, 
+                1001.0f0,
+                0.5f0, 
+f_index_frag_bins[:FragIndexBin],
+f_index_fragments[:IndexFragment]
+)
+
+#Come up with some test cases. Keep trying till they work. 
