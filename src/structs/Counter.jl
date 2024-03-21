@@ -26,8 +26,8 @@ end
 function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
     @inbounds @fastmath begin 
         no_previous_encounter = c.counts[id]===zero(C)
-        c.ids[c.size] += no_previous_encounter ? id : zero(I)
-        c.size += no_previous_encounter ? one(Int64) : zero(Int64)
+        c.ids[c.size] = id
+        c.size += no_previous_encounter
         c.counts[id] += pred_intensity;
     end
     return nothing

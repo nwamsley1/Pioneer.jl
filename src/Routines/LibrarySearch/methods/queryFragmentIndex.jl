@@ -98,24 +98,45 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         base = lo
         @inbounds @fastmath begin 
             len = hi - lo + UInt32(1)
-            while len > 1
-                mid = len >>> 0x01
-                base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
-                len -= mid
-            end
-            window_start = base
-            len = hi - base + UInt32(1)
-            base = hi
-            while len > 1
-                mid = len >>> 0x01
-                base -= (getPrecMZ(fragments[base - mid + one(UInt32)]) > window_max)*mid
-                len -= mid
-            end
-            window_stop = base
+            if len > 4 #If query range is sufficiently large, do a branchless binary search
+                while len > 1
+                    mid = len >>> 0x01
+                    base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
+                    len -= mid
+                end
+                window_start = base
+                len = hi - base + UInt32(1)
+                base = hi
+                while len > 1
+                    mid = len >>> 0x01
+                    base -= (getPrecMZ(fragments[base - mid + one(UInt32)]) > window_max)*mid
+                    len -= mid
+                end
+                window_stop = base
 
-            if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
-                return 
+                if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
+                    return 
+                end
+            
+            else #Query range is small, do linear search
+                window_start, window_stop = lo, hi
+                #println("a window_start $window_start window_stop $window_stop")
+                matched = (getPrecMZ(fragments[window_start])<window_min)
+                while (matched) & (window_start < hi)
+                    window_start += matched
+                    matched = (getPrecMZ(fragments[window_start])<window_min)
+                end
+                matched = (getPrecMZ(fragments[window_stop])>window_max)
+                while matched & (window_stop > window_start)
+                    window_stop -= matched
+                    matched = (getPrecMZ(fragments[window_stop])>window_max)
+                end
+                #println("b window_start $window_start window_stop $window_stop")
+                if window_start > window_stop
+                    return 
+                end
             end
+            
         end
         
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
