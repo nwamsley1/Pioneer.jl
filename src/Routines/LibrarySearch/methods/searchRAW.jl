@@ -198,7 +198,7 @@ function searchRAW(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
         
-        #if i != 100000
+        #if (i < 100000) | (i > 110000)
         #    continue
         #end
         first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 

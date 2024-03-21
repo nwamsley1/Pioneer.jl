@@ -76,7 +76,7 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     precs
 #scan_range = (100000, 100010)
 )...);
-pprof(;webport=58600)
+pprof(;webport=58700)
 #pprof(;webport=58599)
 
 FragmentIndex
@@ -109,31 +109,168 @@ function getPrecursorBins(
                             )
     M = length(frag_bin_mzs)
     N = length(fragment_bins)
-    precursor_bins = Vector{UInt32}(undef, M*N)
+    precursor_bins = zeros(UInt32, M*N)
+    i = 1
     for (n, frag_bin) in ProgressBar(enumerate(fragment_bins))
         frag_range = getSubBinRange(frag_bin)
         idx = first(frag_range)
         for (m, prec_mz) in enumerate(frag_bin_mzs)
-            while idx < last(frag_range)
+            while idx <= last(frag_range)
                 if getPrecMZ(fragments[idx]) > prec_mz
+                    precursor_bins[i] = idx
                     break
                 end
                 idx += 1
             end
-            precursor_bins[(n-1)*m + m] = idx
+            if idx > last(frag_range)
+                precursor_bins[(n - 1)*M + m] = last(frag_range)
+            end
+            i += 1
         end
     end
-    return precursor_bins
+    return precursor_bins, frag_bin_mzs
 end
 
-precursor_bins = getPrecursorBins(396.0f0, 
+precursor_bins, frag_bin_mzs = getPrecursorBins(396.0f0, 
                 1001.0f0,
                 0.5f0, 
 f_index_frag_bins[:FragIndexBin],
 f_index_fragments[:IndexFragment]
 )
 
-#Come up with some test cases. Keep trying till they work. 
+precursor_bins  = (PrecursorBin = precursor_bins ,)
+frag_bin_mzs = (FragBinMZ = frag_bin_mzs ,)
+Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_precursor_bins_031924.arrow", precursor_bins);
+Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_frag_bin_mzs_031924.arrow", frag_bin_mzs);
 
-test_f_bin = f_index_frag_bins[:FragIndexBin][1000000]
-f_index_fragments[getSubBinRange(test_f_bin)]
+
+#Come up with some test cases. Keep trying till they work. 
+N = 1005000
+M = length(frag_bin_mzs)
+test_f_bin = f_index_frag_bins[:FragIndexBin][N]
+f_index_fragments[:IndexFragment][getSubBinRange(test_f_bin)]
+
+
+
+for i in range(1, length(frag_bin_mzs))
+    idx = precursor_bins[(N-1)*M + i]
+    if idx!=0
+        println(frag_bin_mzs[i], "-", idx, "-", getPrecMZ(f_index_fragments[:IndexFragment][idx]))
+    else
+        println(frag_bin_mzs[i], "-", idx, "-", "null")
+    end
+end
+
+hcat(frag_bin_mzs, precursor_bins[(N-1)*M:(N-1)*M + M - 1])
+
+function branchless_binary(t::Vector{Float32},
+                           x::Float32,
+                           lo::UInt32,
+                           hi::UInt32)
+    #hi_f = hi
+    base = lo
+    @fastmath len = hi - lo
+    while len > 1
+        mid = len>>>0x01
+        base += (t[base + mid - UInt32(1)] < x)*mid
+        len -= mid# - UInt32(1)
+    end
+    #lo_f = lo
+    return base
+end
+
+test_t = 10.0f0.*sort(rand(Float32, 1000000))   
+x = 5.5f0
+answer = branchless_binary(test_t, x, UInt32(1000), UInt32(900000))
+test_t[answer]
+
+function branchless_binary(t::Vector{Float32},
+                           x::Float32,
+                           y::Float32,
+                           lo::UInt32,
+                           hi::UInt32)
+    #hi_f = hi
+    base = lo
+    @fastmath len = hi - lo
+    while len > 1
+        mid = len>>>0x01
+        base += (t[base + mid - UInt32(1)] < x)*mid
+        len -= mid# - UInt32(1)
+    end
+    a = base
+    @fastmath len = hi - lo
+    base = hi
+    while len > 1
+        mid = len>>>0x01
+        base -= (t[base - mid + UInt32(1)] > y)*mid
+        len -= mid# - UInt32(1)
+    end
+
+    #lo_f = lo
+    return a, base
+end
+
+x = 4.1f0
+y = 4.5f0
+test_t = 10.0f0.*sort(rand(Float32, 1000000))   
+
+test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
+
+answer = branchless_binary(test_t, x, y, UInt32(1000), UInt32(900000))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+
+x = 7.1f0
+y = 8.1f0
+answer = branchless_binary(test_t, x, y, UInt32(1000), UInt32(900000))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+
+for i in 10:1
+    println(i)
+end
+
+
+
+function FindPrecBinRange(t::Arrow.Primitive{Float32, Vector{Float32}},
+                           x::Float32,
+                           y::Float32)
+    #hi_f = hi
+    base, hi = one(UInt32), UInt32(length(t))
+    @fastmath len = hi - base
+    while len > 1
+        mid = len>>>0x01
+        base += (t[base + mid - UInt32(1)] < x)*mid
+        len -= mid# - UInt32(1)
+    end
+
+    #=
+    a = base
+    @fastmath len = hi - lo
+    base = hi
+    while len > 1
+        mid = len>>>0x01
+        base -= (t[base - mid + UInt32(1)] > y)*mid
+        len -= mid# - UInt32(1)
+    end
+    =#
+    a = base
+    @fastmath len = hi - base
+    while len > 1
+        mid = len>>>0x01
+        base += (t[base + mid - UInt32(1)] < y)*mid
+        len -= mid# - UInt32(1)
+    end
+
+    #lo_f = lo
+    return a, base
+end
+
+x = 800.9f0
+y = 809.4f0
+
+@btime answer = branchless_binary(f_index.frag_bin_mzs, x, y)
+println(Int64(answer[1]), " ", Int64(answer[2]))
+f_index.frag_bin_mzs[first(answer):last(answer)]

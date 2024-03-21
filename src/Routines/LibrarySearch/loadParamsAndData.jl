@@ -179,6 +179,11 @@ prosit_lib["f_det"] = library_fragment_lookup_table
 f_index_fragments = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragments_031924.arrow")
 f_index_rt_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_rtbins_031924.arrow")
 f_index_frag_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragbins_031924.arrow")
+
+
+precursor_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_precursor_bins_031924.arrow");
+frag_bin_mzs = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_frag_bin_mzs_031924.arrow");
+
 #detailed_frags = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_detailed_frags_031924.arrow")
 #prec_frag_ranges = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_prec_frag_ranges_031924.arrow")
 #Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/precursors_031924.arrow", DataFrame(precursors))
@@ -187,7 +192,9 @@ precursors = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_
 f_index = FragmentIndex(
     f_index_frag_bins[:FragIndexBin],
     f_index_rt_bins[:FragIndexBin],
-    f_index_fragments[:IndexFragment]
+    f_index_fragments[:IndexFragment],
+    precursor_bins[:PrecursorBin],
+    frag_bin_mzs[:FragBinMZ]
 );
 prosit_lib["f_index"] = f_index;
 prosit_lib["precursors"] = precursors;

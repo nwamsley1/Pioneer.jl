@@ -5,23 +5,39 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
                                 frag_max::Float32) #where {T<:AbstractFloat}
     #Binary Search
     lo, hi = first(frag_bin_range), last(frag_bin_range)
+    @fastmath len = hi - lo
     potential_match = zero(UInt32)
-    #mid = max((lo + hi) ÷ 8, lo + 1) #Should be closer to the begining of the range
-    #=
-    bound_inc = UInt32(4)#one(UInt32)
-    @inbounds @fastmath while getLow(frag_index_bins[upper_bound_guess])<frag_max #(upper_bound_guess < hi) 
-        #if (getLow(frag_index_bins[upper_bound_guess])>frag_max)
-        #    break
-        #end
-        bound_inc += one(UInt32)
-        upper_bound_guess = lo + bound_inc*UInt32(2)
-        if upper_bound_guess > hi
-            break
+    @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    @inbounds @fastmath while lo <= hi
+
+        if (frag_min) <= getHigh(frag_index_bins[mid])
+            if (frag_max) >= getHigh(frag_index_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
+                potential_match = UInt32(mid)
+            end
+            hi = mid - one(UInt32)
+            #mid = (lo + hi)÷2
+        elseif (frag_max) >= getLow(frag_index_bins[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
+            if (frag_min) <= getLow(frag_index_bins[mid])
+                potential_match = UInt32(mid)
+            end
+            lo = mid + one(UInt32)
+            #mid = hi - (hi - lo)÷10
         end
+        mid = (lo + hi) >>> 0x01
     end
-    #println("lo $lo ubg $upper_bound_guess hi $hi")
-    @fastmath hi = min(hi, upper_bound_guess)
-    =#
+
+    return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
+end
+#=
+function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
+                                frag_bin_range::UnitRange{UInt32},
+                                upper_bound_guess::UInt32,
+                                frag_min::Float32, 
+                                frag_max::Float32) #where {T<:AbstractFloat}
+    #Binary Search
+    lo, hi = first(frag_bin_range), last(frag_bin_range)
+    @fastmath len = hi - lo
+    potential_match = zero(UInt32)
     @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
     @inbounds @fastmath while lo <= hi
 
@@ -44,13 +60,42 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
     return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
 end
 
+function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
+                                frag_bin_range::UnitRange{UInt32},
+                                upper_bound_guess::UInt32,
+                                frag_min::Float32, 
+                                frag_max::Float32) #where {T<:AbstractFloat}
+    #Binary Search
+    lo, hi = first(frag_bin_range), last(frag_bin_range)
+    @fastmath len = hi - lo
+    #potential_match = zero(UInt32)
+    #@fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    @fastmath mid = len>>>0x01
+    @inbounds @fastmath while (len > 0x01)
+        #lo += (getHigh(frag_index_bins[mid-one(UInt32)]) >= frag_min)*mid 
+        lo += (getHigh(frag_index_bins[mid + lo - one(UInt32)]) >= frag_min)*(getLow(frag_index_bins[mid + lo - one(UInt32)]) < frag_max)*mid 
+        len -= mid 
+        mid = len>>>0x01
+    end
+
+    @inbounds @fastmath begin
+        if (mid == one(UInt32)) & (lo == first(frag_bin_range))
+            return zero(UInt32), one(UInt32)
+        else
+            return lo, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
+        end
+    end
+
+end
+=#
 function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
+                            prec_bounds_idx::Tuple{UInt32, UInt32},
                             fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
                             frag_id_range::UnitRange{UInt32},
                             window_min::Float32, 
                             window_max::Float32)
 
-    
+        #=
         #N = getLength(precursor_bin)
         N =  last(frag_id_range)
         #lo, hi = 1, N
@@ -92,6 +137,56 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         end
         window_stop = max(window_stop - 1, window_start)
         =#
+        =#
+    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
+                                    fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
+                                    matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
+        @inline @inbounds for i in matched_frag_range
+            frag = fragments[i]
+            inc!(prec_id_to_score, getPrecID(frag), getScore(frag))
+        end
+    end
+    
+    #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
+    #Could be used for testing purposes. 
+    
+    #addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
+    #println("test ",  Int64(first(prec_bounds_idx)):Int64((last(prec_bounds_idx)-one(UInt32))))
+    addFragmentMatches!(prec_id_to_score, fragments, first(prec_bounds_idx):(last(prec_bounds_idx)-one(UInt32)))
+    return 
+
+end
+
+#=
+function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
+                            fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
+                            frag_id_range::UnitRange{UInt32},
+                            window_min::Float32, 
+                            window_max::Float32)
+
+        lo, hi = first(frag_id_range), last(frag_id_range)
+        base = lo
+        @inbounds @fastmath begin 
+            len = hi - lo 
+
+            while len > 1
+                mid = len>>>0x01
+                base +=  (getPrecMZ(fragments[base + mid - UInt32(1)]) < window_min)*mid
+                len -= mid
+            end
+
+            window_start = base
+            #len = hi - lo#base - UInt32(1)
+            len = hi - base
+            base = hi
+            while len > 1
+                mid = len>>>0x01
+                base -= (getPrecMZ(fragments[base - mid + UInt32(1)]) > window_max)*mid
+                len -= mid
+            end
+            window_stop = base
+        end
+
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
                                     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
                                     matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
@@ -108,9 +203,10 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     return 
 
 end
-
+=#
 function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8}, 
                         frag_bin_range::UnitRange{UInt32},
+                        prec_bounds_idx::Tuple{UInt32, UInt32},
                         upper_bound_guess::UInt32,
                         frag_index::FragmentIndex{Float32}, 
                         frag_min::Float32, frag_max::Float32, 
@@ -138,7 +234,11 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
         else
             frag_id_range = getSubBinRange(frag_bin)
             #Search the fragment range for fragments with precursors in the precursor tolerance
+            M = (frag_bin_idx-one(UInt32))*UInt32(1211)
+            prec_bounds_ids = (frag_index.precursor_bins[first(prec_bounds_idx) + M], 
+                              frag_index.precursor_bins[last(prec_bounds_idx) + M])
             searchPrecursorBin!(prec_id_to_score, 
+                                prec_bounds_ids,
                                 getFragments(frag_index),
                                 frag_id_range, 
                                 first(prec_bounds), 
@@ -189,7 +289,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
 
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
-
+    prec_bounds_idx =  FindPrecBinRange(frag_index.frag_bin_mzs, prec_min, prec_max)
     while getLow(getRTBin(frag_index, rt_bin_idx)) < irt_high
         #println("rt_bin_idx $rt_bin_idx irt_high $irt_high getRTBin(frag_index, rt_bin_idx) ", getRTBin(frag_index, rt_bin_idx))
         sub_bin_range = getSubBinRange(getRTBin(frag_index, rt_bin_idx))
@@ -209,6 +309,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
 
             min_frag_bin, upper_bound_guess = queryFragment!(prec_id_to_score, 
                                             min_frag_bin:max_frag_bin, 
+                                            prec_bounds_idx,
                                             upper_bound_guess,
                                             frag_index, 
                                             frag_min, frag_max, 
