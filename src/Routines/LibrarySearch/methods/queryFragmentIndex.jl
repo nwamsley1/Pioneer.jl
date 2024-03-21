@@ -95,24 +95,37 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                             window_max::Float32)
 
         lo, hi = first(frag_id_range), last(frag_id_range)
+        println("lo $lo hi $hi")
         base = lo
         @inbounds @fastmath begin 
-            len = hi - lo
+            len = hi - lo + UInt32(1)
+
             while len > 1
                 mid = len >>> 0x01
                 base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
                 len -= mid
             end
             window_start = base
-            @fastmath len = hi - lo 
+            len = hi - base + UInt32(1)
             base = hi
             while len > 1
                 mid = len >>> 0x01
                 base -= (getPrecMZ(fragments[base - mid + one(UInt32)]) > window_max)*mid
                 len -= mid
             end
-            window_stop = hi
+            window_stop = base
         end
+
+        #if window_start*getPrecMZ(fragments[window_start])<window_min
+        #    println("window_start $window_start window_stop $window_stop low")
+        #    return 
+        #elseif window_stop*getPrecMZ(fragments[window_stop])>window_max
+        #    println("window_start $window_start window_stop $window_stop hihg")
+        #    println("window_max $window_max ", getPrecMZ(fragments[window_stop]))
+        #    return 
+        #end
+        println("window_min $window_min window_max $window_max")
+        println("window_start $window_start window_stop $window_stop")
         #=
         window_stop = window_start
         @inbounds @fastmath while getPrecMZ(fragments[window_stop]) < window_max

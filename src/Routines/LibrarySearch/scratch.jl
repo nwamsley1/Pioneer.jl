@@ -171,14 +171,18 @@ function branchless_binary(t::Vector{Float32},
     #hi_f = hi
     base = lo
     @inbounds @fastmath begin
-        len = hi - lo
+        len = hi - lo + UInt32(1)
+
         while len > 1
             mid = len>>>0x01
             base += (t[base + mid - UInt32(1)] < x)*mid
             len -= mid# - UInt32(1)
         end
-        a = base
-        @fastmath len = hi - lo
+        window_start = base
+        #@fastmath len = hi - base
+        #len = hi - base
+        len = hi - base + UInt32(1)
+        println("len $len")
         base = hi
         while len > 1
             mid = len>>>0x01
@@ -186,19 +190,63 @@ function branchless_binary(t::Vector{Float32},
             #base = (t[base - mid + UInt32(1)] > y) ? base - mid : base
             len -= mid# - UInt32(1)
         end
+
     end
     #lo_f = lo
-    return a, base
+    println("window_start $window_start base $base")
+    return window_start*(t[window_start]>x), (base)*(t[base]<y)
 end
 
 x = 4.1f0
 y = 4.5f0
 test_t = 100.0f0.*sort(rand(Float32, 100000))   
-#test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
-@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
+#@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
 answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
 println(Int64(answer[1]), " ", Int64(answer[2]))
 test_t[first(answer):last(answer)]
+
+test_t = 100.0f0.*sort(rand(Float32, 100000))   
+#@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+test_t[first(answer)-1:last(answer)+1]
+
+x = 3.5f0
+y = 5.0f0
+test_t = 100.0f0.*sort(rand(Float32, 100))   
+#@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100))
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+test_t[first(answer)-1:last(answer)+1]
+
+test_t = [20.0f0, 100.0f0, 200.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(3))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+test_t = [1.0f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(5))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+test_t = [1.0f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(2))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+test_t = [1.0f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(5))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+test_t = [1.0f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(6), UInt32(6))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
 
 function branchless_binary(t::Vector{Float32},
                            x::Float32,
