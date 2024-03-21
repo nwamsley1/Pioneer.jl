@@ -24,29 +24,8 @@ function reset!(c::Counter{I,C}, id::I) where {I,C<:Unsigned}
 end
 
 function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
-    if iszero(c.counts[id])#c.counts[id]<1#iszero(c.counts[id])# == zero(C)
-        c.ids[getSize(c)] = id;
-        update!(c,id,pred_intensity);
-        incSize!(c);
-    else
-        update!(c,id,pred_intensity);
-    end
-    return nothing
-end
-
-function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
     @inbounds @fastmath begin 
-        no_previous_encounter = iszero(c.counts[id])
-        c.ids[c.size] += id*no_previous_encounter;
-        c.size += (no_previous_encounter)
-        c.counts[id] += pred_intensity;
-    end
-    return nothing
-end
-
-function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
-    @inbounds @fastmath begin 
-        no_previous_encounter = iszero(c.counts[id])
+        no_previous_encounter = c.counts[id].==zero(I)
         c.ids[c.size] += no_previous_encounter ? id : zero(I)
         c.size += no_previous_encounter ? one(Int64) : zero(Int64)
         c.counts[id] += pred_intensity;

@@ -50,6 +50,13 @@ test_frags_ref = Vector{DetailedFrag{Float32}}(undef, N)
 fillTestFrags!(test_frags_ref, library_fragment_lookup_table.frags, N)
 @time fillTestFrags!(test_frags, test_frags_ref, N)
 
+eight_bit_ints = rand(UInt8, 10000)
+function isZeroSimple()
+    @inbounds @fastmath begin
+        for 
+    end
+end
+
 using Profile, PProf
 Profile.clear()
 MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
