@@ -76,7 +76,7 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     precs
 #scan_range = (100000, 100010)
 )...);
-pprof(;webport=58700)
+pprof(;webport=58701)
 #pprof(;webport=58599)
 
 FragmentIndex

@@ -34,6 +34,25 @@ function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned}
     return nothing
 end
 
+function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
+    @inbounds @fastmath begin 
+        no_previous_encounter = iszero(c.counts[id])
+        c.ids[c.size] += id*no_previous_encounter;
+        c.size += (no_previous_encounter)
+        c.counts[id] += pred_intensity;
+    end
+    return nothing
+end
+
+function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
+    @inbounds @fastmath begin 
+        no_previous_encounter = iszero(c.counts[id])
+        c.ids[c.size] += no_previous_encounter ? id : zero(I)
+        c.size += no_previous_encounter ? one(Int64) : zero(Int64)
+        c.counts[id] += pred_intensity;
+    end
+    return nothing
+end
 
 import Base.sort!
 function sortCounter!(counter::Counter{I,C}) where {I,C<:Unsigned}
