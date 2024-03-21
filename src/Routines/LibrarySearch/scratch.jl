@@ -134,3 +134,6 @@ f_index_fragments[:IndexFragment]
 )
 
 #Come up with some test cases. Keep trying till they work. 
+
+test_f_bin = f_index_frag_bins[:FragIndexBin][1000000]
+f_index_fragments[getSubBinRange(test_f_bin)]
