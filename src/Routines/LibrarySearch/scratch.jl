@@ -165,6 +165,43 @@ hcat(frag_bin_mzs, precursor_bins[(N-1)*M:(N-1)*M + M - 1])
 
 function branchless_binary(t::Vector{Float32},
                            x::Float32,
+                           y::Float32,
+                           lo::UInt32,
+                           hi::UInt32)
+    #hi_f = hi
+    base = lo
+    @inbounds @fastmath begin
+        len = hi - lo
+        while len > 1
+            mid = len>>>0x01
+            base += (t[base + mid - UInt32(1)] < x)*mid
+            len -= mid# - UInt32(1)
+        end
+        a = base
+        @fastmath len = hi - lo
+        base = hi
+        while len > 1
+            mid = len>>>0x01
+            base -= (t[base - mid + UInt32(1)] > y)*mid
+            #base = (t[base - mid + UInt32(1)] > y) ? base - mid : base
+            len -= mid# - UInt32(1)
+        end
+    end
+    #lo_f = lo
+    return a, base
+end
+
+x = 4.1f0
+y = 4.5f0
+test_t = 100.0f0.*sort(rand(Float32, 100000))   
+#test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
+@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
+function branchless_binary(t::Vector{Float32},
+                           x::Float32,
                            lo::UInt32,
                            hi::UInt32)
     #hi_f = hi
@@ -213,9 +250,7 @@ end
 x = 4.1f0
 y = 4.5f0
 test_t = 10.0f0.*sort(rand(Float32, 1000000))   
-
-test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
-
+#test_t = test_t[(test_t .< 4.0) .| (test_t .> 6.0)]
 answer = branchless_binary(test_t, x, y, UInt32(1000), UInt32(900000))
 println(Int64(answer[1]), " ", Int64(answer[2]))
 test_t[first(answer):last(answer)]

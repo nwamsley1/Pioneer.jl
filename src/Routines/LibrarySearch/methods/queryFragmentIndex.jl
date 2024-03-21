@@ -94,6 +94,57 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                             window_min::Float32, 
                             window_max::Float32)
 
+        lo, hi = first(frag_id_range), last(frag_id_range)
+        base = lo
+        @inbounds @fastmath begin 
+            len = hi - lo
+            while len > 1
+                mid = len >>> 0x01
+                base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
+                len -= mid
+            end
+            window_start = base
+            @fastmath len = hi - lo 
+            base = hi
+            while len > 1
+                mid = len >>> 0x01
+                base -= (getPrecMZ(fragments[base - mid + one(UInt32)]) > window_max)*mid
+                len -= mid
+            end
+            window_stop = hi
+        end
+        #=
+        window_stop = window_start
+        @inbounds @fastmath while getPrecMZ(fragments[window_stop]) < window_max
+            window_stop += 1
+        end
+        window_stop = max(window_stop - 1, window_start)
+        =#
+        
+    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
+                                    fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
+                                    matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
+        @inline @inbounds for i in matched_frag_range
+            frag = fragments[i]
+            inc!(prec_id_to_score, getPrecID(frag), getScore(frag))
+        end
+    end
+    
+    #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
+    #Could be used for testing purposes. 
+    
+    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
+    return 
+
+end
+
+#=
+function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
+                            fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
+                            frag_id_range::UnitRange{UInt32},
+                            window_min::Float32, 
+                            window_max::Float32)
+
     
         #N = getLength(precursor_bin)
         N =  last(frag_id_range)
@@ -150,53 +201,6 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     #Could be used for testing purposes. 
     
     addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
-    return 
-
-end
-
-#=
-function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                            fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
-                            frag_id_range::UnitRange{UInt32},
-                            window_min::Float32, 
-                            window_max::Float32)
-
-        lo, hi = first(frag_id_range), last(frag_id_range)
-        base = lo
-        @inbounds @fastmath begin 
-            len = hi - lo 
-
-            while len > 1
-                mid = len>>>0x01
-                base +=  (getPrecMZ(fragments[base + mid - UInt32(1)]) < window_min)*mid
-                len -= mid
-            end
-
-            window_start = base
-            #len = hi - lo#base - UInt32(1)
-            len = hi - base
-            base = hi
-            while len > 1
-                mid = len>>>0x01
-                base -= (getPrecMZ(fragments[base - mid + UInt32(1)]) > window_max)*mid
-                len -= mid
-            end
-            window_stop = base
-        end
-
-    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                                    fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
-                                    matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
-        @inline @inbounds for i in matched_frag_range
-            frag = fragments[i]
-            inc!(prec_id_to_score, getPrecID(frag), getScore(frag))
-        end
-    end
-    
-    #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
-    #Could be used for testing purposes. 
-    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
-
     return 
 
 end
