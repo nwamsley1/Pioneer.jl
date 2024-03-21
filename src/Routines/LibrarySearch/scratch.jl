@@ -162,6 +162,29 @@ for i in range(1, length(frag_bin_mzs))
 end
 
 hcat(frag_bin_mzs, precursor_bins[(N-1)*M:(N-1)*M + M - 1])
+@time PSMs = vcat(mainLibrarySearch(
+           MS_TABLE,
+           prosit_lib["f_index"],
+           prosit_lib["precursors"],
+           library_fragment_lookup_table,
+           RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+           UInt32(ms_file_idx), #MS_FILE_IDX
+           frag_err_dist_dict[ms_file_idx],
+           irt_errs[ms_file_idx],
+           params_,
+           ionMatches,
+           ionMisses,
+           all_fmatches,
+           IDtoCOL,
+           ionTemplates,
+           iso_splines,
+           scored_PSMs,
+           unscored_PSMs,
+           spectral_scores,
+           precursor_weights,
+           precs
+       #scan_range = (100000, 100010)
+       )...);
 
 function branchless_binary(t::Vector{Float32},
                            x::Float32,
@@ -179,8 +202,6 @@ function branchless_binary(t::Vector{Float32},
             len -= mid# - UInt32(1)
         end
         window_start = base
-        #@fastmath len = hi - base
-        #len = hi - base
         len = hi - base + UInt32(1)
         println("len $len")
         base = hi
@@ -241,6 +262,13 @@ test_t = [1.0f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
 answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(5))
 println(Int64(answer[1]), " ", Int64(answer[2]))
 test_t[first(answer):last(answer)]
+
+
+test_t = [1.0f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary(test_t, x, y, UInt32(3), UInt32(5))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+
 
 test_t = [1.0f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
 answer = branchless_binary(test_t, x, y, UInt32(6), UInt32(6))

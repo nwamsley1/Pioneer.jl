@@ -198,9 +198,9 @@ function searchRAW(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
         
-        if (i < 100000) | (i > 100000)
-            continue
-        end
+        #if (i < 100000) | (i > 100000)
+        #    continue
+        #end
         first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
         

@@ -95,11 +95,9 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                             window_max::Float32)
 
         lo, hi = first(frag_id_range), last(frag_id_range)
-        println("lo $lo hi $hi")
         base = lo
         @inbounds @fastmath begin 
             len = hi - lo + UInt32(1)
-
             while len > 1
                 mid = len >>> 0x01
                 base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
@@ -114,25 +112,11 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                 len -= mid
             end
             window_stop = base
-        end
 
-        #if window_start*getPrecMZ(fragments[window_start])<window_min
-        #    println("window_start $window_start window_stop $window_stop low")
-        #    return 
-        #elseif window_stop*getPrecMZ(fragments[window_stop])>window_max
-        #    println("window_start $window_start window_stop $window_stop hihg")
-        #    println("window_max $window_max ", getPrecMZ(fragments[window_stop]))
-        #    return 
-        #end
-        println("window_min $window_min window_max $window_max")
-        println("window_start $window_start window_stop $window_stop")
-        #=
-        window_stop = window_start
-        @inbounds @fastmath while getPrecMZ(fragments[window_stop]) < window_max
-            window_stop += 1
+            if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
+                return 
+            end
         end
-        window_stop = max(window_stop - 1, window_start)
-        =#
         
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
                                     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
@@ -146,7 +130,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
     #Could be used for testing purposes. 
     
-    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
+    @inline addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
     return 
 
 end
