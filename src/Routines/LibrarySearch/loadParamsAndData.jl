@@ -193,8 +193,6 @@ f_index = FragmentIndex(
     f_index_frag_bins[:FragIndexBin],
     f_index_rt_bins[:FragIndexBin],
     f_index_fragments[:IndexFragment],
-    precursor_bins[:PrecursorBin],
-    frag_bin_mzs[:FragBinMZ]
 );
 prosit_lib["f_index"] = f_index;
 prosit_lib["precursors"] = precursors;

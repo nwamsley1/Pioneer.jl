@@ -89,13 +89,12 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
 end
 =#
 function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                            prec_bounds_idx::Tuple{UInt32, UInt32},
                             fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
                             frag_id_range::UnitRange{UInt32},
                             window_min::Float32, 
                             window_max::Float32)
 
-        #=
+    
         #N = getLength(precursor_bin)
         N =  last(frag_id_range)
         #lo, hi = 1, N
@@ -137,7 +136,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         end
         window_stop = max(window_stop - 1, window_start)
         =#
-        =#
+        
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
                                     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
                                     matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
@@ -150,9 +149,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
     #Could be used for testing purposes. 
     
-    #addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
-    #println("test ",  Int64(first(prec_bounds_idx)):Int64((last(prec_bounds_idx)-one(UInt32))))
-    addFragmentMatches!(prec_id_to_score, fragments, first(prec_bounds_idx):(last(prec_bounds_idx)-one(UInt32)))
+    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
     return 
 
 end
@@ -206,7 +203,6 @@ end
 =#
 function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8}, 
                         frag_bin_range::UnitRange{UInt32},
-                        prec_bounds_idx::Tuple{UInt32, UInt32},
                         upper_bound_guess::UInt32,
                         frag_index::FragmentIndex{Float32}, 
                         frag_min::Float32, frag_max::Float32, 
@@ -234,11 +230,7 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
         else
             frag_id_range = getSubBinRange(frag_bin)
             #Search the fragment range for fragments with precursors in the precursor tolerance
-            M = (frag_bin_idx-one(UInt32))*UInt32(1211)
-            prec_bounds_ids = (frag_index.precursor_bins[first(prec_bounds_idx) + M], 
-                              frag_index.precursor_bins[last(prec_bounds_idx) + M])
             searchPrecursorBin!(prec_id_to_score, 
-                                prec_bounds_ids,
                                 getFragments(frag_index),
                                 frag_id_range, 
                                 first(prec_bounds), 
@@ -289,7 +281,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
 
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
-    prec_bounds_idx =  FindPrecBinRange(frag_index.frag_bin_mzs, prec_min, prec_max)
     while getLow(getRTBin(frag_index, rt_bin_idx)) < irt_high
         #println("rt_bin_idx $rt_bin_idx irt_high $irt_high getRTBin(frag_index, rt_bin_idx) ", getRTBin(frag_index, rt_bin_idx))
         sub_bin_range = getSubBinRange(getRTBin(frag_index, rt_bin_idx))
@@ -309,7 +300,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
 
             min_frag_bin, upper_bound_guess = queryFragment!(prec_id_to_score, 
                                             min_frag_bin:max_frag_bin, 
-                                            prec_bounds_idx,
                                             upper_bound_guess,
                                             frag_index, 
                                             frag_min, frag_max, 

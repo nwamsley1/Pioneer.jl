@@ -89,8 +89,6 @@ struct FragmentIndex{T<:AbstractFloat}
     fragment_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}
     rt_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}
     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}
-    precursor_bins::Arrow.Primitive{UInt32, Vector{UInt32}}
-    frag_bin_mzs::Arrow.Primitive{T, Vector{T}}
 end
 #struct FragmentIndex{T<:AbstractFloat}
 #    fragment_bins::Vector{FragIndexBin{T}}
