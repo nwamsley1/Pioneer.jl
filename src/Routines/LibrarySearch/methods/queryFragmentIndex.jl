@@ -98,7 +98,8 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         base = lo
         @inbounds @fastmath begin 
             len = hi - lo + UInt32(1)
-            if len > 4 #If query range is sufficiently large, do a branchless binary search
+            #println("len $len")
+            if len > 2 #If query range is sufficiently large, do a branchless binary search
                 while len > 1
                     mid = len >>> 0x01
                     base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
@@ -117,25 +118,23 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                 if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
                     return 
                 end
-            
             else #Query range is small, do linear search
                 window_start, window_stop = lo, hi
                 #println("a window_start $window_start window_stop $window_stop")
-                matched = (getPrecMZ(fragments[window_start])<window_min)
-                while (matched) & (window_start < hi)
-                    window_start += matched
-                    matched = (getPrecMZ(fragments[window_start])<window_min)
-                end
-                matched = (getPrecMZ(fragments[window_stop])>window_max)
-                while matched & (window_stop > window_start)
-                    window_stop -= matched
-                    matched = (getPrecMZ(fragments[window_stop])>window_max)
-                end
-                #println("b window_start $window_start window_stop $window_stop")
-                if window_start > window_stop
-                    return 
+                while true #(window_stop >= window_start)
+                    matched_lo = (getPrecMZ(fragments[window_start])<window_min)
+                    window_start += matched_lo
+                    matched_hi = (getPrecMZ(fragments[window_stop])>window_max)
+                    window_stop -= matched_hi
+                    if window_start > window_stop
+                        return 
+                    end
+                    if (matched_lo === false) === (matched_hi === false)
+                        break
+                    end
                 end
             end
+            
             
         end
         
