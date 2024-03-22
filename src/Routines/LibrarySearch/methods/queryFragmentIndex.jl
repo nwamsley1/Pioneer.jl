@@ -11,10 +11,11 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
     #@fastmath mid = lo + (hi - lo)>>>0x08
     @inbounds @fastmath begin
         len = hi - lo + UInt32(1)
+        mid = len>>>0x04
         while len > 1
-            mid = len>>>0x01
             base += (getHigh(frag_index_bins[base + mid - UInt32(1)]) < frag_min)*mid
             len -= mid
+            mid = len>>>0x01
         end
     end
 
@@ -67,7 +68,8 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
             #if len > 2 #If query range is sufficiently large, do a branchless binary search
                 while len > 1
                     mid = len >>> 0x01
-                    base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
+                    frag = fragments[base + mid - one(UInt32)]
+                    base += (getPrecMZ(frag) < window_min)*mid
                     len -= mid
                 end
                 window_start = base
@@ -75,7 +77,8 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                 base = hi
                 while len > 1
                     mid = len >>> 0x01
-                    base -= (getPrecMZ(fragments[base - mid + one(UInt32)]) > window_max)*mid
+                    frag = fragments[base - mid + one(UInt32)]
+                    base -= (getPrecMZ(frag) > window_max)*mid
                     len -= mid
                 end
                 window_stop = base
