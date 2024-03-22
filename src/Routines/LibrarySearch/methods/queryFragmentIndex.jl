@@ -60,53 +60,32 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                             window_min::Float32, 
                             window_max::Float32)
 
-        lo, hi = first(frag_id_range), last(frag_id_range)
-        base = lo
-        @inbounds @fastmath begin 
-            len = hi - lo + UInt32(1)
-            #println("len $len")
-            #if len > 2 #If query range is sufficiently large, do a branchless binary search
-                while len > 1
-                    mid = len >>> 0x01
-                    frag = fragments[base + mid - one(UInt32)]
-                    base += (getPrecMZ(frag) < window_min)*mid
-                    len -= mid
-                end
-                window_start = base
-                len = hi - base + UInt32(1)
-                base = hi
-                while len > 1
-                    mid = len >>> 0x01
-                    frag = fragments[base - mid + one(UInt32)]
-                    base -= (getPrecMZ(frag) > window_max)*mid
-                    len -= mid
-                end
-                window_stop = base
-
-                if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
-                    return 
-                end
-            #=
-            else #Query range is small, do linear search
-                window_start, window_stop = lo, hi
-                #println("a window_start $window_start window_stop $window_stop")
-                while true #(window_stop >= window_start)
-                    matched_lo = (getPrecMZ(fragments[window_start])<window_min)
-                    window_start += matched_lo
-                    matched_hi = (getPrecMZ(fragments[window_stop])>window_max)
-                    window_stop -= matched_hi
-                    if window_start > window_stop
-                        return 
-                    end
-                    if (matched_lo === false) === (matched_hi === false)
-                        break
-                    end
-                end
-            end
-            =#
-            
-            
+    lo, hi = first(frag_id_range), last(frag_id_range)
+    base = lo
+    @inbounds @fastmath begin 
+        len = hi - lo + UInt32(1)
+        while len > 1
+            mid = len >>> 0x01
+            base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
+            len -= mid
         end
+        window_start = base
+        if (getPrecMZ(fragments[window_start]) > window_max)
+            return
+        else
+            len = hi - base + UInt32(1)
+            base = hi
+            while len > 1
+                mid = len >>> 0x01
+                base -= (getPrecMZ( fragments[base - mid + one(UInt32)]) > window_max)*mid
+                len -= mid
+            end
+            window_stop = base
+        end
+        if getPrecMZ(fragments[window_stop])<window_min
+            return
+        end
+    end
         
     function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
                                     fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 

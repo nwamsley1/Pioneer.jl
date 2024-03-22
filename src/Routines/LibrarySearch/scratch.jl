@@ -306,12 +306,16 @@ answer = branchless_binary_a(test_t, x, UInt32(1), UInt32(100))
 println(Int64(answer), " ", Int64(answer))
 test_t[answer-1:answer+1]
 #test_t[first(answer)-1:last(answer)+1]
+test_t = [3.6f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary_a(test_t, x, UInt32(1), UInt32(2))
+println(Int64(answer), " ", Int64(answer))
+test_t[answer-1:answer+1]
 
 
-test_t = 10.0f0.*sort(rand(Float32, 1000000))   
-x = 5.5f0
-answer = branchless_binary(test_t, x, UInt32(1000), UInt32(900000))
-test_t[answer]
+test_t = [1.0f0, 4.2f0, 20.0f0, 100.0f0, 200.0f0, 200.0f0, 300.0f0]
+answer = branchless_binary_a(test_t, x, UInt32(1), UInt32(2))
+println(Int64(answer), " ", Int64(answer))
+test_t[answer-1:answer+1]
 
 function branchless_binary(t::Vector{Float32},
                            x::Float32,
