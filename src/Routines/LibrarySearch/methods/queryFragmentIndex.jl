@@ -5,10 +5,33 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
                                 frag_max::Float32) #where {T<:AbstractFloat}
     #Binary Search
     lo, hi = first(frag_bin_range), last(frag_bin_range)
+    base = lo
+    #potential_match = zero(UInt32)
+    #@fastmath mid = (lo + hi)>>>0x01 #min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    #@fastmath mid = lo + (hi - lo)>>>0x08
+    @inbounds @fastmath begin
+        len = hi - lo + UInt32(1)
+        while len > 1
+            mid = len>>>0x01
+            base += (getHigh(frag_index_bins[base + mid - UInt32(1)]) < frag_min)*mid
+            len -= mid
+        end
+    end
+
+    return base, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
+end
+#=
+function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
+                                frag_bin_range::UnitRange{UInt32},
+                                upper_bound_guess::UInt32,
+                                frag_min::Float32, 
+                                frag_max::Float32) #where {T<:AbstractFloat}
+    #Binary Search
+    lo, hi = first(frag_bin_range), last(frag_bin_range)
     @fastmath len = hi - lo
     potential_match = zero(UInt32)
-    #@fastmath mid = (lo + hi)>>>0x01 #min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
-    @fastmath mid = lo + (hi - lo)>>>0x08
+    @fastmath mid = (lo + hi)>>>0x01 #min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    #@fastmath mid = lo + (hi - lo)>>>0x08
     @inbounds @fastmath while lo <= hi
 
         if (frag_min) < getHigh(frag_index_bins[mid])
@@ -28,64 +51,6 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
     end
 
     return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
-end
-#=
-function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
-                                frag_bin_range::UnitRange{UInt32},
-                                upper_bound_guess::UInt32,
-                                frag_min::Float32, 
-                                frag_max::Float32) #where {T<:AbstractFloat}
-    #Binary Search
-    lo, hi = first(frag_bin_range), last(frag_bin_range)
-    @fastmath len = hi - lo
-    potential_match = zero(UInt32)
-    @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
-    @inbounds @fastmath while lo <= hi
-
-        if (frag_min) <= getHigh(frag_index_bins[mid])
-            if (frag_max) >= getHigh(frag_index_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
-                potential_match = UInt32(mid)
-            end
-            hi = mid - one(UInt32)
-            #mid = (lo + hi)÷2
-        elseif (frag_max) >= getLow(frag_index_bins[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
-            if (frag_min) <= getLow(frag_index_bins[mid])
-                potential_match = UInt32(mid)
-            end
-            lo = mid + one(UInt32)
-            #mid = hi - (hi - lo)÷10
-        end
-        mid = (lo + hi) >>> 0x01
-    end
-
-    return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
-end
-function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
-                                frag_bin_range::UnitRange{UInt32},
-                                upper_bound_guess::UInt32,
-                                frag_min::Float32, 
-                                frag_max::Float32) #where {T<:AbstractFloat}
-    #Binary Search
-    lo, hi = first(frag_bin_range), last(frag_bin_range)
-    @fastmath len = hi - lo
-    #potential_match = zero(UInt32)
-    #@fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
-    @fastmath mid = len>>>0x01
-    @inbounds @fastmath while (len > 0x01)
-        #lo += (getHigh(frag_index_bins[mid-one(UInt32)]) >= frag_min)*mid 
-        lo += (getHigh(frag_index_bins[mid + lo - one(UInt32)]) >= frag_min)*(getLow(frag_index_bins[mid + lo - one(UInt32)]) < frag_max)*mid 
-        len -= mid 
-        mid = len>>>0x01
-    end
-
-    @inbounds @fastmath begin
-        if (mid == one(UInt32)) & (lo == first(frag_bin_range))
-            return zero(UInt32), one(UInt32)
-        else
-            return lo, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
-        end
-    end
-
 end
 =#
 function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 

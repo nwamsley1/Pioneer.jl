@@ -283,7 +283,7 @@ println(Int64(answer[1]), " ", Int64(answer[2]))
 test_t[first(answer):last(answer)]
 
 
-function branchless_binary(t::Vector{Float32},
+function branchless_binary_a(t::Vector{Float32},
                            x::Float32,
                            lo::UInt32,
                            hi::UInt32)
@@ -298,6 +298,15 @@ function branchless_binary(t::Vector{Float32},
     #lo_f = lo
     return base
 end
+x = 3.5f0
+y = 5.0f0
+test_t = 100.0f0.*sort(rand(Float32, 100))   
+#@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100))
+answer = branchless_binary_a(test_t, x, UInt32(1), UInt32(100))
+println(Int64(answer), " ", Int64(answer))
+test_t[answer-1:answer+1]
+#test_t[first(answer)-1:last(answer)+1]
+
 
 test_t = 10.0f0.*sort(rand(Float32, 1000000))   
 x = 5.5f0
