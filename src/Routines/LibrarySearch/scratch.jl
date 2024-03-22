@@ -218,11 +218,18 @@ function branchless_binary(t::Vector{Float32},
             #base = (t[base - mid + UInt32(1)] > y) ? base - mid : base
             len -= mid# - UInt32(1)
         end
+        window_stop = base
 
+        if window_start === window_stop
+            if t[window_start]>y
+                return one(UInt32), zero(UInt32)
+            end
+            if t[window_stop]<x
+                return one(UInt32), zero(UInt32)
+            end
+        end
     end
-    #lo_f = lo
-    println("window_start $window_start base $base")
-    return window_start*(t[window_start]>x), (base)*(t[base]<y)
+    return window_start, window_stop
 end
 
 x = 4.1f0

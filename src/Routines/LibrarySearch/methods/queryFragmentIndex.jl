@@ -70,20 +70,23 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
             len -= mid
         end
         window_start = base
-        if (getPrecMZ(fragments[window_start]) > window_max)
-            return
-        else
-            len = hi - base + UInt32(1)
-            base = hi
-            while len > 1
-                mid = len >>> 0x01
-                base -= (getPrecMZ( fragments[base - mid + one(UInt32)]) > window_max)*mid
-                len -= mid
-            end
-            window_stop = base
+        len = hi - base + UInt32(1)
+        base = hi
+        mid = len >>> 0x01
+        while len > 1
+            base -= (getPrecMZ( fragments[base - mid + one(UInt32)]) > window_max)*mid
+            mid = (hi - base + UInt32(1)) >>> 0x01
+            len -= mid
         end
-        if getPrecMZ(fragments[window_stop])<window_min
-            return
+        window_stop = base
+
+        if window_start === window_stop
+            if (getPrecMZ(fragments[window_start])>window_max)
+                return 
+            end
+            if getPrecMZ(fragments[window_stop])<window_min
+                return 
+            end
         end
     end
         
