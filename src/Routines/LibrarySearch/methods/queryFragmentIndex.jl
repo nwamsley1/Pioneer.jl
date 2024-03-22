@@ -7,7 +7,8 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
     lo, hi = first(frag_bin_range), last(frag_bin_range)
     @fastmath len = hi - lo
     potential_match = zero(UInt32)
-    @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    #@fastmath mid = (lo + hi)>>>0x01 #min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
+    @fastmath mid = lo + (hi - lo)>>>0x08
     @inbounds @fastmath while lo <= hi
 
         if (frag_min) < getHigh(frag_index_bins[mid])
