@@ -10,14 +10,14 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
     @fastmath mid = (lo + hi)>>>0x01#min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
     @inbounds @fastmath while lo <= hi
 
-        if (frag_min) <= getHigh(frag_index_bins[mid])
-            if (frag_max) >= getHigh(frag_index_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
+        if (frag_min) < getHigh(frag_index_bins[mid])
+            if (frag_max) > getHigh(frag_index_bins[mid]) #Frag tolerance overlaps the upper boundary of the frag bin
                 potential_match = UInt32(mid)
             end
             hi = mid - one(UInt32)
             #mid = (lo + hi)÷2
-        elseif (frag_max) >= getLow(frag_index_bins[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
-            if (frag_min) <= getLow(frag_index_bins[mid])
+        elseif (frag_max) > getLow(frag_index_bins[mid]) #Frag tolerance overlaps the lower boundary of the frag bin
+            if (frag_min) < getLow(frag_index_bins[mid])
                 potential_match = UInt32(mid)
             end
             lo = mid + one(UInt32)
@@ -59,7 +59,6 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
 
     return potential_match, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
 end
-
 function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}, 
                                 frag_bin_range::UnitRange{UInt32},
                                 upper_bound_guess::UInt32,
@@ -99,7 +98,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
         @inbounds @fastmath begin 
             len = hi - lo + UInt32(1)
             #println("len $len")
-            if len > 2 #If query range is sufficiently large, do a branchless binary search
+            #if len > 2 #If query range is sufficiently large, do a branchless binary search
                 while len > 1
                     mid = len >>> 0x01
                     base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
@@ -118,6 +117,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                 if (getPrecMZ(fragments[window_start])<window_min) | (getPrecMZ(fragments[window_stop])>window_max)
                     return 
                 end
+            #=
             else #Query range is small, do linear search
                 window_start, window_stop = lo, hi
                 #println("a window_start $window_start window_stop $window_stop")
@@ -134,6 +134,7 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
                     end
                 end
             end
+            =#
             
             
         end
