@@ -5,18 +5,28 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
                                 frag_max::Float32) #where {T<:AbstractFloat}
     #Binary Search
     lo, hi = first(frag_bin_range), last(frag_bin_range)
-    base = lo
+    #base = lo
+
+
     #potential_match = zero(UInt32)
     #@fastmath mid = (lo + hi)>>>0x01 #min(lo + (upper_bound_guess*UInt32(2)), (lo + hi)>>>1)#(hi - lo)÷upper_bound_guess
     #@fastmath mid = lo + (hi - lo)>>>0x08
     @inbounds @fastmath begin
+
+        init_guess = min(lo + UInt32(1000), hi) #(hi - lo) >>> 0x04
+        tf =  (getHigh(frag_index_bins[init_guess]) < frag_min)
+        hi = (one(UInt32) - tf)*init_guess + (tf)*hi
         len = hi - lo + UInt32(1)
-        mid = len>>>0x04
+        mid = len>>>0x01
+        base = lo
+        #n = 0
         while len > 1
+            #n += 1
             base += (getHigh(frag_index_bins[base + mid - UInt32(1)]) < frag_min)*mid
             len -= mid
             mid = len>>>0x01
         end
+        #println("n $n intit_guess $init_guess tf - $tf : diff - ", base - first(frag_bin_range), "diff -2 ", last(frag_bin_range) - first(frag_bin_range))
     end
 
     return base, one(UInt32)#UInt32(max(potential_match, lo + 1) - lo)#UInt32(2*(hi_f - low_f)÷(mid - low_f))
@@ -64,18 +74,29 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
     base = lo
     @inbounds @fastmath begin 
         len = hi - lo + UInt32(1)
+        gd = min(UInt32(2),len)
+        #if gd < 3
+        #    println("gd $gd")
+        #end
         while len > 1
             mid = len >>> 0x01
             base += (getPrecMZ(fragments[base + mid - one(UInt32)]) < window_min)*mid
             len -= mid
         end
         window_start = base
-        len = hi - base + UInt32(1)
+
+        #Next three lines implement an initial guess strategy. 
+        #Worth making a branch to only do this if the len is greater than 2? 
+        init_guess = min(window_start + gd,hi) #Could exceed bounds. 
+        tf = (getPrecMZ(fragments[init_guess])>window_max)
+        hi = tf*init_guess + (one(UInt32)-tf)*hi
+
+
+        len = hi - base  + one(UInt32)
         base = hi
-        mid = len >>> 0x01
         while len > 1
+            mid = len>>>0x01
             base -= (getPrecMZ( fragments[base - mid + one(UInt32)]) > window_max)*mid
-            mid = (hi - base + UInt32(1)) >>> 0x01
             len -= mid
         end
         window_stop = base
@@ -107,73 +128,6 @@ function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8},
 
 end
 
-#=
-function searchPrecursorBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                            fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)},
-                            frag_id_range::UnitRange{UInt32},
-                            window_min::Float32, 
-                            window_max::Float32)
-
-    
-        #N = getLength(precursor_bin)
-        N =  last(frag_id_range)
-        #lo, hi = 1, N
-        lo, hi = first(frag_id_range), N
-        @inbounds @fastmath begin 
-            while lo <= hi
-                mid = (lo + hi) >>> 0x01
-                if getPrecMZ(fragments[mid]) < window_min
-                    lo = mid + one(UInt32)
-                else
-                    hi = mid - one(UInt32)
-                end
-            end
-
-            window_start = (lo <= N ? lo : return)
-
-
-            if getPrecMZ(fragments[window_start]) > window_max
-                return 
-            end
-            
-            lo, hi = window_start, N
-
-            while lo <= hi
-                mid = (lo + hi) >>> 0x01
-                if getPrecMZ(fragments[mid]) > window_max
-                    hi = mid - UInt32(1)
-                else
-                    lo = mid + UInt32(1)
-                end
-            end
-
-            window_stop = hi
-        end
-        #=
-        window_stop = window_start
-        @inbounds @fastmath while getPrecMZ(fragments[window_stop]) < window_max
-            window_stop += 1
-        end
-        window_stop = max(window_stop - 1, window_start)
-        =#
-        
-    function addFragmentMatches!(prec_id_to_score::Counter{UInt32, UInt8}, 
-                                    fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}, 
-                                    matched_frag_range::UnitRange{UInt32})# where {T,U<:AbstractFloat}
-        @inline @inbounds for i in matched_frag_range
-            frag = fragments[i]
-            inc!(prec_id_to_score, getPrecID(frag), getScore(frag))
-        end
-    end
-    
-    #Slower, but for clarity, could have used searchsortedfirst and searchsortedlast to get the same result.
-    #Could be used for testing purposes. 
-    
-    addFragmentMatches!(prec_id_to_score, fragments, window_start:window_stop)
-    return 
-
-end
-=#
 function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8}, 
                         frag_bin_range::UnitRange{UInt32},
                         upper_bound_guess::UInt32,
@@ -261,7 +215,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         old_min_frag_bin = min_frag_bin
         upper_bound_guess = UInt32((min_frag_bin + max_frag_bin)÷2)#UInt32(min_frag_bin + 1)
         @inbounds for (mass, intensity) in zip(masses, intensities)
-            mass, intensity = coalesce(mass, zero(U)),  coalesce(intensity, zero(U))
+            #mass, intensity = coalesce(mass, zero(U)),  coalesce(intensity, zero(U))
             #Get intensity dependent fragment tolerance
             frag_min, frag_max, MIN_ALL_FRAGS = getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
             #Don't avance the minimum frag bin if it is still possible to encounter a smaller matching fragment 

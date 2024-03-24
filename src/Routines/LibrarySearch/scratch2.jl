@@ -14,23 +14,25 @@ function branchless_binary(t::Vector{Float32},
             len -= mid# - UInt32(1)
         end
         window_start = base
-        len = hi - base + UInt32(1)
-        base = hi
-        mid = len>>>0x01
-        init_guess = window_start + UInt32(1)
 
-        tf = t[init_guess]>y
-        base -= tf*mid
-        len = hi - tf*init_guess + one(UInt32)#hi - base + UInt32(1)
-        #println("lo $lo hi $hi init_guess $init_guess mid $mid")
+        #Make initial guess closer to lhs
+        init_guess = min(window_start + UInt32(2),hi) #Could exceed bounds. 
+        tf = t[init_guess]>y  #Is the initial guess greater than the query
+        hi = tf*init_guess + (one(UInt32)-tf)*hi
+        len = hi - base  + one(UInt32)
+        base = hi
+        #If guess wass correct, adjust starting point of search and search length. 
+        #base = tf*(init_guess - hi) + hi#tf*(hi - lo) + lo#(#What would mid be if the initial guess was true?)
+        #len = (UInt32(4))*(tf) + (1-tf)*((hi - window_start + UInt32(1)))
+        #println("tf $tf base $base len $len window_start $window_start hi $hi")
         while len > 1
             mid = len>>>0x01
             base -= (t[base - mid + UInt32(1)] > y)*mid
             len -= mid
-            println("base $base len $len")
         end
         window_stop = base
-
+        #println("tf $tf base $base len $len window_start $window_start window_stop $window_stop hi $hi")
+        #println("test ", window_start === window_stop)
         if window_start === window_stop
             if t[window_start]>y
                 return one(UInt32), zero(UInt32)
@@ -58,10 +60,22 @@ x = 4.1f0
 y = 4.5f0
 test_t = Float32[0.0, 4.1, 5.0, 5.2]
 #@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
-answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(4))
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(3))
 println(Int64(answer[1]), " ", Int64(answer[2]))
 test_t[first(answer):last(answer)]
 test_t[first(answer)-1:last(answer)+1]
+
+
+
+x = 4.1f0
+y = 4.5f0
+test_t = Float32[0.0, 4.1, 5.0]
+#@btime answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(100000))
+answer = branchless_binary(test_t, x, y, UInt32(1), UInt32(1))
+println(Int64(answer[1]), " ", Int64(answer[2]))
+test_t[first(answer):last(answer)]
+test_t[first(answer)-1:last(answer)+1]
+
 
 x = 4.1f0
 y = 4.5f0
