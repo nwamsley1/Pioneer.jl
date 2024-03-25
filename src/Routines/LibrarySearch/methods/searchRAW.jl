@@ -240,6 +240,14 @@ function searchRAW(
                         isotope_err_bounds,
                         min_score = min_index_search_score,
                         )
+
+            #if ion_idx < Inf
+                reset!(ionTemplates, ion_idx)
+                #if !ismissing(precs)
+                reset!(precs)
+                #end
+                continue
+            #end
             #return precs
             #println("scan_idx $i precs.matches ", precs.matches)
             #println("precs.matches ", precs.matches)
@@ -291,7 +299,7 @@ function searchRAW(
         #return precs
         #If one or fewer fragment ions matched to the spectrum, don't bother
         #continue
-        if ion_idx < 2
+        if ion_idx < Inf
             reset!(ionTemplates, ion_idx)
             if !ismissing(precs)
             reset!(precs)
