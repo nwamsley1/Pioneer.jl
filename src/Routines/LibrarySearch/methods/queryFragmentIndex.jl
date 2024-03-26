@@ -10,13 +10,19 @@ function findFirstFragmentBin(frag_index_bins::Arrow.Struct{FragIndexBin, Tuple{
         tf =  (getHigh(frag_index_bins[upper_bound_guess]) < frag_min)
         n = zero(UInt8)
         #exponential search for new upper and lower bounds 
-        while tf & (upper_bound_guess <= frag_bin_max_idx) #Need a new upper and lower bound guess 
+        while tf #Need a new upper and lower bound guess 
             lower_bound_guess = upper_bound_guess 
-            upper_bound_guess += UInt32(2048) << n 
+            upper_bound_guess += UInt32(512) << n#UInt32(2048) << n
+            if upper_bound_guess > frag_bin_max_idx
+                upper_bound_guess = frag_bin_max_idx
+                if (getHigh(frag_index_bins[upper_bound_guess]) < frag_min)
+                    return lower_bound_guess, lower_bound_guess, upper_bound_guess
+                end
+                break
+            end
             tf = (getHigh(frag_index_bins[upper_bound_guess]) < frag_min)
             n += one(UInt8)
         end
-        upper_bound_guess = min(upper_bound_guess, frag_bin_max_idx)
         len = upper_bound_guess - lower_bound_guess + UInt32(1)
         mid = len>>>0x01
         base = lower_bound_guess

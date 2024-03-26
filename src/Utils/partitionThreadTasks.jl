@@ -44,6 +44,9 @@ function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Uni
 end
 
 function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
+                                rt::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},
+                                prec_mz::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},
+                                ms_order::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}},
                                 n_threads::Int,
                                 tasks_per_thread::Int)
     total_peaks = sum(length.(spectra))
@@ -73,13 +76,27 @@ function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Uni
         end
     end
     =#
-    spectra_count = length(spectra)
+    spectra_ids = collect([x for x in range(1, length(spectra)) if ms_order[x]==2])
+    bin_start, bin_stop = 1, 1
+    for i in range(1, length(spectra_ids))
+        if rt[i] - rt[bin_start] > 1.0f0
+            bin_stop = i - 1
+            sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->Int64(round(prec_mz[x])))
+            bin_start, bin_stop = i, i
+        end
+    end
+    bin_stop = length(spectra_ids)
+    sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->Int64(round(prec_mz[x])))
+    spectra_count = length(spectra_ids)
     scans_per_thread = spectra_count÷n_threads + n_threads
     thread_tasks = [[0, zeros(Int64, scans_per_thread)] for _ in range(1, n_threads)]
     for (thread_id, task) in enumerate(thread_tasks)
         task[1] = thread_id
         for i in range(1, length(task[2]))
-            task[2][i] = n_threads*(i - 1) - thread_id + n_threads + 1
+            id = n_threads*(i - 1) - thread_id + n_threads + 1
+            if id <= length(spectra_ids)
+            task[2][i] = spectra_ids[id]
+            end
         end
     end
     return thread_tasks, total_peaks

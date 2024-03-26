@@ -1,4 +1,6 @@
 function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
+                            scan_to_prec_idx::UnitRange{Int64},
+                            precursors_passed_scoring::Vector{UInt32},
                             prec_mzs::Arrow.Primitive{Float32, Vector{Float32}},
                             prec_charges::Arrow.Primitive{UInt8, Vector{UInt8}},
                             prec_irts::Arrow.Primitive{Float32, Vector{Float32}},
@@ -7,24 +9,22 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             #precursors::Vector{LibraryPrecursor{Float32}}
-                            counter::Counter{UInt32,UInt8},
+                            #counter::Counter{UInt32,UInt8},
                             iRT::Float32, 
                             iRT_tol::Float32, 
                             mz_bounds::Tuple{Float32, Float32};
                             isotope_err_bounds::Tuple{Int64,Int64} = (3, 1),
                             block_size::Int64 = 10000)# where {V,W<:AbstractFloat}
 
-    i = 1
     transition_idx = 0
-    while i <= counter.matches
+    for i in scan_to_prec_idx
 
        
-        prec_idx = getID(counter, i)
+        prec_idx =  precursors_passed_scoring[i]
         prec_charge = prec_charges[prec_idx]
         prec_mz = prec_mzs[prec_idx]
         #Enforce iRT tolerance on precursors
         if abs(prec_irts[prec_idx] - iRT) > iRT_tol
-            i += 1
              continue
         end
 
@@ -33,7 +33,6 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
         mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/prec_charge
 
         if (prec_mz < mz_low) | (prec_mz > mz_high)
-            i += 1
             continue
         end
 
@@ -46,7 +45,6 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
             end
             #Grow array if exceeds length
         end
-        i += 1
     end
 
     sort!(@view(transitions[1:transition_idx]), 
@@ -55,7 +53,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
             #alg = TimSort)
     )
 
-    reset!(counter)
+    #reset!(counter)
 
     #return transition_idx, 0#sort!(transitions, by = x->getFragMZ(x))
     return transition_idx, false

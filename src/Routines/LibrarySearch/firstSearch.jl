@@ -90,6 +90,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         precs
     #scan_range = (100000, 100010)
     )...);
+    println("size(PSMs) ", size(PSMs))
 
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:sequence],
