@@ -86,6 +86,15 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
 pprof(;webport=58708)
 #pprof(;webport=58599)
 
+function testForArrow(test::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)})
+    println("test[1] ", test[1])
+end
+
+
+function testForAbstract(test::AbstractArray{FragIndexBin})
+    println("test[1] ", test[1])
+end
+
 FragmentIndex
 
 describe(precursors[:mz])

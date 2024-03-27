@@ -52,30 +52,7 @@ function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Uni
     total_peaks = sum(length.(spectra))
     n_tasks = n_threads*tasks_per_thread
     peaks_per_task = total_peaks÷(n_tasks)
-    #thread_tasks = Vector{ThreadTask}(undef, n_tasks)
-    #=
-    n = 0
-    start = 1
-    thread_id = 1
-    task = 1
-    for (i, spectrum) in enumerate(spectra)
-        n += length(spectrum)
-        if (n > peaks_per_task) | ((i + 1) == length(spectra))
 
-            thread_tasks[task] = ThreadTask(
-                                                UnitRange(start, i), 
-                                                thread_id
-                                            )
-            thread_id += 1
-            if thread_id > n_threads
-                thread_id = 1
-            end
-            task += 1
-            start = i + 1
-            n = 0
-        end
-    end
-    =#
     spectra_ids = collect([x for x in range(1, length(spectra)) if ms_order[x]==2])
     bin_start, bin_stop = 1, 1
     for i in range(1, length(spectra_ids))

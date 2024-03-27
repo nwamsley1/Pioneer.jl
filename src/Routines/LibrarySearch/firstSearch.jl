@@ -25,7 +25,7 @@ function mainLibrarySearch(
                                                             R<:SpectralScores{Float16}}
 
 
-    return searchRAW(
+    return mainLibrarySearch(
         spectra, 
         frag_index, 
         precursors,
@@ -64,6 +64,138 @@ function mainLibrarySearch(
     )
 end
 
+function mainLibrarySearch(
+                    #Mandatory Args
+                    spectra::Arrow.Table, 
+                    frag_index::Union{FragmentIndex{Float32}, Missing},
+                    precursors::Union{Arrow.Table, Missing},
+                    ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
+                    rt_to_irt_spline::Any,
+                    ms_file_idx::UInt32,
+                    mass_err_model::MassErrorModel{Float32},
+                    searchScan!::Union{Function, Missing},
+                    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
+                    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+                    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
+                    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
+                    ionTemplates::Vector{Vector{L}},
+                    iso_splines::IsotopeSplineModel{Float64},
+                    scored_PSMs::Vector{Vector{S}},
+                    unscored_PSMs::Vector{Vector{Q}},
+                    spectral_scores::Vector{Vector{R}},
+                    precursor_weights::Vector{Vector{Float32}},
+                    precs::Union{Missing, Vector{Counter{UInt32, UInt8}}};
+                    #keyword args
+                    collect_fmatches = false,
+                    expected_matches::Int64 = 100000,
+                    frag_ppm_err::Float32 = 0.0f0,
+
+                    δ::Float32 = 10000f0,
+                    λ::Float32 = 0f0,
+                    max_iter_newton::Int64 = 100,
+                    max_iter_bisection::Int64 = 100,
+                    max_iter_outer::Int64 = 100,
+                    accuracy_newton::Float32 = 100f0,
+                    accuracy_bisection::Float32 = 100000f0,
+                    max_diff::Float32 = 0.01f0,
+
+                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
+                    isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
+                    min_frag_count::Int64 = 1,
+                    min_spectral_contrast::Float32  = 0f0,
+                    min_log2_matched_ratio::Float32 = -Inf32,
+                    min_index_search_score::UInt8 = zero(UInt8),
+                    min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
+                    min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
+                    filter_by_rank::Bool = false, 
+                    filter_by_count::Bool = true,
+                    max_best_rank::Int64 = one(Int64),
+                    n_frag_isotopes::Int64 = 1,
+                    quadrupole_isolation_width::Float64 = 8.5,
+                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
+                    irt_tol::Float64 = Inf,
+                    sample_rate::Float64 = Inf,
+                    spec_order::Set{Int64} = Set(2)
+                    ) where {T,U<:AbstractFloat, 
+                                                            L<:LibraryIon{Float32}, 
+                                                            S<:ScoredPSM{Float32, Float16},
+                                                            Q<:UnscoredPSM{Float32},
+                                                            R<:SpectralScores{Float16}}
+
+
+    ########
+    #Each thread needs to handle a similair number of peaks. 
+    #For example if there are 10,000 scans and two threads, choose n so that
+    #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
+    #of scans have an equal number of fragment peaks in the spectra
+    thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
+                                                        spectra[:retentionTime],
+                                                         spectra[:precursorMZ],
+                                                         spectra[:msOrder],
+                                                        Threads.nthreads(),
+                                                        1)
+
+    if ismissing(precs)
+        precs = [missing for _ in range(1, Threads.nthreads())]
+    end
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return searchFragmentIndex(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                frag_index,
+                                scan_to_prec_idx,
+                                rt_to_irt_spline,
+                                mass_err_model,
+                                searchScan!,
+                                frag_ppm_err,
+                                precs[thread_id],
+                                isotope_err_bounds,
+                                min_index_search_score,
+                                min_max_ppm,
+                                quadrupole_isolation_width,
+                                irt_tol,
+                                sample_rate,
+                                spec_order
+                            )
+        end
+    end
+    precursors_passed_scoring = fetch.(tasks)
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getPSMS(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                frag_index,precursors,scan_to_prec_idx,precursors_passed_scoring[thread_id],
+                                ion_list, rt_to_irt_spline,ms_file_idx,mass_err_model,
+                                searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
+                                δ,
+                                λ,
+                                max_iter_newton,
+                                max_iter_bisection,
+                                max_iter_outer,
+                                accuracy_newton,
+                                accuracy_bisection,
+                                max_diff,
+                                ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
+                                iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
+                                precs[thread_id],
+                                isotope_dict,
+                                isotope_err_bounds,
+                                min_frag_count,min_spectral_contrast,
+                                min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,filter_by_count,
+                                max_best_rank,n_frag_isotopes,quadrupole_isolation_width,
+                                rt_index, irt_tol,sample_rate,
+                                spec_order
+                            )
+        end
+    end
+    psms = fetch.(tasks)
+    return psms
+end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  

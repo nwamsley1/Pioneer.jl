@@ -73,74 +73,86 @@ function searchRAW(
         precs = [missing for _ in range(1, Threads.nthreads())]
     end
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
-    @time begin
-        tasks = map(thread_tasks) do thread_task
-            Threads.@spawn begin 
-                #thread_id = getThreadID(thread_task)
-                thread_id = first(thread_task)
-                return searchFragmentIndex(
-                                    spectra,
-                                    last(thread_task), #getRange(thread_task),
-                                    frag_index,
-                                    scan_to_prec_idx,
-                                    rt_to_irt_spline,
-                                    mass_err_model,
-                                    searchScan!,
-                                    frag_ppm_err,
-                                    precs[thread_id],
-                                    isotope_err_bounds,
-                                    min_index_search_score,
-                                    min_max_ppm,
-                                    quadrupole_isolation_width,
-                                    irt_tol,
-                                    sample_rate,
-                                    spec_order
-                                )
-            end
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return searchFragmentIndex(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                frag_index,
+                                scan_to_prec_idx,
+                                rt_to_irt_spline,
+                                mass_err_model,
+                                searchScan!,
+                                frag_ppm_err,
+                                precs[thread_id],
+                                isotope_err_bounds,
+                                min_index_search_score,
+                                min_max_ppm,
+                                quadrupole_isolation_width,
+                                irt_tol,
+                                sample_rate,
+                                spec_order
+                            )
         end
-
+    end
     precursors_passed_scoring = fetch.(tasks)
-    end
-    #println("getPSMS time ", index_search_time.time, " bytes ", index_search_time.bytes, " gc time ", index_search_time.gctime)
-    
-    @time begin
-        tasks = map(thread_tasks) do thread_task
-            Threads.@spawn begin 
-                #thread_id = getThreadID(thread_task)
-                thread_id = first(thread_task)
-                return getPSMS(
-                                    spectra,
-                                    last(thread_task), #getRange(thread_task),
-                                    frag_index,precursors,scan_to_prec_idx,precursors_passed_scoring[thread_id],
-                                    ion_list, rt_to_irt_spline,ms_file_idx,mass_err_model,
-                                    searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
-                                    δ,
-                                    λ,
-                                    max_iter_newton,
-                                    max_iter_bisection,
-                                    max_iter_outer,
-                                    accuracy_newton,
-                                    accuracy_bisection,
-                                    max_diff,
-                                    ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
-                                    iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
-                                    precs[thread_id],
-                                    isotope_dict,
-                                    isotope_err_bounds,
-                                    min_frag_count,min_spectral_contrast,
-                                    min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,filter_by_count,
-                                    max_best_rank,n_frag_isotopes,quadrupole_isolation_width,
-                                    rt_index, irt_tol,sample_rate,
-                                    spec_order
-                                )
-            end
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getPSMS(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                frag_index,
+                                precursors,
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                ion_list, 
+                                rt_to_irt_spline,
+                                ms_file_idx,
+                                mass_err_model,
+                                collect_fmatches,
+                                frag_ppm_err,
+                                δ,
+                                λ,
+                                max_iter_newton,
+                                max_iter_bisection,
+                                max_iter_outer,
+                                accuracy_newton,
+                                accuracy_bisection,
+                                max_diff,
+                                ionMatches[thread_id],
+                                ionMisses[thread_id],
+                                all_fmatches[thread_id],
+                                IDtoCOL[thread_id],
+                                ionTemplates[thread_id],
+                                iso_splines,
+                                scored_PSMs[thread_id],
+                                unscored_PSMs[thread_id],
+                                spectral_scores[thread_id], 
+                                precursor_weights[thread_id],
+                                precs[thread_id],
+                                isotope_dict,
+                                isotope_err_bounds,
+                                min_frag_count,
+                                min_spectral_contrast,
+                                min_log2_matched_ratio,
+                                min_topn_of_m,
+                                min_max_ppm,
+                                filter_by_rank,
+                                filter_by_count,
+                                max_best_rank,
+                                n_frag_isotopes,
+                                quadrupole_isolation_width,
+                                rt_index, 
+                                irt_tol,
+                                sample_rate,
+                                spec_order
+                            )
         end
-    out = fetch.(tasks)
     end
-    
-    return out 
-    
-    #return precursors_passed_scoring
+    psms = fetch.(tasks)
+    return psms
 end
 
 function searchFragmentIndex(
@@ -280,9 +292,7 @@ function getPSMS(
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel{Float32},
-                    searchScan!::Union{Function, Missing},
                     collect_fmatches::Bool,
-                    expected_matches::Int64,
                     frag_ppm_err::Float32,
                     δ::Float32,
                     λ::Float32,
@@ -292,14 +302,11 @@ function getPSMS(
                     accuracy_newton::Float32,
                     accuracy_bisection::Float32,
                     max_diff::Float32,
-
-
                     ionMatches::Vector{FragmentMatch{Float32}},
                     ionMisses::Vector{FragmentMatch{Float32}},
                     all_fmatches::Vector{FragmentMatch{Float32}},
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
-                    iso_splines::IsotopeSplineModel{Float64},
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
@@ -311,7 +318,6 @@ function getPSMS(
                     min_frag_count::Int64,
                     min_spectral_contrast::Float32,
                     min_log2_matched_ratio::Float32,
-                    min_index_search_score::UInt8,
                     min_topn_of_m::Tuple{Int64, Int64},
                     min_max_ppm::Tuple{Float32, Float32},
                     filter_by_rank::Bool,
@@ -319,16 +325,12 @@ function getPSMS(
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     quadrupole_isolation_width::Float64,
-                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
-                    sample_rate::Float64,
                     spec_order::Set{Int64},
-                    ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
+                    ) where {L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
                     R<:SpectralScores{Float16}}
-
-    thread_peaks = 0
     ##########
     #Initialize 
     msms_counts = Dict{Int64, Int64}()
@@ -337,7 +339,6 @@ function getPSMS(
     Hs = SparseArray(5000);
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
-    isotopes = zeros(Float64, n_frag_isotopes)
     #prec_id = 0
     #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     rt_bin_idx = 1
@@ -350,12 +351,8 @@ function getPSMS(
         if i > length(spectra[:masses])
             continue
         end
-        thread_peaks += length(spectra[:masses][i])
-        if thread_peaks > 100000
-            #lock(lk) do 
-            #    update(pbar, thread_peaks)
-            #end
-            thread_peaks = 0
+        if ismissing(scan_to_prec_idx[i])
+            continue
         end
 
         ###########
@@ -370,7 +367,6 @@ function getPSMS(
         #if (i < 100000) | (i > 100000)
         #    continue
         #end
-        first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
         
         #Get correct rt_bin_idx 
@@ -382,10 +378,6 @@ function getPSMS(
             end 
         end
 
-        #if i != 100000
-        #    continue
-        #end
-        #println("rt_bin_idx $rt_bin_idx iRT_low $iRT_low getRTBin(frag_index, rt_bin_idx) ", getRTBin(frag_index, rt_bin_idx))
         ##########
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
@@ -393,37 +385,23 @@ function getPSMS(
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
-
-        if !ismissing(scan_to_prec_idx[i])
-            ion_idx, prec_idx = selectTransitions!(
-                                            ionTemplates,
-                                            scan_to_prec_idx[i],
-                                            precursors_passed_scoring,
-                                            precursors[:mz],
-                                            precursors[:prec_charge],
-                                            precursors[:irt],
-                                            ion_list,
-                                            iso_splines,
-                                            isotopes,
-                                            Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
-                                            Float32(irt_tol), #rt_tol
-                                            (
-                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                            ),
-                                            isotope_err_bounds = isotope_err_bounds
-                                            )
-        end
-        #println("ion_idx $ion_idx prec_idx $prec_idx")
-        #return precs
-        #If one or fewer fragment ions matched to the spectrum, don't bother
-        #continue
-
+        ion_idx, prec_idx = selectTransitions!(
+                                        ionTemplates,
+                                        scan_to_prec_idx[i],
+                                        precursors_passed_scoring,
+                                        precursors[:mz],
+                                        precursors[:prec_charge],
+                                        precursors[:irt],
+                                        ion_list,
+                                        Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
+                                        Float32(irt_tol), #rt_tol
+                                        (
+                                        spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
+                                        spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
+                                        ),
+                                        isotope_err_bounds = isotope_err_bounds
+                                        )
         if ion_idx < 2
-            #reset!(ionTemplates, ion_idx)
-            #if !ismissing(precs)
-            #reset!(precs)
-            #end
             continue
         end 
         ##########
@@ -554,8 +532,193 @@ function getPSMS(
     end
     #println("prec_idx $prec_idx")
     #println("scan_to_prec_idx $scan_to_prec_idx")
+
+    if collect_fmatches
+        return DataFrame(@view(scored_PSMs[1:last_val])), @view(all_fmatches[1:frag_err_idx])
+    else
+        return DataFrame(@view(scored_PSMs[1:last_val]))
+    end
+end
+
+function quantPSMs(
+                    spectra::Arrow.Table,
+                    thread_task::Vector{Int64},#UnitRange{Int64},
+                    precursors::Union{Arrow.Table, Missing},
+                    ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
+                    ms_file_idx::UInt32,
+                    mass_err_model::MassErrorModel{Float32},
+                    frag_ppm_err::Float32,
+                    δ::Float32,
+                    λ::Float32,
+                    max_iter_newton::Int64,
+                    max_iter_bisection::Int64,
+                    max_iter_outer::Int64,
+                    accuracy_newton::Float32,
+                    accuracy_bisection::Float32,
+                    max_diff::Float32,
+                    ionMatches::Vector{FragmentMatch{Float32}},
+                    ionMisses::Vector{FragmentMatch{Float32}},
+                    IDtoCOL::ArrayDict{UInt32, UInt16},
+                    ionTemplates::Vector{L},
+                    iso_splines::IsotopeSplineModel{Float64},
+                    scored_PSMs::Vector{S},
+                    unscored_PSMs::Vector{Q},
+                    spectral_scores::Vector{R},
+                    precursor_weights::Vector{Float32},
+                    isotope_err_bounds::Tuple{Int64, Int64},
+                    min_frag_count::Int64,
+                    min_spectral_contrast::Float32,
+                    min_log2_matched_ratio::Float32,
+                    min_topn_of_m::Tuple{Int64, Int64},
+                    min_max_ppm::Tuple{Float32, Float32},
+                    max_best_rank::Int64,
+                    n_frag_isotopes::Int64,
+                    quadrupole_isolation_width::Float64,
+                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
+                    irt_tol::Float64,
+                    spec_order::Set{Int64},
+                    ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
+                    S<:ScoredPSM{Float32, Float16},
+                    Q<:UnscoredPSM{Float32},
+                    R<:SpectralScores{Float16}}
+
+    ##########
+    #Initialize 
+    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    Hs = SparseArray(5000);
+    _weights_ = zeros(Float32, 5000);
+    _residuals_ = zeros(Float32, 5000);
+    isotopes = zeros(Float64, n_frag_isotopes)
+    ##########
+    #Iterate through spectra
+    for i in thread_task
+        if i == 0 
+            continue
+        end
+        if i > length(spectra[:masses])
+            continue
+        end
+
+        ###########
+        #Scan Filtering
+        msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
+        cycle_idx += (msn == 1)
+        msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
+
+        #Candidate precursors and their retention time estimates have already been determined from
+        #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
+        #the retention time and m/z tolerance constraints
+        ion_idx, prec_idx = selectRTIndexedTransitions!(
+                                        ionTemplates,
+                                        precursors,
+                                        ion_list,
+                                        iso_splines,
+                                        isotopes,
+                                        rt_index,
+                                        spectra[:retentionTime][i],
+                                        Float32(irt_tol),#Float32(max_peak_width/2),
+                                        (
+                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
+                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
+                                        ),
+                                    isotope_err_bounds = isotope_err_bounds)
+        if ion_idx < 2
+            continue
+        end 
+        ##########
+        #Match sorted list of plausible ions to the observed spectra
+        nmatches, nmisses = matchPeaks!(ionMatches, 
+                                        ionMisses, 
+                                        ionTemplates, 
+                                        ion_idx, 
+                                        spectra[:masses][i], 
+                                        spectra[:intensities][i], 
+                                        frag_ppm_err,
+                                        mass_err_model,
+                                        min_max_ppm,
+                                        UInt32(i), 
+                                        ms_file_idx)
+        
+        ##########
+        #Spectral Deconvolution and Distance Metrics 
+        if nmatches > 2 #Few matches to do not perform de-convolution 
+        
+            #Spectral deconvolution. Build sparse design/template matrix for regression 
+            #Sparse matrix representation of templates written to Hs. 
+            #IDtoCOL maps precursor ids to their corresponding columns. 
+            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
+            #Adjuste size of pre-allocated arrays if needed 
+            if IDtoCOL.size > length(_weights_)
+                new_entries = IDtoCOL.size - length(_weights_) + 1000 
+                append!(_weights_, zeros(eltype(_weights_), new_entries))
+                append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, new_entries))
+                append!(unscored_PSMs, [eltype(unscored_PSMs)() for _ in 1:new_entries]);
+            end
+            #Get most recently determined weights for each precursors
+            #"Hot" start
+            for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
+                _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
+            end
+            #Get initial residuals
+            initResiduals!(_residuals_, Hs, _weights_);
+            #Spectral deconvolution. Hybrid bisection/newtowns method
+            solveHuber!(Hs, _residuals_, _weights_, δ, λ, 
+                            max_iter_newton, 
+                            max_iter_bisection,
+                            max_iter_outer,
+                            accuracy_newton,
+                            accuracy_bisection,
+                            Hs.n,
+                            max_diff
+                            );
+            #Record weights for each precursor
+            for i in range(1, IDtoCOL.size)
+                precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
+            end
+
+            getDistanceMetrics(_weights_, Hs, spectral_scores)
+
+            ##########
+            #Scoring and recording data
+            ScoreFragmentMatches!(unscored_PSMs,
+                                IDtoCOL,
+                                ionMatches, 
+                                nmatches, 
+                                mass_err_model,
+                                last(min_topn_of_m)
+                                )
+
+            last_val = Score!(scored_PSMs, 
+                unscored_PSMs,
+                spectral_scores,
+                _weights_,
+                IDtoCOL,
+                nmatches/(nmatches + nmisses),
+                last_val,
+                Hs.n,
+                Float32(sum(spectra[:intensities][i])), 
+                i,
+                min_spectral_contrast = min_spectral_contrast,
+                min_log2_matched_ratio = min_log2_matched_ratio,
+                min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
+                max_best_rank = max_best_rank,
+                min_topn = first(min_topn_of_m),
+                block_size = 500000,
+                )
+        end
+
+        ##########
+        #Reset pre-allocated arrays 
+        for i in range(1, Hs.n)
+            unscored_PSMs[i] = eltype(unscored_PSMs)()
+        end
+        reset!(IDtoCOL);
+        reset!(Hs);
+    end
+
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end
+
 function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
     nmatches_all, nmisses_all = nmatches, nmisses
 
