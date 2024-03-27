@@ -58,35 +58,37 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
 end
 
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
-function selectRTIndexedTransitions!(transitions::Vector{DetailedFrag{Float32}}, 
+function selectRTIndexedTransitions!(
+                            transitions::Vector{DetailedFrag{Float32}}, 
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
-                            prec_mzs::Arrow.Primitive{Float32, Vector{Float32}},
-                            prec_charges::Arrow.Primitive{UInt8, Vector{UInt8}},
-                           
+                            prec_mzs::AbstractArray{Float32},
+                            prec_charges::AbstractArray{UInt8},
+                            prec_sulfur_counts::AbstractArray{UInt8},
                             iso_splines::IsotopeSplineModel{Float64},
                             isotopes::Vector{Float64},
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt::Float32, 
                             rt_tol::Float32, 
-                            mz_bounds::Tuple{Float32, Float32};
-                            isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
-                            block_size = 10000)
+                            min_prec_mz::Float32,
+                            max_prec_mz::Float32,
+                            isotope_err_bounds::Tuple{Int64, Int64},
+                            block_size::Int64)
     transition_idx = 0
     n = 0
     rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
     rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-    #rt_start = max(searchsortedfirst(rt_index.rt_bins, rt, lt=(r,x)->r.lb<x) - 1, 1)
-    #rt_stop = rt_start
+
+
     for rt_bin_idx in rt_start:rt_stop #Add transitions
         precs = rt_index.rt_bins[rt_bin_idx].prec
-        start = searchsortedfirst(precs, by = x->last(x), first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
-        stop = searchsortedlast(precs, by = x->last(x), last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
+        start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
+        stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
             n += 1 #Keep track of number of precursors 
             prec_idx = first(precs[i])
-            prec_charge, prec_mz = prec_charges[prec_idx], prec_mzs[prec_idx]
-            mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/prec_charge
-            mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/prec_charge
+            prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
+            mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
+            mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
 
             #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
             (prec_mz < mz_low) | (prec_mz > mz_high) ? continue : nothing
@@ -96,12 +98,14 @@ function selectRTIndexedTransitions!(transitions::Vector{DetailedFrag{Float32}},
             transition_idx = @inline fillTransitionList!(transitions, 
                                                         getPrecFragRange(library_fragment_lookup, prec_idx),
                                                         getFragments(library_fragment_lookup),
-                                                        prec_charge,
                                                         prec_mz,
+                                                        prec_charge,
+                                                        prec_sulfur_count,
                                                         transition_idx,
                                                         isotopes, 
                                                         iso_splines, 
-                                                        mz_bounds, 
+                                                        min_prec_mz,
+                                                        max_prec_mz,
                                                         block_size
                                                         )
         end
@@ -118,23 +122,34 @@ end
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_fragment_range::UnitRange{UInt32},
                             fragment_ions::Vector{DetailedFrag{Float32}},
-                            prec_charge::UInt8,
                             prec_mz::Float32,
+                            prec_sulfur_count::UInt8,
+                            prec_charge::UInt8,
                             transition_idx::Int64, 
                             isotopes::Vector{Float64}, 
                             iso_splines::IsotopeSplineModel{Float64}, 
-                            mz_bounds::Tuple{Float32,Float32}, 
+                            min_prec_mz::Float32,
+                            max_prec_mz::Float32,
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
 
     NEUTRON = Float64(1.00335)
-    prec_isotope_set = getPrecursorIsotopeSet(prec_mz, prec_charge, mz_bounds)
+    prec_isotope_set = getPrecursorIsotopeSet(prec_mz, 
+                                            prec_charge, 
+                                            min_prec_mz, 
+                                            max_prec_mz)
 
     #for frag in fragment_list[getID(counter, i)]
     for frag_idx in precursor_fragment_range#getPrecFragRange(library_fragment_lookup, prec_idx)
 
         frag = fragment_ions[frag_idx]
         #Estimate isotope abundances 
-        getFragIsotopes!(isotopes, iso_splines, prec, frag, prec_isotope_set)
+        getFragIsotopes!(isotopes, 
+                        iso_splines, 
+                        prec_mz,
+                        prec_charge, 
+                        prec_sulfur_count,
+                        frag, 
+                        prec_isotope_set)
 
         for iso_idx in range(0, length(isotopes) - 1)
 

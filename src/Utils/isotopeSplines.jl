@@ -190,7 +190,11 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 ### Examples 
 
 """
-function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+function getFragAbundance!(isotopes::Vector{Float64}, 
+                            iso_splines::IsotopeSplineModel{Float64}, 
+                            frag::isotope{T, I}, 
+                            prec::isotope{T, I}, 
+                            pset::Tuple{I, I}) where {T<:Real,I<:Integer}
     #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
     min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
     #placeholder for fragment isotope distributions
@@ -214,35 +218,59 @@ function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSpline
     #return isotopes#isotopes./sum(isotopes)
 end
 
-function getFragAbundance!(isotopes::Vector{Float64}, iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursorIon{Float32}, frag::LibraryFragmentIon{Float32}, pset::Tuple{I, I}) where {I<:Integer}
+function getFragAbundance!(isotopes::Vector{Float64}, 
+                            iso_splines::IsotopeSplineModel{Float64},
+                            prec_mz::Float32,
+                            prec_sulfur_count::UInt8,
+                            prec_charge::UInt8,
+                            frag::LibraryFragmentIon{Float32}, 
+                            pset::Tuple{I, I}) where {I<:Integer}
     getFragAbundance!(
         isotopes,
         iso_splines,
         isotope(Float64(frag.mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
-        isotope(Float64(prec.mz*prec.prec_charge), Int64(prec.sulfur_count), 0),
+        isotope(Float64(prec_mz*prec_charge), Int64(prec_sulfur_count), 0),
         pset
         )
 end
 
-function getFragIsotopes!(isotopes::Vector{T}, iso_splines::IsotopeSplineModel{T}, prec::LibraryPrecursorIon{U}, frag::LibraryFragmentIon{U}, prec_isotope_set::Tuple{I, I}) where {T,U<:AbstractFloat,I<:Integer}
+function getFragIsotopes!(isotopes::Vector{Float64}, 
+                            iso_splines::IsotopeSplineModel{Float64}, 
+                            prec_mz::Float32,
+                            prec_charge::UInt8,
+                            prec_sulfur_count::UInt8,
+                            frag::LibraryFragmentIon{Float32}, 
+                            prec_isotope_set::Tuple{Int64, Int64})
     fill!(isotopes, zero(eltype(isotopes)))
 
     monoisotopic_intensity = frag.intensity
     if (first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 1) #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
         
         #Get relative abundances of frag isotopes given the prosit training isotope set 
-        getFragAbundance!(isotopes, iso_splines, prec, frag, 
-        #getPrositIsotopeSet(prec.charge)
-        #getPrositIsotopeSet(prec.charge, prec.mz)
-        getPrositIsotopeSet(iso_splines, prec)
+        getFragAbundance!(isotopes, 
+                            iso_splines, 
+                            prec_mz,
+                            prec_charge,
+                            prec_sulfur_count,
+                            frag, 
+                            getPrositIsotopeSet(iso_splines,                             
+                            prec_mz,
+                            prec_charge,
+                            prec_sulfur_count)
         )
         prosit_mono = first(isotopes)
         fill!(isotopes, zero(eltype(isotopes)))
-        getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
+        getFragAbundance!(isotopes, iso_splines,                             
+                            prec_mz,
+                            prec_charge,
+                            prec_sulfur_count,
+                            frag, prec_isotope_set)
         corrected_mono = first(isotopes)
         monoisotopic_intensity = max(Float32(frag.intensity*corrected_mono/prosit_mono), zero(Float32))
     else
-        getFragAbundance!(isotopes, iso_splines, prec, frag, prec_isotope_set)
+        getFragAbundance!(isotopes, iso_splines,  prec_mz,
+        prec_charge,
+        prec_sulfur_count, frag, prec_isotope_set)
     end
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
@@ -278,11 +306,14 @@ A Tuple of two integers. (1, 3) would indicate the M+1 through M+3 isotopes were
 ### Examples 
 
 """
-function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
+function getPrecursorIsotopeSet(prec_mz::Float32, 
+                                prec_charge::UInt8, 
+                                min_prec_mz::Float32, 
+                                max_prec_mz::Float32)
     first_iso, last_iso = -1, -1
     for iso_count in range(0, 5) #Arbitrary cutoff after 5 
         iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
-        if (iso_mz > first(window)) & (iso_mz < last(window)) 
+        if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz) 
             if first_iso < 0
                 first_iso = iso_count
             end
@@ -292,21 +323,27 @@ function getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})
     return (first_iso, last_iso)
 end
 
-function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, prec::LibraryPrecursorIon{Float32}) #where {T,U<:AbstractFloat}
-    M0 = iso_splines(min(prec.sulfur_count, 5),0,Float64(prec.mz*prec.prec_charge))
-    M1 = iso_splines(min(prec.sulfur_count, 5),1,Float64(prec.mz*prec.prec_charge))
+function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, 
+                                prec_mz::Float32,
+                                prec_charge::UInt8,
+                                prec_sulfur_count::UInt8
+                             ) #where {T,U<:AbstractFloat}
+    prec_mass = Float64(prec_mz*prec_charge)
+    prec_sulfur_count = in(prec_sulfur_count, 5)
+    M0 = iso_splines(prec_sulfur_count,0,prec_mass)
+    M1 = iso_splines(prec_sulfur_count,1,prec_mass)
     if M0 > M1
-        if prec.prec_charge <= 2
+        if prec_charge <= 2
             return (0, 1)
-        elseif prec.prec_charge == 3
+        elseif prec_charge == 3
             return (0, 2)
         else
             return (0, 3)
         end
     else
-        if prec.prec_charge <= 2
+        if prec_charge <= 2
             return (0, 2)
-        elseif prec.prec_charge == 3
+        elseif prec_charge == 3
             return (0, 3)
         else
             return (0, 4)

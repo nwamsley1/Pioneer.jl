@@ -123,7 +123,7 @@ struct LibraryFragmentLookup{T<:AbstractFloat}
 end
 
 getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
-
+getFragments(lfp::LibraryFragmentLookup{<:AbstractFloat}) = lfp.frags
 getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt32} = lfp.prec_frag_ranges[prec_idx]
 
 """

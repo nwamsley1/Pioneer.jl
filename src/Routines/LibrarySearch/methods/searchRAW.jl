@@ -126,7 +126,6 @@ function searchRAW(
                                 all_fmatches[thread_id],
                                 IDtoCOL[thread_id],
                                 ionTemplates[thread_id],
-                                iso_splines,
                                 scored_PSMs[thread_id],
                                 unscored_PSMs[thread_id],
                                 spectral_scores[thread_id], 
@@ -144,9 +143,7 @@ function searchRAW(
                                 max_best_rank,
                                 n_frag_isotopes,
                                 quadrupole_isolation_width,
-                                rt_index, 
                                 irt_tol,
-                                sample_rate,
                                 spec_order
                             )
         end
@@ -544,7 +541,7 @@ function quantPSMs(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
                     precursors::Union{Arrow.Table, Missing},
-                    ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel{Float32},
                     frag_ppm_err::Float32,
@@ -610,18 +607,19 @@ function quantPSMs(
         #the retention time and m/z tolerance constraints
         ion_idx, prec_idx = selectRTIndexedTransitions!(
                                         ionTemplates,
-                                        precursors,
-                                        ion_list,
+                                        library_fragment_lookup,
+                                        precursors[:mz],
+                                        precursors[:prec_charge],
+                                        precursors[:sulfur_count],
                                         iso_splines,
                                         isotopes,
                                         rt_index,
                                         spectra[:retentionTime][i],
                                         Float32(irt_tol),#Float32(max_peak_width/2),
-                                        (
-                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
-                                        ),
-                                    isotope_err_bounds = isotope_err_bounds)
+                                        spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
+                                        spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
+                                        isotope_err_bounds,
+                                        10000)
         if ion_idx < 2
             continue
         end 
