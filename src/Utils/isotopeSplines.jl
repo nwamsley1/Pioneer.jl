@@ -329,7 +329,7 @@ function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64},
                                 prec_sulfur_count::UInt8
                              ) #where {T,U<:AbstractFloat}
     prec_mass = Float64(prec_mz*prec_charge)
-    prec_sulfur_count = in(prec_sulfur_count, 5)
+    prec_sulfur_count = min(prec_sulfur_count, 5)
     M0 = iso_splines(prec_sulfur_count,0,prec_mass)
     M1 = iso_splines(prec_sulfur_count,1,prec_mass)
     if M0 > M1

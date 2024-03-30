@@ -224,7 +224,13 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     precursor_weights,
                     )...);
 
-        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
+        PSMS = copy(PSMS_old)
+        @time addSecondSearchColumns!(PSMS, 
+                                        MS_TABLE, 
+                                        prosit_lib["precursors"][:mz],
+                                        prosit_lib["precursors"][:prec_charge], 
+                                        prosit_lib["precursors"][:is_decoy],
+                                        precID_to_cv_fold);
         addIntegrationFeatures!(PSMS);
         getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
         PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
@@ -235,7 +241,12 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             intensity_filter_fraction = Float32(params_[:integration_params]["intensity_filter_threshold"]),
                             α = 0.001f0);
         addPostIntegrationFeatures!(PSMS, 
-                                    MS_TABLE, prosit_lib["precursors"],
+                                    MS_TABLE, 
+                                    prosit_lib["precursors"][:sequence],
+                                    prosit_lib["precursors"][:mz],
+                                    prosit_lib["precursors"][:irt],
+                                    prosit_lib["precursors"][:prec_charge],
+                                    prosit_lib["precursors"][:missed_cleavages],
                                     ms_file_idx,
                                     file_id_to_parsed_name,
                                     RT_iRT,

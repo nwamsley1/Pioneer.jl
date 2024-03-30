@@ -116,7 +116,7 @@ function selectRTIndexedTransitions!(
           alg=PartialQuickSort(1:transition_idx))
 
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
-    return transition_idx, prec_idx
+    return transition_idx, n
 end
 
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 

@@ -83,9 +83,108 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     precs
 #scan_range = (100000, 100010)
 )...);
-pprof(;webport=58708)
+pprof(;webport=58720)
 #pprof(;webport=58599)
 
+p = plot(
+    #ylim = ylim,
+    title = "",#,nothing,
+    xtickfont = font(10, "Arial"),
+    ytickfont = font(10, "Arial"),
+    grid = :x,
+    gridalpha = 0.4,
+    dpi = 600,
+    xlabel = "Entropy Score",
+    ylabel = "# Precursors",
+    legendfontsize = 15,
+    titlefontsize = 24,
+
+    #minorgrid = true,
+    #xscale = :log2,
+    linewidth = 3)
+
+bins = LinRange(0, 1, 50)
+stephist!(p, PSMs[PSMs[!,:target],:entropy_score], 
+        alpha = 0.5, 
+        bins = bins, lw = 3, label = "Target")
+
+stephist!(p, 
+            PSMs[PSMs[!,:target].==false,:entropy_score], 
+            alpha = 0.5, 
+            bins = bins, lw = 3, label = "Decoy")
+savefig(p, "/Users/n.t.wamsley/Documents/seminar_slides/entropy_hist.png")
+
+p = plot(
+    #ylim = ylim,
+    title = "",#,nothing,
+    xtickfont = font(10, "Arial"),
+    ytickfont = font(10, "Arial"),
+    grid = :x,
+    gridalpha = 0.4,
+    dpi = 600,
+    xlabel = "Spectral Contrast",
+    ylabel = "# Precursors",
+    legendfontsize = 15,
+    titlefontsize = 24,
+
+    #minorgrid = true,
+    #xscale = :log2,
+    linewidth = 3)
+
+bins = LinRange(0, 1, 50)
+stephist!(p, PSMs[PSMs[!,:target],:spectral_contrast], 
+        alpha = 0.5, 
+        bins = bins, lw = 3, label = "Target")
+
+stephist!(p, 
+            PSMs[PSMs[!,:target].==false,:spectral_contrast], 
+            alpha = 0.5, 
+            bins = bins, lw = 3, label = "Decoy")
+savefig(p, "/Users/n.t.wamsley/Documents/seminar_slides/spectral_contrast.png")
+diann_precs = unique(diann[!,"Precursor.Id"])
+
+#diann = DataFrame(CSV.File("/Users/n.t.wamsley/Desktop/report.tsv"))
+#diann_precs = unique(diann[diann[!,"Run"].=="20210906_LRH_MMCC_Static_K_3.raw","Precursor.Id"])
+diann_precs = load("/Users/n.t.wamsley/Desktop/diann_k_cv30.jld2")["diann_passing"]
+
+diann_precs = replace.(diann_precs, "M(UniMod:35)" => "M(ox)")
+diann_precs = replace.(diann_precs, "C(UniMod:4)" => "C")
+is_silac = [occursin("R(UniMod:259)",x ) for x in diann_precs] .| [occursin("K(UniMod:267)",x ) for x in diann_precs]
+diann_precs = replace.(diann_precs, "R(UniMod:259)" => "R")
+diann_precs = replace.(diann_precs, "K(UniMod:267)" => "K")
+for i in range(1, length(diann_precs))
+    if is_silac[i]
+        diann_precs[i] = diann_precs[i]*"_L"
+    else
+        diann_precs[i] = diann_precs[i]*"_U"
+    end
+end
+
+prec_ids = unique(PSMs[!,:precursor_idx])
+#prec_ids = collect(keys(precID_to_cv_fold))
+pioneer_precs = precursors[:sequence][prec_ids]
+pioneer_charge = precursors[:prec_charge][prec_ids]
+pioneer_accession = precursors[:accession_numbers][prec_ids]
+for i in range(1, length(pioneer_precs))
+    if occursin("SILAC", pioneer_accession[i])
+        pioneer_precs[i] = pioneer_precs[i]*string(pioneer_charge[i])*"_L"
+    else
+        pioneer_precs[i] = pioneer_precs[i]*string(pioneer_charge[i])*"_U"
+    end
+end
+
+diann_exclusive = collect(setdiff(Set(diann_precs), Set(pioneer_precs)))
+
+diann_exclusive = collect(setdiff(Set(pioneer_precs), Set(diann_precs)))
+
+sum([occursin("_L", x) for x in diann_exclusive])
+
+[x for x in pioneer_precs if occursin("QLSQGSEEYETTR", x)]
+for i in range(1, length(pioneer_precs))
+    if occursin("LAEYYGLYR", pioneer_precs[i])
+        println(pioneer_precs[i])
+    end
+end
 function testForArrow(test::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)})
     println("test[1] ", test[1])
 end

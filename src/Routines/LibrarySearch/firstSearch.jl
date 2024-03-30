@@ -139,6 +139,7 @@ function mainLibrarySearch(
         precs = [missing for _ in range(1, Threads.nthreads())]
     end
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    @time begin
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -163,15 +164,24 @@ function mainLibrarySearch(
         end
     end
     precursors_passed_scoring = fetch.(tasks)
+    end
+    @time begin 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
             return getPSMS(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
-                                frag_index,precursors,scan_to_prec_idx,precursors_passed_scoring[thread_id],
-                                ion_list, rt_to_irt_spline,ms_file_idx,mass_err_model,
-                                searchScan!,collect_fmatches,expected_matches,frag_ppm_err,
+                                frag_index,
+                                precursors,
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                ion_list, 
+                                rt_to_irt_spline,
+                                ms_file_idx,
+                                mass_err_model,
+                                collect_fmatches,
+                                frag_ppm_err,
                                 δ,
                                 λ,
                                 max_iter_newton,
@@ -180,20 +190,35 @@ function mainLibrarySearch(
                                 accuracy_newton,
                                 accuracy_bisection,
                                 max_diff,
-                                ionMatches[thread_id],ionMisses[thread_id],all_fmatches[thread_id],IDtoCOL[thread_id],ionTemplates[thread_id],
-                                iso_splines, scored_PSMs[thread_id],unscored_PSMs[thread_id],spectral_scores[thread_id],precursor_weights[thread_id],
+                                ionMatches[thread_id],
+                                ionMisses[thread_id],
+                                all_fmatches[thread_id],
+                                IDtoCOL[thread_id],
+                                ionTemplates[thread_id],
+                                scored_PSMs[thread_id],
+                                unscored_PSMs[thread_id],
+                                spectral_scores[thread_id],
+                                precursor_weights[thread_id],
                                 precs[thread_id],
                                 isotope_dict,
                                 isotope_err_bounds,
-                                min_frag_count,min_spectral_contrast,
-                                min_log2_matched_ratio,min_index_search_score,min_topn_of_m,min_max_ppm,filter_by_rank,filter_by_count,
-                                max_best_rank,n_frag_isotopes,quadrupole_isolation_width,
-                                rt_index, irt_tol,sample_rate,
+                                min_frag_count,
+                                min_spectral_contrast,
+                                min_log2_matched_ratio,
+                                min_topn_of_m,
+                                min_max_ppm,
+                                filter_by_rank,
+                                filter_by_count,
+                                max_best_rank,
+                                n_frag_isotopes
+                                ,quadrupole_isolation_width,
+                                irt_tol,
                                 spec_order
                             )
         end
     end
     psms = fetch.(tasks)
+    end
     return psms
 end
 PSMs_Dict = Dictionary{String, DataFrame}()
@@ -223,7 +248,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #scan_range = (100000, 100010)
     )...);
     println("size(PSMs) ", size(PSMs))
-
+    @time begin
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:sequence],
                         prosit_lib["precursors"][:missed_cleavages],
@@ -251,7 +276,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
-
+    end
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
         PSMs

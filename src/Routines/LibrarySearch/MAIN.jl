@@ -30,6 +30,7 @@ main_search_time = @timed begin
     include(joinpath(methods_path,"firstSearch.jl"))
 end
 jldsave(joinpath(results_folder, "PSMs_Dict.jld2"); PSMs_Dict)
+PSMs_Dict = load(joinpath(results_folder, "PSMs_Dict.jld2"))["PSMs_Dict"]
 println("Finished main search in ", main_search_time.time, " seconds")
 #PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
 ############
@@ -43,6 +44,13 @@ jldsave(joinpath(results_folder,  "RT_iRT_spline.jld2"); RT_iRT)
 jldsave(joinpath(results_folder, "precID_to_iRT.jld2"); precID_to_iRT)
 jldsave(joinpath(results_folder, "RT_INDICES.jld2"); RT_INDICES)
 jldsave(joinpath(results_folder, "precID_to_cv_fold.jld2"); precID_to_cv_fold)
+
+iRT_RT = load(joinpath(results_folder, "iRT_RT_spline.jld2"))["iRT_RT"]
+RT_iRT = load(joinpath(results_folder,  "RT_iRT_spline.jld2"))["RT_iRT"]
+precID_to_iRT = load(joinpath(results_folder, "precID_to_iRT.jld2"))["precID_to_iRT"]
+RT_INDICES = load(joinpath(results_folder, "RT_INDICES.jld2"))["RT_INDICES"]
+precID_to_cv_fold = load(joinpath(results_folder, "precID_to_cv_fold.jld2"))["precID_to_cv_fold"]
+
 println("Combined main search results in ", combine_results_time.time, " seconds")
 ############
 #New Inplace Arrays for Integration
