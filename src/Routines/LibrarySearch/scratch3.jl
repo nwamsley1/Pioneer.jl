@@ -112,20 +112,17 @@ function removeSmallestElement!(
     #Number of bins in the merge 
     n = ttree.n_bins
     #Get node containing minimum value 
-    node_id = n + n - one(UInt32)
-    node = getNode(ttree, node_id)
+    leading_node = getNode(ttree, n + n - one(UInt32))
     #Write minimum value to output array and increase index 
-    values_out[out_idx] = getVal(node)
+    values_out[out_idx] = getVal(leading_node)
     out_idx += 1
     #Repair tree 
-    top_id = getTopID(node)
-    last_id = getLastID(node)
-    bin_id = getBinID(node)
-    if top_id > last_id
+    top_id,last_id,bin_id = getTopID(leading_node),getLastID(leading_node),getBinID(leading_node)
+    if top_id > last_id #No more elements left in the bin
         top_id += one(I)
         setNode!(ttree, 
                 TTreeNode(
-                typemax(T),
+                typemax(T), #No more elements left, so make sure this bin always loses 
                 bin_id,
                 top_id,
                 last_id),
@@ -140,22 +137,26 @@ function removeSmallestElement!(
                 last_id),
                 bin_id)
     end
-    println("node_id $node_id")
+    #If the bin_id is even, subtract one
     lower_node_id = bin_id - (bin_id%I(2) === zero(I))
-    println("lower_node_id $lower_node_id")
     N = ttree.n_bins
-    layer_size = n
-    n = (lower_node_id >> 2)
-    while N < ttree.n_bins + ttree.n_bins - one(I)
-        println("n $n ", N + n)
+    layer_size = N
+    n = (lower_node_id >> 1)
+    n_nodes = ttree.n_bins + ttree.n_bins - one(I)
+    while lower_node_id < n_nodes 
+        println("lower_node_id $lower_node_id n $n N $N layer_size $layer_size N + n ", N + n)
         node_a, node_b = getNode(ttree, lower_node_id), getNode(ttree, lower_node_id + one(I))
+        lower_node_id = N - n + one(UInt32)
+        println("lower_node_id $lower_node_id")
         if getVal(node_a) <= getVal(node_b)
-            setNode!(ttree, node_a,  N + n + one(I))
+            setNode!(ttree, node_a,  lower_node_id)
         else
-            setNode!(ttree, node_b,  N + n + one(I))
+            setNode!(ttree, node_b,  lower_node_id)
         end
         layer_size = layer_size >> 1
-        N += layer_size
+        println("layer_size $layer_size")
+        N += layer_size 
+        println("N $N")
         n = n >> 1
     end
 end
