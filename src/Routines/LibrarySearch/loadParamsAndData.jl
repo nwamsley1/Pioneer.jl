@@ -153,7 +153,7 @@ params_ = (
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch","methods",jl_file)) for jl_file in [
-                                                                                    "matchpeaksLib.jl",
+                                                                                    "matchPeaks.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "manipulateDataFrames.jl",
                                                                                     "buildRTIndex.jl",

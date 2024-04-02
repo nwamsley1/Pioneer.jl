@@ -235,7 +235,9 @@ function searchFragmentIndex(
             #println("spec_order", spec_order)
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
-                        frag_index, 
+                        getRTBins(frag_index),
+                        getFragBins(frag_index),
+                        getFragments(frag_index), 
                         spectra[:masses][i], spectra[:intensities][i],
                         rt_bin_idx, 
                         iRT_high,
@@ -244,10 +246,11 @@ function searchFragmentIndex(
                         min_max_ppm,
                         spectra[:precursorMZ][i],
                         Float32(quadrupole_isolation_width/2.0),
-                        isotope_err_bounds,
-                        min_score = min_index_search_score,
+                        isotope_err_bounds
                         )
-
+            
+            match_count, prec_count = filterPrecursorMatches!(precs, min_index_search_score)
+            
             if getID(precs, 1)>0
 
                 start_idx = prec_id + 1
@@ -620,9 +623,10 @@ function quantPSMs(
                                         spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
                                         isotope_err_bounds,
                                         10000)
-        if ion_idx < 2
-            continue
-        end 
+        #if ion_idx < 2
+        #    reset!(ionTemplates, ion_idx)
+        #    continue
+        #end 
         ##########
         #Match sorted list of plausible ions to the observed spectra
         nmatches, nmisses = matchPeaks!(ionMatches, 
@@ -660,7 +664,8 @@ function quantPSMs(
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
-            solveHuber!(Hs, _residuals_, _weights_, δ, λ, 
+            solveHuber!(Hs, _residuals_, _weights_, 
+                            δ, λ, 
                             max_iter_newton, 
                             max_iter_bisection,
                             max_iter_outer,
@@ -710,6 +715,7 @@ function quantPSMs(
         for i in range(1, Hs.n)
             unscored_PSMs[i] = eltype(unscored_PSMs)()
         end
+        #reset!(ionTemplates, ion_idx)
         reset!(IDtoCOL);
         reset!(Hs);
     end

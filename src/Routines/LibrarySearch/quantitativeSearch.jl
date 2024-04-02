@@ -1,4 +1,3 @@
-
 function quantitationSearch(
     #Mandatory Args
     spectra::Arrow.Table,
@@ -11,7 +10,6 @@ function quantitationSearch(
     params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
     iso_splines::IsotopeSplineModel{Float64},
@@ -24,19 +22,14 @@ function quantitationSearch(
                                             R<:SpectralScores{Float16}}
 
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-    return quantitativeSearch(
+    return quantitationSearch(
         spectra, 
-        missing,
         precursors,
         ion_list, 
-        x->x,
         ms_file_idx,
-        err_dist,
-        missing,
-        
+        err_dist,     
         ionMatches,
         ionMisses,
-        all_fmatches,
         IDtoCOL,
         ionTemplates,
         iso_splines,
@@ -44,12 +37,8 @@ function quantitationSearch(
         unscored_PSMs,
         spectral_scores,
         precursor_weights,
-        missing,
         
         isotope_err_bounds = params[:isotope_err_bounds],
-        filter_by_rank = Bool(params[:quant_search_params]["filter_by_rank"]),
-        filter_by_count = Bool(params[:quant_search_params]["filter_on_frag_count"]),
-        min_index_search_score = zero(UInt8),
 
         δ = Float32(params[:deconvolution_params]["huber_delta"]),
         λ = Float32(params[:deconvolution_params]["lambda"]),
@@ -72,32 +61,23 @@ function quantitationSearch(
         irt_tol = irt_tol,
     )
 end
-
-
-function quantitativeSearch(
+function quantitationSearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
-                    frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
-                    rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel{Float32},
-                    searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-                    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
                     iso_splines::IsotopeSplineModel{Float64},
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
-                    precursor_weights::Vector{Vector{Float32}},
-                    precs::Union{Missing, Vector{Counter{UInt32, UInt8}}};
+                    precursor_weights::Vector{Vector{Float32}};
                     #keyword args
-                    collect_fmatches = false,
-                    expected_matches::Int64 = 100000,
                     frag_ppm_err::Float32 = 0.0f0,
 
                     δ::Float32 = 10000f0,
@@ -109,22 +89,17 @@ function quantitativeSearch(
                     accuracy_bisection::Float32 = 100000f0,
                     max_diff::Float32 = 0.01f0,
 
-                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     min_frag_count::Int64 = 1,
                     min_spectral_contrast::Float32  = 0f0,
                     min_log2_matched_ratio::Float32 = -Inf32,
-                    min_index_search_score::UInt8 = zero(UInt8),
                     min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
                     min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
-                    filter_by_rank::Bool = false, 
-                    filter_by_count::Bool = true,
                     max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
                     quadrupole_isolation_width::Float64 = 8.5,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     irt_tol::Float64 = Inf,
-                    sample_rate::Float64 = Inf,
                     spec_order::Set{Int64} = Set(2)
                     ) where {T,U<:AbstractFloat, 
                                                             L<:LibraryIon{Float32}, 
@@ -138,16 +113,23 @@ function quantitativeSearch(
     #For example if there are 10,000 scans and two threads, choose n so that
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
-    thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
-                                                        spectra[:retentionTime],
-                                                         spectra[:precursorMZ],
-                                                         spectra[:msOrder],
+    #=
+    thread_tasks, total_peaks = partitionScansToThreadsTest(spectra[:masses],
+                                                        spectra[:precursorMZ],
+                                                        spectra[:msOrder],
+
                                                         Threads.nthreads(),
                                                         1)
+    =#                                        
+    
+    thread_tasks, total_peaks = partitionScansToThreads2(spectra[:masses],
+                                                        spectra[:retentionTime],
+                                                        spectra[:precursorMZ],
+                                                        spectra[:msOrder],
 
-    if ismissing(precs)
-        precs = [missing for _ in range(1, Threads.nthreads())]
-    end
+                                                        Threads.nthreads(),
+                                                        1)
+    
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -214,7 +196,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     params_,  
                     ionMatches,
                     ionMisses,
-                    all_fmatches,
                     IDtoCOL,
                     ionTemplates,
                     iso_splines,
@@ -223,9 +204,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     complex_spectral_scores,
                     precursor_weights,
                     )...);
-
-        PSMS = copy(PSMS_old)
-        @time addSecondSearchColumns!(PSMS, 
+        addSecondSearchColumns!(PSMS, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],
                                         prosit_lib["precursors"][:prec_charge], 
@@ -254,7 +233,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                     );
         PSMS[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
         BPSMS[ms_file_idx] = PSMS;
-        GC.gc()
 end
 
 best_psms = vcat(values(BPSMS)...)

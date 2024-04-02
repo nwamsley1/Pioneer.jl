@@ -68,9 +68,13 @@ score_traces_time = @timed begin
     include(joinpath(methods_path,"scoreTraces.jl"))
 end
 jldsave(joinpath(results_folder, "best_psms_scored.jld2"); best_psms)
-best_psms_passing = best_psms[best_psms[!,:q_value].<=0.01,:]
+best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:]
 jldsave(joinpath(results_folder, "best_psms_passing.jld2"); best_psms_passing)
 println("Scored Traces In ", score_traces_time.time, " seconds")
+#=
+value_counts(df, col) = combine(groupby(df, col), nrow);
+IDs_PER_FILE = sort(value_counts(best_psms_passing[!,:], [:file_name]))
+=#
 
 ###########
 #QC Plots

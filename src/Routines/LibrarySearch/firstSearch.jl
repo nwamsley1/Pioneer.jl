@@ -139,7 +139,6 @@ function mainLibrarySearch(
         precs = [missing for _ in range(1, Threads.nthreads())]
     end
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
-    @time begin
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -164,8 +163,6 @@ function mainLibrarySearch(
         end
     end
     precursors_passed_scoring = fetch.(tasks)
-    end
-    @time begin 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -218,13 +215,12 @@ function mainLibrarySearch(
         end
     end
     psms = fetch.(tasks)
-    end
     return psms
 end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    @time PSMs = vcat(mainLibrarySearch(
+    PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -247,8 +243,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         precs
     #scan_range = (100000, 100010)
     )...);
-    println("size(PSMs) ", size(PSMs))
-    @time begin
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:sequence],
                         prosit_lib["precursors"][:missed_cleavages],
@@ -276,7 +270,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
-    end
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
         PSMs

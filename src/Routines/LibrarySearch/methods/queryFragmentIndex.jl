@@ -163,8 +163,13 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
             #This and all subsequent fragment bins cannot match the fragment,
             #so exit the loop 
             if (getLow(frag_bin) > frag_mz_max)
-                return lower_bound_guess, upper_bound_guess
+                break
             else
+                if frag_bin_max_idx === frag_bin_idx
+                    if getHigh(frag_bin) < frag_mz_min
+                        break
+                    end
+                end
                 #Range of fragment ions that could match the observed fragment tolerance 
                 frag_id_range = getSubBinRange(frag_bin)
                 #Search the fragment range for fragments with precursors in the precursor tolerance
@@ -197,8 +202,8 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     min_max_ppm::Tuple{Float32, Float32},
                     prec_mz::Float32, 
                     prec_tol::Float32, 
-                    isotope_err_bounds::Tuple{Int64, Int64},
-                    min_score::UInt8) where {U<:AbstractFloat}
+                    isotope_err_bounds::Tuple{Int64, Int64}
+                    ) where {U<:AbstractFloat}
     
     function getFragTol(mass::Float32, 
                         ppm_err::Float32, 
@@ -215,13 +220,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         return Float32(mass - last(min_max_ppm)*mass/1e6), Float32(mass - tol), Float32(mass + tol)
     end
 
-    function filterPrecursorMatches!(prec_id_to_score::Counter{UInt32, UInt8}, min_score::UInt8)
-        match_count = countFragMatches(prec_id_to_score, min_score)
-        prec_count = getSize(prec_id_to_score) - 1
-        sortCounter!(prec_id_to_score);
-        return match_count, prec_count
-    end
-
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
     @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
@@ -235,7 +233,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
 
             #Get intensity dependent fragment tolerance.
             frag_absolute_min, frag_min, frag_max = getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
-
             #For every precursor that could have produced the observed ion
             #award to it the corresponding score
             lower_bound_guess, upper_bound_guess = queryFragment!(prec_id_to_score, 
@@ -250,7 +247,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                                             prec_min, 
                                             prec_max
                                         )
-
         end
 
         rt_bin_idx += 1
@@ -260,6 +256,12 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         end 
     end
 
-    return filterPrecursorMatches!(prec_id_to_score, min_score)
+    return nothing#filterPrecursorMatches!(prec_id_to_score, min_score)
 end
 
+function filterPrecursorMatches!(prec_id_to_score::Counter{UInt32, UInt8}, min_score::UInt8)
+    match_count = countFragMatches(prec_id_to_score, min_score)
+    prec_count = getSize(prec_id_to_score) - 1
+    sortCounter!(prec_id_to_score);
+    return match_count, prec_count
+end

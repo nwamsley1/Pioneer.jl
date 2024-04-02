@@ -139,7 +139,10 @@ Returns `isotopes` where isotopes[1] is M+0, isotopes[2] is M+1, etc. Does not n
 ### Examples 
 
 """
-function getFragAbundance(iso_splines::IsotopeSplineModel{Float64}, frag::isotope{T, I}, prec::isotope{T, I}, pset::Tuple{I, I}) where {T<:Real,I<:Integer}
+function getFragAbundance(iso_splines::IsotopeSplineModel{Float64}, 
+                            frag::isotope{T, I}, 
+                            prec::isotope{T, I}, 
+                            pset::Tuple{I, I}) where {T<:Real,I<:Integer}
     #Approximating Isotope Distributions of Biomolecule Fragments, Goldfarb et al. 2018 
     min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
 
@@ -207,7 +210,13 @@ function getFragAbundance!(isotopes::Vector{Float64},
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
             #Splines don't go above five sulfurs 
-            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), 
+            if (prec.sulfurs - frag.sulfurs)<0
+                println("TEST")
+                println("prec.sulfurs - frag.sulfurs ", prec.sulfurs - frag.sulfurs)
+                println("TEST")
+            end
+            complement_prob += coalesce(iso_splines(
+                                                            min(prec.sulfurs - frag.sulfurs, 5), 
                                                             p - f, 
                                                             Float64(prec.mass - frag.mass)), 
                                         0.0)
@@ -221,8 +230,8 @@ end
 function getFragAbundance!(isotopes::Vector{Float64}, 
                             iso_splines::IsotopeSplineModel{Float64},
                             prec_mz::Float32,
-                            prec_sulfur_count::UInt8,
                             prec_charge::UInt8,
+                            prec_sulfur_count::UInt8,
                             frag::LibraryFragmentIon{Float32}, 
                             pset::Tuple{I, I}) where {I<:Integer}
     getFragAbundance!(
