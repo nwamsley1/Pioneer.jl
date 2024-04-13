@@ -28,7 +28,7 @@ struct IsotopeSplineModel{T<:Real}
 end
 
 function (p::IsotopeSplineModel)(S, I, x)
-    return p.splines[S::Int64 + 1][I::Int64 + 1](x::Float64)
+    return p.splines[S::Int64 + 1][I::Int64 + 1](x::Float32)
 end
 
 
@@ -62,15 +62,15 @@ function parseIsoXML(iso_xml_path::String)
     end
 
     #Pre-allocate splines 
-    splines = Vector{Vector{PolynomialSpline{Float64}}}()
+    splines = Vector{Vector{PolynomialSpline{Float32}}}()
     for i in range(1, max_S)
         push!(splines, [])
         for j in range(1, max_iso)
             push!(
                 splines[i], 
                 PolynomialSpline(
-                                buildPolynomials(Float64[0, 0, 0], 3),
-                                Float64[0]
+                                buildPolynomials(Float32[0, 0, 0], 3),
+                                Float32[0]
                                             )
             )
         end
@@ -83,10 +83,10 @@ function parseIsoXML(iso_xml_path::String)
             iso =  parse(Int64, attributes_dict(model)["isotope"]) 
             splines[S+1][iso+1] = PolynomialSpline(
                 buildPolynomials(
-                collect(DecodeCoefficients(content(model["coefficients"][1]))),
+                collect(Float32.(DecodeCoefficients(content(model["coefficients"][1])))),
                 parse(Int64, attributes_dict(model)["order"]) - 1
                 ),
-                collect(DecodeCoefficients(content(model["knots"][1])))
+                collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))
             )
         end
     end
@@ -139,7 +139,7 @@ Returns `isotopes` where isotopes[1] is M+0, isotopes[2] is M+1, etc. Does not n
 ### Examples 
 
 """
-function getFragAbundance(iso_splines::IsotopeSplineModel{Float64}, 
+function getFragAbundance(iso_splines::IsotopeSplineModel{T}, 
                             frag::isotope{T, I}, 
                             prec::isotope{T, I}, 
                             pset::Tuple{I, I}) where {T<:Real,I<:Integer}
@@ -150,12 +150,12 @@ function getFragAbundance(iso_splines::IsotopeSplineModel{Float64},
     #zero to isotopic state of largest precursor 
     isotopes = zeros(Float64, max_p + 1)
     for f in range(0, max_p) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
-        complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
+        complement_prob = 0.0f0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
 
-        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float64(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
+        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float32(frag.mass)), 0.0f0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
-            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), p - f, Float64(prec.mass - frag.mass)), 0.0)
+            complement_prob += coalesce(iso_splines(min(prec.sulfurs - frag.sulfurs, 5), p - f, Float32(prec.mass - frag.mass)), 0.0f0)
         end
         isotopes[f+1] = f_i*complement_prob
     end
@@ -193,8 +193,8 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 ### Examples 
 
 """
-function getFragAbundance!(isotopes::Vector{Float64}, 
-                            iso_splines::IsotopeSplineModel{Float64}, 
+function getFragAbundance!(isotopes::Vector{T}, 
+                            iso_splines::IsotopeSplineModel{T}, 
                             frag::isotope{T, I}, 
                             prec::isotope{T, I}, 
                             pset::Tuple{I, I}) where {T<:Real,I<:Integer}
@@ -206,14 +206,14 @@ function getFragAbundance!(isotopes::Vector{Float64},
         complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
 
         #Splines don't go above five sulfurs
-        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float64(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
+        f_i = coalesce(iso_splines(min(frag.sulfurs, 5), f, Float32(frag.mass)), 0.0) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
             #Splines don't go above five sulfurs 
             complement_prob += coalesce(iso_splines(
                                                             min(prec.sulfurs - frag.sulfurs, 5), 
                                                             p - f, 
-                                                            Float64(prec.mass - frag.mass)), 
+                                                            Float32(prec.mass - frag.mass)), 
                                         0.0)
         end
         isotopes[f+1] = f_i*complement_prob
@@ -222,8 +222,8 @@ function getFragAbundance!(isotopes::Vector{Float64},
     #return isotopes#isotopes./sum(isotopes)
 end
 
-function getFragAbundance!(isotopes::Vector{Float64}, 
-                            iso_splines::IsotopeSplineModel{Float64},
+function getFragAbundance!(isotopes::Vector{Float32}, 
+                            iso_splines::IsotopeSplineModel{Float32},
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
@@ -232,14 +232,14 @@ function getFragAbundance!(isotopes::Vector{Float64},
     getFragAbundance!(
         isotopes,
         iso_splines,
-        isotope(Float64(frag.mz*frag.frag_charge), Int64(frag.sulfur_count), 0),
-        isotope(Float64(prec_mz*prec_charge), Int64(prec_sulfur_count), 0),
+        isotope(frag.mz*frag.frag_charge, Int64(frag.sulfur_count), 0),
+        isotope(prec_mz*prec_charge, Int64(prec_sulfur_count), 0),
         pset
         )
 end
 
-function getFragIsotopes!(isotopes::Vector{Float64}, 
-                            iso_splines::IsotopeSplineModel{Float64}, 
+function getFragIsotopes!(isotopes::Vector{Float32}, 
+                            iso_splines::IsotopeSplineModel{Float32}, 
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
@@ -248,34 +248,13 @@ function getFragIsotopes!(isotopes::Vector{Float64},
     fill!(isotopes, zero(eltype(isotopes)))
 
     monoisotopic_intensity = frag.intensity
-    if (first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 1) #Only adjust mono-isotopic intensit if isolated precursor isotopes differ from the prosit training data
-        
-        #Get relative abundances of frag isotopes given the prosit training isotope set 
-        getFragAbundance!(isotopes, 
-                            iso_splines, 
-                            prec_mz,
-                            prec_charge,
-                            prec_sulfur_count,
-                            frag, 
-                            getPrositIsotopeSet(iso_splines,                             
-                            prec_mz,
-                            prec_charge,
-                            prec_sulfur_count)
-        )
-        prosit_mono = first(isotopes)
-        fill!(isotopes, zero(eltype(isotopes)))
-        getFragAbundance!(isotopes, iso_splines,                             
-                            prec_mz,
-                            prec_charge,
-                            prec_sulfur_count,
-                            frag, prec_isotope_set)
-        corrected_mono = first(isotopes)
-        monoisotopic_intensity = max(Float32(frag.intensity*corrected_mono/prosit_mono), zero(Float32))
-    else
-        getFragAbundance!(isotopes, iso_splines,  prec_mz,
-        prec_charge,
-        prec_sulfur_count, frag, prec_isotope_set)
-    end
+    getFragAbundance!(isotopes, 
+                    iso_splines,  
+                    prec_mz,
+                    prec_charge,
+                    prec_sulfur_count, 
+                    frag, 
+                    prec_isotope_set)
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     for i in reverse(range(1, length(isotopes)))

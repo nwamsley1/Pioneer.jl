@@ -61,22 +61,18 @@ function selectRTIndexedTransitions!(
                             prec_mzs::AbstractArray{Float32},
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
-                            iso_splines::IsotopeSplineModel{Float64},
-                            isotopes::Vector{Float64},
+                            iso_splines::IsotopeSplineModel{Float32},
+                            isotopes::Vector{Float32},
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
-                            rt::Float32, 
-                            rt_tol::Float32, 
+                            rt_start_idx::Int64, 
+                            rt_stop_idx::Int64,
                             min_prec_mz::Float32,
                             max_prec_mz::Float32,
                             isotope_err_bounds::Tuple{Int64, Int64},
                             block_size::Int64)
     transition_idx = 0
     n = 0
-    rt_start = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
-    rt_stop = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-
-
-    for rt_bin_idx in rt_start:rt_stop #Add transitions
+    for rt_bin_idx in range(rt_start_idx, rt_stop_idx) #Add transitions
         precs = rt_index.rt_bins[rt_bin_idx].prec
         start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
@@ -123,8 +119,8 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
                             transition_idx::Int64, 
-                            isotopes::Vector{Float64}, 
-                            iso_splines::IsotopeSplineModel{Float64}, 
+                            isotopes::Vector{Float32}, 
+                            iso_splines::IsotopeSplineModel{Float32}, 
                             min_prec_mz::Float32,
                             max_prec_mz::Float32,
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}

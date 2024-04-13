@@ -10,6 +10,6 @@ precID_to_iRT = getPrecIDtoiRT(PSMs_Dict,
 RT_INDICES = makeRTIndices(PSMs_Dict,
                             precID_to_iRT,
                             iRT_RT,
-                            bin_rt_size = 0.1)
+                            bin_rt_size = 0.5)
 precID_to_cv_fold = getCVFolds(precID_to_iRT)
 end

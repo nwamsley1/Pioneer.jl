@@ -547,7 +547,7 @@ function quantPSMs(
                     ionMisses::Vector{FragmentMatch{Float32}},
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
-                    iso_splines::IsotopeSplineModel{Float64},
+                    iso_splines::IsotopeSplineModel{Float32},
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
@@ -575,12 +575,15 @@ function quantPSMs(
     Hs = SparseArray(5000);
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
-    isotopes = zeros(Float64, n_frag_isotopes)
+    isotopes = zeros(Float32, n_frag_isotopes)
     rt_start, rt_stop = 1, 1
     test_n = 0
+    #n_templates = zeros(Int64, length(thread_task))
+    n = 0
     ##########
     #Iterate through spectra
     for i in thread_task
+        n += 1
         if i == 0 
             continue
         end
@@ -603,47 +606,26 @@ function quantPSMs(
         if (rt_start_new != rt_start) | rt_stop_new != rt_stop
             rt_start = rt_start_new
             rt_stop = rt_stop_new
-            #=
-            while getHigh(getRTBin(rt_index, rt_bin_high)) + irt_tol < spectra[:retentionTime][i]
-                rt_bin_high += 1
-                if rt_bin_high  >length(getRTBins(rt_index))
-                    rt_bin_high = length(getRTBins(rt_index))
-                    break
-                end 
-            end
-
-            while getLow(getRTBin(rt_index, rt_bin_low)) - irt_tol > spectra[:retentionTime][i]
-                rt_bin_low += 1
-                if rt_bin_low  >length(getRTBins(rt_index))
-                    rt_bin_low = length(getRTBins(rt_index))
-                    break
-                end 
-            end
-            =#
-        #Candidate precursors and their retention time estimates have already been determined from
-        #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
-        #the retention time and m/z tolerance constraints
-        test_n += 1
-        ion_idx, prec_idx = selectRTIndexedTransitions!(
-                                        ionTemplates,
-                                        library_fragment_lookup,
-                                        precursors[:mz],
-                                        precursors[:prec_charge],
-                                        precursors[:sulfur_count],
-                                        iso_splines,
-                                        isotopes,
-                                        rt_index,
-                                        spectra[:retentionTime][i],
-                                        Float32(irt_tol),#Float32(max_peak_width/2),
-                                        spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                        spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
-                                        isotope_err_bounds,
-                                        10000)
+            #Candidate precursors and their retention time estimates have already been determined from
+            #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
+            #the retention time and m/z tolerance constraints
+            test_n += 1
+            ion_idx, prec_idx = selectRTIndexedTransitions!(
+                                            ionTemplates,
+                                            library_fragment_lookup,
+                                            precursors[:mz],
+                                            precursors[:prec_charge],
+                                            precursors[:sulfur_count],
+                                            iso_splines,
+                                            isotopes,
+                                            rt_index,
+                                            rt_start,
+                                            rt_stop,
+                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
+                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
+                                            isotope_err_bounds,
+                                            10000)
         end
-        #if ion_idx < 2
-        #    reset!(ionTemplates, ion_idx)
-        #    continue
-        #end 
         ##########
         #Match sorted list of plausible ions to the observed spectra
         nmatches, nmisses = matchPeaks!(ionMatches, 
@@ -729,6 +711,7 @@ function quantPSMs(
 
         ##########
         #Reset pre-allocated arrays 
+        #n_templates[n] = Hs.n
         for i in range(1, Hs.n)
             unscored_PSMs[i] = eltype(unscored_PSMs)()
         end
@@ -736,6 +719,7 @@ function quantPSMs(
         reset!(IDtoCOL);
         reset!(Hs);
     end
+    #println("describe(n_templates) ", describe(n_templates))
     println("test_n $test_n")
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end

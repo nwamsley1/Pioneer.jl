@@ -155,3 +155,25 @@ function removeSmallestElement!(
         n = n >> 1
     end
 end
+using PProf, Profile
+Profile.clear()
+MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+@profile PSMS = vcat(quantitationSearch(MS_TABLE, 
+                prosit_lib["precursors"],
+                prosit_lib["f_det"],
+                RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+                UInt32(ms_file_idx), 
+                frag_err_dist_dict[ms_file_idx],
+                irt_errs[ms_file_idx],
+                params_,  
+                ionMatches,
+                ionMisses,
+                IDtoCOL,
+                ionTemplates,
+                iso_splines,
+                complex_scored_PSMs,
+                complex_unscored_PSMs,
+                complex_spectral_scores,
+                precursor_weights,
+                )...);
+                pprof(;webport=58600)
