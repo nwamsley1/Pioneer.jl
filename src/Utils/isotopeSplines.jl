@@ -210,11 +210,6 @@ function getFragAbundance!(isotopes::Vector{Float64},
 
         for p in range(max(f, min_p), max_p) #Probabilities of complement fragments 
             #Splines don't go above five sulfurs 
-            if (prec.sulfurs - frag.sulfurs)<0
-                println("TEST")
-                println("prec.sulfurs - frag.sulfurs ", prec.sulfurs - frag.sulfurs)
-                println("TEST")
-            end
             complement_prob += coalesce(iso_splines(
                                                             min(prec.sulfurs - frag.sulfurs, 5), 
                                                             p - f, 

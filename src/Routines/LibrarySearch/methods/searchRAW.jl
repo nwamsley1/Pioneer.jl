@@ -576,6 +576,8 @@ function quantPSMs(
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float64, n_frag_isotopes)
+    rt_start, rt_stop = 1, 1
+    test_n = 0
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -591,10 +593,37 @@ function quantPSMs(
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
         cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
+        #a = (getHigh(getRTBin(rt_index, rt_bin_high)) + irt_tol < spectra[:retentionTime][i]) 
+        #b = (getLow(getRTBin(rt_index, rt_bin_high)) - irt_tol > spectra[:retentionTime][i]) 
+        rt = spectra[:retentionTime][i]
+        rt_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
+        rt_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
+    
+        
+        if (rt_start_new != rt_start) | rt_stop_new != rt_stop
+            rt_start = rt_start_new
+            rt_stop = rt_stop_new
+            #=
+            while getHigh(getRTBin(rt_index, rt_bin_high)) + irt_tol < spectra[:retentionTime][i]
+                rt_bin_high += 1
+                if rt_bin_high  >length(getRTBins(rt_index))
+                    rt_bin_high = length(getRTBins(rt_index))
+                    break
+                end 
+            end
 
+            while getLow(getRTBin(rt_index, rt_bin_low)) - irt_tol > spectra[:retentionTime][i]
+                rt_bin_low += 1
+                if rt_bin_low  >length(getRTBins(rt_index))
+                    rt_bin_low = length(getRTBins(rt_index))
+                    break
+                end 
+            end
+            =#
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
+        test_n += 1
         ion_idx, prec_idx = selectRTIndexedTransitions!(
                                         ionTemplates,
                                         library_fragment_lookup,
@@ -610,6 +639,7 @@ function quantPSMs(
                                         spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
                                         isotope_err_bounds,
                                         10000)
+        end
         #if ion_idx < 2
         #    reset!(ionTemplates, ion_idx)
         #    continue
@@ -706,7 +736,7 @@ function quantPSMs(
         reset!(IDtoCOL);
         reset!(Hs);
     end
-
+    println("test_n $test_n")
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end
 

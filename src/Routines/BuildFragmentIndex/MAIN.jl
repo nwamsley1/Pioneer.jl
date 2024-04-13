@@ -3,7 +3,7 @@ using Base.Iterators: partition
 
 include("src/structs/Ion.jl")
 include("src/structs/LibraryIon.jl")
-include("src/structs/LibraryFragmentIndex.jl")
+include("src/structs/Index.jl")
 include("src/Routines/buildFragmentIndex/buildFragmentIndex.jl")
 
 ARGS = Dict(

@@ -217,6 +217,71 @@ function mainLibrarySearch(
     return psms
 end
 
+PSMs_Dict = Dictionary{String, DataFrame}()
+main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+    PSMs = vcat(mainLibrarySearch(
+        MS_TABLE,
+        prosit_lib["f_index"],
+        prosit_lib["precursors"],
+        library_fragment_lookup_table,
+        RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+        UInt32(ms_file_idx), #MS_FILE_IDX
+        frag_err_dist_dict[ms_file_idx],
+        irt_errs[ms_file_idx],
+        params_,
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precursor_weights,
+        precs
+    #scan_range = (100000, 100010)
+    )...);
+    addMainSearchColumns!(PSMs, MS_TABLE, 
+                        prosit_lib["precursors"][:sequence],
+                        prosit_lib["precursors"][:missed_cleavages],
+                        prosit_lib["precursors"][:is_decoy],
+                        prosit_lib["precursors"][:irt],
+                        prosit_lib["precursors"][:prec_charge]);
+    #Observed iRT estimates based on pre-search
+    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
+    PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
+
+    column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
+                    :iRT_error,:missed_cleavage,:Mox,:charge,:TIC,
+                    :y_count,:err_norm,:spectrum_peak_count,:intercept]
+
+    scoreMainSearchPSMs!(PSMs,
+                                column_names,
+                                n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
+                                max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
+                                max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
+
+    getProbs!(PSMs);
+    
+    getBestPSMs!(PSMs,
+                    prosit_lib["precursors"][:mz],
+                    max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
+                    max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
+                )
+    insert!(PSMs_Dict, 
+        file_id_to_parsed_name[ms_file_idx], 
+        PSMs
+    );
+end
+
+
+println("Finished main search in ", main_search_time.time, "seconds")
+println("Finished main search in ", main_search_time, "seconds")
+
+
+#=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(
     MS_TABLE,
     prosit_lib["f_index"],
@@ -285,67 +350,4 @@ length(a)
 length(setdiff(a, b))
 length(setdiff(b, a))
 
-PSMs_Dict = Dictionary{String, DataFrame}()
-main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
-    MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(mainLibrarySearch(
-        MS_TABLE,
-        prosit_lib["f_index"],
-        prosit_lib["precursors"],
-        library_fragment_lookup_table,
-        RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-        UInt32(ms_file_idx), #MS_FILE_IDX
-        frag_err_dist_dict[ms_file_idx],
-        irt_errs[ms_file_idx],
-        params_,
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        precs
-    #scan_range = (100000, 100010)
-    )...);
-    addMainSearchColumns!(PSMs, MS_TABLE, 
-                        prosit_lib["precursors"][:sequence],
-                        prosit_lib["precursors"][:missed_cleavages],
-                        prosit_lib["precursors"][:is_decoy],
-                        prosit_lib["precursors"][:irt],
-                        prosit_lib["precursors"][:prec_charge]);
-    #Observed iRT estimates based on pre-search
-    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
-    PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-
-    column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
-                    :iRT_error,:missed_cleavage,:Mox,:charge,:TIC,
-                    :y_count,:err_norm,:spectrum_peak_count,:intercept]
-
-    scoreMainSearchPSMs!(PSMs,
-                                column_names,
-                                n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
-                                max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
-                                max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
-
-    getProbs!(PSMs);
-    
-    getBestPSMs!(PSMs,
-                    prosit_lib["precursors"][:mz],
-                    max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
-                    max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
-                )
-    insert!(PSMs_Dict, 
-        file_id_to_parsed_name[ms_file_idx], 
-        PSMs
-    );
-end
-
-
-println("Finished main search in ", main_search_time.time, "seconds")
-println("Finished main search in ", main_search_time, "seconds")
-
-
+=#
