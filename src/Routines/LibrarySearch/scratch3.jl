@@ -27,55 +27,57 @@ function fillNode!(ttree::TournamentTree{I,T}, node_id::UInt32, val::T, bin_id::
     )
 end
 
+#Grow tree to accomadate N bins
 function growTTree!(ttree::TournamentTree{I,T}, N::I) where {I<:Unsigned, T<:Real}
     ttree.nodes = Vector{TTreeNode{I, T}}(undef, N + N - 1)
     ttree.n_bins = N
 end
 
+#Find the smallest power of 2 greater than or equal
+#to the query
 function getNearestPowerOf2(n::UInt32)
-    n -= 1
+    n -= one(UInt32)
     n |= n >> 1
     n |= n >> 2
     n |= n >> 4
     n |= n >> 8
     n |= n >> 16
-    n += 1
+    n += one(UInt32)
     return n
 end
 
 
 function buildTTree!(
-    ttree::TournamentTree{I, T},
-    sub_bin_ranges::Vector{UnitRange{I}},
-    n_sub_bins::UInt32,
-    values::Vector{T}
+    ttree::TournamentTree{I, T}, #Tournament Tree
+    sub_bin_ranges::Vector{UnitRange{I}}, #Ranges of `values` that are each sorted in ascending order
+    n_sub_bins::UInt32, #Number of sub bin ranges to consider
+    values::Vector{T} #Values 
     ) where {I<:Unsigned,T<:Real}
 
     #Number of leaves needs to be the next highest power of 2. 
-    N = UInt32(getNearestPowerOf2(n_sub_bins))
-    if N+N-1 > length(getNodes(ttree))
+    N = getNearestPowerOf2(n_sub_bins)
+    if N+N-one(UInt32) > length(getNodes(ttree))
         growTTree!(ttree, N)
     end
-    println("N $N")
-    #Fill leaves 
-    i = one(UInt32)
+    #Fill leaves (first-layer nodes) 
+    leaf_idx = one(UInt32)
     for sub_bin_range in sub_bin_ranges
         top_id = first(sub_bin_range)
         last_id = last(sub_bin_range)
         fillNode!(ttree, 
-                    i, #node_id
-                    values[first(sub_bin_range)], #val
-                    i, #bin_id
+                    leaf_idx, #node_id
+                    values[top_id], #val
+                    leaf_idx, #bin_id
                     top_id,
                     last_id
                     )
-        i += one(UInt32)
+        leaf_idx += one(UInt32)
     end
-    for i in range(n_sub_bins+one(UInt32), N) #Fill placeholder leaves (if last_sub_bin_idx is not a power of 2)
+    for leaf_idx in range(n_sub_bins+one(UInt32), N) #Fill placeholder leaves (if last_sub_bin_idx is not a power of 2)
         fillNode!(ttree, 
-                i,
+                leaf_idx,
                 typemax(T),
-                i, #leaf_id
+                leaf_idx, #leaf_id
                 one(I),
                 one(I)
         )
@@ -118,8 +120,7 @@ function removeSmallestElement!(
     out_idx += 1
     #Repair tree 
     top_id,last_id,bin_id = getTopID(leading_node),getLastID(leading_node),getBinID(leading_node)
-    if top_id > last_id #No more elements left in the bin
-        top_id += one(I)
+    if top_id === last_id #No more elements left in the bin
         setNode!(ttree, 
                 TTreeNode(
                 typemax(T), #No more elements left, so make sure this bin always loses 
@@ -140,40 +141,17 @@ function removeSmallestElement!(
     #If the bin_id is even, subtract one
     lower_node_id = bin_id - (bin_id%I(2) === zero(I))
     N = ttree.n_bins
-    layer_size = N
     n = (lower_node_id >> 1)
-    n_nodes = ttree.n_bins + ttree.n_bins - one(I)
-    while lower_node_id < n_nodes 
-        println("lower_node_id $lower_node_id n $n N $N layer_size $layer_size N + n ", N + n)
+    while N > 1
         node_a, node_b = getNode(ttree, lower_node_id), getNode(ttree, lower_node_id + one(I))
-        lower_node_id = N - n + one(UInt32)
-        println("lower_node_id $lower_node_id")
+        lower_node_id += N - n
         if getVal(node_a) <= getVal(node_b)
             setNode!(ttree, node_a,  lower_node_id)
         else
             setNode!(ttree, node_b,  lower_node_id)
         end
-        layer_size = layer_size >> 1
-        println("layer_size $layer_size")
-        N += layer_size 
-        println("N $N")
+        lower_node_id = lower_node_id - (lower_node_id%I(2) === zero(I))
+        N = N >> 1
         n = n >> 1
     end
 end
-#=
-    #Fill first layer of nodes 
-    leaf_id = 1
-    node_id = 1
-    while leaf_id <= N
-        #Compare leaves and assign winner to the node 
-        val_a, val_b = getVal(getLeaf(ttree,leaf_id)), getVal(getLeaf(ttree,leaf_id+1))
-        if val_a <= val_b
-            ttree.nodes[node_id] = TTreeNode(val_a, UInt32(leaf_id))
-        else
-            ttree.nodes[node_id] = TTreeNode(val_b, UInt32(leaf_id + 1))
-        end
-        #Increment leaf and node counters 
-        leaf_id += 2
-        node_id += 1
-    end
-=#

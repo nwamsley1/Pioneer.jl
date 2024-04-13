@@ -4,10 +4,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             prec_mzs::Arrow.Primitive{Float32, Vector{Float32}},
                             prec_charges::Arrow.Primitive{UInt8, Vector{UInt8}},
                             prec_irts::Arrow.Primitive{Float32, Vector{Float32}},
-                            #fragment_list::Vector{Vector{DetailedFrag{Float32}}}, 
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
-                            #precursors::Vector{LibraryPrecursor{Float32}}
-                            #counter::Counter{UInt32,UInt8},
                             iRT::Float32, 
                             iRT_tol::Float32, 
                             mz_bounds::Tuple{Float32, Float32};

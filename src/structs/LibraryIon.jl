@@ -26,7 +26,7 @@ getMissedCleavages(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.misse
 getVariableMods(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.variable_mods
 getLength(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.length
 sulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
-
+getCharge(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.prec_charge
 
 abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
 
@@ -48,7 +48,32 @@ struct SimpleFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_charge::UInt8
     score::UInt8
 end
+ArrowTypes.arrowname(::Type{SimpleFrag}) = :SimpleFrag
+ArrowTypes.JuliaType(::Val{:SimpleFrag}) = SimpleFrag
+
+
 getScore(pbi::SimpleFrag)::UInt8 = pbi.score
+getIRT(pbi::SimpleFrag{T}) where {T<:AbstractFloat} = pbi.prec_irt
+
+struct PrositFrag
+    intensity::Float32
+    mass::Float32
+    type::Char
+    index::UInt8
+    charge::UInt8
+    sulfur_count::UInt8
+end
+
+getIntensity(pf::PrositFrag) = pf.intensity
+getMZ(pf::PrositFrag) = pf.mass
+getType(pf::PrositFrag) = pf.type
+getIndex(pf::PrositFrag) = pf.index
+getCharge(pf::PrositFrag) = pf.charge
+getSulfurCount(pf::PrositFrag) = pf.sulfur_count
+
+PrositFrag() = PrositFrag(zero(Float32), zero(Float32), 'y', zero(UInt8), zero(UInt8), zero(UInt8))
+ArrowTypes.arrowname(::Type{PrositFrag}) = :PrositFrag
+ArrowTypes.JuliaType(::Val{:PrositFrag}) = PrositFrag
 
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_id::UInt32

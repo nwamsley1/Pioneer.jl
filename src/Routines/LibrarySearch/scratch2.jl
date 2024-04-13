@@ -17,13 +17,17 @@ buildTTree!(
     test_values
 )
 n = 1
-max_elements = sum([(last(x) - first(x) + 1) for x in sorted_sub_ranges])
-while n < max_elements 
-removeSmallestElement!(
-    test_ttree,
-    test_values,
-    sorted_out,
-    n,
-)
-n += 1
+max_elements = 0
+for sub_range in sorted_sub_ranges
+    max_elements += (last(sub_range) - first(sub_range) + 1)
+end
+
+while n <= max_elements 
+    removeSmallestElement!(
+        test_ttree,
+        test_values,
+        sorted_out,
+        n,
+    )
+    n += 1
 end

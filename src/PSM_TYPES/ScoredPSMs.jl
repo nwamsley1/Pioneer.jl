@@ -95,6 +95,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
 
     start_idx = last_val
     skipped = 0
+    n = 0
     for i in range(1, n_vals)
 
         passing_filter = (
@@ -139,6 +140,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(scan_idx)
         )
+        n += 1
         last_val += 1
     end
     return last_val

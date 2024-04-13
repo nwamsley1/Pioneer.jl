@@ -284,7 +284,6 @@ end
 function getPSMS(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
-                    frag_index::Union{FragmentIndex{Float32}, Missing},
                     precursors::Union{Arrow.Table, Missing},
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
                     precursors_passed_scoring::Vector{UInt32},
@@ -341,7 +340,6 @@ function getPSMS(
     _residuals_ = zeros(Float32, 5000);
     #prec_id = 0
     #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
-    rt_bin_idx = 1
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -369,15 +367,6 @@ function getPSMS(
         #end
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
         
-        #Get correct rt_bin_idx 
-        while getHigh(getRTBin(frag_index, rt_bin_idx)) < iRT_low
-            rt_bin_idx += 1
-            if rt_bin_idx >length(getRTBins(frag_index))
-                rt_bin_idx = length(getRTBins(frag_index))
-                break
-            end 
-        end
-
         ##########
         #Ion Template Selection
         #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
@@ -417,7 +406,6 @@ function getPSMS(
                                         min_max_ppm,
                                         UInt32(i), 
                                         ms_file_idx)
-        
         #println("nmatches $nmatches nmisses $nmisses")
         nmisses_all = nmisses
         nmatches_all = nmatches    
@@ -445,7 +433,6 @@ function getPSMS(
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
-        
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
@@ -816,7 +803,6 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16},
     return nmatches_all, nmisses_all, nmatches, nmisses
 end
 
-
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {M<:MatchIon{Float32}}
     if collect_fmatches
         for match in range(1, nmatches)
@@ -835,4 +821,35 @@ function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end
 
+
+function buildSubsetLibraryFragmentLookupTable!(
+                                            precursors_passed_scoring::Vector{Vector{UInt32}},
+                                            lookup_table::LibraryFragmentLookup{Float32},
+                                            n_precursors::Int64
+                                            )
+    #prec_id_conversion = zeros(UInt32, n_precursors)
+    @time begin
+        precursors = sort(unique(vcat(precursors_passed_scoring...)))
+        prec_frag_ranges = Vector{UnitRange{UInt32}}(undef, n_precursors)
+    end
+    fragment_count = 0
+    n = 0
+    @time for prec_idx in precursors
+        n += 1
+        prec_size = length(getPrecFragRange(lookup_table, prec_idx))
+        prec_frag_ranges[prec_idx] = UInt32(fragment_count + 1):UInt32(fragment_count + prec_size)
+        fragment_count += prec_size
+    end
+    println("fragment_count $fragment_count")
+    fragments = Vector{DetailedFrag{Float32}}(undef, fragment_count)
+    n = 0
+    @time for prec_idx in precursors
+        for i in getPrecFragRange(lookup_table, prec_idx)
+            n+=1
+            fragments[n] = lookup_table.frags[i]
+        end
+    end
+
+    return LibraryFragmentLookup(fragments, prec_frag_ranges)
+end
 
