@@ -1,4 +1,8 @@
-function getDerivatives!(Hs::SparseArray{Ti, T}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float32) where {Ti<:Integer,T<:AbstractFloat}
+function getDerivatives!(Hs::SparseArray{Ti, T}, 
+                            r::Vector{Float32}, 
+                            col::Int64, 
+                            δ::Float32, 
+                            λ::Float32) where {Ti<:Integer,T<:AbstractFloat}
     L1 = zero(Float32)
     L2 = zero(Float32)
     @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
@@ -85,59 +89,61 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
 
     #Newton-Raphson Method Iterations until convergence or maximum iterations. 
     #If convergence fails in maximum iterations, switch to bisection method for guaranteed convergence
-    while (n < max_iter_newton)
+    @inbounds @fastmath begin
+        while (n < max_iter_newton)
 
-        #First and second derivatives 
-        L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
-        update_rule = (L1)/L2
+            #First and second derivatives 
+            L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
+            update_rule = (L1)/L2
 
-        #Switch to bisection method
-        if isnan(update_rule)
-            n = max_iter_newton
-            break
+            #Switch to bisection method
+            if isnan(update_rule)
+                n = max_iter_newton
+                break
+            end
+
+            #Useful as boundaries for bisection method if Newton's method fails to converge. 
+            #Want positive and negative L1 with smallest absolute values 
+            if (sign(L1) == 1) & (L1 < max_l1) #L1 > max_l1
+                max_x1, max_l1 = X₁[col], L1
+            end
+
+            X0 = X₁[col] 
+
+            #Newton-Raphson update. Contrain X₁[col] to be non-negative
+            X₁[col] = max(X₁[col] - update_rule, zero(T))
+            n += 1
+
+            #Update residuals given new estimate, X₁[col], and prior estimate, X0
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+
+            ########
+            #Stopping Criterion for single variable Newton-Raphson
+            ########
+            abs(X₁[col] - X0) < accuracy_newton ? break : nothing
         end
 
-        #Useful as boundaries for bisection method if Newton's method fails to converge. 
-        #Want positive and negative L1 with smallest absolute values 
-        if (sign(L1) == 1) & (L1 < max_l1) #L1 > max_l1
-            max_x1, max_l1 = X₁[col], L1
+        #If newtons method fails to converge, switch to bisection method
+        if n == max_iter_newton
+            #println("bisection")
+            #######
+            #Lower bound is always X₁[col] == 0
+            X0 = X₁[col]
+            X₁[col] = zero(T)
+            updateResiduals!(Hs, r, col, X₁[col], X0)
+            L1 = getL1(Hs, r, col, δ, λ)
+            if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
+                bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
+                            min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
+                            L1,  
+                            max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
+                            accuracy_bisection)#accuracy)
+            end
+
+            return X₁[col] - X_init
+        else #Convergence reached. Return difference between current estimate and initial guess. 
+            return X₁[col] - X_init
         end
-
-        X0 = X₁[col] 
-
-        #Newton-Raphson update. Contrain X₁[col] to be non-negative
-        @fastmath X₁[col] = max(X₁[col] - update_rule, zero(T))
-        n += 1
-
-        #Update residuals given new estimate, X₁[col], and prior estimate, X0
-        updateResiduals!(Hs, r, col, X₁[col], X0)
-
-        ########
-        #Stopping Criterion for single variable Newton-Raphson
-        ########
-        abs(X₁[col] - X0) < accuracy_newton ? break : nothing
-    end
-
-    #If newtons method fails to converge, switch to bisection method
-    if n == max_iter_newton
-        #println("bisection")
-        #######
-        #Lower bound is always X₁[col] == 0
-        X0 = X₁[col]
-        X₁[col] = zero(T)
-        updateResiduals!(Hs, r, col, X₁[col], X0)
-        L1 = getL1(Hs, r, col, δ, λ)
-        if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
-            bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
-                        min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
-                        L1,  
-                        max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
-                        accuracy_bisection)#accuracy)
-        end
-
-        return X₁[col] - X_init
-    else #Convergence reached. Return difference between current estimate and initial guess. 
-        return X₁[col] - X_init
     end
 end
 
@@ -202,7 +208,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     while (i < max_iter_outer) & (ΔX > tol)
         ΔX = 0.0
         #Update each variable once 
-        max_diff = 0.0
+        _diff = 0.0
         for col in range(1, Hs.n)
             #difference in X_1[col]
             δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
@@ -212,13 +218,13 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                                         accuracy_bisection))
             if !iszero(X₁) 
                 if δx/X₁[col] > max_diff
-                    max_diff =  δx/X₁[col]
+                    _diff =  δx/X₁[col]
                 end
             end
             
             ΔX += δx
         end
-        if max_diff < 0.01
+        if _diff < max_diff
             break
         end
        i += 1

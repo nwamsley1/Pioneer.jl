@@ -1,8 +1,7 @@
-
 function quantitationSearch(
     #Mandatory Args
     spectra::Arrow.Table,
-    precursors::Vector{LibraryPrecursorIon{Float32}},
+    precursors::Arrow.Table,
     ion_list::LibraryFragmentLookup{Float32},
     rt_index::retentionTimeIndex{Float32, Float32},
     ms_file_idx::UInt32,
@@ -11,10 +10,9 @@ function quantitationSearch(
     params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float64},
+    iso_splines::IsotopeSplineModel{Float32},
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -24,19 +22,14 @@ function quantitationSearch(
                                             R<:SpectralScores{Float16}}
 
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-    return searchRAW(
+    return quantitationSearch(
         spectra, 
-        missing,
         precursors,
         ion_list, 
-        x->x,
         ms_file_idx,
-        err_dist,
-        missing,
-        
+        err_dist,     
         ionMatches,
         ionMisses,
-        all_fmatches,
         IDtoCOL,
         ionTemplates,
         iso_splines,
@@ -44,12 +37,8 @@ function quantitationSearch(
         unscored_PSMs,
         spectral_scores,
         precursor_weights,
-        missing,
         
         isotope_err_bounds = params[:isotope_err_bounds],
-        filter_by_rank = Bool(params[:quant_search_params]["filter_by_rank"]),
-        filter_by_count = Bool(params[:quant_search_params]["filter_on_frag_count"]),
-        min_index_search_score = zero(UInt8),
 
         δ = Float32(params[:deconvolution_params]["huber_delta"]),
         λ = Float32(params[:deconvolution_params]["lambda"]),
@@ -72,8 +61,121 @@ function quantitationSearch(
         irt_tol = irt_tol,
     )
 end
+function quantitationSearch(
+                    #Mandatory Args
+                    spectra::Arrow.Table, 
+                    precursors::Union{Arrow.Table, Missing},
+                    ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
+                    ms_file_idx::UInt32,
+                    mass_err_model::MassErrorModel{Float32},
+                    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
+                    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+                    IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
+                    ionTemplates::Vector{Vector{L}},
+                    iso_splines::IsotopeSplineModel{Float32},
+                    scored_PSMs::Vector{Vector{S}},
+                    unscored_PSMs::Vector{Vector{Q}},
+                    spectral_scores::Vector{Vector{R}},
+                    precursor_weights::Vector{Vector{Float32}};
+                    #keyword args
+                    frag_ppm_err::Float32 = 0.0f0,
+
+                    δ::Float32 = 10000f0,
+                    λ::Float32 = 0f0,
+                    max_iter_newton::Int64 = 100,
+                    max_iter_bisection::Int64 = 100,
+                    max_iter_outer::Int64 = 100,
+                    accuracy_newton::Float32 = 100f0,
+                    accuracy_bisection::Float32 = 100000f0,
+                    max_diff::Float32 = 0.01f0,
+
+                    isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
+                    min_frag_count::Int64 = 1,
+                    min_spectral_contrast::Float32  = 0f0,
+                    min_log2_matched_ratio::Float32 = -Inf32,
+                    min_topn_of_m::Tuple{Int64, Int64} = (2, 3),
+                    min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
+                    max_best_rank::Int64 = one(Int64),
+                    n_frag_isotopes::Int64 = 1,
+                    quadrupole_isolation_width::Float64 = 8.5,
+                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
+                    irt_tol::Float64 = Inf,
+                    spec_order::Set{Int64} = Set(2)
+                    ) where {T,U<:AbstractFloat, 
+                                                            L<:LibraryIon{Float32}, 
+                                                            S<:ScoredPSM{Float32, Float16},
+                                                            Q<:UnscoredPSM{Float32},
+                                                            R<:SpectralScores{Float16}}
 
 
+    ########
+    #Each thread needs to handle a similair number of peaks. 
+    #For example if there are 10,000 scans and two threads, choose n so that
+    #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
+    #of scans have an equal number of fragment peaks in the spectra
+    #=
+    thread_tasks, total_peaks = partitionScansToThreadsTest(spectra[:masses],
+                                                        spectra[:precursorMZ],
+                                                        spectra[:msOrder],
+
+                                                        Threads.nthreads(),
+                                                        1)
+    =#                                        
+    
+    thread_tasks, total_peaks = partitionScansToThreads2(spectra[:masses],
+                                                        spectra[:retentionTime],
+                                                        spectra[:precursorMZ],
+                                                        spectra[:msOrder],
+
+                                                        Threads.nthreads(),
+                                                        1)
+    
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return quantPSMs(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                precursors,
+                                ion_list, 
+                                ms_file_idx,
+                                mass_err_model,
+                                frag_ppm_err,
+                                δ,
+                                λ,
+                                max_iter_newton,
+                                max_iter_bisection,
+                                max_iter_outer,
+                                accuracy_newton,
+                                accuracy_bisection,
+                                max_diff,
+                                ionMatches[thread_id],
+                                ionMisses[thread_id],
+                                IDtoCOL[thread_id],
+                                ionTemplates[thread_id],
+                                iso_splines,
+                                scored_PSMs[thread_id],
+                                unscored_PSMs[thread_id],
+                                spectral_scores[thread_id],
+                                precursor_weights[thread_id],
+                                isotope_err_bounds,
+                                min_frag_count,
+                                min_spectral_contrast,
+                                min_log2_matched_ratio,
+                                min_topn_of_m,
+                                min_max_ppm,
+                                max_best_rank,
+                                n_frag_isotopes,
+                                quadrupole_isolation_width,
+                                rt_index, 
+                                irt_tol,
+                                spec_order
+                            )
+        end
+    end
+    psms = fetch.(tasks)
+    return psms
+end
 BPSMS = Dict{Int64, DataFrame}()
 #PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 #PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
@@ -84,7 +186,7 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    PSMS = vcat(quantitationSearch(MS_TABLE, 
+    @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
@@ -94,7 +196,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     params_,  
                     ionMatches,
                     ionMisses,
-                    all_fmatches,
                     IDtoCOL,
                     ionTemplates,
                     iso_splines,
@@ -103,8 +204,12 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     complex_spectral_scores,
                     precursor_weights,
                     )...);
-
-        addSecondSearchColumns!(PSMS, MS_TABLE, prosit_lib["precursors"], precID_to_cv_fold);
+        addSecondSearchColumns!(PSMS, 
+                                        MS_TABLE, 
+                                        prosit_lib["precursors"][:mz],
+                                        prosit_lib["precursors"][:prec_charge], 
+                                        prosit_lib["precursors"][:is_decoy],
+                                        precID_to_cv_fold);
         addIntegrationFeatures!(PSMS);
         getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
         PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
@@ -115,7 +220,12 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             intensity_filter_fraction = Float32(params_[:integration_params]["intensity_filter_threshold"]),
                             α = 0.001f0);
         addPostIntegrationFeatures!(PSMS, 
-                                    MS_TABLE, prosit_lib["precursors"],
+                                    MS_TABLE, 
+                                    prosit_lib["precursors"][:sequence],
+                                    prosit_lib["precursors"][:mz],
+                                    prosit_lib["precursors"][:irt],
+                                    prosit_lib["precursors"][:prec_charge],
+                                    prosit_lib["precursors"][:missed_cleavages],
                                     ms_file_idx,
                                     file_id_to_parsed_name,
                                     RT_iRT,
@@ -123,7 +233,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                     );
         PSMS[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
         BPSMS[ms_file_idx] = PSMS;
-        GC.gc()
 end
 
 best_psms = vcat(values(BPSMS)...)

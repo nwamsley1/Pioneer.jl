@@ -54,12 +54,14 @@ params = JSON.parse(read(ARGS["params_json"], String));
 3-protome PC test March 4th 2024 for hupo
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
 
-SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
+#SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
+SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr4_24/pioneer_lib/"
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/"
+#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/ThermoRawFileToParquetConverter-main/parquet_out"
 #SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
 #MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-EXPERIMENT_NAME = "HUPO_THREE_PROTEOME_Mar4_2024"
+EXPERIMENT_NAME = "TEST_FOR_EWZ"
 =#
 
 MS_DATA_DIR = ARGS["data_dir"];
@@ -153,7 +155,7 @@ params_ = (
 
 #Files needed for PRM routines
 [include(joinpath(pwd(), "src", "Routines","LibrarySearch","methods",jl_file)) for jl_file in [
-                                                                                    "matchpeaksLib.jl",
+                                                                                    "matchPeaks.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "manipulateDataFrames.jl",
                                                                                     "buildRTIndex.jl",
@@ -164,37 +166,69 @@ params_ = (
                                                                                     "integrateChroms.jl"]];
                                              
 
-library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_2hi_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+#library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+#f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_1hi_rtmajor_031924", file) != nothing, readdir(SPEC_LIB_DIR))][1];
+#precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
+
+#println("Loading spectral libraries into main memory...")
+#prosit_lib = Dict{String, Any}()
+#@time detailed_frags = load("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_detailed_frags_032124.jld2")["detailed_frags"]
+#@time prec_frag_ranges = load("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_prec_frag_ranges_032124.jld2")["prec_frag_ranges"]
+#const library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
+#prosit_lib["f_det"] = library_fragment_lookup_table
+
+#@time begin
+f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
+f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
+f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
 
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
-spec_load_time = @timed begin
-    @time const f_index = load(f_index_path)["f_index"];
-    prosit_lib["f_index"] = f_index;#["f_index"]
-    @time const library_fragment_lookup_table = load(library_fragment_lookup_path)["lib_frag_lookup"]
-    prosit_lib["f_det"] = library_fragment_lookup_table; #["f_det"];
-    @time const precursors = load(precursors_path)["precursors"]
-    prosit_lib["precursors"] = precursors;#["precursors"];
-end
+@time detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
+@time prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
+const library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
+prosit_lib["f_det"] = library_fragment_lookup_table
 
+#@time begin
+#f_index_fragments = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragments_032124.arrow")
+#f_index_rt_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_rtbins_032124.arrow")
+#f_index_frag_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragbins_032124.arrow")
+
+
+#precursor_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_precursor_bins_031924.arrow");
+#frag_bin_mzs = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_frag_bin_mzs_031924.arrow");
+
+#detailed_frags = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_detailed_frags_031924.arrow")
+#prec_frag_ranges = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_prec_frag_ranges_031924.arrow")
+#Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/precursors_031924.arrow", DataFrame(precursors))
+#Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragbins_031924.arrow", f_index_frag_bins)
+#precursors = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/precursors_032124.arrow")#DataFrame(precursors)
+precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursor_table.arrow"))#DataFrame(precursors)
+f_index = FragmentIndex(
+    f_index_frag_bins[:FragIndexBin],
+    f_index_rt_bins[:FragIndexBin],
+    f_index_fragments[:IndexFragment],
+);
+prosit_lib["f_index"] = f_index;
+prosit_lib["precursors"] = precursors;
 ###########
 #Load Pre-Allocated Data Structures. One of each for each thread. 
 ###########
 @time begin
 N = Threads.nthreads()
-ionMatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
-ionMisses = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+M = 250000
+n_precursors = length(precursors[:mz])
+ionMatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
+ionMisses = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
 all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
-IDtoCOL = [ArrayDict(UInt32, UInt16, length(precursors)) for _ in range(1, N)];
-ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, 1000000)] for _ in range(1, N)];
+IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
+ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
 iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
 scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
-precursor_weights = [zeros(Float32, length(precursors)) for _ in range(1, N)];
-precs = [Counter(UInt32, UInt8,length(precursors)) for _ in range(1, N)];
+precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
+precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
 complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];

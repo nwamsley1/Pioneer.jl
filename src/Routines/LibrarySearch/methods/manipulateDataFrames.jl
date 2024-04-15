@@ -1,6 +1,8 @@
 function addPreSearchColumns!(PSMs::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
-                                precursors::Vector{LibraryPrecursorIon{T}}; 
+                                prec_is_decoy::Arrow.BoolVector{Bool},
+                                prec_irt::Arrow.Primitive{T, Vector{T}},
+                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}}; 
                                 min_prob::Float64 = 0.9) where {T<:AbstractFloat}
     
     N = size(PSMs, 1)
@@ -24,12 +26,12 @@ function addPreSearchColumns!(PSMs::DataFrame,
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
-            decoys[i] = isDecoy(precursors[precursor_idx[i]]);
+            decoys[i] = prec_is_decoy[precursor_idx[i]];
             targets[i] = decoys[i] == false
-            iRT_pred[i] = Float32(getIRT(precursors[precursor_idx[i]]));
+            iRT_pred[i] = Float32(prec_irt[precursor_idx[i]]);
             RT[i] = Float32(scan_retention_time[scan_idx[i]]);
             TIC[i] = Float16(log2(tic[scan_idx[i]]));
-            charge[i] = UInt8(getPrecCharge(precursors[precursor_idx[i]]));
+            charge[i] = UInt8(prec_charge[precursor_idx[i]]);
             matched_ratio[i] = Float16(min(matched_ratio[i], 6e4))
             end
         end
@@ -70,7 +72,11 @@ end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
-                                precursors::Vector{LibraryPrecursorIon{T}}
+                                prec_sequence::Arrow.List{String, Int32, Vector{UInt8}},
+                                prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
+                                prec_is_decoy::Arrow.BoolVector{Bool},
+                                prec_irt::Arrow.Primitive{T, Vector{T}},
+                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}};
                                 ) where {T<:AbstractFloat}
     
     ###########################
@@ -117,14 +123,15 @@ function addMainSearchColumns!(PSMs::DataFrame,
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
-                prec = precursors[precursor_idx[i]]
-                targets[i] = isDecoy(prec) == false;
-                missed_cleavage[i] = prec.missed_cleavages
-                Mox[i] = countMOX(prec.sequence)::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
-                iRT_pred[i] = Float32(getIRT(prec));
+                prec_idx = precursor_idx[i]
+
+                targets[i] = prec_is_decoy[prec_idx] == false;
+                missed_cleavage[i] = prec_missed_cleavages[prec_idx]
+                Mox[i] = countMOX(prec_sequence[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
+                iRT_pred[i] = Float32(prec_irt[prec_idx]);
                 RT[i] = Float32(scan_retention_time[scan_idx[i]]);
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
-                charge[i] = UInt8(getPrecCharge(prec));
+                charge[i] = UInt8(prec_charge[prec_idx]);
                 err_norm[i] = min(Float16.(abs(error[i]/total_ions[i])), Float16(6e4))#Float16(min(abs((error[i])/(total_ions[i])), 6e4))
                 spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))
             end
@@ -218,7 +225,7 @@ function getProbs!(psms::DataFrame)
 end
 
 function getBestPSMs!(psms::DataFrame,
-                        precursors::Vector{LibraryPrecursorIon{T}}; 
+                        prec_mz::Arrow.Primitive{T, Vector{T}}; 
                         max_q_value::Float64 = 0.10,
                         max_psms::Int64 = 250000) where {T<:AbstractFloat}
 
@@ -240,19 +247,21 @@ function getBestPSMs!(psms::DataFrame,
     delete!(psms, min(n, max_psms + 1):n)
     select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])
 
-    prec_mz = zeros(Float32, size(psms, 1));
+    mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
     Threads.@threads for i in range(1, size(psms, 1))
-        prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
+        mz[i] = prec_mz[precursor_idx[i]];
     end
-    psms[!,:prec_mz] = prec_mz
+    psms[!,:prec_mz] = mz
 
     return
 end
 
 function addSecondSearchColumns!(psms::DataFrame, 
                         MS_TABLE::Arrow.Table, 
-                        precursors::Vector{LibraryPrecursorIon{T}},
+                        prec_mz::AbstractVector{T},
+                        prec_charge::AbstractVector{UInt8},
+                        prec_is_decoy::AbstractVector{Bool},
                         prec_id_to_cv_fold::Dictionary{UInt32, UInt8}) where {T<:AbstractFloat}
     
     ###########################
@@ -269,11 +278,11 @@ function addSecondSearchColumns!(psms::DataFrame,
     total_ions = zeros(UInt16, N);
     err_norm = zeros(Float16, N);
     targets = zeros(Bool, N);
-    charge = zeros(UInt8, N);
-    prec_mz = zeros(Float32, N);
+    prec_charges = zeros(UInt8, N);
+    prec_mzs = zeros(Float32, N);
     cv_fold = zeros(UInt8, N);
-    scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
+    scan_idxs::Vector{UInt32} = psms[!,:scan_idx]
+    prec_idxs::Vector{UInt32} = psms[!,:precursor_idx]
     y_count::Vector{UInt8} = psms[!,:y_count]
     b_count::Vector{UInt8} = psms[!,:b_count]
     isotope_count::Vector{UInt8} = psms[!,:isotope_count]
@@ -290,18 +299,21 @@ function addSecondSearchColumns!(psms::DataFrame,
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
             for i in chunk
-                decoys[i] = isDecoy(precursors[precursor_idx[i]]);
+                prec_idx = prec_idxs[i]
+                scan_idx = scan_idxs[i]
+
+                decoys[i] = prec_is_decoy[prec_idx];
                 targets[i] = decoys[i] == false
-                RT[i] = Float32(scan_retention_time[scan_idx[i]]);
-                charge[i] = UInt8(precursors[precursor_idx[i]].prec_charge);
-                prec_mz[i] = Float32(getMZ(precursors[precursor_idx[i]]));
-                TIC[i] = Float16(log2(tic[scan_idx[i]]));
+                RT[i] = Float32(scan_retention_time[scan_idx]);
+                prec_charges[i] = prec_charge[prec_idx];
+                prec_mzs[i] = prec_mz[prec_idx];
+                TIC[i] = Float16(log2(tic[scan_idx]));
                 total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
                 err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
                 end
-                cv_fold[i] = prec_id_to_cv_fold[precursor_idx[i]]
+                cv_fold[i] = prec_id_to_cv_fold[prec_idx]
             end
         end
     end
@@ -313,8 +325,8 @@ function addSecondSearchColumns!(psms::DataFrame,
     psms[!,:total_ions] = total_ions
     psms[!,:err_norm] = err_norm
     psms[!,:target] = targets
-    psms[!,:charge] = charge
-    psms[!,:prec_mz] = prec_mz
+    psms[!,:charge] = prec_charges
+    psms[!,:prec_mz] = prec_mzs
     psms[!,:cv_fold] = cv_fold
 
     psms[!,:best_scan] = zeros(Bool, N)
@@ -384,11 +396,11 @@ function getIsoRanks!(psms::DataFrame,
                 scan_id = psms[i,:scan_idx]
                 scan_mz = MS_TABLE[:precursorMZ][scan_id]
 
-                window = (Float32(scan_mz-window_width/2), 
-                        Float32(scan_mz+window_width/2)
-
-                        )
-                isotopes = getPrecursorIsotopeSet(mz, charge, window)
+                isotopes = getPrecursorIsotopeSet(mz, 
+                                                    charge, 
+                                                    Float32(scan_mz-window_width/2),
+                                                    Float32(scan_mz+window_width/2) 
+                                                    )
 
                 
                 #rank = one(UInt8)
@@ -441,7 +453,11 @@ end
 
 function addPostIntegrationFeatures!(psms::DataFrame, 
                                     MS_TABLE::Arrow.Table, 
-                                    precursors::Vector{LibraryPrecursorIon{T}},
+                                    precursor_sequence::AbstractArray{String},
+                                    prec_mz::AbstractArray{T},
+                                    prec_irt::AbstractArray{T},
+                                    prec_charge::AbstractArray{UInt8},
+                                    precursor_missed_cleavage::AbstractArray{UInt8},
                                     ms_file_idx::Integer,
                                     ms_id_to_file_path::Dict{Int64, String},
                                     rt_to_irt_interp::Any,
@@ -466,11 +482,11 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     stripped_sequence = Vector{String}(undef, N);
     adjusted_intensity_explained = zeros(Float16, N);
     #log2_base_peak_intensity = zeros(Float16, N);
-    charge = zeros(UInt8, N)
+    prec_charges = zeros(UInt8, N)
     sequence_length = zeros(UInt8, N);
     b_y_overlap = zeros(Bool, N);
     spectrum_peak_count = zeros(Float16, N);
-    prec_mz = zeros(Float32, size(psms, 1));
+    prec_mzs = zeros(Float32, size(psms, 1));
     Mox = zeros(UInt8, N);
     TIC = zeros(Float16, N);
 
@@ -508,28 +524,28 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin 
             for i in chunk
-                prec = precursors[precursor_idx[i]]
+                prec_idx = precursor_idx[i]
 
                 irt_obs[i] = rt_to_irt_interp[ms_id_to_file_path[ms_file_idx]](rt[i])
-                irt_pred[i] = getIRT(prec)
-                irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[precursor_idx[i]]))
+                irt_pred[i] = prec_irt[prec_idx]
+                irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 
-                missed_cleavage[i] = prec.missed_cleavages
-                sequence[i] = prec.sequence
+                missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
+                sequence[i] = precursor_sequence[prec_idx]
                 stripped_sequence[i] = replace(sequence[i], r"\(.*?\)" => "")#replace.(sequence[i], "M(ox)" => "M");
-                Mox[i] = countMOX(prec.sequence)
+                Mox[i] = countMOX(sequence[i])
                 sequence_length[i] = length(stripped_sequence[i])
 
 
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
-                charge[i] = getPrecCharge(prec)
+                prec_charges[i] = prec_charge[prec_idx]
                 b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
 
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
          
-                prec_mz[i] = precursors[precursor_idx[i]].mz::Float32;
+                prec_mzs[i] = prec_mz[prec_idx];
             end
         end
     end
@@ -547,10 +563,10 @@ function addPostIntegrationFeatures!(psms::DataFrame,
 
     psms[!,:tic] = TIC
     psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
-    psms[!,:charge] = charge
+    psms[!,:charge] = prec_charges
     psms[!,:b_y_overlap] = b_y_overlap
     psms[!,:spectrum_peak_count] = spectrum_peak_count
-    psms[!,:prec_mz] = prec_mz
+    psms[!,:prec_mz] = prec_mzs
     psms[!,:ms_file_idx] .= ms_file_idx
     return nothing
 end

@@ -33,53 +33,31 @@ end
 
 PrecursorBin(T::DataType, N::Int) = PrecursorBin(Vector{PrecursorBinFragment{T}}(undef, N))
 
-"""
-    FragBin{T<:AbstractFloat}
+abstract type FragmentIndexBin{T<:AbstractFloat} end 
 
-Represents a bin of sorted fragment ions. Gives the lowest and highest m/z ratio of ions in the bin. 
-Also contains a unique identifier for the corresponding precursor bin. 
+getLow(fb::FragmentIndexBin{T}) where {T<:AbstractFloat} = fb.lb
+getHigh(fb::FragmentIndexBin{T}) where {T<:AbstractFloat} = fb.ub
+getSubBinRange(fb::FragmentIndexBin{T}) where {T<:AbstractFloat} = fb.first_bin:fb.last_bin
 
-### Fields
-
-- lb::T -- Lowest m/z of a fragment ion in the `FragBin`
-- ub::T -- Highest m/z of a fragment ion in the `FragBin`
-- prec_bin::UInt32 -- Identifier of the corresponding `PrecursorBin`
-
-### Examples
-
-- FragBin() = FragBin(0.0, 0.0, UInt32(0)) -- Constructor
-
-### GetterMethods
-
-- getLowMZ(fb::FragBin) = fb.lb
-- getHighMZ(fb::FragBin) = fb.ub
-- getPrecBinID(fb::FragBin) = fb.prec_bin
-
-### Methods
-
-- setPrecursor!(pb::PrecursorBin, index::Int, pbi::PrecursorBinItem)
-"""
-struct FragBin{T<:AbstractFloat}
+struct FragIndexBin{T<:AbstractFloat} <: FragmentIndexBin{T}
     lb::T
     ub::T
-    sub_bin::UInt32
+    first_bin::UInt32
+    last_bin::UInt32
 end
+ArrowTypes.arrowname(::Type{FragIndexBin{Float32}}) = :FragIndexBin
+ArrowTypes.JuliaType(::Val{:FragIndexBin}) = FragIndexBin
 
-getLowMZ(fb::FragBin) = fb.lb
-getHighMZ(fb::FragBin) = fb.ub
-getPrecBinID(fb::FragBin) = fb.sub_bin
-FragBin() = FragBin(0.0, 0.0, UInt32(0))
-
-struct RTBin{T<:AbstractFloat}
-    lb::T
-    ub::T
-    sub_bin::UInt32
+struct IndexFragment{T<:AbstractFloat} <: LibraryFragmentIon{T}
+    prec_id::UInt32
+    prec_mz::T #Only need to tell if the peptide is in the quad isolation window
+    score::UInt8 
+    charge::UInt8
 end
-RTBin() = RTBin(0.0, 0.0, UInt32(0))
-getLow(rb::RTBin) = rb.lb
-getHigh(rb::RTBin) = rb.ub
-getPrecBinID(rb::RTBin) = rb.sub_bin
+ArrowTypes.arrowname(::Type{IndexFragment{Float32}}) = :IndexFragment
+ArrowTypes.JuliaType(::Val{:IndexFragment}) = IndexFragment
 
+getScore(ind_frag::IndexFragment{T}) where {T<:AbstractFloat} = ind_frag.score
 
 """
     FragmentIndex{T<:AbstractFloat}
@@ -108,54 +86,19 @@ to a `PrecursorBin`. A precursor bin has the precursor m/z's and peptide ID's fo
 - setPrecursorBinItem!(fi::FragmentIndex{T}, bin::Int64, index::Int64, prec_bin_item::PrecursorBinItem{T}) where {T<:AbstractFloat}
 """
 struct FragmentIndex{T<:AbstractFloat}
-    fragment_bins::Vector{FragBin{T}}
-    rt_bins::Vector{Vector{RTBin{T}}}
-    precursor_bins::Vector{PrecursorBin{T}}
+    fragment_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}
+    rt_bins::Arrow.Struct{FragIndexBin, Tuple{Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{UInt32, Vector{UInt32}}}, (:lb, :ub, :first_bin, :last_bin)}
+    fragments::Arrow.Struct{IndexFragment, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:prec_id, :prec_mz, :score, :charge)}
 end
-
-getFragBins(fi::FragmentIndex) = fi.fragment_bins
-getRTBins(fi::FragmentIndex) = fi.rt_bins
-getPrecBins(fi::FragmentIndex) = fi.precursor_bins
-getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
-getPrecursorBin(fi::FragmentIndex, bin::UInt32) = fi.precursor_bins[bin]
-getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
-
-function FragmentIndex(T::DataType) 
-    return FragmentIndex(Vector{FragBin{T}}(), Vector{Vector{RTBin{T}}}(), Vector{PrecursorBin{T}}())
-end
-
-getFragmentBin(fi::FragmentIndex, bin::Int) = fi.fragment_bins[bin]
-
-function setFragmentBin!(fi::FragmentIndex{T}, bin::Int64, frag_bin::FragBin{T}) where {T<:AbstractFloat}
-    fi.fragment_bins[bin] = frag_bin
-end
-
-function addFragmentBin!(fi::FragmentIndex{T}, frag_bin::FragBin{T}) where {T<:AbstractFloat}
-    push!(getFragBins(fi), frag_bin)
-end
-
-#function setRTBin!(fi::FragmentIndex{T}, bin::Int64, rt_bin::RTBin{T}) where {T<:AbstractFloat}
-#    fi.rt_bins[bin] = rt_bin
+#struct FragmentIndex{T<:AbstractFloat}
+#    fragment_bins::Vector{FragIndexBin{T}}
+#    rt_bins::Vector{FragIndexBin{T}}
+#    fragments::Vector{IndexFragment{T}}
 #end
 
-function addRTBin!(fi::FragmentIndex{T}) where {T<:AbstractFloat}
-    push!(getRTBins(fi), Vector{RTBin{T}}())
-end
+getFragBins(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragment_bins
+getRTBins(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.rt_bins
+getFragmentBin(fi::FragmentIndex{T}, frag_bin_idx::I) where {T<:AbstractFloat,I<:Integer} = getFragBins(fi)[frag_bin_idx]
+getRTBin(fi::FragmentIndex{T}, rt_bin_idx::I) where {T<:AbstractFloat,I<:Integer} = getRTBins(fi)[rt_bin_idx]
+getFragments(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragments
 
-
-getPrecursorBin(fi::FragmentIndex, bin::UInt32) = fi.precursor_bins[bin]
-getPrecursorBinLength(fi::FragmentIndex, bin::Int64) = getLength(fi.precursor_bins[bin])
-
-function setPrecursorBinItem!(fi::FragmentIndex{T}, bin::UInt32, index::Int, prec_bin_item::PrecursorBinFragment{T}) where {T<:AbstractFloat}
-    setPrecursor!(fi.precursor_bins[bin], index, prec_bin_item)
-end
-
-function addPrecursorBinFragment!(fi::FragmentIndex{T}, bin::UInt32, prec_bin_item::PrecursorBinFragment{T}) where {T<:AbstractFloat}
-    push!(getPrecursors(fi.precursor_bins[bin]), prec_bin_item)
-end
-
-function addPrecursorBin!(fi::FragmentIndex{T}, prec_bin::PrecursorBin{T}) where {T<:AbstractFloat}
-    push!(getPrecBins(fi), prec_bin)
-end
-
-getPPM(frag_mz::T, ppm::T) where {T<:AbstractFloat} = ppm*frag_mz/1e6

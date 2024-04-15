@@ -3,7 +3,8 @@ struct rtIndexBin{T,U<:AbstractFloat}
     ub::T
     prec::Vector{Tuple{UInt32, U}}
 end
-
+getLow(r::rtIndexBin) = r.lb
+getHigh(r::rtIndexBin) = r.ub
 function compare_lb(rb::rtIndexBin{T,U}) where {T,U<:AbstractFloat}
     return rb.lb
 end
@@ -14,7 +15,8 @@ getPrecID(rb::rtIndexBin{T, U}) where {T,U<:AbstractFloat} = first(rb.prec)
 struct retentionTimeIndex{T,U<:AbstractFloat}
     rt_bins::Vector{rtIndexBin{T, U}}
 end
-
+getRTBins(rti::retentionTimeIndex) = rti.rt_bins
+getRTBin(rti::retentionTimeIndex, rt_bin::Int) = rti.rt_bins[rt_bin]
 function retentionTimeIndex(T::DataType, U::DataType) 
     return retentionTimeIndex(Vector{rtIndexBin{T, U}}())
 end
@@ -61,11 +63,12 @@ function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, 
     return rt_index
 end
 
-buildRTIndex(PSMs::DataFrame, bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
+buildRTIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
 function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
                        precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
                        iRT_RT::Any;
+                       bin_rt_size = 0.1,
                        min_prob::AbstractFloat = 0.5)
     #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
     rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
@@ -105,7 +108,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
                                 :prec_mz => mzs,
                                 :precursor_idx => prec_ids))
         sort!(rt_df, :RT)
-        rt_index = buildRTIndex(rt_df);
+        rt_index = buildRTIndex(rt_df, bin_rt_size=bin_rt_size);
         insert!(rt_indices, file_path, rt_index)
     end
     return rt_indices

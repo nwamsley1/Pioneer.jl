@@ -1,0 +1,14 @@
+{
+    "rt_bin_tol": 1.0,
+    "frag_bin_tol_ppm": 7.0,
+    "frag_mz_min": 150.0,
+    "frag_mz_max": 2000.0,
+    "prec_mz_min": 390.0,
+    "prec_mz_max": 1010.0,
+    "y_start_index": 4,
+    "b_start_index": 3,
+    "y_start": 3,
+    "b_start": 2,
+    "missed_cleavage_regex": "[KR][^P|$]",
+    "rank_to_score": [4, 2, 2, 1, 1]
+}
