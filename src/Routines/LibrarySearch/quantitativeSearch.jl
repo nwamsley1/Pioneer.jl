@@ -186,7 +186,7 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    PSMS = vcat(quantitationSearch(MS_TABLE, 
+    @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
                     RT_INDICES[file_id_to_parsed_name[ms_file_idx]],

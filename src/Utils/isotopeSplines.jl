@@ -3,24 +3,40 @@ using LightXML, Base64, Polynomials
 function DecodeCoefficients(encoded::String)
     return reinterpret(Float64, Base64.base64decode(encoded))
 end
+struct CubicPolynomial{T<:Real}
+    x0::T
+    x1::T
+    x2::T
+    x3::T
+end
 
+function (a::CubicPolynomial{T})(x::T) where {T<:Real}
+    return @fastmath a.x0 + a.x1*x + a.x2*x^2 + a.x3*x^3
+end
 struct PolynomialSpline{T<:Real}
-    polynomials::Vector{Polynomial{T, :x}}
+    polynomials::Vector{CubicPolynomial{T}}
+    slope::T
+    intercept::T
     knots::Vector{T}
 end
 
+
+
 function (p::PolynomialSpline)(x)
-    idx = searchsortedfirst(p.knots, x)
+    #idx = searchsortedfirst(p.knots, x)
+    
+    #idx = max(ceil(Int, first(p.knots) + x*last(p.knots)), 1)
+    idx = ceil(Int, p.intercept + x*p.slope)
     #if (idx == 1) | (idx > length(p.knots))
     #    return missing
     #end
-    if (idx == 1)
-        return p.polynomials[1](p.knots[1])
+    if (idx == 0)
+        return max(p.polynomials[1](x - p.knots[1]), zero(Float32))
+    elseif (idx > length(p.knots))
+        return p.polynomials[end](x - p.knots[end])
+    else
+        return p.polynomials[idx](x - p.knots[idx])
     end
-    if (idx > length(p.knots))
-        return p.polynomials[end](p.knots[end])
-    end
-    return p.polynomials[idx-1](x - p.knots[idx - 1])
 end
 
 struct IsotopeSplineModel{T<:Real}
@@ -35,11 +51,11 @@ end
 function buildPolynomials(coefficients::Vector{T}, order::I) where {T<:Real, I<:Integer}
     order += 1
     n_knots = length(coefficients)÷order
-    polynomials = Vector{Polynomial{T, :x}}()
+    polynomials = Vector{CubicPolynomial{T}}()
     for n in range(1, n_knots)
         start = ((n - 1)*order + 1)
         stop = (n)*order
-        push!(polynomials, Polynomial(coefficients[start:stop], :x))
+        push!(polynomials, CubicPolynomial(coefficients[start], coefficients[start+1], coefficients[start+2], coefficients[start+3]))
     end
     return polynomials
 end
@@ -70,6 +86,8 @@ function parseIsoXML(iso_xml_path::String)
                 splines[i], 
                 PolynomialSpline(
                                 buildPolynomials(Float32[0, 0, 0], 3),
+                                zero(Float32),
+                                zero(Float32),
                                 Float32[0]
                                             )
             )
@@ -81,12 +99,20 @@ function parseIsoXML(iso_xml_path::String)
         if (haskey(attributes_dict(model),"S"))
             S = parse(Int64, attributes_dict(model)["S"])
             iso =  parse(Int64, attributes_dict(model)["isotope"]) 
-            splines[S+1][iso+1] = PolynomialSpline(
-                buildPolynomials(
+
+            polynomials =                 buildPolynomials(
                 collect(Float32.(DecodeCoefficients(content(model["coefficients"][1])))),
                 parse(Int64, attributes_dict(model)["order"]) - 1
-                ),
-                collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))
+                )
+
+            knots = collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))[1:end - 1]
+            A = hcat(ones(length(knots)), knots)
+            x = A\collect(range(0, length(knots) - 1))
+            splines[S+1][iso+1] = PolynomialSpline(
+                polynomials,
+                Float32(last(x)),
+                Float32(first(x)),
+                knots
             )
         end
     end
@@ -304,32 +330,4 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
         end
     end
     return (first_iso, last_iso)
-end
-
-function getPrositIsotopeSet(iso_splines::IsotopeSplineModel{Float64}, 
-                                prec_mz::Float32,
-                                prec_charge::UInt8,
-                                prec_sulfur_count::UInt8
-                             ) #where {T,U<:AbstractFloat}
-    prec_mass = Float64(prec_mz*prec_charge)
-    prec_sulfur_count = min(prec_sulfur_count, 5)
-    M0 = iso_splines(prec_sulfur_count,0,prec_mass)
-    M1 = iso_splines(prec_sulfur_count,1,prec_mass)
-    if M0 > M1
-        if prec_charge <= 2
-            return (0, 1)
-        elseif prec_charge == 3
-            return (0, 2)
-        else
-            return (0, 3)
-        end
-    else
-        if prec_charge <= 2
-            return (0, 2)
-        elseif prec_charge == 3
-            return (0, 3)
-        else
-            return (0, 4)
-        end
-    end
 end

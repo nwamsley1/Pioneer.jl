@@ -13,7 +13,7 @@ function searchRAW(
                     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float64},
+                    iso_splines::IsotopeSplineModel{Float32},
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
@@ -103,7 +103,6 @@ function searchRAW(
             return getPSMS(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
-                                frag_index,
                                 precursors,
                                 scan_to_prec_idx,
                                 precursors_passed_scoring[thread_id],

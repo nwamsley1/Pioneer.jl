@@ -12,7 +12,7 @@ function parameterTuningSearch(
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float64},
+    iso_splines::IsotopeSplineModel{Float32},
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -79,7 +79,7 @@ function parameterTuningSearch(
                     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float64},
+                    iso_splines::IsotopeSplineModel{Float32},
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
@@ -169,7 +169,6 @@ function parameterTuningSearch(
             return getPSMS(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
-                                frag_index,
                                 precursors,
                                 scan_to_prec_idx,
                                 precursors_passed_scoring[thread_id],
@@ -230,7 +229,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    @time RESULT =  parameterTuningSearch(
+    RESULT =  parameterTuningSearch(
                                             MS_TABLE,
                                             prosit_lib["f_index"],
                                             prosit_lib["precursors"],

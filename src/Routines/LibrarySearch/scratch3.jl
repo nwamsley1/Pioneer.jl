@@ -177,3 +177,52 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
                 precursor_weights,
                 )...);
                 pprof(;webport=58600)
+
+b = iso_splines.splines[1][1].knots[1:end - 1]
+A = hcat(ones(length(b)), b)
+x = A\[x for x in range(0, length(b)-1)]
+ceil(Int, (1075 - 75)/1000)
+
+y = 0.0
+ceil(Int, first(x)+ y*last(x))
+
+
+y = 80.0
+ceil(Int, first(x)+ y*last(x))
+
+y = 1080.0
+ceil(Int, first(x)+ y*last(x))
+
+plot(collect(LinRange(0, 10000.0, 10000)), [iso_splines.splines[1][1](x) for x in LinRange(0, 15000.0, 10000)])
+plot!(collect(LinRange(0, 10000.0, 10000)), [iso_splines.splines[1][2](x) for x in LinRange(0, 15000.0, 10000)])
+plot!(collect(LinRange(0, 10000.0, 10000)), [iso_splines.splines[1][3](x) for x in LinRange(0, 15000.0, 10000)])
+
+plot(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[1][1](x) for x in LinRange(0, 3000.0, 10000)])
+plot!(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[1][2](x) for x in LinRange(0, 3000.0, 10000)])
+plot!(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[1][3](x) for x in LinRange(0, 3000.0, 10000)])
+vline!([75.0])
+
+plot(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[3][1](x) for x in LinRange(0, 3000.0, 10000)])
+plot!(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[3][2](x) for x in LinRange(0, 3000.0, 10000)])
+plot!(collect(LinRange(0, 3000.0, 10000)), [iso_splines.splines[3][3](x) for x in LinRange(0, 3000.0, 10000)])
+vline!([75.0])
+
+[iso_splines.splines[3][2](1973) ]
+iso_splines.splines[1][1].polynomials
+
+
+plot(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[1](x) for x in LinRange(0, 5000.0, 10000)])
+plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[2](x) for x in LinRange(0, 5000.0, 10000)])
+plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[3](x) for x in LinRange(0, 5000.0, 10000)])
+plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[4](x) for x in LinRange(0, 5000.0, 10000)])
+plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[5](x) for x in LinRange(0, 5000.0, 10000)])
+
+bins = LinRange(0, 1, 100)
+histogram(PSMS[PSMS[!,:decoy],:entropy_score], alpha = 0.5, bins = bins)
+histogram!(PSMS[PSMS[!,:target],:entropy_score], alpha = 0.5, bins = bins)
+
+
+bins = LinRange(-0.5, 2, 100)
+histogram(PSMS[PSMS[!,:decoy],:city_block_fitted], alpha = 0.5, bins = bins)
+histogram!(PSMS[PSMS[!,:target],:city_block_fitted], alpha = 0.5, bins = bins)
+
