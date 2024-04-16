@@ -1,4 +1,4 @@
-function buildDesignMatrix!(H::SparseArray{UInt16,Float32}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:MatchIon{Float32}}
+function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:MatchIon{Float32}}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -20,10 +20,10 @@ function buildDesignMatrix!(H::SparseArray{UInt16,Float32}, matches::Vector{m}, 
         append!(H.matched, zeros(eltype(H.matched), block_size))
         #MUST BE ONES!!!
         append!(H.mask, ones(eltype(H.mask), block_size))
-        append!(H.colptr, Vector{UInt16}(undef, block_size))
+        append!(H.colptr, Vector{UInt32}(undef, block_size))
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
-    X = zeros(T, M)
+    #X = zeros(T, M)
     #Maps a precursor id to a row of H. 
 
     #Current highest row encountered
@@ -43,14 +43,13 @@ function buildDesignMatrix!(H::SparseArray{UInt16,Float32}, matches::Vector{m}, 
         if getPeakInd(match) != last_peak_ind
             row += 1
             last_peak_ind = getPeakInd(match)
-            X[row] = getIntensity(match)
+            #X[row] = getIntensity(match)
         end
 
-        H.colval[i] = Int64(precID_to_col[getPrecID(match)])
-
+        H.colval[i] = precID_to_col[getPrecID(match)]
         H.rowval[i] = row
         H.nzval[i] = getPredictedIntenisty(match)
-        H.x[i] = X[row]
+        H.x[i] = getIntensity(match)#X[row]
         H.matched[i] = true
         H.n_vals += 1
 
@@ -69,7 +68,8 @@ function buildDesignMatrix!(H::SparseArray{UInt16,Float32}, matches::Vector{m}, 
         last_peak_ind = getPeakInd(miss)
         #end
         #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(miss)])), getPredictedIntenisty(miss), zero(U))
-        H.colval[i] = Int64(precID_to_col[getPrecID(miss)])
+        H.colval[i] = precID_to_col[getPrecID(miss)]
+        #println("row $row")
         H.rowval[i] = row
         H.nzval[i] = getPredictedIntenisty(miss) #factor to reduce impact of unmatched ions 
         H.x[i] = zero(Float32)
@@ -82,6 +82,5 @@ function buildDesignMatrix!(H::SparseArray{UInt16,Float32}, matches::Vector{m}, 
     #end
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
     #sortSparse!(H)
-
     sortSparse!(H)
 end

@@ -334,7 +334,7 @@ function getPSMS(
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    Hs = SparseArray(UInt16(5000));
+    Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     #prec_id = 0
@@ -571,12 +571,12 @@ function quantPSMs(
     ##########
     #Initialize 
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    Hs = SparseArray(UInt16(5000));
+    Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, n_frag_isotopes)
     rt_start, rt_stop = 1, 1
-    test_n = 0
+    #test_n = 0
     #n_templates = zeros(Int64, length(thread_task))
     n = 0
     ##########
@@ -589,7 +589,6 @@ function quantPSMs(
         if i > length(spectra[:masses])
             continue
         end
-
         ###########
         #Scan Filtering
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
@@ -608,7 +607,7 @@ function quantPSMs(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
-            test_n += 1
+            #test_n += 1
             ion_idx, prec_idx = selectRTIndexedTransitions!(
                                             ionTemplates,
                                             library_fragment_lookup,
@@ -638,7 +637,8 @@ function quantPSMs(
                                         min_max_ppm,
                                         UInt32(i), 
                                         ms_file_idx)
-        
+        #println([x for x in ionMisses[1:nmisses] if (x.prec_id==0x00a2e2fa)])
+        #println("any zeros yet ?", any([iszero(getPredictedIntenisty(x)) for x in ionMisses[1:nmisses]]))
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
@@ -719,7 +719,7 @@ function quantPSMs(
         reset!(Hs);
     end
     #println("describe(n_templates) ", describe(n_templates))
-    println("test_n $test_n")
+    #println("test_n $test_n")
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end
 

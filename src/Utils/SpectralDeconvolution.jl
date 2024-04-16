@@ -5,7 +5,8 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
                             λ::Float32) where {Ti<:Integer,T<:AbstractFloat}
     L1 = zero(Float32)
     L2 = zero(Float32)
-    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
@@ -26,7 +27,8 @@ end
 
 function getL1(Hs::SparseArray{Ti, Float32}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float32) where {Ti<:Integer}
     L1 = zero(Float32)
-    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         #Huber
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
@@ -45,7 +47,7 @@ end
 
 function getL1(Hs::SparseArray{Ti, Float64}, r::Vector{Float64}, col::Int64, δ::Float64, λ::Float64) where {Ti<:Integer}
     L1 = zero(Float32)
-    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         #Huber
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
@@ -63,7 +65,7 @@ function getL1(Hs::SparseArray{Ti, Float64}, r::Vector{Float64}, col::Int64, δ:
 end
 
 function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, X0) where {Ti<:Integer, T<:AbstractFloat}
-    @turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         row_val = Hs.rowval[i]
         nz_val = Hs.nzval[i]
         r[row_val] += nz_val*(X1 - X0)
