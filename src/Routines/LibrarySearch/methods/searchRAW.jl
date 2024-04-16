@@ -334,7 +334,7 @@ function getPSMS(
     msms_counts = Dict{Int64, Int64}()
     frag_err_idx = 1
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    Hs = SparseArray(5000);
+    Hs = SparseArray(UInt16(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     #prec_id = 0
@@ -571,7 +571,7 @@ function quantPSMs(
     ##########
     #Initialize 
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
-    Hs = SparseArray(5000);
+    Hs = SparseArray(UInt16(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, n_frag_isotopes)

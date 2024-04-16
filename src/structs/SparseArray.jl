@@ -148,17 +148,17 @@ function getRowColNZ(sa::SparseArray{Ti, T}, i::Int64) where {Ti<:Integer,T<:Abs
     return sa.row_col_nzval_x[i]
 end
 
-SparseArray(N::Int) = SparseArray(
+SparseArray(N::I) where {I<:Integer} = SparseArray(
                     0,
                     0,
                     0,
-                    zeros(Int64, N), #rowval 
-                    zeros(Int64, N), #colval 
+                    zeros(I, N), #rowval 
+                    zeros(I, N), #colval 
                     zeros(Float32, N), #nzval
                     ones(Bool, N), #mask
                     ones(Bool, N), #matched,
                     zeros(Float32, N), #x
-                    zeros(Int64, N), #colptr
+                    zeros(I, N), #colptr
                     
 )
 
