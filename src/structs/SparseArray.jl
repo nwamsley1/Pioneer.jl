@@ -185,6 +185,7 @@ function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     #partialsort!(sa.row_col_nzval[1:sa.n_vals], 
     #                    1:sa.n_vals, 
     #                    by = x -> x[2])
+    #println("sa.n_vals ", sa.n_vals)
     specialsort!(sa, 1, sa.n_vals, Base.Order.Forward);
     max_col = 1
     max_row  = 1

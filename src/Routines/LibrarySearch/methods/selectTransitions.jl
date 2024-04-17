@@ -147,7 +147,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         for iso_idx in range(0, length(isotopes) - 1)
 
             #Skip if missing
-            isnan(isotopes[iso_idx + 1]) ? continue : nothing
+            iszero(isotopes[iso_idx + 1]) ? continue : nothing
                         
             transition_idx += 1
             transitions[transition_idx] = DetailedFrag(

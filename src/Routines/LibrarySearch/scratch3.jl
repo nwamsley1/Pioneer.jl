@@ -217,7 +217,7 @@ plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomial
 plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[4](x) for x in LinRange(0, 5000.0, 10000)])
 plot!(collect(LinRange(0, 5000.0, 10000)), [iso_splines.splines[1][1].polynomials[5](x) for x in LinRange(0, 5000.0, 10000)])
 
-bins = LinRange(0, 1, 100)
+bins = LinRange(0, 5, 100)
 histogram(PSMS[PSMS[!,:decoy],:entropy_score], alpha = 0.5, bins = bins)
 histogram!(PSMS[PSMS[!,:target],:entropy_score], alpha = 0.5, bins = bins)
 
@@ -226,3 +226,29 @@ bins = LinRange(-0.5, 2, 100)
 histogram(PSMS[PSMS[!,:decoy],:city_block_fitted], alpha = 0.5, bins = bins)
 histogram!(PSMS[PSMS[!,:target],:city_block_fitted], alpha = 0.5, bins = bins)
 
+test = quantitationSearch(MS_TABLE, 
+prosit_lib["precursors"],
+prosit_lib["f_det"],
+RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+UInt32(ms_file_idx), 
+frag_err_dist_dict[ms_file_idx],
+irt_errs[ms_file_idx],
+params_,  
+ionMatches,
+ionMisses,
+IDtoCOL,
+ionTemplates,
+iso_splines,
+complex_scored_PSMs,
+complex_unscored_PSMs,
+complex_spectral_scores,
+precursor_weights,
+)
+
+testHX = test[10]
+
+hcat([testHX.nzval[range(testHX.colptr[104], testHX.colptr[105]-1)],
+    testHX.matched[range(testHX.colptr[104], testHX.colptr[105]-1)],
+    testHX.mask[range(testHX.colptr[104], testHX.colptr[105]-1)],
+    testHX.x[range(testHX.colptr[104], testHX.colptr[105]-1)],
+    testHX.rowval[range(testHX.colptr[104], testHX.colptr[105]-1)]])

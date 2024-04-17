@@ -88,7 +88,6 @@ prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 ) => :accession_numbers
 );
 getBestTrace!(best_psms)
-#=
+
 value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_name])
-=#
