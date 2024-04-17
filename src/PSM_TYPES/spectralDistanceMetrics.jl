@@ -95,61 +95,29 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         
         H_sqrt_sum = zero(T)
         X_sqrt_sum = zero(T)
-
-        #H_sqrt_sum_corrected = zero(T)
-        #X_sqrt_sum_corrected = zero(T)
-
         H2_norm = zero(T)
         X2_norm = zero(T)
         X_sum = zero(T)
-        #H2_norm_corrected = zero(T)
-        #X2_norm_corrected = zero(T)
-
         dot_product = zero(T)
-        #dot_product_corrected = zero(T)
-
         scribe_score = zero(T)
-        #scribe_score_corrected = zero(T)
         scribe_score_fitted = zero(T)
-
         city_block_dist = zero(T)
         city_block_fitted = zero(T)
-
         matched_sum = zero(T)
-        unmatched_sum = zero(T)
-    
-        #=
-        max_residual = zero(T)
-        max_residual_int = 0
-
-
-        @inbounds @fastmath for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            if abs(w[col]*H.nzval[i] - H.x[i]) > max_residual
-                max_residual = abs(w[col]*H.nzval[i] - H.x[i])
-                max_residual_int = i
-            end
-        end
-        
-        if !iszero(max_residual_int)
-            setMask!(H, max_residual_int, false)
-        end
-        =#
-    
+        unmatched_sum = zero(T)    
         N = 0
-        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             X_sum += H.x[i]
             H_sqrt_sum += sqrt(H.nzval[i])
-            X_sqrt_sum += sqrt(H.x[i])#/Xsum
+            X_sqrt_sum += sqrt(H.x[i])
             scribe_score_fitted += (w[col]*H.nzval[i] - H.x[i])^2
             city_block_fitted += abs(w[col]*H.nzval[i] - H.x[i])
-            H2_norm += (H.nzval[i])^2# + 1e-10
-            X2_norm += (H.x[i])^2# + 1e-10
+            H2_norm += (H.nzval[i])^2
+            X2_norm += (H.x[i])^2
             dot_product += H.nzval[i]*H.x[i]
             matched_sum += H.nzval[i]*H.matched[i]
             unmatched_sum += H.nzval[i]*(1 - H.matched[i])
-
             N += 1
         end
           
