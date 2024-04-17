@@ -82,5 +82,6 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
     #end
     #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
     #sortSparse!(H)
+    #sort!(@view(matches[1:nmatches]), by = x->getPrecID(x), alg = PartialQuickSort(1:nmatches))
     sortSparse!(H)
 end
