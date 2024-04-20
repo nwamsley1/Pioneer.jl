@@ -3,17 +3,24 @@ mutable struct SparseArray{Ti<:Integer,T<:AbstractFloat}
     m::Int64
     n::Int64
     rowval::Vector{Ti}
-    colval::Vector{Ti}
+    colval::Vector{UInt16}
     nzval::Vector{T}
-    mask::Vector{Bool}
     matched::Vector{Bool}
     x::Vector{T}
     colptr::Vector{Ti}
 end
+SparseArray(N::I) where {I<:Integer} = SparseArray(
+                    0,
+                    0,
+                    0,
+                    zeros(I, N), #rowval 
+                    zeros(UInt16, N), #colval 
+                    zeros(Float32, N), #nzval
+                    ones(Bool, N), #matched,
+                    zeros(Float32, N), #x
+                    zeros(I, N), #colptr
 
-function setMask!(sa::SparseArray{Ti, T}, i::Int64, v::Bool) where {Ti<:Integer,T<:AbstractFloat}
-    sa.mask[i] = v
-end
+)
 
 @inline function selectpivot!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering) where {Ti<:Integer, T<:AbstractFloat}
     @inbounds begin
@@ -132,45 +139,16 @@ function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) wh
     #scratch
 end
 
-function getRowVal(sa::SparseArray{Ti, T}, i::Int64) where {Ti<:Integer,T<:AbstractFloat}
-    return sa.rowval[i]
-end
 
-function getColVal(sa::SparseArray{Ti, T}, i::Int64) where {Ti<:Integer,T<:AbstractFloat}
-    return sa.colval[i]
-end
-
-function getNzVal(sa::SparseArray{Ti, T}, i::Int64) where {Ti<:Integer,T<:AbstractFloat}
-    return sa.nzval[i]
-end
-
-function getRowColNZ(sa::SparseArray{Ti, T}, i::Int64) where {Ti<:Integer,T<:AbstractFloat}
-    return sa.row_col_nzval_x[i]
-end
-
-SparseArray(N::I) where {I<:Integer} = SparseArray(
-                    0,
-                    0,
-                    0,
-                    zeros(I, N), #rowval 
-                    zeros(I, N), #colval 
-                    zeros(Float32, N), #nzval
-                    ones(Bool, N), #mask
-                    ones(Bool, N), #matched,
-                    zeros(Float32, N), #x
-                    zeros(I, N), #colptr
-                    
-)
 
 function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     @turbo for i in range(1, sa.n_vals)
-        sa.colval[i] = 0
-        sa.rowval[i] = 0
+        sa.colval[i] = zero(UInt16)
+        sa.rowval[i] = zero(Ti)
         sa.x[i] = zero(T)
         sa.nzval[i] = zero(T)
-        sa.mask[i] = true
         sa.matched[i] = true
-        sa.colptr[i] = 0
+        sa.colptr[i] = zero(Ti)
     end
     sa.n_vals = 0
     sa.m = 0
@@ -193,7 +171,7 @@ function sortSparse!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     for i in range(1, sa.n_vals - 1)
         #If row greater than max row
         if sa.rowval[i + 1] > max_row
-            max_row = sa.rowval[i + 1][1] 
+            max_row = sa.rowval[i + 1]
         end 
 
         if sa.colval[i + 1] == sa.colval[i]

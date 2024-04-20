@@ -20,10 +20,7 @@ function parameterTuningSearch(
     precs::Vector{Counter{UInt32, UInt8}}) where {S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
                                                             R<:SpectralScores{Float16}}
-
-
     err_dist = MassErrorModel(zero(Float32), zero(Float32), zero(Float32))
-    
     return parameterTuningSearch(
         spectra, 
         frag_index,
@@ -33,7 +30,6 @@ function parameterTuningSearch(
         ms_file_idx,
         err_dist,
         searchScan!,
-
         ionMatches,
         ionMisses,
         all_fmatches,
@@ -45,11 +41,9 @@ function parameterTuningSearch(
         spectral_scores,
         precursor_weights,
         precs,
-
         collect_fmatches = true,
         expected_matches = params[:expected_matches],
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
-
         min_index_search_score = UInt8(params[:presearch_params]["min_index_search_score"]),
         min_frag_count = Int64(params[:presearch_params]["min_frag_count"]),
         min_log2_matched_ratio = Float32(params[:presearch_params]["min_log2_matched_ratio"]),
@@ -63,7 +57,6 @@ function parameterTuningSearch(
         sample_rate = Float64(params[:presearch_params]["sample_rate"]),
     )
 end
-
 function parameterTuningSearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 

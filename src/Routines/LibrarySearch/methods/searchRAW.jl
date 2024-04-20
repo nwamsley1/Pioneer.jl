@@ -469,10 +469,8 @@ function getPSMS(
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
-
-            if ismissing(isotope_dict) 
-                getDistanceMetrics(_weights_, Hs, spectral_scores)
-            end
+            
+            getDistanceMetrics(_weights_, Hs, spectral_scores)
 
             ##########
             #Scoring and recording data
@@ -578,11 +576,9 @@ function quantPSMs(
     rt_start, rt_stop = 1, 1
     #test_n = 0
     #n_templates = zeros(Int64, length(thread_task))
-    n = 0
     ##########
     #Iterate through spectra
     for i in thread_task
-        n += 1
         if i == 0 
             continue
         end
@@ -707,7 +703,6 @@ function quantPSMs(
                 block_size = 500000,
                 )
         end
-
         ##########
         #Reset pre-allocated arrays 
         #n_templates[n] = Hs.n

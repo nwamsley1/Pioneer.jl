@@ -176,7 +176,20 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
                 complex_spectral_scores,
                 precursor_weights,
                 )...);
-                pprof(;webport=58601)
+                pprof(;webport=58603)
+N = 100
+a = rand(100)
+p = zeros(UInt32, N)
+sortperm!(@view(p[1:20]),@view(a[1:20]),alg = PartialQuickSort(1:4))
+issorted([a[i] for i in p[1:20]])
+
+
+H, Hs = RESULT[1]
+n = H.n_vals
+H.idx[1:30]
+Hs.idx[1:30]
+
+
 
 b = iso_splines.splines[1][1].knots[1:end - 1]
 A = hcat(ones(length(b)), b)
