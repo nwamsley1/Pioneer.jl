@@ -18,8 +18,6 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         append!(H.nzval, zeros(eltype(H.nzval), block_size))
         append!(H.x, zeros(eltype(H.x), block_size))
         append!(H.matched, zeros(eltype(H.matched), block_size))
-        #MUST BE ONES!!!
-        append!(H.mask, ones(eltype(H.mask), block_size))
         append!(H.colptr, Vector{UInt32}(undef, block_size))
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)

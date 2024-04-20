@@ -58,7 +58,6 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             unmatched_sum += H.nzval[i]*(1 - H.matched[i])
 
             N += 1
-            N_corrected += H.mask[i]
         end
           
         #Sqrt of sum of squares

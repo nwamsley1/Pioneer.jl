@@ -153,7 +153,8 @@ function ModelPredict!(scores::Vector{U},
     function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                @turbo for row in row_chunk
+                for row in row_chunk
+                #@turbo for row in row_chunk
                     scores[row] += X[row]*β
                 end
             end
@@ -176,7 +177,8 @@ function ModelPredictProbs!(scores::Vector{U},
     function fillColumn!(scores::Vector{T}, X::Vector{R}, β::U, data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T,U<:AbstractFloat,R<:Real}
         tasks = map(data_chunks) do row_chunk
             Threads.@spawn begin
-                @turbo for row in row_chunk
+                #@turbo for row in row_chunk
+                for row in row_chunk
                     scores[row] += X[row]*β
                 end
             end
