@@ -92,20 +92,48 @@ function ModelMassErrs(intensities::Vector{T},
     shape_estimates = Vector{Float32}(undef, n_intensity_bins)#zeros(T, n_intensity_bins)
     μ = median(err_df[!,:ppm_errs]) #global location estimate
     bin_idx = 0
+    #return err_df
+    #=
+    intensities = Float64[]
+    offsets = Float64[]
     for (int_bin, subdf) in pairs(groupby(err_df, :bins))
+        push!(intensities, median(2 .^subdf[!,:log2_intensities]))
+        push!(offsets, (median((subdf[!,:ppm_errs]))))
+    end
+    #prepend!(intensities, 0.0)
+    #prepend!(offsets, first(offsets))
+    #append!(intensities, maximum(intensities))
+    #append!(offsets, last(offsets))
+    #min_int = minimum(intensities)
+    #max_int = maximum(intensities)
+    test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
+    =#
+    for (int_bin, subdf) in pairs(groupby(err_df, :bins))
+        #println("median ", median(subdf[!,:ppm_errs]))
+        #sub_ppm_errs = subdf[!,:ppm_errs] .- test_interp.(2 .^subdf[!,:log2_intensities])
+        
+        #test_μ = median(subdf[!,:ppm_errs])
         bin_idx += 1 #Intensity bin counter
         median_intensities[bin_idx] = median(subdf[!,:log2_intensities])
+        #b = mean(abs.(subdf[!,:ppm_errs] .- μ)) #Mean absolute deviation estimate
         b = mean(abs.(subdf[!,:ppm_errs] .- μ)) #Mean absolute deviation estimate
+        #b = mean(abs.(sub_ppm_errs)) #Mean absolute deviation estimate
+        #b = std(sub_ppm_errs) #Mean absolute deviation estimate
         L, z = EstimateMixtureWithUniformNoise(
             subdf[!,:ppm_errs],
+            #sub_ppm_errs,
             Laplace{Float64},
+            #Normal{Float64},
+            #zero(Float64),
             μ,
             frag_tol,
             b,
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
+        #println("z $z")
         shape_estimates[bin_idx] = quantile(Laplace(0.0, L.θ), frag_err_quantile)# L.θ
+        #shape_estimates[bin_idx] = quantile(Normal(0.0, L.σ), frag_err_quantile)# L.θ
     end
 
 

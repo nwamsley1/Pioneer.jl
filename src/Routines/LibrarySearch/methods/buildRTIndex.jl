@@ -77,7 +77,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     for (file_path, psms) in ProgressBar(pairs(psms_dict)) #For each file in the experiment
         #insert!(iRT_dict, file_path, UnorderedDictionary{UInt32, Float32}())
         #Impute empirical iRT value for psms with probability lower than the threshold
-        filter!(x->x.prob>=min_prob, psms); 
+        #filter!(x->x.prob>=min_prob, psms); 
         RTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
 
         prec_set = Dictionary(psms[!,:precursor_idx]::Vector{UInt32},

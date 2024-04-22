@@ -388,7 +388,7 @@ function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame};
                                 half_width_at_α::Float32 = 0.15f0                                                                    )
 
     gx, gw = gausslegendre(n_quadrature_nodes)
-    N = 500
+    N = 1000
     dtype = eltype(grouped_precursor_df[1].weight)
     thread_tasks = partitionThreadTasks(length(grouped_precursor_df), 10, Threads.nthreads())
     #for i in ProgressBar(range(1, length(grouped_precursor_df)))

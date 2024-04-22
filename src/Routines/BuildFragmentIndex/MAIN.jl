@@ -3,10 +3,10 @@ using Base.Iterators: partition
 
 include("src/structs/Ion.jl")
 include("src/structs/LibraryIon.jl")
-include("src/structs/Index.jl")
+include("src/structs/LibraryFragmentIndex.jl")
 include("src/Routines/buildFragmentIndex/buildFragmentIndex.jl")
 
-ARGS = Dict(
+ARGS_ = Dict(
     "params_json" =>  joinpath(pwd(), "data", "example_config","buildFragmentIndex.json"),
     "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","TEST_DATA",
     "SPEC_LIBS","HUMAN",
@@ -14,7 +14,7 @@ ARGS = Dict(
     "UP000005640_9606_NCE29dynamic_DefCharge2_1missedCleavage_1varMod_8to30_wDecoys_fromChronologer_hi.arrow"),
     "out_dir" => joinpath("/Users","n.t.wamsley","TEST_DATA",
     "SPEC_LIBS","HUMAN",
-    "STANDARD_NCE33_DefCharge2_DYNAMIC","PIONEER","LIBA","UP000005640_9606_Apr4_24")
+    "STANDARD_NCE33_DefCharge2_DYNAMIC","PIONEER","LIBA","UP000005640_9606_Apr20_24")
 
 )
 
@@ -38,7 +38,7 @@ end
 
 println("Parsing Arguments...")
 ARGS = parse_commandline();
-params = JSON.parse(read(ARGS["params_json"], String));
+params = JSON.parse(read(ARGS_["params_json"], String));
 params_ = (
     rt_bin_tol = Float32(params["rt_bin_tol"]),
     frag_bin_tol_ppm = Float32(params["frag_bin_tol_ppm"]),
@@ -55,7 +55,7 @@ params_ = (
 )
 
 println("make output folder...")
-folder_out = joinpath(ARGS["out_dir"],"pioneer_lib")
+folder_out = joinpath(ARGS_["out_dir"],"pioneer_lib")
 if !isdir(folder_out)
     mkpath(folder_out)
 end
@@ -67,7 +67,7 @@ end
 
 println("reading pioneer lib...")
 #@time pioneer_lib = Arrow.Table("/Users/n.t.wamsley/Desktop/test_lib.arrow")
-@time pioneer_lib = Arrow.Table(ARGS["pioneer_lib_dir"])
+@time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
 
 @time sorted_indices = sortPrositLib(
     pioneer_lib[:prec_mz],

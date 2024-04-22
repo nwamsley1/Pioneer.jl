@@ -64,7 +64,7 @@ function searchRAW(
     #of scans have an equal number of fragment peaks in the spectra
     @time thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
                                                         spectra[:retentionTime],
-                                                         spectra[:precursorMZ],
+                                                         spectra[:centerMass],
                                                          spectra[:msOrder],
                                                         Threads.nthreads(),
                                                         1)
@@ -173,6 +173,7 @@ function searchFragmentIndex(
     thread_peaks = 0
     ##########
     #Initialize 
+    #println("min_index_search_score $min_index_search_score")
     msms_counts = Dict{Int64, Int64}()
     cycle_idx = 0
     prec_id = 0
@@ -204,9 +205,10 @@ function searchFragmentIndex(
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
         
-        #if (i < 100000) | (i > 100000)
+        #if (i < 200002) | (i > 200002)
         #    continue
         #end
+        #println("i $i")
         first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
         iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
         
@@ -243,13 +245,15 @@ function searchFragmentIndex(
                         frag_ppm_err,
                         mass_err_model,
                         min_max_ppm,
-                        spectra[:precursorMZ][i],
-                        Float32(quadrupole_isolation_width/2.0),
+                        spectra[:centerMass][i],
+                        spectra[:isolationWidth][i]/2.0f0,
                         isotope_err_bounds
                         )
             
             match_count, prec_count = filterPrecursorMatches!(precs, min_index_search_score)
             
+            #println("match_coutn $match_count")
+            #println("prec_count $prec_count")
             if getID(precs, 1)>0
 
                 start_idx = prec_id + 1
@@ -384,8 +388,8 @@ function getPSMS(
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol), #rt_tol
                                         (
-                                        spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                        spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0)
+                                        spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
+                                        spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0
                                         ),
                                         isotope_err_bounds = isotope_err_bounds
                                         )
@@ -615,8 +619,8 @@ function quantPSMs(
                                             rt_index,
                                             rt_start,
                                             rt_stop,
-                                            spectra[:precursorMZ][i] - Float32(quadrupole_isolation_width/2.0),
-                                            spectra[:precursorMZ][i] + Float32(quadrupole_isolation_width/2.0),
+                                            spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
+                                            spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0,
                                             isotope_err_bounds,
                                             10000)
         end

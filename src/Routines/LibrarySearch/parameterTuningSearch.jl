@@ -6,9 +6,11 @@ function parameterTuningSearch(
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
+    min_max_ppm::Tuple{Float32, Float32},
     params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+    collect_fmatches::Bool,
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
@@ -41,7 +43,7 @@ function parameterTuningSearch(
         spectral_scores,
         precursor_weights,
         precs,
-        collect_fmatches = true,
+        collect_fmatches = collect_fmatches,
         expected_matches = params[:expected_matches],
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
         min_index_search_score = UInt8(params[:presearch_params]["min_index_search_score"]),
@@ -49,9 +51,10 @@ function parameterTuningSearch(
         min_log2_matched_ratio = Float32(params[:presearch_params]["min_log2_matched_ratio"]),
         min_spectral_contrast = Float32(params[:presearch_params]["min_spectral_contrast"]),
         min_topn_of_m = Tuple([Int64(x) for x in params[:presearch_params]["min_topn_of_m"]]),
-        min_max_ppm = ( Float32(params[:presearch_params]["frag_tol_ppm"]),  
-                        Float32(params[:presearch_params]["frag_tol_ppm"])
-                     ),
+        min_max_ppm = min_max_ppm,
+        #min_max_ppm = ( Float32(params[:presearch_params]["frag_tol_ppm"]),  
+        #                Float32(params[:presearch_params]["frag_tol_ppm"])
+        #             ),
         max_best_rank = Int64(params[:presearch_params]["max_best_rank"]),
         quadrupole_isolation_width = params[:quadrupole_isolation_width],
         sample_rate = Float64(params[:presearch_params]["sample_rate"]),
@@ -123,7 +126,7 @@ function parameterTuningSearch(
     #of scans have an equal number of fragment peaks in the spectra
     thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
                                                         spectra[:retentionTime],
-                                                         spectra[:precursorMZ],
+                                                         spectra[:centerMass],
                                                          spectra[:msOrder],
                                                         Threads.nthreads(),
                                                         1)
@@ -147,7 +150,7 @@ function parameterTuningSearch(
                                 precs[thread_id],
                                 isotope_err_bounds,
                                 min_index_search_score,
-                                min_max_ppm,
+                                min_max_ppm,#(5.0f0, 5.0f0),#min_max_ppm,
                                 quadrupole_isolation_width,
                                 irt_tol,
                                 sample_rate,
@@ -156,6 +159,7 @@ function parameterTuningSearch(
         end
     end
     precursors_passed_scoring = fetch.(tasks)
+    #return precursors_passed_scoring, scan_to_prec_idx
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -218,85 +222,77 @@ test_time = @time begin
 RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
+#MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"
+#MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/test/20230324_OLEP08_200ng_30min_E20H50Y30_180K_2Th3p5ms_02.arrow"
 for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    RESULT =  parameterTuningSearch(
-                                            MS_TABLE,
-                                            prosit_lib["f_index"],
-                                            prosit_lib["precursors"],
-                                            library_fragment_lookup_table,
-                                            x->x, #RT to iRT map'
-                                            UInt32(ms_file_idx), #MS_FILE_IDX
-                                            params_,
-                                            ionMatches,
-                                            ionMisses,
-                                            all_fmatches,
-                                            IDtoCOL,
-                                            ionTemplates,
-                                            iso_splines,
-                                            scored_PSMs,
-                                            unscored_PSMs,
-                                            spectral_scores,
-                                            precursor_weights,
-                                            precs,
-                                            );
+    start_ppm = 20.0f0
+    max_ppm = 30.0f0
+    params_[:presearch_params]["sample_rate"] = 0.02
+    data_points = 0
+    n = 0
+    while n < 10
+        RESULT =  parameterTuningSearch(
+                                                MS_TABLE,
+                                                prosit_lib["f_index"],
+                                                prosit_lib["precursors"],
+                                                library_fragment_lookup_table,
+                                                x->x, #RT to iRT map'
+                                                UInt32(ms_file_idx), #MS_FILE_IDX
+                                                (start_ppm, start_ppm),
+                                                params_,
+                                                ionMatches,
+                                                ionMisses,
+                                                false,
+                                                all_fmatches,
+                                                IDtoCOL,
+                                                ionTemplates,
+                                                iso_splines,
+                                                scored_PSMs,
+                                                unscored_PSMs,
+                                                spectral_scores,
+                                                precursor_weights,
+                                                precs,
+                                                );
 
-    rtPSMs = vcat([first(result) for result in RESULT]...)
-    all_matches = vcat([last(result) for result in RESULT]...)
-    #@time begin
-    addPreSearchColumns!(rtPSMs, 
-                                MS_TABLE, 
-                                prosit_lib["precursors"][:is_decoy],
-                                prosit_lib["precursors"][:irt],
-                                prosit_lib["precursors"][:prec_charge],
-                                min_prob = params_[:presearch_params]["min_prob"])
-    function _getPPM(a::T, b::T) where {T<:AbstractFloat}
-        (a-b)/(a/1e6)
+        rtPSMs = vcat([result for result in RESULT]...)
+        #all_matches = vcat([last(result) for result in RESULT]...)
+        #@time begin
+        addPreSearchColumns!(rtPSMs, 
+                                    MS_TABLE, 
+                                    prosit_lib["precursors"][:is_decoy],
+                                    prosit_lib["precursors"][:irt],
+                                    prosit_lib["precursors"][:prec_charge],
+                                    min_prob = params_[:presearch_params]["min_prob"])
+        mean(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]))
+        if size(rtPSMs, 1) > 2000
+            println("a ", size(rtPSMs, 1))
+            break
+        else# size(rtPSMs, 1) > 500
+            println("b ", size(rtPSMs, 1))
+            test = Float32(quantile(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]), 0.99))
+            #start_ppm = min(max_ppm, start_ppm*Float32(2))#Float32(quantile(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]), 0.9))
+            start_ppm = min(max_ppm, test*2)
+            params_[:presearch_params]["sample_rate"] *= 1.5
+        end
+            #break
+        #else
+        #    println("c ", size(rtPSMs, 1))
+        #    start_ppm *= min(max_ppm, start_ppm*Float32(2))
+        #    #params_[:presearch_params]["sample_rate"] *= 1.5
+        #end
+        println("start_ppm $start_ppm")
+        println("sample rate ", params_[:presearch_params]["sample_rate"])
+        n += 1
     end
-    #Get Retention Times and Target/Decoy Status 
-    ####################
-    #Use best_psms to estimate 
-    #1) RT to iRT curve and 
-    #2) mass error (ppm) distribution 
-    best_precursors = Set(rtPSMs[:,:precursor_idx]);
-    best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
-    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
-    frag_ppm_intensities = [match.intensity for match in best_matches];
-
-
-    out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
-
-    mass_err_model = ModelMassErrs(
-        frag_ppm_intensities,
-        frag_ppm_errs,
-        params_[:presearch_params]["frag_tol_ppm"],
-        n_intensity_bins = length(frag_ppm_errs)÷Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
-        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
-        out_fdir = mass_err_estimation_folder,
-        out_fname = out_fname
-    )
-    #Model fragment errors with a mixture model of a uniform and laplace distribution 
-    rtPSMs[!,:best_psms] .= false
-    grouped_psms = groupby(rtPSMs,:precursor_idx)
-    for psms in grouped_psms
-        best_idx = argmax(psms.prob)
-        psms[best_idx,:best_psms] = true
-    end
-    filter!(x->x.best_psms, rtPSMs)
-
-    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-
-    #File name but remove file type
 
     RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], 
-                                rtPSMs[1:end,:iRT_predicted], 
-                                n = params_[:irt_mapping_params]["n_bins"], 
-                                bandwidth = params_[:irt_mapping_params]["bandwidth"]);
-
-
-    
+    rtPSMs[1:end,:iRT_predicted], 
+    n = params_[:irt_mapping_params]["n_bins"], 
+    bandwidth = params_[:irt_mapping_params]["bandwidth"]);
 
     plotRTAlign(rtPSMs[:,:RT], 
                 rtPSMs[:,:iRT_predicted], 
@@ -311,6 +307,146 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
 
     irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
     RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
+    #=
+    rtPSMs[!,:target] = [precursors[:is_decoy][x] for x in rtPSMs[!,:precursor_idx]]
+    bins = LinRange(0, 2, 100)
+    histogram(rtPSMs[rtPSMs[!,:target], :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(rtPSMs[rtPSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
+    
+    =#
+    function _getPPM(a::T, b::T) where {T<:AbstractFloat}
+        (a-b)/(a/1e6)
+    end
+    #Get Retention Times and Target/Decoy Status 
+    ####################
+    #Use best_psms to estimate 
+    #1) RT to iRT curve and 
+    #2) mass error (ppm) distribution 
+
+    RESULT =  parameterTuningSearch(
+        MS_TABLE,
+        prosit_lib["f_index"],
+        prosit_lib["precursors"],
+        library_fragment_lookup_table,
+        RT_to_iRT_map, #RT to iRT map'
+        UInt32(ms_file_idx), #MS_FILE_IDX
+        (max_ppm, max_ppm),
+        params_,
+        ionMatches,
+        ionMisses,
+        true,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precursor_weights,
+        precs,
+        );
+    rtPSMs = vcat([first(result) for result in RESULT]...)
+    all_matches = vcat([last(result) for result in RESULT]...)
+
+    addPreSearchColumns!(rtPSMs, 
+                        MS_TABLE, 
+                        prosit_lib["precursors"][:is_decoy],
+                        prosit_lib["precursors"][:irt],
+                        prosit_lib["precursors"][:prec_charge],
+                        min_prob = params_[:presearch_params]["min_prob"])
+
+    best_precursors = Set(rtPSMs[:,:precursor_idx]);
+    best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
+    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
+    #frag_ppm_errs = [Float64(match.theoretical_mz - match.match_mz) for match in best_matches];
+    frag_ppm_intensities = [match.intensity for match in best_matches];
+    #frag_ppm_intensities = [match.theoretical_mz for match in best_matches];
+
+    mass_err_model = ModelMassErrs(
+        frag_ppm_intensities,
+        frag_ppm_errs,
+        Float64(max_ppm),#params_[:presearch_params]["frag_tol_ppm"],
+        n_intensity_bins = length(frag_ppm_errs)÷1500,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
+        out_fdir = mass_err_estimation_folder,
+        out_fname = out_fname
+    )
+
+    #=
+        ppm_diffs = Int64[]
+    for i in range(200000, 220000) 
+        if MS_TABLE[:msOrder][i] == 2
+            push!(ppm_diffs, sum(diff(MS_TABLE[:masses][i])./(MS_TABLE[:masses][i][1:end - 1]./1e6).<40.0))
+        end
+    end
+        err_df = ModelMassErrs(
+        frag_ppm_intensities,
+        frag_ppm_errs,
+        params_[:presearch_params]["frag_tol_ppm"],
+        n_intensity_bins = length(frag_ppm_errs)÷250,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
+        out_fdir = mass_err_estimation_folder,
+        out_fname = out_fname
+    )
+    bins = LinRange(-12, 12, 50)
+    histogram(groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
+    histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
+    histogram!(groupby(  err_df,:bins)[end-15][!,:ppm_errs], alpha = 0.5, bins = bins)
+    #histogram!(groupby(  err_df,:bins)[end - 2][!,:ppm_errs], alpha = 0.5, bins = bins)
+
+    plot(frag_ppm_intensities, frag_ppm_errs, alpha = 0.1, seriestype=:scatter)
+
+
+     plot(log2.(frag_ppm_intensities), frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
+    test_loess = loess(log2.(frag_ppm_intensities), frag_ppm_errs, span = 0.5)
+    plot!(LinRange(8, 21, 100), Loess.predict(test_loess, LinRange(8, 21, 100)))
+    intensities = Float64[]
+    offsets = Float64[]
+    for (int_bin, subdf) in pairs(groupby(err_df, :bins))
+        push!(intensities, median(2 .^subdf[!,:log2_intensities]))
+        push!(offsets, (median((subdf[!,:ppm_errs]))))
+    end
+
+
+    plot(intensities, offsets, seriestype=:scatter)
+    #plot(intensities, frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
+    test_loess = loess((intensities), offsets, span = 0.5)
+    loess_range = LinRange(minimum(intensities), maximum(intensities), 100)
+    plot!(loess_range, 
+            Loess.predict(test_loess, 
+                            loess_range)
+        )
+
+
+    test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
+    plot(intensities, offsets, seriestype=:scatter)
+    poly = Polynomials.fit(intensities, offsets, 10) 
+    plot!(collect(LinRange(0, 2e5, 100)), poly.(LinRange(0, 2e5, 100)))
+    #plot!(LinRange(0, 2e5, 100), test_interp.(LinRange(0, 2e5, 100)))
+
+    bins = LinRange(-12, 12, 100)
+    groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs])
+    histogram( groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs]), alpha = 0.5, bins = bins)
+    histogram!( groupby(  err_df,:bins)[end-15][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end-15][!,:ppm_errs]), alpha = 0.5, bins = bins)
+
+    histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
+
+
+    =#
+    #Model fragment errors with a mixture model of a uniform and laplace distribution 
+    rtPSMs[!,:best_psms] .= false
+    grouped_psms = groupby(rtPSMs,:precursor_idx)
+    for psms in grouped_psms
+        best_idx = argmax(psms.prob)
+        psms[best_idx,:best_psms] = true
+    end
+    filter!(x->x.best_psms, rtPSMs)
+
+    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
+
+    #File name but remove file type
+
+
     frag_err_dist_dict[ms_file_idx] = mass_err_model
 end
 end

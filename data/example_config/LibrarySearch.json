@@ -6,20 +6,20 @@
     "quadrupole_isolation_width": 8.0036, 
     "presearch_params":
     {
-        "min_index_search_score": 10,
+        "min_index_search_score": 22,
         "min_frag_count": 7,
-        "min_log2_matched_ratio": 0,
+        "min_log2_matched_ratio": 1.0,
         "min_spectral_contrast": 0.9,
         "min_topn_of_m": [3, 3],
         "max_best_rank": 1,
-        "sample_rate": 0.05,
+        "sample_rate": 0.01,
         "frag_tol_ppm": 50.0,
         "min_prob": 0.95,
         "samples_per_mass_err_bin": 1500
     },
     "first_search_params":
     {
-        "min_index_search_score": 7,
+        "min_index_search_score": 15,
         "filter_on_frag_count": false,
         "min_frag_count": 0,
         "filter_by_rank": false,
@@ -30,7 +30,7 @@
         "max_iter_probit":20,
         "max_q_value_probit_rescore": 0.01,
         "max_q_value_filter": 1.0,
-        "max_precursors_passing": 250000
+        "max_precursors_passing": 500000
     },
     "summarize_first_search_params":
     {

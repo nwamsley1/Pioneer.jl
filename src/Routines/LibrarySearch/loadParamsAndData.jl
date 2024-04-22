@@ -55,11 +55,12 @@ params = JSON.parse(read(ARGS["params_json"], String));
 params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
 
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
-#SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr4_24/pioneer_lib/"
-SPEC_LIB_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "LIBS", "UP000005640_9606_Apr4_24", "pioneer_lib")
-#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/"
+SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib/"
+#SPEC_LIB_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","test")
+#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/""
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/ThermoRawFileToParquetConverter-main/parquet_out"
-MS_DATA_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "HUPO_2023", "CALIBRATION_CURVES", "RAW")
+#MS_DATA_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "HUPO_2023", "CALIBRATION_CURVES", "RAW")
+MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","test")
 #SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
 #MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];

@@ -113,18 +113,11 @@ function quantitationSearch(
     #For example if there are 10,000 scans and two threads, choose n so that
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
-    #=
-    thread_tasks, total_peaks = partitionScansToThreadsTest(spectra[:masses],
-                                                        spectra[:precursorMZ],
-                                                        spectra[:msOrder],
-
-                                                        Threads.nthreads(),
-                                                        1)
-    =#                                        
+                                       
     
     thread_tasks, total_peaks = partitionScansToThreads2(spectra[:masses],
                                                         spectra[:retentionTime],
-                                                        spectra[:precursorMZ],
+                                                        spectra[:centerMass],
                                                         spectra[:msOrder],
 
                                                         Threads.nthreads(),
@@ -192,7 +185,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
-                    irt_errs[ms_file_idx],
+                    irt_errs[ms_file_idx]/2,
                     params_,  
                     ionMatches,
                     ionMisses,

@@ -158,24 +158,29 @@ end
 using PProf, Profile
 Profile.clear()
 MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-@profile PSMS = vcat(quantitationSearch(MS_TABLE, 
-                prosit_lib["precursors"],
-                prosit_lib["f_det"],
-                RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
-                UInt32(ms_file_idx), 
-                frag_err_dist_dict[ms_file_idx],
-                irt_errs[ms_file_idx],
-                params_,  
-                ionMatches,
-                ionMisses,
-                IDtoCOL,
-                ionTemplates,
-                iso_splines,
-                complex_scored_PSMs,
-                complex_unscored_PSMs,
-                complex_spectral_scores,
-                precursor_weights,
-                )...);
+@profile PSMS = PSMs = vcat(mainLibrarySearch(
+    MS_TABLE,
+    prosit_lib["f_index"],
+    prosit_lib["precursors"],
+    library_fragment_lookup_table,
+    RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
+    UInt32(ms_file_idx), #MS_FILE_IDX
+    frag_err_dist_dict[ms_file_idx],
+    irt_errs[ms_file_idx],
+    params_,
+    ionMatches,
+    ionMisses,
+    all_fmatches,
+    IDtoCOL,
+    ionTemplates,
+    iso_splines,
+    scored_PSMs,
+    unscored_PSMs,
+    spectral_scores,
+    precursor_weights,
+    precs
+#scan_range = (100000, 100010)
+)...);
                 pprof(;webport=58603)
 N = 100
 a = rand(100)
@@ -183,6 +188,14 @@ p = zeros(UInt32, N)
 sortperm!(@view(p[1:20]),@view(a[1:20]),alg = PartialQuickSort(1:4))
 issorted([a[i] for i in p[1:20]])
 
+PSMs[!,:prec_mz] = [precursors[:mz][x] for x in PSMs[!,:precursor_idx]]
+println("max observed mz ", maximum(PSMs[!,:prec_mz]))
+println("min observed mz ", minimum(PSMs[!,:prec_mz]))
+MS_TABLE[:centerMass][PSMs[!,:scan_idx][1]] -  MS_TABLE[:isolationWidth][PSMs[!,:scan_idx][1]]/2
+MS_TABLE[:centerMass][PSMs[!,:scan_idx][1]] +  MS_TABLE[:isolationWidth][PSMs[!,:scan_idx][1]]/2
+
+ms2_scans = MS_TABLE[:msOrder].==2
+MS_TABLE[:lowMass][ms2_scans]
 
 H, Hs = RESULT[1]
 n = H.n_vals

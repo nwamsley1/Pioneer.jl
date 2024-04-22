@@ -62,7 +62,6 @@ function mainLibrarySearch(
        
     )
 end
-
 function mainLibrarySearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -129,7 +128,7 @@ function mainLibrarySearch(
     #of scans have an equal number of fragment peaks in the spectra
     thread_tasks, total_peaks = partitionScansToThreads2(spectra[:masses],
                                                         spectra[:retentionTime],
-                                                         spectra[:precursorMZ],
+                                                         spectra[:centerMass],
                                                          spectra[:msOrder],
                                                         Threads.nthreads(),
                                                         1)
@@ -220,7 +219,7 @@ end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(mainLibrarySearch(
+    @time PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -249,6 +248,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                         prosit_lib["precursors"][:is_decoy],
                         prosit_lib["precursors"][:irt],
                         prosit_lib["precursors"][:prec_charge]);
+    
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
@@ -264,7 +264,29 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
+    #=
+    bins = LinRange(0, 2, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
     
+    bins = LinRange(0, 2, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :spectral_contrast], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :spectral_contrast], alpha = 0.5, bins = bins, normalize=:pdf)
+
+
+    bins = LinRange(0, 25, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :total_ions], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :total_ions], alpha = 0.5, bins = bins, normalize=:pdf)
+
+bins = LinRange(-1, 5, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :matched_ratio], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :matched_ratio], alpha = 0.5, bins = bins, normalize=:pdf)
+ 
+
+    bins = LinRange(0, 25, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :topn], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :topn], alpha = 0.5, bins = bins, normalize=:pdf)
+    =#
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),

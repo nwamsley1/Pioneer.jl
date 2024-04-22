@@ -394,8 +394,8 @@ function getIsoRanks!(psms::DataFrame,
                 charge = psms[i,:charge]
                 mz = psms[i,:prec_mz]
                 scan_id = psms[i,:scan_idx]
-                scan_mz = MS_TABLE[:precursorMZ][scan_id]
-
+                scan_mz = MS_TABLE[:centerMass][scan_id]
+                window_width = MS_TABLE[:isolationWidth][scan_id]
                 isotopes = getPrecursorIsotopeSet(mz, 
                                                     charge, 
                                                     Float32(scan_mz-window_width/2),
