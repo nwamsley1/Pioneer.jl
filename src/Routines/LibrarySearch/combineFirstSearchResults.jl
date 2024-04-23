@@ -6,7 +6,7 @@ iRT_RT, RT_iRT = mapRTandiRT(PSMs_Dict,
                              )
 precID_to_iRT = getPrecIDtoiRT(PSMs_Dict, 
                                 RT_iRT, 
-                                max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
+                                max_precursors = 250000)#Int64(params_[:summarize_first_search_params]["max_precursors"]))
 RT_INDICES = makeRTIndices(PSMs_Dict,
                             precID_to_iRT,
                             iRT_RT,

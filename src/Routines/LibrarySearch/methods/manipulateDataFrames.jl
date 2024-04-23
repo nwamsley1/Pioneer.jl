@@ -242,7 +242,7 @@ function getBestPSMs!(psms::DataFrame,
     end
 
     filter!(x->x.best_psm, psms);
-    sort!(psms,:prob, rev = true)
+    sort!(psms,:score, rev = true)
     n = size(psms, 1)
     delete!(psms, min(n, max_psms + 1):n)
     select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])

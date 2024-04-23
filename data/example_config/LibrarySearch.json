@@ -21,10 +21,11 @@
     {
         "min_index_search_score": 15,
         "filter_on_frag_count": false,
-        "min_frag_count": 0,
+        "min_frag_count": 4,
         "filter_by_rank": false,
         "min_topn_of_m": [2, 3],       
-        "min_log2_matched_ratio": -10,
+        "min_log2_matched_ratio": 0.0,
+        "min_spectral_contrast": 0.5,
         "max_best_rank": 1,
         "n_train_rounds_probit": 2,
         "max_iter_probit":20,

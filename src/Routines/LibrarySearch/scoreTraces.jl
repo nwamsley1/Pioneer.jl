@@ -73,12 +73,16 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         colsample_bynode = 0.5,
                         min_child_weight = 5, 
                         gamma = 1, 
+                        #gamma = 0,
                         subsample = 0.25, 
-                        max_depth = 10, 
+                        #subsample = 1.0,
+                        max_depth = 10,
+                        #max_depth = 4, 
                         eta = 0.05, 
                         #eta = 0.0175,
                         train_fraction = 9.0/9.0,
                         iter_scheme = [100, 100, 200],
+                        #iter_scheme = [200],
                         print_importance = false);
 best_psms = bst[2];
 best_psms[!,:prob] =Float32.(best_psms[!,:prob]);

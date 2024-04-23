@@ -407,6 +407,7 @@ function getPSMS(
                                         frag_ppm_err,
                                         mass_err_model,
                                         min_max_ppm,
+                                        spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)
         #println("nmatches $nmatches nmisses $nmisses")
@@ -578,6 +579,7 @@ function quantPSMs(
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, n_frag_isotopes)
     rt_start, rt_stop = 1, 1
+    prec_mz_string = ""
     #test_n = 0
     #n_templates = zeros(Int64, length(thread_task))
     ##########
@@ -599,11 +601,13 @@ function quantPSMs(
         rt = spectra[:retentionTime][i]
         rt_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         rt_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-    
-        
-        if (rt_start_new != rt_start) | rt_stop_new != rt_stop
+        prec_mz_string_new = string(spectra[:centerMass][i])
+        prec_mz_string_new = prec_mz_string_new[1:max(length(prec_mz_string_new), 6)]
+
+        if (rt_start_new != rt_start) | (rt_stop_new != rt_stop) | (prec_mz_string_new != prec_mz_string)
             rt_start = rt_start_new
             rt_stop = rt_stop_new
+            prec_mz_string = prec_mz_string_new
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
@@ -635,6 +639,7 @@ function quantPSMs(
                                         frag_ppm_err,
                                         mass_err_model,
                                         min_max_ppm,
+                                        spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)
         #println([x for x in ionMisses[1:nmisses] if (x.prec_id==0x00a2e2fa)])

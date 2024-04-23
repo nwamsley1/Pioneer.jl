@@ -202,8 +202,13 @@ n = H.n_vals
 H.idx[1:30]
 Hs.idx[1:30]
 
+MS2_CHROMS = groupby(PSMS, [:precursor_idx]);
 
 
+MS2_CHROMS[N][!,[:RT,:weight,:b_count,:y_count,:scribe_fitted,:city_block_fitted,:spectral_contrast,:matched_ratio,:iso_rank]]
+plot(MS2_CHROMS[N][!,:RT],
+MS2_CHROMS[N][!,:weight], seriestype=:scatter)
+N += 1
 b = iso_splines.splines[1][1].knots[1:end - 1]
 A = hcat(ones(length(b)), b)
 x = A\[x for x in range(0, length(b)-1)]

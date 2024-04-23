@@ -213,6 +213,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                     ppm_err::Float32, 
                     mass_err_model::MassErrorModel{Float32},
                     min_max_ppm::Tuple{Float32, Float32},
+                    high_mass::Float32,
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
                     ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
@@ -296,6 +297,9 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
     #Remaining templates with higher m/z than the highest
     #m/z peak in the spectrum are written to 'unmatched'
     while ion_idx <= max_ions_idx#length(Ions)
+        if getMZ(ions[ion_idx]) > high_mass
+            break
+        end
         unmatched_idx = setMatch!(unmatched,
                                     ions[ion_idx], 
                                     zero(Float32), 

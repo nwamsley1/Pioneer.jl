@@ -54,6 +54,7 @@ function mainLibrarySearch(
         expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
         min_log2_matched_ratio = Float32(params[:first_search_params]["min_log2_matched_ratio"]),
+        min_spectral_contrast = Float32(params[:first_search_params]["min_spectral_contrast"]),
         min_index_search_score = UInt8(params[:first_search_params]["min_index_search_score"]),
         min_topn_of_m = Tuple([Int64(x) for x in params[:first_search_params]["min_topn_of_m"]]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
@@ -269,19 +270,18 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
     histogram!(PSMs[PSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
     
+
     bins = LinRange(0, 2, 100)
     histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :spectral_contrast], alpha = 0.5, bins = bins, normalize = :pdf)
     histogram!(PSMs[PSMs[!,:target].==false, :spectral_contrast], alpha = 0.5, bins = bins, normalize=:pdf)
-
 
     bins = LinRange(0, 25, 100)
     histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :total_ions], alpha = 0.5, bins = bins, normalize = :pdf)
     histogram!(PSMs[PSMs[!,:target].==false, :total_ions], alpha = 0.5, bins = bins, normalize=:pdf)
 
-bins = LinRange(-1, 5, 100)
+    bins = LinRange(-1, 5, 100)
     histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :matched_ratio], alpha = 0.5, bins = bins, normalize = :pdf)
     histogram!(PSMs[PSMs[!,:target].==false, :matched_ratio], alpha = 0.5, bins = bins, normalize=:pdf)
- 
 
     bins = LinRange(0, 25, 100)
     histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :topn], alpha = 0.5, bins = bins, normalize = :pdf)
@@ -290,7 +290,7 @@ bins = LinRange(-1, 5, 100)
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
-                    max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
+                    max_psms = 250000#Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
