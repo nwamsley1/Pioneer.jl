@@ -294,7 +294,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             end
         end
     end
-    if points_above_half_max < 2
+    if points_above_half_max < 0
     fitEGH(state, 
             HuberParams(T(0.001), T(0), T(-1), T(1.0)),
             HuberParams(T(1), T(Inf), T(1), T(1.0)),
@@ -304,9 +304,13 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             chrom.RT[best_scan]
             )
     else
+        #println("TEST  chrom.RT[best_scan]",  chrom.RT[best_scan])
         fitEGH(state, 
         HuberParams(T(0.001), T(0), T(-1), T(0.75)),
         HuberParams(T(1), T(Inf), T(1), T(1.25)),
+        #HuberParams(T(0.001), T(chrom.RT[best_scan-1]), T(-1), T(0.75)),
+        #HuberParams(T(0.001), T(chrom.RT[best_scan-1]), T(-1), T(1.0)),
+        #HuberParams(T(1), T(chrom.RT[best_scan+1]), T(1), T(1.25)),
         max_peak_width,
         α,
         half_width_at_α,

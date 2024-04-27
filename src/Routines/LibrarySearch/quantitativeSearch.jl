@@ -52,6 +52,7 @@ function quantitationSearch(
         min_topn_of_m = Tuple([Int64(x) for x in params[:quant_search_params]["min_topn_of_m"]]),
         min_frag_count = Int64(params[:quant_search_params]["min_frag_count"]),
         min_log2_matched_ratio = Float32(params[:quant_search_params]["min_log2_matched_ratio"]),
+        min_spectral_contrast = Float32(params[:quant_search_params]["min_spectral_contrast"]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),
         n_frag_isotopes = Int64(params[:quant_search_params]["n_frag_isotopes"]),
         max_best_rank = Int64(params[:quant_search_params]["max_best_rank"]),

@@ -290,7 +290,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
-                    max_psms = 250000#Int64(params_[:first_search_params]["max_precursors_passing"])
+                    max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 

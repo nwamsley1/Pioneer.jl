@@ -1,7 +1,11 @@
-struct MassErrorModel{T<:AbstractFloat}
-    power::T
-    factor::T
-    location::T
+
+struct MassErrorModel
+    mass_offset::BSplineKit.SplineApproximations.SplineApproximation
+    mass_tolerance::BSplineKit.SplineApproximations.SplineApproximation
+    min_intensity::Float16
+    max_intensity::Float16
+    min_ppm::Float32
+    max_ppm::Float32
 end
 
 function getMassCorrection(mem::MassErrorModel{T}) where {T<:AbstractFloat}
@@ -12,9 +16,30 @@ function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
     return mem.location
 end
 
-function (mem::MassErrorModel{T})(intensity::T) where {T<:AbstractFloat}
-    return mem.factor*(intensity^(mem.power))
+function (mem::MassErrorModel)(mass::Float32, intensity::Float16, quantile::Float32)
+    #Log 
+    ppm_norm = Float32(1e6)
+    log_intensity = max(
+                        min(
+                            log2(intensity),
+                            mem.max_intensity
+                            ), 
+                        mem.min_intensity
+                        )
+
+    mass -= mem.mass_offset(log_intensity)*mass/ppm_norm
+
+    ppm_err = max(
+            min(
+                -mem.mass_tolerance(log_intensity)*log(2.0f0*(1.0f0 - quantile)), 
+                mem.max_ppm
+                ), 
+            mem.min_ppm
+            )
+    tol = ppm_err*mass/ppm_norm
+    return mass - mem.max_ppm*mass/ppm_norm, mass - tol, mas + tol
 end
+
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          err_model::Type{D}, #Distribution to model error
                                          μ::T, #Fixed/known location parameter
@@ -72,93 +97,152 @@ function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
 
 end
 
+function getIntensityBinIds(log2_intensities::Vector{T},
+                            max_n_bins::Int64,
+                            min_bin_size::Int64)::Vector{UInt32} where {T<:AbstractFloat}
+
+    #Width of intensity bins 
+    bin_width = (maximum(log2_intensities) - minimum(log2_intensities))/max_n_bins
+    
+    #Assumes log2_intensities is sorted in descenging order 
+    #Allocate bin ids and staring indices 
+    N = length(log2_intensities)
+    bins = zeros(UInt32, N)
+    bin_idx = 1
+    #Intensity of stoping and starting bins 
+    start_intensity, stop_intensity = first(log2_intensities), first(log2_intensities)
+    start_idx, stop_idx = 1, 1
+    #Construct intensity bins 
+    for i in range(1, N)
+        stop_intensity = log2_intensities[i]
+        stop_idx = i
+        #If the bin exceeds the minimum width and number of data points,
+        #then start a new bin 
+        if (abs(stop_intensity - start_intensity) > bin_width) & ((stop_idx - start_idx) > min_bin_size)
+            bin_idx += 1
+            start_idx, stop_idx = i, i
+            start_intensity = stop_intensity
+        end
+        bins[i] = bin_idx
+    end
+
+    #If last bin has fwewer than the minimum number of fragments, merge
+    #it with the second to last bin 
+    if abs(start_idx - stop_idx) < min_bin_size
+        bins[start_idx:stop_idx] .= max(bin_idx - 1, 1)
+    end
+    return bins      
+end
+
+
 function ModelMassErrs(intensities::Vector{T},
                        ppm_errs::Vector{U},
                        frag_tol::U;
-                       n_intensity_bins::Int = 10,
+                       min_ppm::Float32 = zero(Float32),
+                       max_ppm::Float32 = typemax(Float32),
+                       max_n_bins::Int = 30,
+                       min_bin_size::Int = 300,
                        frag_err_quantile::Float64 = 0.999,
                        out_fdir::String = "./",
                        out_fname = "mass_err_estimate") where {T,U<:AbstractFloat}
-    log2_intensities = log2.(intensities)
 
-    bins = cut(log2_intensities, n_intensity_bins)
+    #sort intensities/ppm_errs in increasing order of intensity 
+    log2_intensities = log2.(intensities)
+    new_indices = sortperm(log2_intensities, rev = true)
+    log2_intensities = log2_intensities[new_indices]
+    ppm_errs = ppm_errs[new_indices]
+
+    bins = getIntensityBinIds(log2_intensities, max_n_bins, min_bin_size)
+
     err_df = DataFrame(Dict(
             :ppm_errs => ppm_errs, 
             :log2_intensities => log2_intensities, 
-            :bins => bins)
+            :bins => bins,
+            :γ => zeros(Bool, length(ppm_errs)))
             )
-    err_df[!,:γ] .= false
-    median_intensities = zeros(T, n_intensity_bins)
-    shape_estimates = Vector{Float32}(undef, n_intensity_bins)#zeros(T, n_intensity_bins)
-    μ = median(err_df[!,:ppm_errs]) #global location estimate
+    #Pre-allocate outpues 
+    median_intensities = zeros(T, bins[end])
+    shape_estimates = Vector{Float32}(undef, bins[end])#zeros(T, n_intensity_bins)
+    μ_estimates = Vector{Float32}(undef, bins[end])
+    #Estimate Laplace-uniform mixture distribution for each intensity bin 
     bin_idx = 0
-    #return err_df
-    #=
-    intensities = Float64[]
-    offsets = Float64[]
     for (int_bin, subdf) in pairs(groupby(err_df, :bins))
-        push!(intensities, median(2 .^subdf[!,:log2_intensities]))
-        push!(offsets, (median((subdf[!,:ppm_errs]))))
-    end
-    #prepend!(intensities, 0.0)
-    #prepend!(offsets, first(offsets))
-    #append!(intensities, maximum(intensities))
-    #append!(offsets, last(offsets))
-    #min_int = minimum(intensities)
-    #max_int = maximum(intensities)
-    test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
-    =#
-    for (int_bin, subdf) in pairs(groupby(err_df, :bins))
-        #println("median ", median(subdf[!,:ppm_errs]))
-        #sub_ppm_errs = subdf[!,:ppm_errs] .- test_interp.(2 .^subdf[!,:log2_intensities])
-        
-        #test_μ = median(subdf[!,:ppm_errs])
         bin_idx += 1 #Intensity bin counter
         median_intensities[bin_idx] = median(subdf[!,:log2_intensities])
-        #b = mean(abs.(subdf[!,:ppm_errs] .- μ)) #Mean absolute deviation estimate
-        b = mean(abs.(subdf[!,:ppm_errs] .- μ)) #Mean absolute deviation estimate
-        #b = mean(abs.(sub_ppm_errs)) #Mean absolute deviation estimate
-        #b = std(sub_ppm_errs) #Mean absolute deviation estimate
+        println("median intensity ", median_intensities[bin_idx])
+        bin_μ = median(subdf[!,:ppm_errs])
+        b = mean(abs.(subdf[!,:ppm_errs] .- bin_μ)) #Mean absolute deviation estimate
         L, z = EstimateMixtureWithUniformNoise(
             subdf[!,:ppm_errs],
-            #sub_ppm_errs,
             Laplace{Float64},
-            #Normal{Float64},
-            #zero(Float64),
-            μ,
+            bin_μ,
             frag_tol,
             b,
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
-        #println("z $z")
-        shape_estimates[bin_idx] = quantile(Laplace(0.0, L.θ), frag_err_quantile)# L.θ
-        #shape_estimates[bin_idx] = quantile(Normal(0.0, L.σ), frag_err_quantile)# L.θ
+        shape_estimates[bin_idx] = L.θ#quantile(Laplace(0.0, L.θ), frag_err_quantile)# L.θ
+        μ_estimates[bin_idx] = bin_μ
     end
 
 
-    intensities = 2 .^ median_intensities;
+    intensities = median_intensities;
+    new_order = sortperm(intensities)
+    intensities = intensities[new_order]
+    shape_estimates = shape_estimates[new_order]
+    μ_estimates = μ_estimates[new_order]
 
-    intensities = hcat(log.(intensities), ones(length(intensities)))
-    m, b = intensities\log.(shape_estimates)
+    #Build Splines 
+    bins = LinRange(minimum(intensities), maximum(intensities), 1000)
+    ξs = range(minimum(intensities), maximum(intensities); length = 5)
+    B = BSplineBasis(BSplineOrder(4), ξs)
 
-    p = Plots.plot(exp.(intensities[:,1]), 
-                    shape_estimates,
+    test_interp = LinearInterpolation(intensities, shape_estimates, extrapolation_bc = Line())
+    log_intensity_to_shape = approximate(test_interp, B, MinimiseL2Error())
+    
+    test_interp = LinearInterpolation(intensities, μ_estimates, extrapolation_bc = Line())
+    log_intensity_to_μ = approximate(test_interp, B, MinimiseL2Error())
+
+
+    p = Plots.plot((intensities), 
+                    shape_estimates.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))),
+                    #shape_estimates,
                     seriestype=:scatter,
                     title = out_fname,
                     xlabel = "Median intensity in Bin",
                     ylabel = "$frag_err_quantile quantile of laplace \n distributed mass errors",
                     label = nothing)
-    bins = LinRange(0, 
-                        maximum(exp.(intensities[:,1])), 
-                        1000
-                    )
+
+
     Plots.plot!(p, 
-    bins,
-    [exp(b)*(x^m) for x in bins]
+    bins, [log_intensity_to_shape(x)*.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))) for x in bins]
     )
 
     savefig(p, joinpath(out_fdir, out_fname)*".pdf")
 
-    return MassErrorModel(Float32(m), Float32(exp(b)), Float32(μ))
+    p = Plots.plot((intensities), 
+    μ_estimates,
+    #shape_estimates,
+    seriestype=:scatter,
+    title = out_fname,
+    xlabel = "Median intensity in Bin",
+    ylabel = "mu estimate",
+    label = nothing)
+
+    Plots.plot!(p, 
+    bins, [ log_intensity_to_μ(x) for x in bins]
+    )
+
+    savefig(p, joinpath(out_fdir, out_fname*"_mu")*".pdf")
+
+    MassErrorModel(
+                    log_intensity_to_μ,
+                    log_intensity_to_shape,
+                    minimum(intensities),
+                    maximum(intensities),
+                    min_ppm,
+                    max_ppm
+                    )
 end
+
+

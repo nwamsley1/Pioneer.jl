@@ -10,7 +10,7 @@ using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
 #DataStructures 
 using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
 #Algorithms 
-using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
+using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
 using Base.Order
 using Base.Iterators: partition
 using PDFmerger

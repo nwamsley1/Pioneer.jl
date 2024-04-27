@@ -234,6 +234,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     params_[:presearch_params]["sample_rate"] = 0.02
     data_points = 0
     n = 0
+    rtPSMs = nothing
     while n < 10
         RESULT =  parameterTuningSearch(
                                                 MS_TABLE,
@@ -345,6 +346,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         precursor_weights,
         precs,
         );
+
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
 
@@ -361,92 +363,81 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     #frag_ppm_errs = [Float64(match.theoretical_mz - match.match_mz) for match in best_matches];
     frag_ppm_intensities = [match.intensity for match in best_matches];
     #frag_ppm_intensities = [match.theoretical_mz for match in best_matches];
-
     mass_err_model = ModelMassErrs(
         frag_ppm_intensities,
         frag_ppm_errs,
-        Float64(max_ppm),#params_[:presearch_params]["frag_tol_ppm"],
-        n_intensity_bins = length(frag_ppm_errs)÷1500,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
-        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
+        Float64(max_ppm),
+        max_n_bins = 30,
+        min_bin_size = 300,
+        frag_err_quantile = 0.99,
         out_fdir = mass_err_estimation_folder,
         out_fname = out_fname
     )
+
 
     #=
         ppm_diffs = Int64[]
-    for i in range(200000, 220000) 
-        if MS_TABLE[:msOrder][i] == 2
-            push!(ppm_diffs, sum(diff(MS_TABLE[:masses][i])./(MS_TABLE[:masses][i][1:end - 1]./1e6).<40.0))
+        for i in range(200000, 220000) 
+            if MS_TABLE[:msOrder][i] == 2
+                push!(ppm_diffs, sum(diff(MS_TABLE[:masses][i])./(MS_TABLE[:masses][i][1:end - 1]./1e6).<40.0))
+            end
         end
-    end
-        err_df = ModelMassErrs(
-        frag_ppm_intensities,
-        frag_ppm_errs,
-        params_[:presearch_params]["frag_tol_ppm"],
-        n_intensity_bins = length(frag_ppm_errs)÷250,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
-        frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
-        out_fdir = mass_err_estimation_folder,
-        out_fname = out_fname
-    )
-    bins = LinRange(-12, 12, 50)
-    histogram(groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
-    histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
-    histogram!(groupby(  err_df,:bins)[end-15][!,:ppm_errs], alpha = 0.5, bins = bins)
-    #histogram!(groupby(  err_df,:bins)[end - 2][!,:ppm_errs], alpha = 0.5, bins = bins)
-
-    plot(frag_ppm_intensities, frag_ppm_errs, alpha = 0.1, seriestype=:scatter)
-
-
-     plot(log2.(frag_ppm_intensities), frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
-    test_loess = loess(log2.(frag_ppm_intensities), frag_ppm_errs, span = 0.5)
-    plot!(LinRange(8, 21, 100), Loess.predict(test_loess, LinRange(8, 21, 100)))
-    intensities = Float64[]
-    offsets = Float64[]
-    for (int_bin, subdf) in pairs(groupby(err_df, :bins))
-        push!(intensities, median(2 .^subdf[!,:log2_intensities]))
-        push!(offsets, (median((subdf[!,:ppm_errs]))))
-    end
-
-
-    plot(intensities, offsets, seriestype=:scatter)
-    #plot(intensities, frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
-    test_loess = loess((intensities), offsets, span = 0.5)
-    loess_range = LinRange(minimum(intensities), maximum(intensities), 100)
-    plot!(loess_range, 
-            Loess.predict(test_loess, 
-                            loess_range)
+            err_df = ModelMassErrs(
+            frag_ppm_intensities,
+            frag_ppm_errs,
+            params_[:presearch_params]["frag_tol_ppm"],
+            n_intensity_bins = length(frag_ppm_errs)÷250,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+            frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
+            out_fdir = mass_err_estimation_folder,
+            out_fname = out_fname
         )
+        bins = LinRange(-12, 12, 50)
+        histogram(groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
+        histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
+        histogram!(groupby(  err_df,:bins)[end-15][!,:ppm_errs], alpha = 0.5, bins = bins)
+        #histogram!(groupby(  err_df,:bins)[end - 2][!,:ppm_errs], alpha = 0.5, bins = bins)
+
+        plot(frag_ppm_intensities, frag_ppm_errs, alpha = 0.1, seriestype=:scatter)
 
 
-    test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
-    plot(intensities, offsets, seriestype=:scatter)
-    poly = Polynomials.fit(intensities, offsets, 10) 
-    plot!(collect(LinRange(0, 2e5, 100)), poly.(LinRange(0, 2e5, 100)))
-    #plot!(LinRange(0, 2e5, 100), test_interp.(LinRange(0, 2e5, 100)))
+        plot(log2.(frag_ppm_intensities), frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
+        test_loess = loess(log2.(frag_ppm_intensities), frag_ppm_errs, span = 0.5)
+        plot!(LinRange(8, 21, 100), Loess.predict(test_loess, LinRange(8, 21, 100)))
+        intensities = Float64[]
+        offsets = Float64[]
+        for (int_bin, subdf) in pairs(groupby(err_df, :bins))
+            push!(intensities, median(2 .^subdf[!,:log2_intensities]))
+            push!(offsets, (median((subdf[!,:ppm_errs]))))
+        end
 
-    bins = LinRange(-12, 12, 100)
-    groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs])
-    histogram( groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs]), alpha = 0.5, bins = bins)
-    histogram!( groupby(  err_df,:bins)[end-15][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end-15][!,:ppm_errs]), alpha = 0.5, bins = bins)
 
-    histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
+        plot(intensities, offsets, seriestype=:scatter)
+        #plot(intensities, frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
+        test_loess = loess((intensities), offsets, span = 0.5)
+        loess_range = LinRange(minimum(intensities), maximum(intensities), 100)
+        plot!(loess_range, 
+                Loess.predict(test_loess, 
+                                loess_range)
+            )
+
+
+        test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
+        plot(intensities, offsets, seriestype=:scatter)
+        poly = Polynomials.fit(intensities, offsets, 10) 
+        plot!(collect(LinRange(0, 2e5, 100)), poly.(LinRange(0, 2e5, 100)))
+        #plot!(LinRange(0, 2e5, 100), test_interp.(LinRange(0, 2e5, 100)))
+
+        bins = LinRange(-12, 12, 100)
+        groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs])
+        histogram( groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs]), alpha = 0.5, bins = bins)
+        histogram!( groupby(  err_df,:bins)[end-15][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end-15][!,:ppm_errs]), alpha = 0.5, bins = bins)
+
+        histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
 
 
     =#
-    #Model fragment errors with a mixture model of a uniform and laplace distribution 
-    rtPSMs[!,:best_psms] .= false
-    grouped_psms = groupby(rtPSMs,:precursor_idx)
-    for psms in grouped_psms
-        best_idx = argmax(psms.prob)
-        psms[best_idx,:best_psms] = true
-    end
-    filter!(x->x.best_psms, rtPSMs)
-
     PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-
     #File name but remove file type
-
-
     frag_err_dist_dict[ms_file_idx] = mass_err_model
 end
 end

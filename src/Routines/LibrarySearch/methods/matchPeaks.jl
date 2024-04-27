@@ -98,7 +98,7 @@ function setNearest!(matches::Vector{M},
                     intensities::AbstractArray{Union{Missing, Float32}},
                     Ion::DetailedFrag{Float32},
                     max_mz::Float32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     min_max_ppm::Tuple{Float32, Float32},
                     δ::Float32,
                     peak_idx::Int64,
@@ -110,7 +110,7 @@ function setNearest!(matches::Vector{M},
 
     #Get maximum and minimum m/z of a theoretical ion that could match a peak given 
     #the intensity. (tolerance is inversely proportional to the sqrt of the intensity)       
-    function getMzBounds(mz::Float32, mass_err_model::MassErrorModel{Float32}, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
+    function getMzBounds(mz::Float32, mass_err_model::MassErrorModel, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
         ppm = mass_err_model(intensity)
         ppm = max(
             min(ppm, last(min_max_ppm)), 
@@ -211,7 +211,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                     masses::AbstractArray{Union{Missing, Float32}}, 
                     intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     min_max_ppm::Tuple{Float32, Float32},
                     high_mass::Float32,
                     scan_idx::UInt32, 

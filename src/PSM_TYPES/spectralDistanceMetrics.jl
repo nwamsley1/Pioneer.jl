@@ -83,7 +83,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             Float16(-log((city_block_dist)/N)), #city_block
             Float16(dot_product/(H2_norm*X2_norm)), #dot_p
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(getEntropy(H, col)) #entropy
+            Float16(Float16(-1.0)*getEntropy(H, col)) #entropy
         )
     end
 end
@@ -145,7 +145,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             Float16(dot_product/(H2_norm*X2_norm)), #dot_p
             zero(Float16),#Float16(dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)), #spectral_contrast_corrected
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(getEntropy(H, col)) #entropy
+            Float16(Float16(-1.0)*getEntropy(H, col)) #entropy
         )
     end
 end

@@ -283,3 +283,121 @@ hcat([testHX.nzval[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.mask[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.x[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.rowval[range(testHX.colptr[104], testHX.colptr[105]-1)]])
+
+
+    bins = LinRange(0, 2, 100)
+    histogram(best_psms[best_psms[!,:target].&(best_psms[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(best_psms[best_psms[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
+    
+PSM_FIRST = copy(PSMs_Dict[""]) # sum(PSM_FIRST[!,:q_value].<=0.01)
+#=
+julia> sum(PSM_FIRST[!,:q_value].<=0.01)
+95119
+=#
+best_psms_a = copy(best_psms)
+#=
+julia> value_counts(best_psms_a[(best_psms_a[:,:q_value].<=0.01) .& (best_psms_a[:,:decoy].==false),:], [:file_name])
+1×2 DataFrame
+Row │ file_name  nrow  
+    │ String     Int64 
+─────┼──────────────────
+1 │            97628
+=#
+post_quant_set = Set(best_psms_a[(best_psms_a[:,:q_value].<=0.01) .& (best_psms_a[:,:decoy].==false),:precursor_idx])
+pre_quant_set = Set(PSM_FIRST[PSM_FIRST[!,:q_value].<=0.01,:precursor_idx])
+
+setdiff(post_quant_set, pre_quant_set) #13974
+
+missing_from_qaunt = collect(setdiff(pre_quant_set, post_quant_set)) #11465 Why are these missing
+PSMS[!,:prec_mz] = [MS_TABLE[:centerMass][i] for i in PSMS[!,:scan_idx]]
+N = 1000
+
+MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,
+[:b_count,:y_count,:isotope_count,:scribe,:spectral_contrast,:matched_ratio,:city_block_fitted,:entropy_score,:max_entropy,:scan_idx,:prec_mz,:RT,:weight,:peak_area,:target]]
+plot(MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,:RT], 
+MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,:weight], seriestype=:scatter)
+
+dtype = Float32;
+gx, gw = gausslegendre(100);
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    );
+integratePrecursorMS2(MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)],
+state,
+gx::Vector{Float64},
+gw::Vector{Float64},
+intensity_filter_fraction =  Float32(params_[:integration_params]["intensity_filter_threshold"]),
+α = 0.001f0,
+half_width_at_α = 0.15f0,
+isplot = true
+);
+best_psms_a[best_psms_a[!,:precursor_idx] .== missing_from_qaunt[N],[:precursor_idx,:scribe,:entropy_score,:weight,:q_value]]
+N += 1
+
+intensities, shapes = ModelMassErrs(
+           frag_ppm_intensities,
+           frag_ppm_errs,
+           Float64(max_ppm),#params_[:presearch_params]["frag_tol_ppm"],
+           n_intensity_bins = length(frag_ppm_errs)÷1500,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+           frag_err_quantile = 0.975,#params_[:frag_tol_params]["frag_tol_quantile"],
+           out_fdir = mass_err_estimation_folder,
+           out_fname = out_fname
+       )
+
+
+m6 = rlm(Float64.(intensities), Float64.(shapes), TauEstimator{TukeyLoss}(); initial_scale=:mad)
+
+
+m, b = RobustModels.coef(m6)
+
+
+#m, b = intensities[10:20,:]\(shapes[10:20])
+
+plot(2 .^intensities[:,1], 2 .^shapes, seriestype=:scatter)
+bins = LinRange(minimum(intensities[:,1]), maximum(intensities[:,1]), 1000)
+plot!(2 .^bins, 2 .^[m*x + b for x in bins])
+
+
+plot(intensities[:,1], 2 .^shapes, seriestype=:scatter)
+bins = LinRange(minimum(intensities[:,1]), maximum(intensities[:,1]), 1000)
+plot!(bins, 2 .^[m*x + b for x in bins])
+hline!([2 .^shapes[end]])
+hline!([2 .^shapes[1]])
+
+
+
+S_interp = approximate(f, B, ApproxByInterpolation(B))  # or simply approximate(f, B)
+
+using BSplineKit
+x_interval = 0
+ξs = range(0, 1; length = 15)
+B = BSplineBasis(BSplineOrder(4), ξs)
+
+
+test_interp = LinearInterpolation(ξs, 
+                                    sin.(ξs),
+                                    #savitzky_golay(ys, w, 3).y, 
+                                    extrapolation_bc = Line())
+
+
+S_minL2 = approximate(test_interp, B, MinimiseL2Error())
+
+function testSplineFunc(a::BSplineKit.SplineApproximations.SplineApproximation,b::Float32)
+    return a(b)
+end
+
+quantile(d::Laplace, p::Real) = p < 1/2 ? xval(d, log(2p)) : xval(d, -log(2(1 - p)))
+
+function testfunc(a)
+    (mean(a) - 0.9924999999999999)*2262.443438914029 + 2000
+end
+
+function testfunc(a)
+    (mean(a) - 0.5569999999999999)*2222 + 1000
+end
