@@ -36,7 +36,7 @@ function ScoreFragmentMatches!(results::Vector{P},
                                 IDtoCOL::ArrayDict{UInt32, UInt16}, 
                                 matches::Vector{FragmentMatch{Float32}}, 
                                 nmatches::Int64, 
-                                errdist::MassErrorModel{Float32},
+                                errdist::MassErrorModel,
                                  m_rank::Int64) where {P<:UnscoredPSM}
     for i in range(1, nmatches)
         match = matches[i]
@@ -46,7 +46,7 @@ function ScoreFragmentMatches!(results::Vector{P},
     end
 end
 
-function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn
@@ -89,7 +89,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     )
 end
 
-function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel{Float32}, m_rank::Int64) where {T<:Real}
+function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
     
     best_rank = score.best_rank
     topn = score.topn

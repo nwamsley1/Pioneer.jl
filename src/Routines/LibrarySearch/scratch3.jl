@@ -158,7 +158,8 @@ end
 using PProf, Profile
 Profile.clear()
 MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-@profile PSMS = PSMs = vcat(mainLibrarySearch(
+@time begin
+@profile PSMs = vcat(mainLibrarySearch(
     MS_TABLE,
     prosit_lib["f_index"],
     prosit_lib["precursors"],
@@ -181,7 +182,18 @@ MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     precs
 #scan_range = (100000, 100010)
 )...);
-                pprof(;webport=58603)
+end
+pprof(;webport=58603)
+
+
+using PProf, Profile
+Profile.clear()
+test_spline = BSplineApprox(test_shapes, 
+test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
+@profile @btime test_spline(10.0f0) 
+pprof(;webport=58603)
+
+
 N = 100
 a = rand(100)
 p = zeros(UInt32, N)

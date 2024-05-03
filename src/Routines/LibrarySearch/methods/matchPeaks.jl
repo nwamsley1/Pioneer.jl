@@ -129,7 +129,9 @@ function setNearest!(matches::Vector{M},
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
     @inbounds while (masses[peak_idx + i]-δ<= max_mz)
-        low, high = getMzBounds(theoretical_mz, mass_err_model, intensities[peak_idx + i], min_max_ppm)
+        _, low, high = mass_err_model(theoretical_mz, log2(intensities[peak_idx + i]), 0.995f0)
+ 
+        #low, high = getMzBounds(theoretical_mz, mass_err_model, intensities[peak_idx + i], min_max_ppm)
         if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
             mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
             if mz_diff < smallest_diff

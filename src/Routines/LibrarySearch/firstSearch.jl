@@ -6,7 +6,7 @@ function mainLibrarySearch(
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Float32},
+    err_dist::MassErrorModel,
     irt_tol::Float64,
     params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -71,7 +71,7 @@ function mainLibrarySearch(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -216,7 +216,7 @@ function mainLibrarySearch(
     psms = fetch.(tasks)
     return psms
 end
-
+#frag_err_dist_dict[1] = MassErrorModel(frag_err_dist_dict[1].mass_offset, frag_err_dist_dict[1].mass_tolerance, 7.0f0, 15.0f0)
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
@@ -301,7 +301,8 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-
+sum(PSMs_Dict[""][!,:q_value].<=0.01)
+sum(PSMs_Dict[""][!,:q_value].<=0.1)
 
 #=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(

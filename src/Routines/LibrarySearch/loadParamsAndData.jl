@@ -147,6 +147,8 @@ params_ = (
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
                                                                     "isotopeSplines.jl",
+
+                                                                    "uniformBasisCubicSpline.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",

@@ -22,7 +22,20 @@ function parameterTuningSearch(
     precs::Vector{Counter{UInt32, UInt8}}) where {S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
                                                             R<:SpectralScores{Float16}}
-    err_dist = MassErrorModel(zero(Float32), zero(Float32), zero(Float32))
+
+    #constant_spline =  approximate(x->0.0f0, BSplineBasis(BSplineOrder(1), range(0.0, 1.0)), MinimiseL2Error())
+    N = 200
+    t = collect(LinRange(0.0, 4*π, N))
+    u = sin.(t) 
+    u .+= randn(N)./50
+    placeholder_spline = UniformSpline(u, t, 3, 3)
+    
+    err_dist = MassErrorModel(
+                placeholder_spline, 
+                placeholder_spline,
+                last(min_max_ppm),
+                last(min_max_ppm)
+    )                                
     return parameterTuningSearch(
         spectra, 
         frag_index,
@@ -68,7 +81,7 @@ function parameterTuningSearch(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -304,7 +317,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     rtPSMs[!,:iRT_observed] = RT_to_iRT_map.(rtPSMs[!,:RT])
     irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
 
-    irt_σ = 1.4826*irt_MAD #Robust estimate of standard deviation
+    irt_σ = irt_MAD #Robust estimate of standard deviation
 
     irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
     RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
@@ -313,7 +326,9 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     bins = LinRange(0, 2, 100)
     histogram(rtPSMs[rtPSMs[!,:target], :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
     histogram!(rtPSMs[rtPSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
-    
+    plot(rtPSMs[!,:RT],  rtPSMs[!,:iRT_predicted], seriestype=:scatter, alpha = 0.1)
+     test_spline = UniformSpline( rtPSMs[!,:iRT_predicted], rtPSMs[!,:RT], 3, 5);
+     plot!(LinRange(0, 45, 100),  test_spline.(LinRange(0, 45, 100)))
     =#
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
         (a-b)/(a/1e6)
@@ -331,7 +346,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         library_fragment_lookup_table,
         RT_to_iRT_map, #RT to iRT map'
         UInt32(ms_file_idx), #MS_FILE_IDX
-        (max_ppm, max_ppm),
+        (30.0f0, 30.0f0),#(max_ppm, max_ppm),
         params_,
         ionMatches,
         ionMisses,
@@ -349,13 +364,13 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
 
     rtPSMs = vcat([first(result) for result in RESULT]...)
     all_matches = vcat([last(result) for result in RESULT]...)
-
+    Int64(maximum([x.predicted_rank for x in all_matches]))
     addPreSearchColumns!(rtPSMs, 
                         MS_TABLE, 
                         prosit_lib["precursors"][:is_decoy],
                         prosit_lib["precursors"][:irt],
                         prosit_lib["precursors"][:prec_charge],
-                        min_prob = params_[:presearch_params]["min_prob"])
+                        min_prob = 0.99)#params_[:presearch_params]["min_prob"])
 
     best_precursors = Set(rtPSMs[:,:precursor_idx]);
     best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
@@ -367,15 +382,52 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         frag_ppm_intensities,
         frag_ppm_errs,
         Float64(max_ppm),
+        max_n_bins = 15,
+        min_bin_size = 500,
+        frag_err_quantile = 0.99,
+        out_fdir = mass_err_estimation_folder,
+        out_fname = out_fname
+    )
+#=
+    err_df = mass_err_model
+    bins = LinRange(-30, 30, 50)
+    histogram( groupby(  err_df,:bins)[end][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
+    histogram!( groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
+    histogram!( groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
+    histogram!( err_df[!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
+    quantile(frag_ppm_errs .- median(frag_ppm_errs), 0.99)
+    quantile(frag_ppm_errs .- median(frag_ppm_errs), 0.01)
+=#
+
+    #=
+
+    ities = [match.theoretical_mz for match in best_matches];
+    test_intensities, test_shapes = ModelMassErrs(
+        frag_ppm_intensities,
+        frag_ppm_errs,
+        Float64(max_ppm),
         max_n_bins = 30,
         min_bin_size = 300,
         frag_err_quantile = 0.99,
         out_fdir = mass_err_estimation_folder,
         out_fname = out_fname
     )
+    test_spline = BSplineApprox(test_shapes, 
+                                test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
+    eval_points = LinRange(minimum(test_intensities)/1.2, maximum(test_intensities)*1.2, 100)
+    plot(test_intensities, test_shapes, seriestype=:scatter)
+    plot!(eval_points, test_spline.(eval_points))
 
 
-    #=
+        test_spline = BSplineApprox(test_shapes, 
+                                test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
+        @btime test_spline(10.0f0)   
+                test_spline = BSplineApprox(test_shapes, 
+                                test_intensities, 3, 4, :Uniform, :Uniform, extrapolate = true)
+        @btime test_spline(10.0f0)          
+                        test_spline = BSplineApprox(test_shapes, 
+                                test_intensities, 3, 4, :Uniform, :Average, extrapolate = true)
+        @btime test_spline(10.0f0)              
         ppm_diffs = Int64[]
         for i in range(200000, 220000) 
             if MS_TABLE[:msOrder][i] == 2
@@ -428,9 +480,10 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         #plot!(LinRange(0, 2e5, 100), test_interp.(LinRange(0, 2e5, 100)))
 
         bins = LinRange(-12, 12, 100)
-        groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs])
-        histogram( groupby(  err_df,:bins)[end][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end][!,:ppm_errs]), alpha = 0.5, bins = bins)
-        histogram!( groupby(  err_df,:bins)[end-15][!,:ppm_errs] .- test_interp(2 .^ groupby(  err_df,:bins)[end-15][!,:ppm_errs]), alpha = 0.5, bins = bins)
+        histogram( groupby(  err_df,:bins)[end][!,:ppm_errs], alpha = 0.5, bins = bins)
+        histogram!( groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
+        histogram!( groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
+        histogram!( err_df[!,:ppm_errs], alpha = 0.5, bins = bins)
 
         histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
 

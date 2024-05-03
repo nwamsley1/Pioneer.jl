@@ -6,7 +6,7 @@ function searchRAW(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -157,7 +157,7 @@ function searchFragmentIndex(
                     frag_index::Union{FragmentIndex{Float32}, Missing},
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
                     rt_to_irt_spline::Any,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     searchScan!::Union{Function, Missing},
                     frag_ppm_err::Float32,
                     precs::Union{Missing, Counter{UInt32, UInt8}},
@@ -293,7 +293,7 @@ function getPSMS(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     collect_fmatches::Bool,
                     frag_ppm_err::Float32,
                     δ::Float32,
@@ -535,7 +535,7 @@ function quantPSMs(
                     precursors::Union{Arrow.Table, Missing},
                     library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     frag_ppm_err::Float32,
                     δ::Float32,
                     λ::Float32,
@@ -824,8 +824,10 @@ function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatc
     if collect_fmatches
         for match in range(1, nmatches)
             if n < length(all_fmatches)
-                all_fmatches[n] = new_fmatches[match]
-                n += 1
+                if new_fmatches[match].predicted_rank < 6
+                    all_fmatches[n] = new_fmatches[match]
+                    n += 1
+                end
             else
                 all_fmatches = append!(all_fmatches, [M() for x in range(1, length(all_fmatches))])
             end

@@ -1,43 +1,38 @@
 
-struct MassErrorModel
-    mass_offset::BSplineKit.SplineApproximations.SplineApproximation
-    mass_tolerance::BSplineKit.SplineApproximations.SplineApproximation
-    min_intensity::Float16
-    max_intensity::Float16
+struct MassErrorModel{N, T<:AbstractFloat}
+    mass_offset::UniformSpline{N, T}
+    mass_tolerance::UniformSpline{N, T}
     min_ppm::Float32
     max_ppm::Float32
 end
 
-function getMassCorrection(mem::MassErrorModel{T}) where {T<:AbstractFloat}
+function getMassCorrection(mem::MassErrorModel)
     return mem.location
 end
 
-function getLocation(mem::MassErrorModel{T}) where {T<:AbstractFloat}
+function getLocation(mem::MassErrorModel)
     return mem.location
 end
 
-function (mem::MassErrorModel)(mass::Float32, intensity::Float16, quantile::Float32)
-    #Log 
+function (mem::MassErrorModel)(mass::Float32, log_intensity::Float32, quantile::Float32)
     ppm_norm = Float32(1e6)
-    log_intensity = max(
-                        min(
-                            log2(intensity),
-                            mem.max_intensity
-                            ), 
-                        mem.min_intensity
-                        )
-
-    mass -= mem.mass_offset(log_intensity)*mass/ppm_norm
+    ppm = mass/Float32(1e6)
+    #mass -= mem.mass_offset(log_intensity)*ppm
+    #mass -= 4.1f0*ppm
 
     ppm_err = max(
             min(
-                -mem.mass_tolerance(log_intensity)*log(2.0f0*(1.0f0 - quantile)), 
+                #Float32(-mem.mass_tolerance(log_intensity)),#*log(2.0f0*(1.0f0 - quantile)), 
+                Float32(mem.mass_tolerance(log_intensity)),#*log(2.0f0*(1.0f0 - quantile)), 
                 mem.max_ppm
                 ), 
             mem.min_ppm
             )
-    tol = ppm_err*mass/ppm_norm
-    return mass - mem.max_ppm*mass/ppm_norm, mass - tol, mas + tol
+    
+    ppm = mass/ppm_norm
+    tol = ppm_err*ppm
+    max_tol = mem.max_ppm*ppm
+    return Float32(mass - max_tol), Float32(mass - tol),Float32(mass + tol)
 end
 
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
@@ -152,6 +147,7 @@ function ModelMassErrs(intensities::Vector{T},
     log2_intensities = log2_intensities[new_indices]
     ppm_errs = ppm_errs[new_indices]
 
+    #bins = getIntensityBinIds(log2_intensities, max_n_bins, min_bin_size)
     bins = getIntensityBinIds(log2_intensities, max_n_bins, min_bin_size)
 
     err_df = DataFrame(Dict(
@@ -160,6 +156,7 @@ function ModelMassErrs(intensities::Vector{T},
             :bins => bins,
             :γ => zeros(Bool, length(ppm_errs)))
             )
+    return err_df
     #Pre-allocate outpues 
     median_intensities = zeros(T, bins[end])
     shape_estimates = Vector{Float32}(undef, bins[end])#zeros(T, n_intensity_bins)
@@ -174,14 +171,14 @@ function ModelMassErrs(intensities::Vector{T},
         b = mean(abs.(subdf[!,:ppm_errs] .- bin_μ)) #Mean absolute deviation estimate
         L, z = EstimateMixtureWithUniformNoise(
             subdf[!,:ppm_errs],
-            Laplace{Float64},
+            Normal{Float64},#Laplace{Float64},
             bin_μ,
             frag_tol,
             b,
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
-        shape_estimates[bin_idx] = L.θ#quantile(Laplace(0.0, L.θ), frag_err_quantile)# L.θ
+        shape_estimates[bin_idx] = 3*mad(subdf[!,:ppm_errs], normalize = true)#quantile(abs.(subdf[!,:ppm_errs] .- bin_μ), 0.99)#quantile(Normal(0.0, L.σ), 0.99)#L.θ
         μ_estimates[bin_idx] = bin_μ
     end
 
@@ -191,21 +188,20 @@ function ModelMassErrs(intensities::Vector{T},
     intensities = intensities[new_order]
     shape_estimates = shape_estimates[new_order]
     μ_estimates = μ_estimates[new_order]
-
+    #return intensities, shape_estimates
     #Build Splines 
     bins = LinRange(minimum(intensities), maximum(intensities), 1000)
-    ξs = range(minimum(intensities), maximum(intensities); length = 5)
-    B = BSplineBasis(BSplineOrder(4), ξs)
-
-    test_interp = LinearInterpolation(intensities, shape_estimates, extrapolation_bc = Line())
-    log_intensity_to_shape = approximate(test_interp, B, MinimiseL2Error())
-    
-    test_interp = LinearInterpolation(intensities, μ_estimates, extrapolation_bc = Line())
-    log_intensity_to_μ = approximate(test_interp, B, MinimiseL2Error())
-
+    #=
+    log_intensity_to_shape = BSplineApprox(shape_estimates,
+                                            intensities, 3, 4, :Uniform, :Uniform, extrapolate = true)
+    log_intensity_to_μ = BSplineApprox(μ_estimates,
+                                            intensities, 3, 4, :Uniform, :Uniform, extrapolate = true)                                        
+    =#
+    log_intensity_to_shape = UniformSpline(shape_estimates, intensities, 3, 4)
+    log_intensity_to_μ = UniformSpline(μ_estimates, intensities, 3, 4)
 
     p = Plots.plot((intensities), 
-                    shape_estimates.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))),
+                    shape_estimates,#.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))),
                     #shape_estimates,
                     seriestype=:scatter,
                     title = out_fname,
@@ -215,7 +211,8 @@ function ModelMassErrs(intensities::Vector{T},
 
 
     Plots.plot!(p, 
-    bins, [log_intensity_to_shape(x)*.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))) for x in bins]
+   # bins, [log_intensity_to_shape(x)*.*(-1.0*log(2.0f0*(1.0f0 - frag_err_quantile))) for x in bins]
+   bins, [log_intensity_to_shape(x) for x in bins]
     )
 
     savefig(p, joinpath(out_fdir, out_fname)*".pdf")
@@ -238,8 +235,6 @@ function ModelMassErrs(intensities::Vector{T},
     MassErrorModel(
                     log_intensity_to_μ,
                     log_intensity_to_shape,
-                    minimum(intensities),
-                    maximum(intensities),
                     min_ppm,
                     max_ppm
                     )
