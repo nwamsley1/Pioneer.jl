@@ -346,7 +346,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         library_fragment_lookup_table,
         RT_to_iRT_map, #RT to iRT map'
         UInt32(ms_file_idx), #MS_FILE_IDX
-        (30.0f0, 30.0f0),#(max_ppm, max_ppm),
+        (20.0f0, 20.0f0),#(max_ppm, max_ppm),
         params_,
         ionMatches,
         ionMisses,
@@ -382,8 +382,8 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         frag_ppm_intensities,
         frag_ppm_errs,
         Float64(max_ppm),
-        max_n_bins = 15,
-        min_bin_size = 500,
+        max_n_bins = 10,
+        min_bin_size = 400,
         frag_err_quantile = 0.99,
         out_fdir = mass_err_estimation_folder,
         out_fname = out_fname

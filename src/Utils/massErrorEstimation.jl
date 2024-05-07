@@ -18,8 +18,9 @@ function (mem::MassErrorModel)(mass::Float32, log_intensity::Float32, quantile::
     ppm_norm = Float32(1e6)
     ppm = mass/Float32(1e6)
     #mass -= mem.mass_offset(log_intensity)*ppm
-    #mass -= 4.1f0*ppm
+    mass -= 4.3f0*ppm
 
+    #=
     ppm_err = max(
             min(
                 #Float32(-mem.mass_tolerance(log_intensity)),#*log(2.0f0*(1.0f0 - quantile)), 
@@ -28,11 +29,15 @@ function (mem::MassErrorModel)(mass::Float32, log_intensity::Float32, quantile::
                 ), 
             mem.min_ppm
             )
-    
+    =#
     ppm = mass/ppm_norm
-    tol = ppm_err*ppm
-    max_tol = mem.max_ppm*ppm
-    return Float32(mass - max_tol), Float32(mass - tol),Float32(mass + tol)
+    #tol = ppm_err*ppm
+    #max_tol = mem.max_ppm*ppm
+    r_tol = 15.2f0*ppm
+    #l_tol = 8.f0*ppm
+    l_tol = 6.2f0*ppm
+    #return Float32(mass - max_tol), Float32(mass - tol),Float32(mass + tol)
+    return Float32(mass - r_tol), Float32(mass - l_tol), Float32(mass + r_tol)
 end
 
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
@@ -156,7 +161,7 @@ function ModelMassErrs(intensities::Vector{T},
             :bins => bins,
             :γ => zeros(Bool, length(ppm_errs)))
             )
-    return err_df
+    #return err_df
     #Pre-allocate outpues 
     median_intensities = zeros(T, bins[end])
     shape_estimates = Vector{Float32}(undef, bins[end])#zeros(T, n_intensity_bins)
@@ -171,14 +176,14 @@ function ModelMassErrs(intensities::Vector{T},
         b = mean(abs.(subdf[!,:ppm_errs] .- bin_μ)) #Mean absolute deviation estimate
         L, z = EstimateMixtureWithUniformNoise(
             subdf[!,:ppm_errs],
-            Normal{Float64},#Laplace{Float64},
+            Laplace{Float64},
             bin_μ,
             frag_tol,
             b,
             0.5, #mixture estimate
             subdf[!,:γ] 
         )
-        shape_estimates[bin_idx] = 3*mad(subdf[!,:ppm_errs], normalize = true)#quantile(abs.(subdf[!,:ppm_errs] .- bin_μ), 0.99)#quantile(Normal(0.0, L.σ), 0.99)#L.θ
+        shape_estimates[bin_idx] = quantile(abs.(subdf[!,:ppm_errs].-median(subdf[!,:ppm_errs])), 0.98)#L.θ#3*mad(subdf[!,:ppm_errs], normalize = true)#quantile(abs.(subdf[!,:ppm_errs] .- bin_μ), 0.99)#quantile(Normal(0.0, L.σ), 0.99)#L.θ
         μ_estimates[bin_idx] = bin_μ
     end
 
