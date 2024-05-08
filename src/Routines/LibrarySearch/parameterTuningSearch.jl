@@ -1,4 +1,4 @@
-function parameterTuningSearch(
+function rtAlignSearch(
     #Mandatory Args
     spectra::Arrow.Table, 
     frag_index::FragmentIndex{Float32},
@@ -24,19 +24,12 @@ function parameterTuningSearch(
                                                             R<:SpectralScores{Float16}}
 
     #constant_spline =  approximate(x->0.0f0, BSplineBasis(BSplineOrder(1), range(0.0, 1.0)), MinimiseL2Error())
-    N = 200
-    t = collect(LinRange(0.0, 4*π, N))
-    u = sin.(t) 
-    u .+= randn(N)./50
-    placeholder_spline = UniformSpline(u, t, 3, 3)
-    
+
     err_dist = MassErrorModel(
-                placeholder_spline, 
-                placeholder_spline,
-                last(min_max_ppm),
-                last(min_max_ppm)
+                0.0f0,
+                (first(min_max_ppm), last(min_max_ppm))
     )                                
-    return parameterTuningSearch(
+    return rtAlignSearch(
         spectra, 
         frag_index,
         precursors, 
@@ -73,7 +66,7 @@ function parameterTuningSearch(
         sample_rate = Float64(params[:presearch_params]["sample_rate"]),
     )
 end
-function parameterTuningSearch(
+function rtAlignSearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     frag_index::Union{FragmentIndex{Float32}, Missing},
@@ -227,6 +220,116 @@ function parameterTuningSearch(
     return psms
 end
 
+function massErrorSearch(
+    #Mandatory Args
+    spectra::Arrow.Table, 
+    scan_idxs::Vector{UInt32},
+    precursors_passed_scoring::Vector{UInt32},
+    library_fragment_lookup::LibraryFragmentLookup{Float32},
+    ms_file_idx::UInt32,
+    min_max_ppm::Tuple{Float32, Float32},
+    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
+    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
+    ionTemplates::Vector{Vector{DetailedFrag{Float32}}}
+    )
+
+    #Sort scans and precursors 
+    sorted_scan_indices = sortperm(scan_idxs)
+    scan_idxs = scan_idxs[sorted_scan_indices]
+    precursors_passed_scoring = precursors_passed_scoring[sorted_scan_indices]
+    #constant_spline =  approximate(x->0.0f0, BSplineBasis(BSplineOrder(1), range(0.0, 1.0)), MinimiseL2Error())
+    function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
+        scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
+        start_idx, stop_idx = 1, 1
+        for i in range(1, length(scan_idxs))
+            stop_idx = i 
+            if scan_idxs[start_idx] == scan_idxs[stop_idx]
+                scan_to_prec_idx[scan_idxs[i]] = start_idx:stop_idx
+            else
+                scan_to_prec_idx[scan_idxs[i]] = i:i
+                start_idx = i
+            end
+        end
+        return scan_to_prec_idx
+    end
+
+    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra[:masses]))
+
+    mass_err_model = MassErrorModel(
+                0.0f0,
+                (first(min_max_ppm), last(min_max_ppm))
+    )               
+    return massErrorSearch(
+        spectra, 
+        library_fragment_lookup,
+        scan_idxs,
+        scan_to_prec_idx,
+        precursors_passed_scoring,
+        ms_file_idx,
+        mass_err_model,
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        ionTemplates,
+    )
+end
+
+function massErrorSearch(
+                    #Mandatory Args
+                    spectra::Arrow.Table,
+                    library_fragment_lookup::LibraryFragmentLookup{Float32},
+                    scan_idxs::Vector{UInt32},
+                    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+                    precursors_passed_scoring::Vector{UInt32},
+                    ms_file_idx::UInt32,
+                    mass_err_model::MassErrorModel,
+                    ionMatches::Vector{Vector{FragmentMatch{Float32}}},
+                    ionMisses::Vector{Vector{FragmentMatch{Float32}}},
+                    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
+                    ionTemplates::Vector{Vector{L}}
+                    ) where {L<:LibraryIon{Float32}}
+
+
+    ########
+    #Each thread needs to handle a similair number of peaks. 
+    #For example if there are 10,000 scans and two threads, choose n so that
+    #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
+    #of scans have an equal number of fragment peaks in the spectra
+    
+    #Build thread tasks 
+    thread_task_size = length(scan_idxs)÷Threads.nthreads()
+    thread_tasks = []
+    start_idx, stop_idx =1, min(thread_task_size - 1, length(scan_idxs))
+    for i in range(1, Threads.nthreads())
+        push!(thread_tasks, (i, start_idx:stop_idx))
+        start_idx = stop_idx + 1
+        stop_idx =  min(start_idx + thread_task_size - 1, length(scan_idxs))
+    end
+
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getMassErrors(
+                                spectra,
+                                library_fragment_lookup,
+                                last(thread_task),
+                                scan_idxs,
+                                scan_to_prec_idx,
+                                precursors_passed_scoring,
+                                ms_file_idx,
+                                mass_err_model,
+                                ionMatches[thread_id],
+                                ionMisses[thread_id],
+                                all_fmatches[thread_id],
+                                ionTemplates[thread_id]
+                            )
+        end
+    end
+    psms = fetch.(tasks)
+    return psms
+end
+
 #Clear directory of previous QC Plots
 [rm(joinpath(rt_alignment_folder, x)) for x in readdir(rt_alignment_folder)]
 [rm(joinpath(mass_err_estimation_folder, x)) for x in readdir(mass_err_estimation_folder)]
@@ -236,20 +339,19 @@ RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
 #MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"
-#MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/test/20230324_OLEP08_200ng_30min_E20H50Y30_180K_2Th3p5ms_02.arrow"
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/test/20230324_OLEP08_200ng_30min_E20H50Y30_180K_2Th3p5ms_02.arrow",
+"/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"]
 for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
     #Randomly sample spectra to search and retain only the 
     #most probable psms as specified in "first_seach_params"
-    start_ppm = 20.0f0
-    max_ppm = 30.0f0
-    params_[:presearch_params]["sample_rate"] = 0.02
+    start_ppm = Float32(params_[:presearch_params]["frag_tol_ppm"])
     data_points = 0
     n = 0
     rtPSMs = nothing
     while n < 10
-        RESULT =  parameterTuningSearch(
+        RESULT =  rtAlignSearch(
                                                 MS_TABLE,
                                                 prosit_lib["f_index"],
                                                 prosit_lib["precursors"],
@@ -271,42 +373,37 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
                                                 precursor_weights,
                                                 precs,
                                                 );
-
-        rtPSMs = vcat([result for result in RESULT]...)
-        #all_matches = vcat([last(result) for result in RESULT]...)
-        #@time begin
-        addPreSearchColumns!(rtPSMs, 
+        PSMs = vcat([result for result in RESULT]...)
+        addPreSearchColumns!(PSMs, 
                                     MS_TABLE, 
                                     prosit_lib["precursors"][:is_decoy],
                                     prosit_lib["precursors"][:irt],
-                                    prosit_lib["precursors"][:prec_charge],
-                                    min_prob = params_[:presearch_params]["min_prob"])
-        mean(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]))
-        if size(rtPSMs, 1) > 2000
-            println("a ", size(rtPSMs, 1))
+                                    prosit_lib["precursors"][:prec_charge]
+                                )
+        if rtPSMs === nothing
+            rtPSMs = PSMs#vcat([result for result in RESULT]...)
+        else
+            rtPSMs = vcat(rtPSMs, PSMs)
+        end            
+
+        scorePresearch!(rtPSMs)
+        getQvalues!(rtPSMs[!,:prob], rtPSMs[!,:target], rtPSMs[!,:q_value])
+        println("TEST ",  sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]))
+        if sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]) > params_[:presearch_params]["min_samples"]
+            filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtPSMs)
+            rtPSMs[!,:best_psms] .= false
+            grouped_psms = groupby(rtPSMs,:precursor_idx)
+            for psms in grouped_psms
+                best_idx = argmax(psms.prob)
+                psms[best_idx,:best_psms] = true
+            end
+            filter!(x->x.best_psms, rtPSMs)
             break
-        else# size(rtPSMs, 1) > 500
-            println("b ", size(rtPSMs, 1))
-            test = Float32(quantile(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]), 0.99))
-            #start_ppm = min(max_ppm, start_ppm*Float32(2))#Float32(quantile(rtPSMs[!,:error]./(rtPSMs[!,:b_count] .+ rtPSMs[!,:y_count]), 0.9))
-            start_ppm = min(max_ppm, test*2)
-            params_[:presearch_params]["sample_rate"] *= 1.5
         end
-            #break
-        #else
-        #    println("c ", size(rtPSMs, 1))
-        #    start_ppm *= min(max_ppm, start_ppm*Float32(2))
-        #    #params_[:presearch_params]["sample_rate"] *= 1.5
-        #end
-        println("start_ppm $start_ppm")
-        println("sample rate ", params_[:presearch_params]["sample_rate"])
         n += 1
     end
 
-    RT_to_iRT_map = KDEmapping(rtPSMs[1:end,:RT], 
-    rtPSMs[1:end,:iRT_predicted], 
-    n = params_[:irt_mapping_params]["n_bins"], 
-    bandwidth = params_[:irt_mapping_params]["bandwidth"]);
+    RT_to_iRT_map = UniformSpline( rtPSMs[!,:iRT_predicted], rtPSMs[!,:RT], 3, 5);
 
     plotRTAlign(rtPSMs[:,:RT], 
                 rtPSMs[:,:iRT_predicted], 
@@ -321,17 +418,23 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
 
     irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
     RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
-    #=
-    rtPSMs[!,:target] = [precursors[:is_decoy][x] for x in rtPSMs[!,:precursor_idx]]
-    bins = LinRange(0, 2, 100)
-    histogram(rtPSMs[rtPSMs[!,:target], :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(rtPSMs[rtPSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
-    plot(rtPSMs[!,:RT],  rtPSMs[!,:iRT_predicted], seriestype=:scatter, alpha = 0.1)
-     test_spline = UniformSpline( rtPSMs[!,:iRT_predicted], rtPSMs[!,:RT], 3, 5);
-     plot!(LinRange(0, 45, 100),  test_spline.(LinRange(0, 45, 100)))
-    =#
+
+
+    matched_fragments = vcat(massErrorSearch(
+        MS_TABLE,
+        rtPSMs[!,:scan_idx],
+        rtPSMs[!,:precursor_idx],
+        library_fragment_lookup_table,
+        UInt32(ms_file_idx),
+        (start_ppm, start_ppm),
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        ionTemplates
+    )...);
+
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
-        (a-b)/(a/1e6)
+        Float32((a-b)/(a/1e6))
     end
     #Get Retention Times and Target/Decoy Status 
     ####################
@@ -339,157 +442,15 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     #1) RT to iRT curve and 
     #2) mass error (ppm) distribution 
 
-    RESULT =  parameterTuningSearch(
-        MS_TABLE,
-        prosit_lib["f_index"],
-        prosit_lib["precursors"],
-        library_fragment_lookup_table,
-        RT_to_iRT_map, #RT to iRT map'
-        UInt32(ms_file_idx), #MS_FILE_IDX
-        (20.0f0, 20.0f0),#(max_ppm, max_ppm),
-        params_,
-        ionMatches,
-        ionMisses,
-        true,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        precs,
-        );
-
-    rtPSMs = vcat([first(result) for result in RESULT]...)
-    all_matches = vcat([last(result) for result in RESULT]...)
-    Int64(maximum([x.predicted_rank for x in all_matches]))
-    addPreSearchColumns!(rtPSMs, 
-                        MS_TABLE, 
-                        prosit_lib["precursors"][:is_decoy],
-                        prosit_lib["precursors"][:irt],
-                        prosit_lib["precursors"][:prec_charge],
-                        min_prob = 0.99)#params_[:presearch_params]["min_prob"])
-
-    best_precursors = Set(rtPSMs[:,:precursor_idx]);
-    best_matches = [match for match in all_matches if match.prec_id ∈ best_precursors];
-    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in best_matches];
-    #frag_ppm_errs = [Float64(match.theoretical_mz - match.match_mz) for match in best_matches];
-    frag_ppm_intensities = [match.intensity for match in best_matches];
-    #frag_ppm_intensities = [match.theoretical_mz for match in best_matches];
+    frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in matched_fragments];
     mass_err_model = ModelMassErrs(
-        frag_ppm_intensities,
         frag_ppm_errs,
-        Float64(max_ppm),
-        max_n_bins = 10,
-        min_bin_size = 400,
-        frag_err_quantile = 0.99,
+        frag_err_quantile = Float32(params_[:presearch_params]["frag_err_quantile"]),
         out_fdir = mass_err_estimation_folder,
         out_fname = out_fname
     )
-#=
-    err_df = mass_err_model
-    bins = LinRange(-30, 30, 50)
-    histogram( groupby(  err_df,:bins)[end][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
-    histogram!( groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
-    histogram!( groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
-    histogram!( err_df[!,:ppm_errs], alpha = 0.5, bins = bins, normalize=:pdf)
-    quantile(frag_ppm_errs .- median(frag_ppm_errs), 0.99)
-    quantile(frag_ppm_errs .- median(frag_ppm_errs), 0.01)
-=#
 
-    #=
-
-    ities = [match.theoretical_mz for match in best_matches];
-    test_intensities, test_shapes = ModelMassErrs(
-        frag_ppm_intensities,
-        frag_ppm_errs,
-        Float64(max_ppm),
-        max_n_bins = 30,
-        min_bin_size = 300,
-        frag_err_quantile = 0.99,
-        out_fdir = mass_err_estimation_folder,
-        out_fname = out_fname
-    )
-    test_spline = BSplineApprox(test_shapes, 
-                                test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
-    eval_points = LinRange(minimum(test_intensities)/1.2, maximum(test_intensities)*1.2, 100)
-    plot(test_intensities, test_shapes, seriestype=:scatter)
-    plot!(eval_points, test_spline.(eval_points))
-
-
-        test_spline = BSplineApprox(test_shapes, 
-                                test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
-        @btime test_spline(10.0f0)   
-                test_spline = BSplineApprox(test_shapes, 
-                                test_intensities, 3, 4, :Uniform, :Uniform, extrapolate = true)
-        @btime test_spline(10.0f0)          
-                        test_spline = BSplineApprox(test_shapes, 
-                                test_intensities, 3, 4, :Uniform, :Average, extrapolate = true)
-        @btime test_spline(10.0f0)              
-        ppm_diffs = Int64[]
-        for i in range(200000, 220000) 
-            if MS_TABLE[:msOrder][i] == 2
-                push!(ppm_diffs, sum(diff(MS_TABLE[:masses][i])./(MS_TABLE[:masses][i][1:end - 1]./1e6).<40.0))
-            end
-        end
-            err_df = ModelMassErrs(
-            frag_ppm_intensities,
-            frag_ppm_errs,
-            params_[:presearch_params]["frag_tol_ppm"],
-            n_intensity_bins = length(frag_ppm_errs)÷250,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
-            frag_err_quantile = params_[:frag_tol_params]["frag_tol_quantile"],
-            out_fdir = mass_err_estimation_folder,
-            out_fname = out_fname
-        )
-        bins = LinRange(-12, 12, 50)
-        histogram(groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
-        histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
-        histogram!(groupby(  err_df,:bins)[end-15][!,:ppm_errs], alpha = 0.5, bins = bins)
-        #histogram!(groupby(  err_df,:bins)[end - 2][!,:ppm_errs], alpha = 0.5, bins = bins)
-
-        plot(frag_ppm_intensities, frag_ppm_errs, alpha = 0.1, seriestype=:scatter)
-
-
-        plot(log2.(frag_ppm_intensities), frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
-        test_loess = loess(log2.(frag_ppm_intensities), frag_ppm_errs, span = 0.5)
-        plot!(LinRange(8, 21, 100), Loess.predict(test_loess, LinRange(8, 21, 100)))
-        intensities = Float64[]
-        offsets = Float64[]
-        for (int_bin, subdf) in pairs(groupby(err_df, :bins))
-            push!(intensities, median(2 .^subdf[!,:log2_intensities]))
-            push!(offsets, (median((subdf[!,:ppm_errs]))))
-        end
-
-
-        plot(intensities, offsets, seriestype=:scatter)
-        #plot(intensities, frag_ppm_errs, alpha = 0.02, seriestype=:scatter)
-        test_loess = loess((intensities), offsets, span = 0.5)
-        loess_range = LinRange(minimum(intensities), maximum(intensities), 100)
-        plot!(loess_range, 
-                Loess.predict(test_loess, 
-                                loess_range)
-            )
-
-
-        test_interp = LinearInterpolation(intensities, offsets,extrapolation_bc=Line()) 
-        plot(intensities, offsets, seriestype=:scatter)
-        poly = Polynomials.fit(intensities, offsets, 10) 
-        plot!(collect(LinRange(0, 2e5, 100)), poly.(LinRange(0, 2e5, 100)))
-        #plot!(LinRange(0, 2e5, 100), test_interp.(LinRange(0, 2e5, 100)))
-
-        bins = LinRange(-12, 12, 100)
-        histogram( groupby(  err_df,:bins)[end][!,:ppm_errs], alpha = 0.5, bins = bins)
-        histogram!( groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
-        histogram!( groupby(  err_df,:bins)[end-2][!,:ppm_errs], alpha = 0.5, bins = bins)
-        histogram!( err_df[!,:ppm_errs], alpha = 0.5, bins = bins)
-
-        histogram!(groupby(  err_df,:bins)[end-1][!,:ppm_errs], alpha = 0.5, bins = bins)
-
-
-    =#
-    PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
+    #PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
     #File name but remove file type
     frag_err_dist_dict[ms_file_idx] = mass_err_model
 end

@@ -54,6 +54,41 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
     return transition_idx, false
 end
 
+function selectTransitions!(
+                            transitions::Vector{DetailedFrag{Float32}},
+                            library_fragment_lookup::LibraryFragmentLookup{Float32},
+                            scan_to_prec_idx::UnitRange{Int64},
+                            precursors_passed_scoring::Vector{UInt32};
+                            max_rank::Int64 = 5,
+                            block_size::Int64 = 10000)# where {V,W<:AbstractFloat}
+
+    transition_idx = 0
+    for i in scan_to_prec_idx
+        prec_idx =  precursors_passed_scoring[i]
+        for frag_idx in getPrecFragRange(library_fragment_lookup, prec_idx)
+            frag = getFrag(library_fragment_lookup, frag_idx) 
+            if getRank(frag) <= max_rank
+                transition_idx += 1
+                transitions[transition_idx] = frag
+            end
+            if transition_idx + 1 > length(transitions)
+                append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
+            end
+            #Grow array if exceeds length
+        end
+    end
+
+    sort!(@view(transitions[1:transition_idx]), 
+            by = x->getMZ(x),
+            alg=PartialQuickSort(1:transition_idx)
+            #alg = TimSort)
+    )
+
+    #reset!(counter)
+
+    #return transition_idx, 0#sort!(transitions, by = x->getFragMZ(x))
+    return transition_idx, false
+end
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
 function selectRTIndexedTransitions!(
                             transitions::Vector{DetailedFrag{Float32}}, 

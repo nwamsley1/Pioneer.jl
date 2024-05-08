@@ -12,10 +12,12 @@
         "min_spectral_contrast": 0.9,
         "min_topn_of_m": [3, 3],
         "max_best_rank": 1,
-        "sample_rate": 0.01,
-        "frag_tol_ppm": 50.0,
-        "min_prob": 0.95,
-        "samples_per_mass_err_bin": 1500
+        "sample_rate": 0.02,
+        "frag_tol_ppm": 25.0,
+        "max_qval": 0.01,
+        "min_samples": 3500,
+        "max_frag_rank": 5,
+        "frag_err_quantile": 0.01
     },
     "first_search_params":
     {

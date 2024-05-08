@@ -1,10 +1,12 @@
 
-struct MassErrorModel{N, T<:AbstractFloat}
-    mass_offset::UniformSpline{N, T}
-    mass_tolerance::UniformSpline{N, T}
-    min_ppm::Float32
-    max_ppm::Float32
+struct MassErrorModel{T<:AbstractFloat}
+    mass_offset::T#UniformSpline{N, T}
+    mass_tolerance::Tuple{T, T}#UniformSpline{N, T}
 end
+
+getRightTol(mem::MassErrorModel) = last(mem.mass_tolerance)
+getLeftTol(mem::MassErrorModel) = first(mem.mass_tolerance)
+getMassOffset(mem::MassErrorModel) = last(mem.mass_offset)
 
 function getMassCorrection(mem::MassErrorModel)
     return mem.location
@@ -16,30 +18,64 @@ end
 
 function (mem::MassErrorModel)(mass::Float32, log_intensity::Float32, quantile::Float32)
     ppm_norm = Float32(1e6)
-    ppm = mass/Float32(1e6)
-    #mass -= mem.mass_offset(log_intensity)*ppm
-    mass -= 4.3f0*ppm
-
-    #=
-    ppm_err = max(
-            min(
-                #Float32(-mem.mass_tolerance(log_intensity)),#*log(2.0f0*(1.0f0 - quantile)), 
-                Float32(mem.mass_tolerance(log_intensity)),#*log(2.0f0*(1.0f0 - quantile)), 
-                mem.max_ppm
-                ), 
-            mem.min_ppm
-            )
-    =#
     ppm = mass/ppm_norm
-    #tol = ppm_err*ppm
-    #max_tol = mem.max_ppm*ppm
-    r_tol = 15.2f0*ppm
-    #l_tol = 8.f0*ppm
-    l_tol = 6.2f0*ppm
-    #return Float32(mass - max_tol), Float32(mass - tol),Float32(mass + tol)
-    return Float32(mass - r_tol), Float32(mass - l_tol), Float32(mass + r_tol)
+    mass -= getMassOffset(mem)*ppm
+    ppm = mass/ppm_norm
+    r_tol = getRightTol(mem)*ppm
+    l_tol = getLeftTol(mem)*ppm
+    return Float32(mass - r_tol), Float32(mass - r_tol), Float32(mass + l_tol)
 end
 
+function ModelMassErrs(ppm_errs::Vector{Float32};
+                       frag_err_quantile::Float32 = 0.01f0,
+                       out_fdir::String = "./",
+                       out_fname::String = "mass_err_estimate")
+
+    bins = LinRange(minimum(ppm_errs), maximum(ppm_errs), 100)
+    mass_err = median(ppm_errs)
+    ppm_errs = ppm_errs .- mass_err
+    r_bound = quantile(ppm_errs, 1 - frag_err_quantile) 
+    l_bound = quantile(ppm_errs, frag_err_quantile)
+
+
+    errs = ppm_errs .+ mass_err
+    plot_title = ""
+    n = 0
+    for i in range(1, length(out_fname))
+        n += 1
+        if n > 24
+            n = 1
+            plot_title *= "\n"
+        end
+        plot_title *= out_fname[i]
+    end
+    p = Plots.histogram(errs,
+                    orientation = :h, 
+                    yflip = true,
+                    #seriestype=:scatter,
+                    title = plot_title,
+                    xlabel = "Count",
+                    ylabel = "Mass Error (ppm)",
+                    label = nothing,
+                    bins = bins,
+                    ylim = (minimum(ppm_errs), maximum(ppm_errs))
+                    )
+
+    Plots.hline!([l_bound + mass_err, mass_err, r_bound + mass_err], label = nothing, color = :black, lw = 2)
+    l_err = l_bound + mass_err
+    Plots.annotate!(last(xlims(p)), l_err, text("$l_err", :black, :right, :bottom, 12))
+    r_err = r_bound + mass_err
+    Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
+    Plots.annotate!(last(xlims(p)), mass_err, text("$mass_err", :black, :right, :bottom, 12))
+    savefig(p, joinpath(out_fdir, out_fname)*".pdf")
+
+    MassErrorModel(
+                   Float32(mass_err),
+                (Float32(abs(l_bound)), Float32(abs(r_bound)))
+                    )
+end
+
+#=
 function EstimateMixtureWithUniformNoise(errs::AbstractVector{T}, #data
                                          err_model::Type{D}, #Distribution to model error
                                          μ::T, #Fixed/known location parameter
@@ -133,7 +169,6 @@ function getIntensityBinIds(log2_intensities::Vector{T},
     end
     return bins      
 end
-
 
 function ModelMassErrs(intensities::Vector{T},
                        ppm_errs::Vector{U},
@@ -244,5 +279,4 @@ function ModelMassErrs(intensities::Vector{T},
                     max_ppm
                     )
 end
-
-
+=#

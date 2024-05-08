@@ -63,6 +63,7 @@ function mainLibrarySearch(
        
     )
 end
+
 function mainLibrarySearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -251,7 +252,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                         prosit_lib["precursors"][:prec_charge]);
     
     #Observed iRT estimates based on pre-search
-    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
+    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
 
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,

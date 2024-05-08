@@ -509,7 +509,7 @@ function getPSMS(
             #end
         end
         #Add fragment matches to all_fmatches 
-        frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx, collect_fmatches)
+        #frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx, collect_fmatches)
     
         ##########
         #Reset pre-allocated arrays 
@@ -522,13 +522,82 @@ function getPSMS(
     #println("prec_idx $prec_idx")
     #println("scan_to_prec_idx $scan_to_prec_idx")
 
-    if collect_fmatches
-        return DataFrame(@view(scored_PSMs[1:last_val])), @view(all_fmatches[1:frag_err_idx])
-    else
-        return DataFrame(@view(scored_PSMs[1:last_val]))
-    end
+    #if collect_fmatches
+    #    return DataFrame(@view(scored_PSMs[1:last_val])), @view(all_fmatches[1:frag_err_idx])
+    #else
+    return DataFrame(@view(scored_PSMs[1:last_val]))
+    #end
 end
 
+function getMassErrors(
+                    spectra::Arrow.Table,
+                    library_fragment_lookup::LibraryFragmentLookup{Float32},
+                    thread_task::UnitRange{Int64},
+                    scan_idxs::Vector{UInt32},
+                    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+                    precursors_passed_scoring::Vector{UInt32},
+                    ms_file_idx::UInt32,
+                    mass_err_model::MassErrorModel,
+                    ionMatches::Vector{FragmentMatch{Float32}},
+                    ionMisses::Vector{FragmentMatch{Float32}},
+                    all_fmatches::Vector{FragmentMatch{Float32}},
+                    ionTemplates::Vector{L};
+                    max_rank::Int64 = 5
+                    ) where {L<:LibraryIon{Float32}}
+    ##########
+    #Initialize 
+    min_max_ppm = (0.0f0, Float32(getRightTol(mass_err_model)))
+    frag_ppm_err = 0.0f0
+    frag_err_idx = 1
+    prec_idx, ion_idx = 0, 0
+    #prec_id = 0
+    #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
+    ##########
+    #Iterate through spectra
+    for n in thread_task
+        i = scan_idxs[n]
+        if i == 0 
+            continue
+        end
+        if i > length(spectra[:masses])
+            continue
+        end
+        if ismissing(scan_to_prec_idx[i])
+            continue
+        end
+        ##########
+        #Ion Template Selection
+        #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
+
+        #Candidate precursors and their retention time estimates have already been determined from
+        #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
+        #the retention time and m/z tolerance constraints
+        ion_idx, prec_idx = selectTransitions!(
+                                        ionTemplates,
+                                        library_fragment_lookup,
+                                        scan_to_prec_idx[i],
+                                        precursors_passed_scoring,
+                                        max_rank = max_rank
+                                        )
+        ##########
+        #Match sorted list of plausible ions to the observed spectra
+        nmatches, nmisses = matchPeaks!(ionMatches, 
+                                        ionMisses, 
+                                        ionTemplates, 
+                                        ion_idx, 
+                                        spectra[:masses][i], 
+                                        spectra[:intensities][i], 
+                                        frag_ppm_err,
+                                        mass_err_model,
+                                        min_max_ppm,
+                                        spectra[:highMass][i],
+                                        UInt32(i), 
+                                        ms_file_idx)  
+        #Add fragment matches to all_fmatches 
+        frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx)
+    end
+    return @view(all_fmatches[1:frag_err_idx])
+end
 function quantPSMs(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
@@ -820,17 +889,13 @@ function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16},
     return nmatches_all, nmisses_all, nmatches, nmisses
 end
 
-function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, collect_fmatches::Bool) where {M<:MatchIon{Float32}}
-    if collect_fmatches
-        for match in range(1, nmatches)
-            if n < length(all_fmatches)
-                if new_fmatches[match].predicted_rank < 6
-                    all_fmatches[n] = new_fmatches[match]
-                    n += 1
-                end
-            else
-                all_fmatches = append!(all_fmatches, [M() for x in range(1, length(all_fmatches))])
-            end
+function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
+    for match in range(1, nmatches)
+        if n < length(all_fmatches)
+            all_fmatches[n] = new_fmatches[match]
+            n += 1
+        else
+            all_fmatches = append!(all_fmatches, [M() for x in range(1, length(all_fmatches))])
         end
     end
     return n

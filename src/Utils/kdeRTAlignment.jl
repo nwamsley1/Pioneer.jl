@@ -51,8 +51,20 @@ function plotRTAlign(RT::Vector{T},
                     out_fdir::String = "./",
                     out_fname::String = "rt_align_plot") where {T<:AbstractFloat}
     n = length(RT)
+
+    plot_title = ""
+    n = 0
+    for i in range(1, length(out_fname))
+        n += 1
+        if n > 24
+            n = 1
+            plot_title *= "\n"
+        end
+        plot_title *= out_fname[i]
+    end
+
     p = Plots.plot(RT, iRT, seriestype=:scatter,
-                        title = out_fname*"\n n = $n",
+                        title = plot_title*"\n n = $n",
                         xlabel = "Retention Time RT (min)",
                         ylabel ="Indexed Retention Time iRT (min)",
                         label = nothing,

@@ -2,8 +2,7 @@ function addPreSearchColumns!(PSMs::DataFrame,
                                 MS_TABLE::Arrow.Table, 
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
-                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}}; 
-                                min_prob::Float64 = 0.9) where {T<:AbstractFloat}
+                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}}) where {T<:AbstractFloat}
     
     N = size(PSMs, 1)
     decoys = zeros(Bool, N);
@@ -46,12 +45,14 @@ function addPreSearchColumns!(PSMs::DataFrame,
     PSMs[!,:charge] = charge
     PSMs[!,:spectrum_peak_count] = spectrum_peak_count
     PSMs[!,:intercept] = ones(Float16, size(PSMs, 1))
-
+    PSMs[!,:q_value] = zeros(Float16, N);
+    PSMs[!,:prob] = zeros(Float16, N);
+    #=
     features = [:entropy_score,:city_block,:scribe,:spectral_contrast,:y_count,:error,
     #:topn,
     :TIC,:intercept]
     PSMs[!,:prob] = zeros(Float32, size(PSMs, 1))
-
+    
     M = size(PSMs, 1)
     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
     data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
@@ -67,7 +68,24 @@ function addPreSearchColumns!(PSMs::DataFrame,
         psms[best_idx,:best_psms] = true
     end
     filter!(x->x.best_psms, PSMs)
+    =#
+end
 
+function scorePresearch!(PSMs::DataFrame)
+    
+    features = [:entropy_score,:city_block,
+                    :scribe,:spectral_contrast,
+                    :y_count,:error,
+                    :TIC,:intercept]
+    PSMs[!,:prob] = zeros(Float32, size(PSMs, 1))
+
+    M = size(PSMs, 1)
+    tasks_per_thread = 10
+    chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+    β = zeros(Float64, length(features))
+    β = ProbitRegression(β, PSMs[!,features], PSMs[!,:target], data_chunks, max_iter = 20)
+    ModelPredictProbs!(PSMs[!,:prob], PSMs[!,features], β, data_chunks)
 end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
