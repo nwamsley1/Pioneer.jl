@@ -14,7 +14,7 @@ function mainLibrarySearch(
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float32},
+    iso_splines::IsotopeSplineModel,
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -36,7 +36,6 @@ function mainLibrarySearch(
 
         ionMatches,
         ionMisses,
-        all_fmatches,
         IDtoCOL,
         ionTemplates,
         iso_splines,
@@ -51,19 +50,17 @@ function mainLibrarySearch(
 
 
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
-        expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
+        n_frag_isotopes = Int64(params[:first_search_params]["n_frag_isotopes"]),
         min_log2_matched_ratio = Float32(params[:first_search_params]["min_log2_matched_ratio"]),
         min_spectral_contrast = Float32(params[:first_search_params]["min_spectral_contrast"]),
         min_index_search_score = UInt8(params[:first_search_params]["min_index_search_score"]),
         min_topn_of_m = Tuple([Int64(x) for x in params[:first_search_params]["min_topn_of_m"]]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
         irt_tol = irt_tol
        
     )
 end
-
 function mainLibrarySearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -76,20 +73,16 @@ function mainLibrarySearch(
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-                    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float32},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
                     precursor_weights::Vector{Vector{Float32}},
                     precs::Union{Missing, Vector{Counter{UInt32, UInt8}}};
                     #keyword args
-                    collect_fmatches = false,
-                    expected_matches::Int64 = 100000,
                     frag_ppm_err::Float32 = 0.0f0,
-
                     δ::Float32 = 10000f0,
                     λ::Float32 = 0f0,
                     max_iter_newton::Int64 = 100,
@@ -99,7 +92,6 @@ function mainLibrarySearch(
                     accuracy_bisection::Float32 = 100000f0,
                     max_diff::Float32 = 0.01f0,
 
-                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     min_frag_count::Int64 = 1,
                     min_spectral_contrast::Float32  = 0f0,
@@ -112,7 +104,6 @@ function mainLibrarySearch(
                     max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
                     quadrupole_isolation_width::Float64 = 8.5,
-                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     irt_tol::Float64 = Inf,
                     sample_rate::Float64 = Inf,
                     spec_order::Set{Int64} = Set(2)
@@ -177,7 +168,6 @@ function mainLibrarySearch(
                                 rt_to_irt_spline,
                                 ms_file_idx,
                                 mass_err_model,
-                                collect_fmatches,
                                 frag_ppm_err,
                                 δ,
                                 λ,
@@ -189,15 +179,14 @@ function mainLibrarySearch(
                                 max_diff,
                                 ionMatches[thread_id],
                                 ionMisses[thread_id],
-                                all_fmatches[thread_id],
                                 IDtoCOL[thread_id],
                                 ionTemplates[thread_id],
+                                iso_splines,
                                 scored_PSMs[thread_id],
                                 unscored_PSMs[thread_id],
                                 spectral_scores[thread_id],
                                 precursor_weights[thread_id],
                                 precs[thread_id],
-                                isotope_dict,
                                 isotope_err_bounds,
                                 min_frag_count,
                                 min_spectral_contrast,
@@ -207,8 +196,7 @@ function mainLibrarySearch(
                                 filter_by_rank,
                                 filter_by_count,
                                 max_best_rank,
-                                n_frag_isotopes
-                                ,quadrupole_isolation_width,
+                                n_frag_isotopes,
                                 irt_tol,
                                 spec_order
                             )
@@ -302,8 +290,8 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-sum(PSMs_Dict[""][!,:q_value].<=0.01)
-sum(PSMs_Dict[""][!,:q_value].<=0.1)
+sum(PSMs_Dict["1"][!,:q_value].<=0.01)
+sum(PSMs_Dict["1"][!,:q_value].<=0.1)
 
 #=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(

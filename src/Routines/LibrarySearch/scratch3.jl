@@ -413,3 +413,15 @@ end
 function testfunc(a)
     (mean(a) - 0.5569999999999999)*2222 + 1000
 end
+
+
+
+plot(LinRange(0, 4000.0, 100), iso_splines.splines[4][1].(LinRange(0, 4000.0, 100)))
+plot!(LinRange(0, 4000.0, 100), iso_splines.splines[4][2].(LinRange(0, 4000.0, 100)))
+plot!(LinRange(0, 4000.0, 100), iso_splines.splines[4][3].(LinRange(0, 4000.0, 100)))
+vline!([384.499, 384.499 + 1000.0f0])
+plot(LinRange(0, 4000.0, 100), iso_splines[1][1].(LinRange(0, 4000.0, 100)))
+
+test_p = Polynomial(iso_splines[1][1].coeffs[1:4])
+plot!(LinRange(0, 1000.0, 100), test_p.(LinRange(0, 1000.0, 100)))
+

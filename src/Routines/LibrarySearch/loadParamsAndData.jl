@@ -146,13 +146,14 @@ params_ = (
                                                                     "ExponentialGaussianHybrid.jl",
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
+                                                                    "uniformBasisCubicSpline.jl",
                                                                     "isotopeSplines.jl",
 
-                                                                    "uniformBasisCubicSpline.jl",
+                                                                    
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",
-                                                                    "kdeRTAlignment.jl",
+                                                                    "plotRTAlignment.jl",
                                                                     "probitRegression.jl",
                                                                     "partitionThreadTasks.jl"]];
 
@@ -280,3 +281,5 @@ end
 const file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
 #Parsed file names 
 const parsed_fnames = sort(collect(values(file_id_to_parsed_name)))
+
+

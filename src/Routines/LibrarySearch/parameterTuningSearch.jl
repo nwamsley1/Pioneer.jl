@@ -14,7 +14,7 @@ function rtAlignSearch(
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float32},
+    iso_splines::IsotopeSplineModel,
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -81,7 +81,7 @@ function rtAlignSearch(
                     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float32},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
@@ -179,7 +179,6 @@ function rtAlignSearch(
                                 rt_to_irt_spline,
                                 ms_file_idx,
                                 mass_err_model,
-                                collect_fmatches,
                                 frag_ppm_err,
                                 δ,
                                 λ,
@@ -191,15 +190,15 @@ function rtAlignSearch(
                                 max_diff,
                                 ionMatches[thread_id],
                                 ionMisses[thread_id],
-                                all_fmatches[thread_id],
                                 IDtoCOL[thread_id],
                                 ionTemplates[thread_id],
+                                iso_splines,
                                 scored_PSMs[thread_id],
                                 unscored_PSMs[thread_id],
                                 spectral_scores[thread_id],
                                 precursor_weights[thread_id],
                                 precs[thread_id],
-                                isotope_dict,
+
                                 isotope_err_bounds,
                                 min_frag_count,
                                 min_spectral_contrast,
@@ -210,7 +209,6 @@ function rtAlignSearch(
                                 filter_by_count,
                                 max_best_rank,
                                 n_frag_isotopes,
-                                quadrupole_isolation_width,
                                 irt_tol,
                                 spec_order
                             )
@@ -219,7 +217,6 @@ function rtAlignSearch(
     psms = fetch.(tasks)
     return psms
 end
-
 function massErrorSearch(
     #Mandatory Args
     spectra::Arrow.Table, 
@@ -339,8 +336,6 @@ RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
 #MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"
-MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/test/20230324_OLEP08_200ng_30min_E20H50Y30_180K_2Th3p5ms_02.arrow",
-"/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"]
 for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
@@ -350,7 +345,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     data_points = 0
     n = 0
     rtPSMs = nothing
-    while n < 10
+    while n <= params_[:presearch_params]["max_presearch_iters"]
         RESULT =  rtAlignSearch(
                                                 MS_TABLE,
                                                 prosit_lib["f_index"],
@@ -388,8 +383,8 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
 
         scorePresearch!(rtPSMs)
         getQvalues!(rtPSMs[!,:prob], rtPSMs[!,:target], rtPSMs[!,:q_value])
-        println("TEST ",  sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]))
-        if sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]) > params_[:presearch_params]["min_samples"]
+        #println("TEST ",  sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]))
+        if sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]) >= params_[:presearch_params]["min_samples"]
             filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtPSMs)
             rtPSMs[!,:best_psms] .= false
             grouped_psms = groupby(rtPSMs,:precursor_idx)
@@ -402,8 +397,18 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
         end
         n += 1
     end
+    if n >= params_[:presearch_params]["max_presearch_iters"]
+        min_samples = params_[:presearch_params]["min_samples"]
+        max_iters = params_[:presearch_params]["max_presearch_iters"]
+        @warn "Presearch did not find $min_samples precursors at the specified fdr in $max_iters iterations"
+    end
 
-    RT_to_iRT_map = UniformSpline( rtPSMs[!,:iRT_predicted], rtPSMs[!,:RT], 3, 5);
+    RT_to_iRT_map = UniformSpline( 
+                                    rtPSMs[!,:iRT_predicted], 
+                                    rtPSMs[!,:RT], 
+                                    3, #Degree is always three
+                                    5 #Spline knots fixed. currently not tunable parameter
+                                    );
 
     plotRTAlign(rtPSMs[:,:RT], 
                 rtPSMs[:,:iRT_predicted], 

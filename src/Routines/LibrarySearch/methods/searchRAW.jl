@@ -13,7 +13,7 @@ function searchRAW(
                     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float32},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
@@ -195,7 +195,9 @@ function searchFragmentIndex(
             #end
             thread_peaks = 0
         end
-
+        #if i != 200000
+        #    continue
+        #end
         ###########
         #Scan Filtering
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
@@ -294,7 +296,6 @@ function getPSMS(
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel,
-                    collect_fmatches::Bool,
                     frag_ppm_err::Float32,
                     δ::Float32,
                     λ::Float32,
@@ -306,16 +307,16 @@ function getPSMS(
                     max_diff::Float32,
                     ionMatches::Vector{FragmentMatch{Float32}},
                     ionMisses::Vector{FragmentMatch{Float32}},
-                    all_fmatches::Vector{FragmentMatch{Float32}},
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
                     precs::Union{Missing, Counter{UInt32, UInt8}},
 
-                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing},
+
                     isotope_err_bounds::Tuple{Int64, Int64},
                     min_frag_count::Int64,
                     min_spectral_contrast::Float32,
@@ -326,7 +327,6 @@ function getPSMS(
                     filter_by_count::Bool,
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
-                    quadrupole_isolation_width::Float64,
                     irt_tol::Float64,
                     spec_order::Set{Int64},
                     ) where {L<:LibraryIon{Float32},
@@ -336,11 +336,11 @@ function getPSMS(
     ##########
     #Initialize 
     msms_counts = Dict{Int64, Int64}()
-    frag_err_idx = 1
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
     Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
+    isotopes = zeros(Float32, n_frag_isotopes);
     #prec_id = 0
     #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     ##########
@@ -355,7 +355,6 @@ function getPSMS(
         if ismissing(scan_to_prec_idx[i])
             continue
         end
-
         ###########
         #Scan Filtering
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
@@ -384,12 +383,18 @@ function getPSMS(
                                         precursors[:mz],
                                         precursors[:prec_charge],
                                         precursors[:irt],
+                                        precursors[:sulfur_count],
+                                        iso_splines,
+                                        isotopes,
                                         ion_list,
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol), #rt_tol
                                         (
                                         spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
                                         spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0
+                                        ),
+                                        (
+                                            spectra[:lowMass][i], spectra[:highMass][i]
                                         ),
                                         isotope_err_bounds = isotope_err_bounds
                                         )
@@ -548,7 +553,7 @@ function getMassErrors(
     #Initialize 
     min_max_ppm = (0.0f0, Float32(getRightTol(mass_err_model)))
     frag_ppm_err = 0.0f0
-    frag_err_idx = 1
+    frag_err_idx = 0
     prec_idx, ion_idx = 0, 0
     #prec_id = 0
     #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
@@ -618,7 +623,7 @@ function quantPSMs(
                     ionMisses::Vector{FragmentMatch{Float32}},
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
-                    iso_splines::IsotopeSplineModel{Float32},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
@@ -694,6 +699,9 @@ function quantPSMs(
                                             rt_stop,
                                             spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
                                             spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0,
+                                            (
+                                                spectra[:lowMass][i], spectra[:highMass][i]
+                                            ),
                                             isotope_err_bounds,
                                             10000)
         end
@@ -892,8 +900,8 @@ end
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
     for match in range(1, nmatches)
         if n < length(all_fmatches)
-            all_fmatches[n] = new_fmatches[match]
             n += 1
+            all_fmatches[n] = new_fmatches[match]
         else
             all_fmatches = append!(all_fmatches, [M() for x in range(1, length(all_fmatches))])
         end

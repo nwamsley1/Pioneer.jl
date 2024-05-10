@@ -49,11 +49,12 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
         end
         plot_title *= out_fname[i]
     end
+    n = length(errs)
     p = Plots.histogram(errs,
                     orientation = :h, 
                     yflip = true,
                     #seriestype=:scatter,
-                    title = plot_title,
+                    title = plot_title*"\n n = $n",
                     xlabel = "Count",
                     ylabel = "Mass Error (ppm)",
                     label = nothing,

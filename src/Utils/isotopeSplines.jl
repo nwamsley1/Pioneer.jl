@@ -3,25 +3,44 @@ using LightXML, Base64, Polynomials
 function DecodeCoefficients(encoded::String)
     return reinterpret(Float64, Base64.base64decode(encoded))
 end
-struct CubicPolynomial{T<:Real}
-    x0::T
-    x1::T
-    x2::T
-    x3::T
+using Polynomials, StaticArrays, Plots
+
+struct CubicSpline{N, T<:AbstractFloat} 
+    coeffs::SVector{N, T}
+    first::T
+    last::T
+    bin_width::T
 end
 
-function (a::CubicPolynomial{T})(x::T) where {T<:Real}
-    return @fastmath a.x0 + a.x1*x + a.x2*x^2 + a.x3*x^3
+function (s::CubicSpline)(t::U) where {U<:AbstractFloat}
+    @inbounds @fastmath begin
+        if t < s.first
+            u = 0.0f0
+            idx = 0
+        else
+            idx = floor(Int32, 
+                        (t - s.first)/s.bin_width
+                        )
+            u = (t - (s.first + s.bin_width*(idx)))
+        end
+        x = zero(U)
+        coeff = (idx)*4 + 1
+        c = one(U)
+        x += s.coeffs[coeff]*c
+        c *= u
+        coeff += 1
+        x += s.coeffs[coeff]*c
+        c *= u
+        coeff += 1
+        x += s.coeffs[coeff]*c
+        c *= u
+        coeff += 1
+        x += s.coeffs[coeff]*c
+    end
+    return x
 end
-struct PolynomialSpline{T<:Real}
-    polynomials::Vector{CubicPolynomial{T}}
-    slope::T
-    intercept::T
-    knots::Vector{T}
-end
 
-
-
+#=
 function (p::PolynomialSpline)(x)
     #idx = searchsortedfirst(p.knots, x)
     
@@ -38,9 +57,9 @@ function (p::PolynomialSpline)(x)
         return p.polynomials[idx](x - p.knots[idx])
     end
 end
-
-struct IsotopeSplineModel{T<:Real}
-    splines::Vector{Vector{PolynomialSpline{T}}}
+=#
+struct IsotopeSplineModel{N, T<:Real}
+    splines::Vector{Vector{CubicSpline{N, T}}}
 end
 
 function (p::IsotopeSplineModel)(S, I, x)
@@ -49,15 +68,17 @@ end
 
 
 function buildPolynomials(coefficients::Vector{T}, order::I) where {T<:Real, I<:Integer}
-    order += 1
-    n_knots = length(coefficients)÷order
-    polynomials = Vector{CubicPolynomial{T}}()
-    for n in range(1, n_knots)
-        start = ((n - 1)*order + 1)
-        stop = (n)*order
-        push!(polynomials, CubicPolynomial(coefficients[start], coefficients[start+1], coefficients[start+2], coefficients[start+3]))
-    end
-    return polynomials
+    #order += 1
+    #n_knots = length(coefficients)÷order
+    #polynomials = Vector{CubicPolynomial{T}}()
+    #SVector{n_knots*4}
+    
+    #for n in range(1, n_knots)
+    #    start = ((n - 1)*order + 1)
+    #    stop = (n)*order
+    #    push!(polynomials, CubicPolynomial(coefficients[start], coefficients[start+1], coefficients[start+2], coefficients[start+3]))
+    #end
+    return SVector{length(coefficients)}(coefficients)#polynomials
 end
 
 function parseIsoXML(iso_xml_path::String)
@@ -78,18 +99,25 @@ function parseIsoXML(iso_xml_path::String)
     end
 
     #Pre-allocate splines 
-    splines = Vector{Vector{PolynomialSpline{Float32}}}()
+    #splines = Vector{Vector{PolynomialSpline{Float32}}}()
+    splines = Vector{Vector{CubicSpline{40, Float32}}}()
     for i in range(1, max_S)
         push!(splines, [])
         for j in range(1, max_iso)
             push!(
                 splines[i], 
-                PolynomialSpline(
-                                buildPolynomials(Float32[0, 0, 0], 3),
-                                zero(Float32),
-                                zero(Float32),
-                                Float32[0]
-                                            )
+                CubicSpline(
+                    @SVector[x for x in zeros(Float32, 40)],
+                    0.0f0,
+                    0.0f0,
+                    0.0f0)
+                #UniformSpline(SVector{1, Float32}(Float32[0]))
+                #PolynomialSpline(
+                #                buildPolynomials(Float32[0, 0, 0], 3),
+                #                zero(Float32),
+                ##                zero(Float32),
+                #                Float32[0]
+                #                            )
             )
         end
     end
@@ -100,19 +128,27 @@ function parseIsoXML(iso_xml_path::String)
             S = parse(Int64, attributes_dict(model)["S"])
             iso =  parse(Int64, attributes_dict(model)["isotope"]) 
 
+            #=
             polynomials =                 buildPolynomials(
                 collect(Float32.(DecodeCoefficients(content(model["coefficients"][1])))),
                 parse(Int64, attributes_dict(model)["order"]) - 1
                 )
+            =#
 
             knots = collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))[1:end - 1]
+            println("knots $knots")
             A = hcat(ones(length(knots)), knots)
             x = A\collect(range(0, length(knots) - 1))
-            splines[S+1][iso+1] = PolynomialSpline(
-                polynomials,
-                Float32(last(x)),
-                Float32(first(x)),
-                knots
+            spline = Float32.(DecodeCoefficients(content(model["coefficients"][1])))
+            splines[S+1][iso+1] = CubicSpline(
+                SVector{length(spline), Float32}(spline),
+                Float32(first(knots)),
+                Float32(last(knots)),
+                Float32((last(knots)-first(knots))/(length(knots) - 1))
+                #polynomials,
+                #Float32(last(x)),
+                #Float32(first(x)),
+                #knots
             )
         end
     end
@@ -165,7 +201,7 @@ Returns `isotopes` where isotopes[1] is M+0, isotopes[2] is M+1, etc. Does not n
 ### Examples 
 
 """
-function getFragAbundance(iso_splines::IsotopeSplineModel{T}, 
+function getFragAbundance(iso_splines::IsotopeSplineModel, 
                             frag::isotope{T, I}, 
                             prec::isotope{T, I}, 
                             pset::Tuple{I, I}) where {T<:Real,I<:Integer}
@@ -220,7 +256,7 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 
 """
 function getFragAbundance!(isotopes::Vector{T}, 
-                            iso_splines::IsotopeSplineModel{T}, 
+                            iso_splines::IsotopeSplineModel, 
                             frag::isotope{T, I}, 
                             prec::isotope{T, I}, 
                             pset::Tuple{I, I}) where {T<:Real,I<:Integer}
@@ -242,6 +278,7 @@ function getFragAbundance!(isotopes::Vector{T},
                                                             Float32(prec.mass - frag.mass)), 
                                         0.0)
         end
+
         isotopes[f+1] = f_i*complement_prob
     end
 
@@ -249,7 +286,7 @@ function getFragAbundance!(isotopes::Vector{T},
 end
 
 function getFragAbundance!(isotopes::Vector{Float32}, 
-                            iso_splines::IsotopeSplineModel{Float32},
+                            iso_splines::IsotopeSplineModel,
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
@@ -265,7 +302,7 @@ function getFragAbundance!(isotopes::Vector{Float32},
 end
 
 function getFragIsotopes!(isotopes::Vector{Float32}, 
-                            iso_splines::IsotopeSplineModel{Float32}, 
+                            iso_splines::IsotopeSplineModel, 
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
@@ -284,7 +321,7 @@ function getFragIsotopes!(isotopes::Vector{Float32},
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     for i in reverse(range(1, length(isotopes)))
-        isotopes[i] = max(monoisotopic_intensity*isotopes[i]/first(isotopes), zero(Float32))
+        isotopes[i] = max(monoisotopic_intensity*isotopes[i], zero(Float32))
     end
 end
 
