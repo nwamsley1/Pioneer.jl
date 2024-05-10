@@ -290,8 +290,8 @@ end
 
 println("Finished main search in ", main_search_time.time, "seconds")
 println("Finished main search in ", main_search_time, "seconds")
-sum(PSMs_Dict["1"][!,:q_value].<=0.01)
-sum(PSMs_Dict["1"][!,:q_value].<=0.1)
+sum(PSMs_Dict["01"][!,:q_value].<=0.01)
+sum(PSMs_Dict["01"][!,:q_value].<=0.1)
 
 #=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(

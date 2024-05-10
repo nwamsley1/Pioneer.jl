@@ -41,6 +41,8 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
     end
 
     function fillState!(state::GD_state{HuberParams{T}, U, I, J}, chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, max_weight::Float32) where {T,U<:AbstractFloat, I,J<:Integer}
+        #start_rt, stop_rt = chrom.rt[1], chrom.rt[end]
+
         for i in range(1, length(chrom.weight))
             state.t[i] = chrom.RT[i]
             state.data[i] = chrom.weight[i]/max_weight
@@ -304,13 +306,9 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             chrom.RT[best_scan]
             )
     else
-        #println("TEST  chrom.RT[best_scan]",  chrom.RT[best_scan])
         fitEGH(state, 
         HuberParams(T(0.001), T(0), T(-1), T(0.75)),
         HuberParams(T(1), T(Inf), T(1), T(1.25)),
-        #HuberParams(T(0.001), T(chrom.RT[best_scan-1]), T(-1), T(0.75)),
-        #HuberParams(T(0.001), T(chrom.RT[best_scan-1]), T(-1), T(1.0)),
-        #HuberParams(T(1), T(chrom.RT[best_scan+1]), T(1), T(1.25)),
         max_peak_width,
         α,
         half_width_at_α,
@@ -327,6 +325,7 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
         #plot!(state.t[1:mi][state.mask[1:mi]], state.data[1:mi][state.mask[1:mi]], seriestype=:scatter, alpha = 0.5)
         xbins = LinRange(state.t[1] - 0.5, state.t[state.max_index] + .5, 100)
         plot!(xbins, [norm_factor*F(state, x) for x in xbins])
+        #plot!(chrom.RT, chrom.weight, seriestype=:scatter, alpha = 0.5, show = true)
         println("area = ", norm_factor*Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
         println("norm_factor ", norm_factor)
         println("H ", norm_factor*state.params.H)

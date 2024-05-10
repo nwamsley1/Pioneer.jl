@@ -186,7 +186,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
                     UInt32(ms_file_idx), 
                     frag_err_dist_dict[ms_file_idx],
-                    irt_errs[ms_file_idx]/4,
+                    irt_errs[ms_file_idx],
                     params_,  
                     ionMatches,
                     ionMisses,

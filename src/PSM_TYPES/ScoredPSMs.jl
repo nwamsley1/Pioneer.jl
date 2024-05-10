@@ -151,6 +151,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 spectral_scores::Vector{SpectralScoresComplex{L}},
                 weight::Vector{H}, 
                 IDtoCOL::ArrayDict{UInt32, UInt16},
+                cycle_idx::Int64,
                 expected_matches::Float64,
                 last_val::Int64,
                 n_vals::Int64,
@@ -191,6 +192,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         #if UInt32(unscored_PSMs[i].precursor_idx) == 10274537
         #    println("scan_idx ", scan_idx)
         #end
+        
         passing_filter = (
            # (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
            (unscored_PSMs[i].y_count) >= min_frag_count
@@ -205,6 +207,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )
+        
+        #passing_filter = true
         #=
         if UInt32(unscored_PSMs[i].precursor_idx) == 11083883
             println("scan_idx passing? ", scan_idx, " ", passing_filter)
@@ -259,7 +263,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
 
             
             UInt32(unscored_PSMs[i].precursor_idx),
-            UInt32(unscored_PSMs[i].ms_file_idx),
+            #UInt32(unscored_PSMs[i].ms_file_idx),
+            UInt32(cycle_idx),
             UInt32(scan_idx)
         )
         last_val += 1

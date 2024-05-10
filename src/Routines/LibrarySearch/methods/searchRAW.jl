@@ -668,7 +668,10 @@ function quantPSMs(
         ###########
         #Scan Filtering
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
-        cycle_idx += (msn == 1)
+        if (msn < 2)
+            cycle_idx += 1
+        end
+        #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         #a = (getHigh(getRTBin(rt_index, rt_bin_high)) + irt_tol < spectra[:retentionTime][i]) 
         #b = (getLow(getRTBin(rt_index, rt_bin_high)) - irt_tol > spectra[:retentionTime][i]) 
@@ -776,6 +779,7 @@ function quantPSMs(
                 spectral_scores,
                 _weights_,
                 IDtoCOL,
+                cycle_idx,
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
