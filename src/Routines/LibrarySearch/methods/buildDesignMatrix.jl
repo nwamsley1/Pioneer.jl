@@ -28,7 +28,7 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
     prec_col = zero(UInt32)
     row = 0
     #Number of unique peaks encountered. 
-    last_peak_ind = 0
+    last_peak_ind = -1
     for i in range(1, nmatches)#matches)
         match = matches[i]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
@@ -53,31 +53,22 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
 
     end
 
-    #All unmatched ions belong to the same row. 
-    increment_row = true
     i = nmatches + 1
     for j in range(nmatches + 1, nmatches + nmisses)
         miss = misses[j - nmatches]
         #If a match for this precursor hasn't been encountered yet, then there were no matched ions for this
         #precursor and it should not be included in the design matrix. 
-        if iszero(precID_to_col[getPrecID(miss)])
-            continue
-            #prec_col += one(UInt32)
-            #update!(precID_to_col, getPrecID(miss), UInt16(prec_col))
-        end
-        if increment_row
+        if !iszero(precID_to_col[getPrecID(miss)])
+            
             row += 1
-            increment_row = false
+            H.colval[i] = precID_to_col[getPrecID(miss)]
+            H.rowval[i] = row
+            H.nzval[i] += getPredictedIntenisty(miss)
+            H.x[i] = zero(Float32)
+            H.matched[i] = false
+            i += 1
+            H.n_vals += 1
         end
-        #row += 1
-        #last_peak_ind = getPeakInd(miss)
-        H.colval[i] = precID_to_col[getPrecID(miss)]
-        H.rowval[i] = row
-        H.nzval[i] = getPredictedIntenisty(miss)
-        H.x[i] = zero(Float32)
-        H.matched[i] = false
-        H.n_vals += 1
-        i += 1
     end
     #if i >= (nmatches - 1)
     #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol

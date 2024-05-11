@@ -37,7 +37,7 @@ MS2_CHROMS[(precursor_idx = best_precursors[N,1],iso_rank = best_precursors[N,2]
 
 
 
-PSMS[PSMS[!,:precursor_idx].==best_precursors[N, 1],
+PSMS[PSMS[!,:precursor_idx].==0x002cc660,#,best_precursors[N, 1],
 [:best_rank,:topn,:b_count,:y_count,:isotope_count,:scribe,:scribe_fitted,
 :city_block_fitted,:spectral_contrast,:matched_ratio,:weight,:RT,:scan_idx,:iso_rank,:prob]]
 N += 1
@@ -78,6 +78,29 @@ julia> N
 =#
 #wholechrom = gchroms[(precursor_idx = best_precursors[N,1],)]
 subchrom = groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank)
+
+dtype = Float32;
+gx, gw = gausslegendre(100);
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    );
+integrateChrom(subchrom[1],
+state,
+gx::Vector{Float64},
+gw::Vector{Float64},
+intensity_filter_fraction =  Float32(params_[:integration_params]["intensity_filter_threshold"]),
+α = 0.01f0,
+half_width_at_α = 0.025f0,
+isplot = true
+);
+N += 1
+
 t = subchrom[1][!,:rt]
 y = subchrom[1][!,:intensity]
 plot(
@@ -89,16 +112,14 @@ plot!(
 t, y,
 alpha = 0.5, color = :blue
 )
-
 sg = savitzky_golay(y, 11, 4)
 plot!(
 t, sg.y,
 alpha = 0.5, seriestype=:scatter, color = :orange
 )
-#plot!(
-#t, sg.y,
-#alpha = 0.5, color = :orange
-#)
+PSMS[PSMS[!,:precursor_idx].==best_precursors[N, 1],
+[:best_rank,:topn,:b_count,:y_count,:isotope_count,:scribe,:scribe_fitted,
+:city_block_fitted,:spectral_contrast,:matched_ratio,:weight,:RT,:scan_idx,:iso_rank,:prob]]
 N += 1
 
 sg = savitzky_golay(y, 21, 9)

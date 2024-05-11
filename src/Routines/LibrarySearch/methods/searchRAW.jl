@@ -755,6 +755,7 @@ function quantPSMs(
             #println("scan_idx $i")
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
             #return Hs
+            #return Hs
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
                 new_entries = IDtoCOL.size - length(_weights_) + 1000 
@@ -768,6 +769,7 @@ function quantPSMs(
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
             #Get initial residuals
+            #println("i  $i")
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
             solveHuber!(Hs, _residuals_, _weights_, 
