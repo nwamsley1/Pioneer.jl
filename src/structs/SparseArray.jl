@@ -197,7 +197,11 @@ function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) wher
     for col in range(1, sa.n)
         start = sa.colptr[col]
         stop = sa.colptr[col+1] - 1
-        @turbo for n in start:stop
+        #@turbo for n in start:stop
+
+        for n in start:stop
+            #println("lemgth(sa.x) ", length(sa.x) ,  " n $n")
+            #println("length(sa.rowval) ", length(sa.rowval) ,  " sa.rowval[n] ", sa.rowval[n], " n $n stop $stop")
             r[sa.rowval[n]] = -sa.x[n]
         end
     end
@@ -205,7 +209,8 @@ function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) wher
     for col in range(1, sa.n)
         start = sa.colptr[col]
         stop = sa.colptr[col+1] - 1
-        @turbo for n in start:stop
+        #@turbo for n in start:stop
+        for n in start:stop
             r[sa.rowval[n]] += w[col]*sa.nzval[n]
         end
     end

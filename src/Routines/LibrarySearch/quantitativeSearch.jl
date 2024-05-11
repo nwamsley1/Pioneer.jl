@@ -180,6 +180,7 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    #=
     @time PSMS = vcat(quantitationSearch(MS_TABLE, 
                     prosit_lib["precursors"],
                     prosit_lib["f_det"],
@@ -198,6 +199,28 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                     complex_spectral_scores,
                     precursor_weights,
                     )...);
+        =#
+        @time RESULT = quantitationSearch(MS_TABLE, 
+            prosit_lib["precursors"],
+            prosit_lib["f_det"],
+            RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+            UInt32(ms_file_idx), 
+            frag_err_dist_dict[ms_file_idx],
+            irt_errs[ms_file_idx]/4,
+            params_,  
+            ionMatches,
+            ionMisses,
+            IDtoCOL,
+            ionTemplates,
+            iso_splines,
+            complex_scored_PSMs,
+            complex_unscored_PSMs,
+            complex_spectral_scores,
+            precursor_weights,
+            )
+        chroms = vcat([last(x) for x in RESULT]...);
+        sort!(chroms,:rt)
+        PSMS = vcat([first(x) for x in RESULT]...);
         addSecondSearchColumns!(PSMS, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],

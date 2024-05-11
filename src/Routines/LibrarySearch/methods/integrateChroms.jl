@@ -152,10 +152,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
                 stop = state.t[i]
             end
         end
-        state.t[state.max_index + 1], state.t[state.max_index + 2] = T(start - max_peak_width), T(stop + max_peak_width)
-        state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
+        #state.t[state.max_index + 1], state.t[state.max_index + 2] = T(start - max_peak_width), T(stop + max_peak_width)
+        #state.data[state.max_index + 1], state.data[state.max_index + 2] = zero(T), zero(T)
         #state.mask[state.max_index + 1], state.mask[state.max_index + 2] = true, true
-        state.max_index += 2
+        #state.max_index += 2
         GD(state,
                 lower_bounds,
                 upper_bounds,
@@ -307,8 +307,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
             )
     else
         fitEGH(state, 
-        HuberParams(T(0.001), T(0), T(-1), T(0.75)),
-        HuberParams(T(1), T(Inf), T(1), T(1.25)),
+        #HuberParams(T(0.001), T(0), T(-1), T(0.75)),
+        #HuberParams(T(1), T(Inf), T(1), T(1.25)),
+        HuberParams(T(-Inf), T(0), T(-Inf), T(0.75)),
+        HuberParams(T(-Inf), T(Inf), T(Inf), T(1.25)),
         max_peak_width,
         α,
         half_width_at_α,

@@ -52,28 +52,32 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         H.n_vals += 1
 
     end
-    last_peak_ind = 0
-    for i in range(nmatches + 1, nmatches + nmisses)
-        miss = misses[i - nmatches]
-        #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
-        if iszero(precID_to_col[getPrecID(miss)])
-            prec_col += one(UInt32)
-            update!(precID_to_col, getPrecID(miss), UInt16(prec_col))
-        end
 
-        # if getPeakInd(miss) != last_peak_ind
-        row += 1
-        last_peak_ind = getPeakInd(miss)
-        #end
-        #H.row_col_nzval_x[i] = FRAG(row, Int64(first(precID_to_col[getPrecID(miss)])), getPredictedIntenisty(miss), zero(U))
+    #All unmatched ions belong to the same row. 
+    increment_row = true
+    i = nmatches + 1
+    for j in range(nmatches + 1, nmatches + nmisses)
+        miss = misses[j - nmatches]
+        #If a match for this precursor hasn't been encountered yet, then there were no matched ions for this
+        #precursor and it should not be included in the design matrix. 
+        if iszero(precID_to_col[getPrecID(miss)])
+            continue
+            #prec_col += one(UInt32)
+            #update!(precID_to_col, getPrecID(miss), UInt16(prec_col))
+        end
+        if increment_row
+            row += 1
+            increment_row = false
+        end
+        #row += 1
+        #last_peak_ind = getPeakInd(miss)
         H.colval[i] = precID_to_col[getPrecID(miss)]
-        #println("row $row")
         H.rowval[i] = row
-        H.nzval[i] = getPredictedIntenisty(miss) #factor to reduce impact of unmatched ions 
+        H.nzval[i] = getPredictedIntenisty(miss)
         H.x[i] = zero(Float32)
         H.matched[i] = false
-
         H.n_vals += 1
+        i += 1
     end
     #if i >= (nmatches - 1)
     #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol

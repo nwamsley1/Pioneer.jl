@@ -123,7 +123,8 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         #Sqrt of sum of squares
         H2_norm = sqrt(H2_norm)
         X2_norm = sqrt(X2_norm)
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)    
             #MASK is true for selected ions and false otherwise
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 

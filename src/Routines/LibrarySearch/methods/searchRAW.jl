@@ -654,6 +654,11 @@ function quantPSMs(
     isotopes = zeros(Float32, n_frag_isotopes)
     rt_start, rt_stop = 1, 1
     prec_mz_string = ""
+
+    rt_idx = 0
+    prec_temp_size = 0
+    chromatograms = Vector{ChromObject}(undef, 100000000)
+    precs_temp = Vector{UInt32}(undef, 50000)
     #test_n = 0
     #n_templates = zeros(Int64, length(thread_task))
     ##########
@@ -665,6 +670,9 @@ function quantPSMs(
         if i > length(spectra[:masses])
             continue
         end
+        #if i != 75694
+        #    continue
+        #end
         ###########
         #Scan Filtering
         msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
@@ -689,6 +697,19 @@ function quantPSMs(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             #test_n += 1
+            prec_temp_size = 0
+            for idx in rt_start:rt_stop
+                precs = rt_index.rt_bins[idx].prec
+                min_prec_mz =   spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0
+                max_prec_mz =   spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0
+                start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
+                stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
+        
+                for i in start:stop
+                    prec_temp_size += 1
+                    precs_temp[prec_temp_size] = first(precs[i])
+                end
+            end
             ion_idx, prec_idx = selectRTIndexedTransitions!(
                                             ionTemplates,
                                             library_fragment_lookup,
@@ -731,7 +752,9 @@ function quantPSMs(
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
+            #println("scan_idx $i")
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
+            #return Hs
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
                 new_entries = IDtoCOL.size - length(_weights_) + 1000 
@@ -754,16 +777,42 @@ function quantPSMs(
                             max_iter_outer,
                             accuracy_newton,
                             accuracy_bisection,
-                            Hs.n,
+                            Hs.n/10.0,
                             max_diff
                             );
+            for j in range(1, prec_temp_size)
+
+                #if iszero(IDtoCOL[precs_temp[j]])
+                #    chromatograms[rt_idx] = ChromObject(
+                #        Float16(spectra[:retentionTime][i]),
+                #        zero(Float32),
+                #        i,
+                #        precs_temp[j]
+                #    )
+                if !iszero(IDtoCOL[precs_temp[j]])
+                    rt_idx += 1
+                    chromatograms[rt_idx] = ChromObject(
+                        Float16(spectra[:retentionTime][i]),
+                        _weights_[IDtoCOL[precs_temp[j]]],
+                        i,
+                        precs_temp[j]
+                    )
+                else
+                    rt_idx += 1
+                    chromatograms[rt_idx] = ChromObject(
+                        Float16(spectra[:retentionTime][i]),
+                        zero(Float32),
+                        i,
+                        precs_temp[j]
+                    )
+                end
+
+            end
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
-
             getDistanceMetrics(_weights_, Hs, spectral_scores)
-
             ##########
             #Scoring and recording data
             ScoreFragmentMatches!(unscored_PSMs,
@@ -792,6 +841,24 @@ function quantPSMs(
                 min_topn = first(min_topn_of_m),
                 block_size = 500000,
                 )
+        else
+            for j in range(1, prec_temp_size)
+
+                #if iszero(IDtoCOL[precs_temp[j]])
+                #    chromatograms[rt_idx] = ChromObject(
+                #        Float16(spectra[:retentionTime][i]),
+                #        zero(Float32),
+                #        i,
+                #        precs_temp[j]
+                #    )
+            rt_idx += 1
+            chromatograms[rt_idx] = ChromObject(
+                Float16(spectra[:retentionTime][i]),
+                zero(Float32),
+                i,
+                precs_temp[j]
+            )
+            end
         end
         ##########
         #Reset pre-allocated arrays 
@@ -805,7 +872,7 @@ function quantPSMs(
     end
     #println("describe(n_templates) ", describe(n_templates))
     #println("test_n $test_n")
-    return DataFrame(@view(scored_PSMs[1:last_val]))
+    return DataFrame(@view(scored_PSMs[1:last_val])), DataFrame(@view(chromatograms[1:rt_idx]))
 end
 
 function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
