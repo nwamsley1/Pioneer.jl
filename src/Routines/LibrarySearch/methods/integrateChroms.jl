@@ -387,6 +387,10 @@ function integratePrecursorMS2(chrom::SubDataFrame{DataFrame, DataFrames.Index, 
 end
 
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
+                                linsolve::LinearSolve.LinearCache,
+                                t::Vector{Float32},
+                                u::Vector{Float32},
+                                u2::Vector{Float32},
                                 state::GD_state{HuberParams{U}, V, I, J}, 
                                 gauss_quad_x::Vector{Float64}, 
                                 gauss_quad_w::Vector{Float64}; 
@@ -407,20 +411,20 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                         max_scans::Int64)
         half_max_scans = ceil(Int64, max_scans/2)
         s_intensities = intensities#savitzky_golay(intensities, 11, 4).y
-        s_intensities = savitzky_golay(intensities, 11, 4).y
+        s_intensities = savitzky_golay(intensities, 9, 4).y
         best_scan = argmax(s_intensities)
         max_intensity = maximum(s_intensities)
-        s_2deriv = savitzky_golay(chrom.intensity, 11, 4, deriv = 2).y
+        s_2deriv = savitzky_golay(chrom.intensity, 9, 4, deriv = 2).y
         start, stop = 1, 1
-        m = 1
-        for i in range(best_scan, length(s_2deriv))
-            if s_2deriv[i] > 0
+        m = 0
+        for i in range(best_scan+1, length(s_2deriv))
+            if (s_2deriv[i-1] > 0) & (s_2deriv[i]<0)
                 stop = min(i + m, length(s_2deriv))
                 break
             end
         end
-        for i in reverse(range(1, best_scan))
-            if s_2deriv[i] > 0
+        for i in reverse(range(2, best_scan))
+            if (s_2deriv[i] > 0) & (s_2deriv[i - 1]<0)
                 start = max(i - m, 1)
                 break
             end
@@ -466,7 +470,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                 upper_bounds,
                 tol = 1e-4, 
                 max_iter = 300, 
-                δ = 1e-4,#1e-3, #Huber loss parameter. 
+                δ = 1e-5,#1e-3, #Huber loss parameter. 
                 α=Float64(α),
                 β1 = 0.9,
                 β2 = 0.999,
@@ -511,8 +515,9 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         #plot!(state.t[1:mi][state.mask[1:mi]], state.data[1:mi][state.mask[1:mi]], seriestype=:scatter, alpha = 0.5)
         xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
         plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
-        start = max(best_scan - 9, 1)
-        stop = min(best_scan + 9, length(chrom.rt))
+        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]])
+        start = max(best_scan - 18, 1)
+        stop = min(best_scan + 18, length(chrom.rt))
         plot!(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
         s_deriv = savitzky_golay(chrom.intensity, 11, 4, deriv = 2).y
         plot!(chrom.rt[start:stop], s_deriv[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
