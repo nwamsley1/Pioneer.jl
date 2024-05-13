@@ -41,7 +41,7 @@ end
 
 function getWittakerHendersonDesignMat(n::Int64, λ::AbstractFloat)
     n < 3 ? throw(ArgumentError("n must be greater than 2")) : nothing
-    λ <= 0 ? throw(ArgumentError("λ must be greater than zero ")) : nothing
+    #λ <= 0 ? throw(ArgumentError("λ must be greater than zero ")) : nothing
     D = secondOrderFiniteDiffMatrix(n, dtype = eltype(λ))
     D2 = transpose(D)*D
     return λ.*D2 + I

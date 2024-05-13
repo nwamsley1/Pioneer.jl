@@ -388,65 +388,91 @@ end
 
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
                                 linsolve::LinearSolve.LinearCache,
-                                t::Vector{Float32},
-                                u::Vector{Float32},
                                 u2::Vector{Float32},
                                 state::GD_state{HuberParams{U}, V, I, J}, 
                                 gauss_quad_x::Vector{Float64}, 
                                 gauss_quad_w::Vector{Float64}; 
-                                intensity_filter_fraction::Float32 = 0.1f0, 
                                 α::Float32 = 0.01f0, 
-                                half_width_at_α::Float32 = 0.15f0,
-                                min_prob = 0f0,
-                                max_scan_gap = 0.2f0, #Needs to be between 3 and4 cycles. 
-                                max_peak_width = 1.0f0,
+                                height_at_integration_width = 0.001f0,
                                 isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
     
     #########
     #Helper Functions  
     #########
-    function fillState!(state::GD_state{HuberParams{Float32}, Float32, Int64, Int64}, 
-                        rt::AbstractVector{Float16}, 
-                        intensities::AbstractVector{Float32},
-                        max_scans::Int64)
-        half_max_scans = ceil(Int64, max_scans/2)
-        s_intensities = intensities#savitzky_golay(intensities, 11, 4).y
-        s_intensities = savitzky_golay(intensities, 9, 4).y
-        best_scan = argmax(s_intensities)
-        max_intensity = maximum(s_intensities)
-        s_2deriv = savitzky_golay(chrom.intensity, 9, 4, deriv = 2).y
+    function WHSmooth!( linsolve::LinearSolve.LinearCache, 
+                        intensities::AbstractVector{Float32})
+        #Reset linsolve and second derivative 
+        @inbounds for i in range(1, length(linsolve.b))
+            linsolve.b[i] = zero(Float32)
+            linsolve.u[i] = zero(Float32)
+            u2[i] = zero(Float32)
+        end
+        #Copy data to linsolve
+        @inbounds for i in range(1, size(chrom, 1))
+            linsolve.b[i] = intensities[i]
+        end
+
+        #WH smoothing 
+        solve!(linsolve)
+
+        #Best scan is the most intense 
+        best_scan = argmax(linsolve.b)
+        
+        return best_scan, linsolve.b[best_scan]
+    end
+
+    function fillU2!(
+        u2::Vector{Float32},
+        u::Vector{Float32})
+        #Get second-order descrete derivative 
+        u2[1], u2[end] = zero(Float32), zero(Float32)
+        @inbounds for i in range(2, length(linsolve.b) - 1)
+            u2[i] = u[i + 1] - 2*u[i] + u[i - 1]
+        end
+
+    end
+
+    function getIntegrationBounds!(u2::Vector{Float32},
+                                   best_scan::Int64)
         start, stop = 1, 1
         m = 0
-        for i in range(best_scan+1, length(s_2deriv))
-            if (s_2deriv[i-1] > 0) & (s_2deriv[i]<0)
-                stop = min(i + m, length(s_2deriv))
+        start_search, stop_search = best_scan + 1, best_scan - 1
+        for i in range(start_search, length(u2))
+            if (u2[i-1] > 0) & (u2[i]<0)
+                stop = min(i+1, length(u2))
                 break
             end
         end
-        for i in reverse(range(2, best_scan))
-            if (s_2deriv[i] > 0) & (s_2deriv[i - 1]<0)
-                start = max(i - m, 1)
+        for i in reverse(range(2, stop_search))
+            if (u2[i] > 0) & (u2[i - 1]<0)
+                start = max(i-1, 1)
                 break
             end
         end
-        println("start $start, stop $stop")
 
+        return range( min(best_scan - 3, start), max(stop, best_scan + 3))
+    end
 
-        #scan_range = range(
-        #    max(1, best_scan - half_max_scans + 1),
-        #    min(length(intensities), best_scan + half_max_scans - 1)
-        #)
-        scan_range = range(start, stop)
-        start_rt = rt[first(scan_range)]
-        rt_width = rt[last(scan_range)] - rt[first(scan_range)]
-        state.max_index = 0
+    function fillState!(state::GD_state{HuberParams{Float32}, Float32, Int64, Int64},
+                        linsolve::LinearSolve.LinearCache, 
+                        rt::AbstractVector{Float16},
+                        start::Int64, 
+                        stop::Int64,
+                        best_scan::Int64
+                        )
 
-        for i in scan_range 
-            state.max_index += 1
-            state.t[state.max_index] = Float32((rt[i] - start_rt)/rt_width)
-            state.data[state.max_index] = max(s_intensities[i]/max_intensity, zero(Float32))
+        start_rt, best_rt = rt[start], rt[best_scan]
+        rt_width = chrom[stop,:rt] - start_rt
+        norm_factor = maximum(linsolve.u)
+        for i in range(1, stop - start + 1)
+            n = start + i - 1
+            state.t[i] = (chrom[n,:rt] - start_rt)/rt_width
+
+            state.data[i] = linsolve.u[n]/norm_factor
         end
-        return best_scan, max_intensity, start_rt, rt_width, scan_range, Float32((rt[best_scan] - start_rt)/rt_width)
+        state.max_index = stop - start + 1
+        best_rt = Float32((best_rt - start_rt)/rt_width)
+        return norm_factor, start_rt, rt_width, best_rt
     end
 
     function fitEGH(state::GD_state{HuberParams{T}, U, I, J}, 
@@ -477,60 +503,115 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                 ϵ = 1e-8)
         
     end
-    
-    T = eltype(chrom.intensity)
 
-    ##########
-    #Initialize state with observed data 
-    #max_peak_width = 1.0f0
-    #best_height, best_scan = getBestPSM(chrom.weight, chrom.topn, chrom.y_count, min_prob)
-    #norm_factor = best_height 
-    println("state.t[1:9] ", state.t[1:20])
-    best_scan, norm_factor, start_rt, rt_norm, scan_range, best_rt = fillState!(state, chrom[!,:rt], chrom[!,:intensity], 18)
-    println("state.t[1:9] ", state.t[1:20])
-    println("scan_range $scan_range")
-    #Fit EGH Curve to data 
-    half_width_at_α = Float32((chrom[best_scan+1,:rt] - chrom[best_scan-1,:rt])/2)
-    println(" half_width_at_α ",  half_width_at_α)
-    println("α ",  α)
-    fitEGH(state, 
-    #HuberParams(T(0.001), T(0), T(-1), T(0.75)),
-    #HuberParams(T(1), T(Inf), T(1), T(1.25)),
-    HuberParams(T(0.001), T(0), T(-1), T(0.75)),
-    HuberParams(T(1),  T(Inf), T(1), T(1.25)),
-    #HuberParams(T(-Inf), T(0), T(-Inf), T(0.75)),
-    #HuberParams(T(-Inf), T(Inf), T(Inf), T(1.25)),
-    α,
-    half_width_at_α,
-    best_rt
+    function getPeakProperties(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+        points_above_FWHM = zero(Int32)
+        points_above_FWHM_01 = zero(Int32)
+        for i in range(1, state.max_index)
+            intensity = state.data[i]
+            if intensity > (state.params.H*0.5)
+                points_above_FWHM += one(Int32)
+            end
+            if intensity > (state.params.H*0.01)
+                points_above_FWHM_01 += one(Int32)
+            end 
+        end
+
+        FWHM = getFWHM(state, 0.5)
+        FWHM_01 = getFWHM(state, 0.01)
+
+        return FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01
+    end
+    #Whittaker Henderson Smoothing
+    best_scan, max_intensity = WHSmooth!(
+        linsolve,
+        chrom[!,:intensity]
+    )
+    #Second discrete derivative of smoothed data
+    fillU2!(
+        u2,
+        linsolve.u
+    )
+    
+    #Integration boundaries based on smoothed second derivative 
+    scan_range = getIntegrationBounds!(
+        u2,
+        best_scan
     )
 
-    if isplot
-        println("TEST2")
-        #p = plot()
-        mi = state.max_index
-        #plot(state.t[1:mi], state.data[1:mi], seriestype=:scatter, show = true)
+    #Baseline subtraction?
+    baseline = minimum(linsolve.u[scan_range])
+    lmin,li = typemax(Float32),first(scan_range)
+    for i in range(first(scan_range), best_scan)
+        if linsolve.u[i] < lmin
+            lmin = linsolve.u[i]
+            li = i
+        end
+    end
 
-        plot(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true)
-        #plot!(state.t[1:mi][state.mask[1:mi]], state.data[1:mi][state.mask[1:mi]], seriestype=:scatter, alpha = 0.5)
-        xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
-        plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
-        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]])
+    rmin,ri = typemax(Float32),last(scan_range)
+    for i in range(best_scan, last(scan_range))
+        if linsolve.u[i] < rmin
+            rmin = linsolve.u[i]
+            ri = i
+        end
+    end
+
+    h = (rmin - lmin)/(ri - li)
+    n = 0
+    println("rmin $rmin, lmin $lmin, rt $ri, li $li")
+    for i in range(1, length(linsolve.u))
+        linsolve.u[i] = linsolve.u[i]-(lmin + (i - li)*h)
+    end
+
+    #File `state` to fit EGH function. Get the inensity, and rt normalization factors 
+    norm_factor, start_rt, rt_norm, best_rt = fillState!(
+        state,
+        linsolve,
+        chrom[!,:rt],
+        first(scan_range),
+        last(scan_range),
+        best_scan
+    )
+    println("rt_norm $rt_norm")
+    println(Float32((chrom[best_scan+1,:rt] - chrom[best_scan-1,:rt]))*3)
+    println(Float32(((chrom[best_scan+1,:rt]-start_rt)/rt_norm - (chrom[best_scan-1,:rt] - start_rt)/rt_norm)/2))
+    #Initial estimate for FWHM
+    half_width_at_α = Float32((chrom[best_scan+1,:rt] - chrom[best_scan-1,:rt]))*3
+    half_width_at_α = Float32(((chrom[best_scan+1,:rt]-start_rt)/rt_norm - (chrom[best_scan-1,:rt] - start_rt)/rt_norm)/2)
+    T = eltype(chrom.intensity)
+    ##########
+    #Fit EGH to data. 
+    fitEGH(state, 
+            HuberParams(T(0.001), T(0), T(-1), T(0.6)),
+            HuberParams(T(1),  T(Inf), T(1), T(1.4)),
+            α,
+            half_width_at_α,
+            best_rt
+            )
+
+    if isplot
+        mi = state.max_index
         start = max(best_scan - 18, 1)
         stop = min(best_scan + 18, length(chrom.rt))
-        plot!(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
-        s_deriv = savitzky_golay(chrom.intensity, 11, 4, deriv = 2).y
-        plot!(chrom.rt[start:stop], s_deriv[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
+        plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
+        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]])
+        plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true)
+        xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
+        plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
+        plot!(chrom.rt[start:stop], u2[start:stop])
         println("area = ", norm_factor*Integrate(state, gauss_quad_x, gauss_quad_w, α = α))
         println("norm_factor ", norm_factor)
         println("H ", norm_factor*state.params.H)
     end
-    ##########
-    #Fit EGH Curve to data
-    #peak_area = Integrate(state, gauss_quad_x, gauss_quad_w, α = α)
-   # 
-   #GOF, FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = sumResiduals(state)
-    return nothing
+
+    peak_area = norm_factor*Integrate(state, 
+                                        gx,
+                                        gw, 
+                                        α = height_at_integration_width)
+
+    FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = getPeakProperties(state)
+    return peak_area, norm_factor, max_intensity,  FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 
 end
 function integratePrecursors(grouped_precursor_df::GroupedDataFrame{DataFrame}; 
                                 n_quadrature_nodes::Int64 = 100, 

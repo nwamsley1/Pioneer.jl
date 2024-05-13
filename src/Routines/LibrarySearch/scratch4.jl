@@ -21,6 +21,12 @@ state = GD_state(
     N #max index
     );
 
+    y = subchrom[1][!,:intensity]
+b = zeros(Float32, 200)
+A = getWittakerHendersonDesignMat(length(b), 0.5f0)
+prob = LinearProblem(A, b)
+linsolve = init(prob)
+
 integratePrecursorMS2(MS2_CHROMS[(precursor_idx = best_precursors[N,1],iso_rank = best_precursors[N,2])],
 state,
 gx::Vector{Float64},
@@ -77,7 +83,14 @@ julia> N
 10153
 =#
 #wholechrom = gchroms[(precursor_idx = best_precursors[N,1],)]
-subchrom = groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank)
+
+b = zeros(Float32, 200);
+A = getWittakerHendersonDesignMat(length(b), 1.0f0);
+prob = LinearProblem(A, b);
+linsolve = init(prob);
+u2 = zeros(Float32, length(linsolve.b));
+
+subchrom = groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank);
 
 dtype = Float32;
 gx, gw = gausslegendre(100);
@@ -90,13 +103,15 @@ state = GD_state(
     0, #number of iterations
     N #max index
     );
+
 integrateChrom(subchrom[1],
+linsolve,
+u2,
 state,
 gx::Vector{Float64},
 gw::Vector{Float64},
-intensity_filter_fraction =  Float32(params_[:integration_params]["intensity_filter_threshold"]),
 α = 0.01f0,
-half_width_at_α = 0.025f0,
+height_at_integration_width = 0.001f0,
 isplot = true
 );
 N += 1
