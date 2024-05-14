@@ -218,25 +218,39 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             complex_spectral_scores,
             precursor_weights,
             );
+
+        #Format Chromatograms 
         chroms = vcat([last(x) for x in RESULT]...);
         sort!(chroms,:rt)
-        PSMS = vcat([first(x) for x in RESULT]...);
-        addSecondSearchColumns!(PSMS, 
+        getIsoRanks!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
+        gchroms = groupby(chroms,[:precursor_idx,:iso_rank])
+
+        #Format spectral scores 
+        psms = vcat([first(x) for x in RESULT]...);
+        addSecondSearchColumns!(psms, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
                                         precID_to_cv_fold);
-        addIntegrationFeatures!(PSMS);
-        getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
-        PSMS[!,:prob] = zeros(Float32, size(PSMS, 1));
-        scoreSecondSearchPSMs!(PSMS,features);
-        MS2_CHROMS = groupby(PSMS, [:precursor_idx,:iso_rank]);
-        integratePrecursors(MS2_CHROMS, 
-                            n_quadrature_nodes = Int64(params_[:integration_params]["n_quadrature_nodes"]),
-                            intensity_filter_fraction = Float32(params_[:integration_params]["intensity_filter_threshold"]),
-                            α = 0.001f0);
-        addPostIntegrationFeatures!(PSMS, 
+        #addIntegrationFeatures!(psms);
+        getIsoRanks!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
+        #getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
+        psms[!,:prob] = zeros(Float32, size(psms, 1));
+        scoreSecondSearchPSMs!(psms,features);
+        spectral_scores = groupby(psms, [:precursor_idx,:iso_rank]);
+
+        precs_to_integrate = keys(spectral_scores) ∩ keys(gchroms)
+        n_precs = length(precs_to_integrate)
+        psms_integrated = initQuantScans(precs_to_integrate)
+
+
+        integratePrecursors(spectral_scores,
+                            gchroms,
+                            precs_to_integrate,
+                            psms_integrated)
+        filter!(x->!ismissing(x.scan_idx), psms_integrated)
+        addPostIntegrationFeatures!(psms_integrated, 
                                     MS_TABLE, 
                                     prosit_lib["precursors"][:sequence],
                                     prosit_lib["precursors"][:mz],
@@ -248,8 +262,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                     RT_iRT,
                                     precID_to_iRT
                                     );
-        PSMS[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
-        BPSMS[ms_file_idx] = PSMS;
+        psms_integrated[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
+        BPSMS[ms_file_idx] = psms_integrated;
 end
 
 best_psms = vcat(values(BPSMS)...)

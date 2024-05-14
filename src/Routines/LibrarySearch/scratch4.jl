@@ -90,7 +90,7 @@ prob = LinearProblem(A, b);
 linsolve = init(prob);
 u2 = zeros(Float32, length(linsolve.b));
 
-subchrom = groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank);
+subchrom = gchroms[(precursor_idx = 0x000c4cc1, iso_rank = (0x00, 0x03))]#groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank);
 
 dtype = Float32;
 gx, gw = gausslegendre(100);
@@ -104,16 +104,14 @@ state = GD_state(
     N #max index
     );
 
-integrateChrom(subchrom[1],
+integrateChrom(subchrom,
 linsolve,
 u2,
 state,
-gx::Vector{Float64},
-gw::Vector{Float64},
 α = 0.01f0,
 height_at_integration_width = 0.001f0,
 isplot = true
-);
+)
 N += 1
 
 t = subchrom[1][!,:rt]
@@ -200,4 +198,69 @@ end
 getIsoRanks!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
 
 
+function initQuantScans(
+    precs_to_integrate::Vector{DataFrames.GroupKey{GroupedDataFrame{DataFrame}}},
+    )
 
+    new_cols = [
+        (:best_rank,                UInt8)
+        (:topn,                     UInt8)
+        (:longest_y,                UInt8)
+        (:b_count,                  UInt8)
+        (:y_count,                  UInt8)
+        (:isotope_count,            UInt8)
+        (:total_ions,               UInt8)
+        (:poisson,                  Float16)
+        (:hyperscore,               Float16)
+        (:log2_intensity_explained,  Float16)
+        (:error,                    Float32)
+        (:error_norm,               Float32)
+
+        (:scribe,                   Float16)
+        (:scribe_fitted,            Float16)
+        (:city_block,               Float16)
+        (:city_block_fitted,        Float16)
+        (:spectral_contrast,        Float16)
+        (:matched_ratio,            Float16)
+        (:entropy_score,            Float16)
+        
+
+        (:weight,                   Float32)
+        (:peak_area,                Float32)
+        (:trapezoid_area,           Float32)
+        (:FWHM,                     Float16)
+        (:FWHM_01,                  Float16)
+        (:points_above_FWHM,        UInt16)
+        (:points_above_FWHM_01,     UInt16)
+        (:assymetry,                Float16)
+        (:base_width_min,           Float16)
+
+        (:max_score,                Float16)
+        (:mean_score,               Float16)
+        (:max_entropy,              Float16)
+        (:max_scribe_score,         Float16)
+        (:max_city_fitted,          Float16)
+        (:mean_city_fitted,         Float16)
+        (:y_ions_sum,               UInt16)
+        (:max_y_ions,               UInt16)
+        (:max_matched_ratio,        Float16)
+
+        (:cv_fold,                  UInt8)
+        (:target,                   Bool)
+        (:RT,                       Float32)
+        (:precursor_idx,            UInt32)
+        #(:isotopes_captured,        Tuple{UInt8, UInt8})
+        (:ms_file_idx,              UInt32)
+        (:scan_idx,                 Union{Missing, UInt32})
+        ];
+    
+        psms = DataFrame()
+        N = length(precs_to_integrate)
+        for column in new_cols
+            col_type = last(column);
+            col_name = first(column)
+            psms[!,col_name] = zeros(col_type, N)
+        end
+        psms[!,:isotope_captures] = Vector{Tuple{UInt8, UInt8}}(undef, N)
+        return psms
+end

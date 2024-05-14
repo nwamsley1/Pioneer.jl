@@ -292,12 +292,12 @@ function addSecondSearchColumns!(psms::DataFrame,
     N = size(psms, 1);
     decoys = zeros(Bool, N);
     RT = zeros(Float32, N);
-    TIC = zeros(Float16, N);
+    #TIC = zeros(Float16, N);
     total_ions = zeros(UInt16, N);
     err_norm = zeros(Float16, N);
     targets = zeros(Bool, N);
     prec_charges = zeros(UInt8, N);
-    prec_mzs = zeros(Float32, N);
+    #prec_mzs = zeros(Float32, N);
     cv_fold = zeros(UInt8, N);
     scan_idxs::Vector{UInt32} = psms[!,:scan_idx]
     prec_idxs::Vector{UInt32} = psms[!,:precursor_idx]
@@ -306,7 +306,7 @@ function addSecondSearchColumns!(psms::DataFrame,
     isotope_count::Vector{UInt8} = psms[!,:isotope_count]
     error::Vector{Float32} = psms[!,:error]
     #PSMs[!,:total_ions]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     matched_ratio::Vector{Float16} = psms[!,:matched_ratio]
 
@@ -324,8 +324,8 @@ function addSecondSearchColumns!(psms::DataFrame,
                 targets[i] = decoys[i] == false
                 RT[i] = Float32(scan_retention_time[scan_idx]);
                 prec_charges[i] = prec_charge[prec_idx];
-                prec_mzs[i] = prec_mz[prec_idx];
-                TIC[i] = Float16(log2(tic[scan_idx]));
+                #prec_mzs[i] = prec_mz[prec_idx];
+                #TIC[i] = Float16(log2(tic[scan_idx]));
                 total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
                 err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
                 if isinf(matched_ratio[i])
@@ -339,15 +339,15 @@ function addSecondSearchColumns!(psms::DataFrame,
     psms[!,:matched_ratio] = matched_ratio
     psms[!,:decoy] = decoys
     psms[!,:RT] = RT
-    psms[!,:TIC] = TIC
+    #psms[!,:TIC] = TIC
     psms[!,:total_ions] = total_ions
     psms[!,:err_norm] = err_norm
     psms[!,:target] = targets
     psms[!,:charge] = prec_charges
-    psms[!,:prec_mz] = prec_mzs
+    #psms[!,:prec_mz] = prec_mzs
     psms[!,:cv_fold] = cv_fold
 
-    psms[!,:best_scan] = zeros(Bool, N)
+    #psms[!,:best_scan] = zeros(Bool, N)
     psms[!,:score] = zeros(Float32, size(psms, 1))
     psms[!,:intercept] = ones(Float16, size(psms, 1))
     #######
@@ -481,9 +481,9 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                                     rt_to_irt_interp::Any,
                                     prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
 
-    filter!(x -> x.best_scan, psms);
+    #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);
-    filter!(x->x.data_points>0, psms)
+    #filter!(x->x.data_points>0, psms)
     ###########################
     #Allocate new columns
     #println("TEST")
@@ -502,7 +502,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     #log2_base_peak_intensity = zeros(Float16, N);
     prec_charges = zeros(UInt8, N)
     sequence_length = zeros(UInt8, N);
-    b_y_overlap = zeros(Bool, N);
+    #b_y_overlap = zeros(Bool, N);
     spectrum_peak_count = zeros(Float16, N);
     prec_mzs = zeros(Float32, size(psms, 1));
     Mox = zeros(UInt8, N);
@@ -512,8 +512,8 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
     masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
-    longest_y::Vector{UInt8} = psms[!,:longest_y]
-    longest_b::Vector{UInt8} = psms[!,:longest_b]
+    #longest_y::Vector{UInt8} = psms[!,:longest_y]
+    #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:RT]
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
@@ -559,7 +559,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
-                b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
+                #b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
 
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
          
@@ -582,7 +582,8 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     psms[!,:tic] = TIC
     psms[!,:adjusted_intensity_explained] = adjusted_intensity_explained
     psms[!,:charge] = prec_charges
-    psms[!,:b_y_overlap] = b_y_overlap
+    
+    #psms[!,:b_y_overlap] = b_y_overlap
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:prec_mz] = prec_mzs
     psms[!,:ms_file_idx] .= ms_file_idx
