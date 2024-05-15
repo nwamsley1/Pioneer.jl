@@ -47,7 +47,7 @@ function getWittakerHendersonDesignMat(n::Int64, λ::AbstractFloat)
     return λ.*D2 + I
 end
 
-
+#=
 subchrom = groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank)
 
 y = subchrom[1][!,:intensity]
@@ -73,3 +73,4 @@ plot!(y2, alpha = 0.5, seriestype=:scatter)
 
 #plot!(savitzky_golay(y, 7, 3).y, alpha = 0.5, seriestype=:scatter)
 N += 1
+=#

@@ -389,7 +389,9 @@ end
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
                                 linsolve::LinearSolve.LinearCache,
                                 u2::Vector{Float32},
-                                state::GD_state{HuberParams{U}, V, I, J}; 
+                                state::GD_state{HuberParams{U}, V, I, J},
+                                gw::Vector{Float64},
+                                gx::Vector{Float64}; 
                                 α::Float32 = 0.01f0, 
                                 height_at_integration_width = 0.001f0,
                                 isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
@@ -749,29 +751,27 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                              chromatograms::GroupedDataFrame{DataFrame},
                              precs_to_integrate::Vector{DataFrames.GroupKey{GroupedDataFrame{DataFrame}}},
                              psms_integrated::DataFrame; 
-                            n_quadrature_nodes::Int64 = 100)
+                             λ::Float32 = 1.0f0,
+                             α::Float32 = 0.01f0,
+                             height_at_integration_width::Float32 = 0.001f0,
+                             n_quadrature_nodes::Int64 = 100)
 
     gx, gw = gausslegendre(n_quadrature_nodes)
-    N = 1000
-    #dtype = eltype(grouped_precursor_df[1].weight)
+    dtype = eltype(spectral_scores[1].weight)
     thread_tasks = partitionThreadTasks(length(precs_to_integrate), 10, Threads.nthreads())
 
-    max_len = 0
+    N = 0
     for i in range(1, length(precs_to_integrate))
-        if size(chromatograms[i], 1) > max_len
-            max_len =  size(chromatograms[i], 1)
+        if size(chromatograms[i], 1) > N
+            N =  size(chromatograms[i], 1)
         end
     end
-    println("max_len $max_len")
 
-
-
-    #for i in ProgressBar(range(1, length(grouped_precursor_df)))
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
 
-            b = zeros(Float32, max_len);
-            A = getWittakerHendersonDesignMat(length(b), 1.0f0);
+            b = zeros(Float32, N);
+            A = getWittakerHendersonDesignMat(length(b), λ);
             prob = LinearProblem(A, b);
             linsolve = init(prob);
             u2 = zeros(Float32, length(linsolve.b));
@@ -787,13 +787,18 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                 )
             for i in chunk
                 prec_key = precs_to_integrate[i]
+
+                #Chromatograms must be sorted by retention time 
+                chroms = chromatograms[(precursor_idx = prec_key[:precursor_idx], isotopes_captured = prec_key[:isotopes_captured])]
+                sort!(chroms,:rt, alg = QuickSort)
                 best_scan_idx, peak_area, trapezoid_area, max_intensity, FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = integrateChrom(
-                                chromatograms[(precursor_idx = prec_key[:precursor_idx], iso_rank = prec_key[:iso_rank])],
+                                chroms,
                                 linsolve,
                                 u2,
                                 state,
-                                α = 0.01f0,
-                                height_at_integration_width = 0.001f0,
+                                gw,gx,
+                                α = α,
+                                height_at_integration_width = height_at_integration_width,
                                 isplot = false
                                 );
                 #println("peak_area $peak_area i $i")
@@ -806,11 +811,13 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                 psms_integrated[i,:points_above_FWHM] = points_above_FWHM
                 psms_integrated[i,:points_above_FWHM_01] = points_above_FWHM_01
                 psms_integrated[i,:precursor_idx] = prec_key[:precursor_idx]
-                psms_integrated[i,:isotopes_captures] = prec_key[:iso_rank]
+                psms_integrated[i,:isotopes_captured] = prec_key[:isotopes_captured]
                 reset!(state)
 
 
-                psms = spectral_scores[(precursor_idx = prec_key[:precursor_idx], iso_rank = prec_key[:iso_rank])]
+                psms = spectral_scores[(precursor_idx = prec_key[:precursor_idx], isotopes_captured = prec_key[:isotopes_captured])]
+                sort!(psms, :RT, alg = QuickSort)
+                
                 best_scan = missing 
                 for i in range(1, size(psms, 1))
                     if psms[i,:scan_idx] == best_scan_idx

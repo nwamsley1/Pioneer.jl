@@ -117,6 +117,8 @@ end
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
 function selectRTIndexedTransitions!(
                             transitions::Vector{DetailedFrag{Float32}}, 
+                            precs_temp::Vector{UInt32},
+                            precs_temp_size::Int64,
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             prec_mzs::AbstractArray{Float32},
                             prec_charges::AbstractArray{UInt8},
@@ -138,8 +140,10 @@ function selectRTIndexedTransitions!(
         start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
+            precs_temp_size += 1
             n += 1 #Keep track of number of precursors 
             prec_idx = first(precs[i])
+            precs_temp[precs_temp_size] = prec_idx
             prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
             mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
             mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
@@ -149,20 +153,20 @@ function selectRTIndexedTransitions!(
 
             #Which precursor isotopes where captured in the quadrupole isolation window? 
             #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
-                      transition_idx = @inline fillTransitionList!(transitions, 
-                                                        getPrecFragRange(library_fragment_lookup, prec_idx),
-                                                        getFragments(library_fragment_lookup),
-                                                        prec_mz,
-                                                        prec_charge,
-                                                        prec_sulfur_count,
-                                                        transition_idx,
-                                                        isotopes, 
-                                                        iso_splines, 
-                                                        min_prec_mz,
-                                                        max_prec_mz,
-                                                        frag_mz_bounds,
-                                                        block_size
-                                                        )
+            transition_idx = @inline fillTransitionList!(transitions, 
+                                            getPrecFragRange(library_fragment_lookup, prec_idx),
+                                            getFragments(library_fragment_lookup),
+                                            prec_mz,
+                                            prec_charge,
+                                            prec_sulfur_count,
+                                            transition_idx,
+                                            isotopes, 
+                                            iso_splines, 
+                                            min_prec_mz,
+                                            max_prec_mz,
+                                            frag_mz_bounds,
+                                            block_size
+                                            )
         end
     end
 
@@ -171,7 +175,7 @@ function selectRTIndexedTransitions!(
           alg=PartialQuickSort(1:transition_idx))
 
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
-    return transition_idx, n
+    return transition_idx, n, precs_temp_size
 end
 
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 

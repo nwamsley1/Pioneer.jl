@@ -624,6 +624,7 @@ function quantPSMs(
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
                     iso_splines::IsotopeSplineModel,
+                    chromatograms::Vector{ChromObject},
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
@@ -636,7 +637,6 @@ function quantPSMs(
                     min_max_ppm::Tuple{Float32, Float32},
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
-                    quadrupole_isolation_width::Float64,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
                     spec_order::Set{Int64},
@@ -657,36 +657,28 @@ function quantPSMs(
 
     rt_idx = 0
     prec_temp_size = 0
-    chromatograms = Vector{ChromObject}(undef, 100000000)
     precs_temp = Vector{UInt32}(undef, 50000)
-    #test_n = 0
-    #n_templates = zeros(Int64, length(thread_task))
     ##########
     #Iterate through spectra
-    for i in thread_task
-        if i == 0 
+    for scan_idx in thread_task
+        if scan_idx == 0 
             continue
         end
-        if i > length(spectra[:masses])
+        if scan_idx > length(spectra[:masses])
             continue
         end
-        #if i != 75694
-        #    continue
-        #end
         ###########
         #Scan Filtering
-        msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
+        msn = spectra[:msOrder][scan_idx] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
         if (msn < 2)
             cycle_idx += 1
         end
         #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-        #a = (getHigh(getRTBin(rt_index, rt_bin_high)) + irt_tol < spectra[:retentionTime][i]) 
-        #b = (getLow(getRTBin(rt_index, rt_bin_high)) - irt_tol > spectra[:retentionTime][i]) 
-        rt = spectra[:retentionTime][i]
+        rt = spectra[:retentionTime][scan_idx]
         rt_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         rt_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-        prec_mz_string_new = string(spectra[:centerMass][i])
+        prec_mz_string_new = string(spectra[:centerMass][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:max(length(prec_mz_string_new), 6)]
 
         if (rt_start_new != rt_start) | (rt_stop_new != rt_stop) | (prec_mz_string_new != prec_mz_string)
@@ -697,21 +689,11 @@ function quantPSMs(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             #test_n += 1
-            prec_temp_size = 0
-            for idx in rt_start:rt_stop
-                precs = rt_index.rt_bins[idx].prec
-                min_prec_mz =   spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0
-                max_prec_mz =   spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0
-                start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
-                stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
-        
-                for i in start:stop
-                    prec_temp_size += 1
-                    precs_temp[prec_temp_size] = first(precs[i])
-                end
-            end
-            ion_idx, prec_idx = selectRTIndexedTransitions!(
+            precs_temp_size = 0
+            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
                                             ionTemplates,
+                                            precs_temp,
+                                            precs_temp_size,
                                             library_fragment_lookup,
                                             precursors[:mz],
                                             precursors[:prec_charge],
@@ -721,10 +703,10 @@ function quantPSMs(
                                             rt_index,
                                             rt_start,
                                             rt_stop,
-                                            spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
-                                            spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0,
+                                            spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
+                                            spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
                                             (
-                                                spectra[:lowMass][i], spectra[:highMass][i]
+                                                spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
                                             ),
                                             isotope_err_bounds,
                                             10000)
@@ -735,16 +717,14 @@ function quantPSMs(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][i], 
-                                        spectra[:intensities][i], 
+                                        spectra[:masses][scan_idx], 
+                                        spectra[:intensities][scan_idx], 
                                         frag_ppm_err,
                                         mass_err_model,
                                         min_max_ppm,
-                                        spectra[:highMass][i],
-                                        UInt32(i), 
+                                        spectra[:highMass][scan_idx],
+                                        UInt32(scan_idx), 
                                         ms_file_idx)
-        #println([x for x in ionMisses[1:nmisses] if (x.prec_id==0x00a2e2fa)])
-        #println("any zeros yet ?", any([iszero(getPredictedIntenisty(x)) for x in ionMisses[1:nmisses]]))
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
@@ -752,10 +732,7 @@ function quantPSMs(
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
-            #println("scan_idx $i")
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-            #return Hs
-            #return Hs
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
                 new_entries = IDtoCOL.size - length(_weights_) + 1000 
@@ -769,7 +746,6 @@ function quantPSMs(
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
             #Get initial residuals
-            #println("i  $i")
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
             solveHuber!(Hs, _residuals_, _weights_, 
@@ -783,30 +759,25 @@ function quantPSMs(
                             max_diff
                             );
             for j in range(1, prec_temp_size)
-
-                #if iszero(IDtoCOL[precs_temp[j]])
-                #    chromatograms[rt_idx] = ChromObject(
-                #        Float16(spectra[:retentionTime][i]),
-                #        zero(Float32),
-                #        i,
-                #        precs_temp[j]
-                #    )
                 if !iszero(IDtoCOL[precs_temp[j]])
                     rt_idx += 1
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][i]),
+                        Float16(spectra[:retentionTime][scan_idx]),
                         _weights_[IDtoCOL[precs_temp[j]]],
-                        i,
+                        scan_idx,
                         precs_temp[j]
                     )
                 else
                     rt_idx += 1
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][i]),
+                        Float16(spectra[:retentionTime][scan_idx]),
                         zero(Float32),
-                        i,
+                        scan_idx,
                         precs_temp[j]
                     )
+                end
+                if rt_idx + 1 > length(chromatograms)
+                    growChromObjects!(chromatograms, 500000)
                 end
 
             end
@@ -834,8 +805,8 @@ function quantPSMs(
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(spectra[:intensities][i])), 
-                i,
+                Float32(sum(spectra[:intensities][scan_idx])), 
+                scan_idx,
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
                 min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
@@ -845,35 +816,27 @@ function quantPSMs(
                 )
         else
             for j in range(1, prec_temp_size)
-
-                #if iszero(IDtoCOL[precs_temp[j]])
-                #    chromatograms[rt_idx] = ChromObject(
-                #        Float16(spectra[:retentionTime][i]),
-                #        zero(Float32),
-                #        i,
-                #        precs_temp[j]
-                #    )
-            rt_idx += 1
-            chromatograms[rt_idx] = ChromObject(
-                Float16(spectra[:retentionTime][i]),
-                zero(Float32),
-                i,
-                precs_temp[j]
-            )
+                rt_idx += 1
+                chromatograms[rt_idx] = ChromObject(
+                    Float16(spectra[:retentionTime][scan_idx]),
+                    zero(Float32),
+                    scan_idx,
+                    precs_temp[j]
+                )
+                if rt_idx + 1 > length(chromatograms)
+                    growChromObjects!(chromatograms, 500000)
+                end
             end
         end
         ##########
         #Reset pre-allocated arrays 
-        #n_templates[n] = Hs.n
         for i in range(1, Hs.n)
             unscored_PSMs[i] = eltype(unscored_PSMs)()
         end
-        #reset!(ionTemplates, ion_idx)
         reset!(IDtoCOL);
         reset!(Hs);
     end
-    #println("describe(n_templates) ", describe(n_templates))
-    #println("test_n $test_n")
+
     return DataFrame(@view(scored_PSMs[1:last_val])), DataFrame(@view(chromatograms[1:rt_idx]))
 end
 

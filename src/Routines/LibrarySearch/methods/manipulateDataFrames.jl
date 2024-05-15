@@ -395,54 +395,117 @@ function addIntegrationFeatures!(psms::DataFrame)
 
 end
 
-function getIsoRanks!(psms::DataFrame, 
-                        MS_TABLE::Arrow.Table,
-                        window_width::Float64)
+function getIsotopesCaptured!(chroms::DataFrame, 
+                        prec_charge::AbstractArray{UInt8},
+                        prec_mz::AbstractArray{Float32},
+                        MS_TABLE::Arrow.Table)
     #sum(MS2_CHROMS.weight.!=0.0)
-    psms[!,:iso_rank] = zeros(UInt8, size(psms, 1))
-
+    chroms[!,:isotopes_captured] = Vector{Tuple{UInt8, UInt8}}(undef, size(chroms, 1))
     
     tasks_per_thread = 5
-    chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that
+    chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
+    data_chunks = partition(1:size(chroms, 1), chunk_size) # partition your data into chunks that
 
     tasks = map(data_chunks) do chunk
+        #last_mz = 0.0f0
+        #last_prec_id = zero(UInt32)
+        #isotopes = (zero(UInt8), zero(UInt8))
         Threads.@spawn begin
             for i in chunk
-                charge = psms[i,:charge]
-                mz = psms[i,:prec_mz]
-                scan_id = psms[i,:scan_idx]
+                
+                prec_id = chroms[i,:precursor_idx]
+                mz = prec_mz[prec_id]
+                #if (abs(mz - last_mz)<1e-6) & (last_prec_id == prec_id)
+                #    chroms[i,:isotopes_captured] = isotopes
+                #    continue
+                #end
+                charge = prec_charge[prec_id]
+
+                scan_id = chroms[i,:scan_idx]
                 scan_mz = MS_TABLE[:centerMass][scan_id]
                 window_width = MS_TABLE[:isolationWidth][scan_id]
+
                 isotopes = getPrecursorIsotopeSet(mz, 
                                                     charge, 
                                                     Float32(scan_mz-window_width/2),
                                                     Float32(scan_mz+window_width/2) 
-                                                    )
-
-                
-                #rank = one(UInt8)
-                
-                rank = zero(UInt8)
-                
-                if iszero(first(isotopes))
-                    if last(isotopes) > 1
-                        rank = UInt8(1)
-                    elseif last(isotopes) == 1
-                        rank = UInt8(2)
-                    else
-                        rank = UInt8(3)
-                    end
-                else
-                    rank = UInt8(4)
-                end
-                
-                psms[i,:iso_rank] = rank
+                                                    )                
+                chroms[i,:isotopes_captured] = isotopes
+                #last_mz = mz
+                #last_prec_id = prec_id
             end
         end
     end
     fetch.(tasks)
     return nothing
+end
+
+
+function initQuantScans(
+    precs_to_integrate::Vector{DataFrames.GroupKey{GroupedDataFrame{DataFrame}}},
+    )
+
+    new_cols = [
+        (:best_rank,                UInt8)
+        (:topn,                     UInt8)
+        (:longest_y,                UInt8)
+        (:b_count,                  UInt8)
+        (:y_count,                  UInt8)
+        (:isotope_count,            UInt8)
+        (:total_ions,               UInt8)
+        (:poisson,                  Float16)
+        (:hyperscore,               Float16)
+        (:log2_intensity_explained,  Float16)
+        (:error,                    Float32)
+        (:error_norm,               Float32)
+
+        (:scribe,                   Float16)
+        (:scribe_fitted,            Float16)
+        (:city_block,               Float16)
+        (:city_block_fitted,        Float16)
+        (:spectral_contrast,        Float16)
+        (:matched_ratio,            Float16)
+        (:entropy_score,            Float16)
+        
+
+        (:weight,                   Float32)
+        (:peak_area,                Float32)
+        (:trapezoid_area,           Float32)
+        (:FWHM,                     Float16)
+        (:FWHM_01,                  Float16)
+        (:points_above_FWHM,        UInt16)
+        (:points_above_FWHM_01,     UInt16)
+        (:assymetry,                Float16)
+        (:base_width_min,           Float16)
+
+        (:max_score,                Float16)
+        (:mean_score,               Float16)
+        (:max_entropy,              Float16)
+        (:max_scribe_score,         Float16)
+        (:max_city_fitted,          Float16)
+        (:mean_city_fitted,         Float16)
+        (:y_ions_sum,               UInt16)
+        (:max_y_ions,               UInt16)
+        (:max_matched_ratio,        Float16)
+
+        (:cv_fold,                  UInt8)
+        (:target,                   Bool)
+        (:RT,                       Float32)
+        (:precursor_idx,            UInt32)
+        #(:isotopes_captured,        Tuple{UInt8, UInt8})
+        (:ms_file_idx,              UInt32)
+        (:scan_idx,                 Union{Missing, UInt32})
+        ];
+    
+        psms = DataFrame()
+        N = length(precs_to_integrate)
+        for column in new_cols
+            col_type = last(column);
+            col_name = first(column)
+            psms[!,col_name] = zeros(col_type, N)
+        end
+        psms[!,:isotopes_captured] = Vector{Tuple{UInt8, UInt8}}(undef, N)
+        return psms
 end
 
 function scoreSecondSearchPSMs!(psms::DataFrame, 

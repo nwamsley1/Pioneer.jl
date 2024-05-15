@@ -13,6 +13,7 @@ function quantitationSearch(
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
     iso_splines::IsotopeSplineModel,
+    chromatograms::Vector{Vector{ChromObject}},
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -33,6 +34,7 @@ function quantitationSearch(
         IDtoCOL,
         ionTemplates,
         iso_splines,
+        chromatograms,
         scored_PSMs,
         unscored_PSMs,
         spectral_scores,
@@ -57,7 +59,6 @@ function quantitationSearch(
         n_frag_isotopes = Int64(params[:quant_search_params]["n_frag_isotopes"]),
         max_best_rank = Int64(params[:quant_search_params]["max_best_rank"]),
 
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
         rt_index = rt_index,
         irt_tol = irt_tol,
     )
@@ -74,6 +75,7 @@ function quantitationSearch(
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
                     iso_splines::IsotopeSplineModel,
+                    chromatograms::Vector{Vector{ChromObject}},
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
@@ -98,7 +100,6 @@ function quantitationSearch(
                     min_max_ppm::Tuple{Float32, Float32} = (-Inf, Inf),
                     max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
-                    quadrupole_isolation_width::Float64 = 8.5,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     irt_tol::Float64 = Inf,
                     spec_order::Set{Int64} = Set(2)
@@ -148,6 +149,7 @@ function quantitationSearch(
                                 IDtoCOL[thread_id],
                                 ionTemplates[thread_id],
                                 iso_splines,
+                                chromatograms[thread_id],
                                 scored_PSMs[thread_id],
                                 unscored_PSMs[thread_id],
                                 spectral_scores[thread_id],
@@ -160,7 +162,6 @@ function quantitationSearch(
                                 min_max_ppm,
                                 max_best_rank,
                                 n_frag_isotopes,
-                                quadrupole_isolation_width,
                                 rt_index, 
                                 irt_tol,
                                 spec_order
@@ -180,39 +181,20 @@ features = [:intercept, :charge, :total_ions, :err_norm,
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    #=
-    @time PSMS = vcat(quantitationSearch(MS_TABLE, 
-                    prosit_lib["precursors"],
-                    prosit_lib["f_det"],
-                    RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
-                    UInt32(ms_file_idx), 
-                    frag_err_dist_dict[ms_file_idx],
-                    irt_errs[ms_file_idx],
-                    params_,  
-                    ionMatches,
-                    ionMisses,
-                    IDtoCOL,
-                    ionTemplates,
-                    iso_splines,
-                    complex_scored_PSMs,
-                    complex_unscored_PSMs,
-                    complex_spectral_scores,
-                    precursor_weights,
-                    )...);
-        =#
         @time RESULT = quantitationSearch(MS_TABLE, 
             prosit_lib["precursors"],
             prosit_lib["f_det"],
             RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
             UInt32(ms_file_idx), 
             frag_err_dist_dict[ms_file_idx],
-            irt_errs[ms_file_idx],
+            irt_errs[ms_file_idx]/3,
             params_,  
             ionMatches,
             ionMisses,
             IDtoCOL,
             ionTemplates,
             iso_splines,
+            chromatograms,
             complex_scored_PSMs,
             complex_unscored_PSMs,
             complex_spectral_scores,
@@ -221,9 +203,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 
         #Format Chromatograms 
         chroms = vcat([last(x) for x in RESULT]...);
-        sort!(chroms,:rt)
-        getIsoRanks!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-        gchroms = groupby(chroms,[:precursor_idx,:iso_rank])
+        getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
+        gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
 
         #Format spectral scores 
         psms = vcat([first(x) for x in RESULT]...);
@@ -233,13 +214,13 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
                                         precID_to_cv_fold);
-        #addIntegrationFeatures!(psms);
-        getIsoRanks!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-        #getIsoRanks!(PSMS, MS_TABLE, params_[:quadrupole_isolation_width]);
+
+        getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         psms[!,:prob] = zeros(Float32, size(psms, 1));
         scoreSecondSearchPSMs!(psms,features);
-        spectral_scores = groupby(psms, [:precursor_idx,:iso_rank]);
+        spectral_scores = groupby(psms, [:precursor_idx,:isotopes_captured]);
 
+        #Integrate Chromatograms and Combine with Spectral Simmilarity Scores
         precs_to_integrate = keys(spectral_scores) ∩ keys(gchroms)
         n_precs = length(precs_to_integrate)
         psms_integrated = initQuantScans(precs_to_integrate)
@@ -248,8 +229,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         integratePrecursors(spectral_scores,
                             gchroms,
                             precs_to_integrate,
-                            psms_integrated)
+                            psms_integrated,
+                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]))
+        #Remove examples where maximum point on chromatogram doesn't have a psm
         filter!(x->!ismissing(x.scan_idx), psms_integrated)
+        #Add additional features 
         addPostIntegrationFeatures!(psms_integrated, 
                                     MS_TABLE, 
                                     prosit_lib["precursors"][:sequence],

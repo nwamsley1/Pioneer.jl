@@ -159,29 +159,26 @@ using PProf, Profile
 Profile.clear()
 MS_TABLE = Arrow.Table(MS_TABLE_PATH)
 @time begin
-@profile PSMs = vcat(mainLibrarySearch(
-    MS_TABLE,
-    prosit_lib["f_index"],
-    prosit_lib["precursors"],
-    library_fragment_lookup_table,
-    RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-    UInt32(ms_file_idx), #MS_FILE_IDX
-    frag_err_dist_dict[ms_file_idx],
-    irt_errs[ms_file_idx],
-    params_,
-    ionMatches,
-    ionMisses,
-    all_fmatches,
-    IDtoCOL,
-    ionTemplates,
-    iso_splines,
-    scored_PSMs,
-    unscored_PSMs,
-    spectral_scores,
-    precursor_weights,
-    precs
-#scan_range = (100000, 100010)
-)...);
+@profile RESULT = quantitationSearch(MS_TABLE, 
+prosit_lib["precursors"],
+prosit_lib["f_det"],
+RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+UInt32(ms_file_idx), 
+frag_err_dist_dict[ms_file_idx],
+irt_errs[ms_file_idx]/3,
+params_,  
+ionMatches,
+ionMisses,
+IDtoCOL,
+ionTemplates,
+iso_splines,
+chromatograms,
+complex_scored_PSMs,
+complex_unscored_PSMs,
+complex_spectral_scores,
+precursor_weights,
+);
+
 end
 pprof(;webport=58603)
 

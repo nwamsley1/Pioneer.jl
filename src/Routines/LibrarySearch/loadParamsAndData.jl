@@ -8,9 +8,9 @@ using ArgParse
 using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
 using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
 #DataStructures 
-using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
+using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays, StaticArrays
 #Algorithms 
-using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
+using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, LinearSolve
 using Base.Order
 using Base.Iterators: partition
 using PDFmerger
@@ -133,6 +133,7 @@ params_ = (
 #Fragment Library Parsing
 
 [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
+                                                                    "ChromObject.jl",
                                                                     "ArrayDict.jl",
                                                                     "Counter.jl",
                                                                     "Ion.jl",
@@ -235,6 +236,7 @@ unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in
 spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
 precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
 precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
+chromatograms = [Vector{ChromObject}(undef, 5000) for _ in range(1, N)];
 complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];

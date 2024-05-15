@@ -46,6 +46,7 @@
     {
         "filter_by_rank": false,
         "filter_on_frag_count": false,
+        "WH_smoothing_strength": 1.0,
         "min_frag_count": 1,
         "min_log2_matched_ratio": -1.7,
         "min_spectral_contrast": 0.0,

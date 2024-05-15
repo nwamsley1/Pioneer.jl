@@ -67,12 +67,6 @@ N += 1
 
 diff(MS2_CHROMS[(precursor_idx = best_precursors[N,1],iso_rank = best_precursors[N,2])][!,:scan_idx])
 
-struct ChromObject
-    rt::Float16
-    intensity::Float32
-    scan_idx::UInt32
-    precursor_idx::UInt32
-end
 
 getIsoRanks!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
 gchroms = groupby(chroms,:precursor_idx)
@@ -159,45 +153,6 @@ alpha = 0.5, color = :green
 
 
 
-function getIsoRanks!(chroms::DataFrame, 
-                        prec_charge::AbstractArray{UInt8},
-                        prec_mz::AbstractArray{Float32},
-                        MS_TABLE::Arrow.Table)
-    #sum(MS2_CHROMS.weight.!=0.0)
-    chroms[!,:iso_rank] = Vector{Tuple{UInt8, UInt8}}(undef, size(chroms, 1))
-    
-    tasks_per_thread = 5
-    chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:size(chroms, 1), chunk_size) # partition your data into chunks that
-
-    tasks = map(data_chunks) do chunk
-        Threads.@spawn begin
-            for i in chunk
-
-                prec_id = chroms[i,:precursor_idx]
-                mz = prec_mz[prec_id]
-                charge = prec_charge[prec_id]
-
-                scan_id = chroms[i,:scan_idx]
-                scan_mz = MS_TABLE[:centerMass][scan_id]
-                window_width = MS_TABLE[:isolationWidth][scan_id]
-
-                isotopes = getPrecursorIsotopeSet(mz, 
-                                                    charge, 
-                                                    Float32(scan_mz-window_width/2),
-                                                    Float32(scan_mz+window_width/2) 
-                                                    )                
-                chroms[i,:iso_rank] = isotopes
-            end
-        end
-    end
-    fetch.(tasks)
-    return nothing
-end
-
-getIsoRanks!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-
-
 function initQuantScans(
     precs_to_integrate::Vector{DataFrames.GroupKey{GroupedDataFrame{DataFrame}}},
     )
@@ -261,6 +216,16 @@ function initQuantScans(
             col_name = first(column)
             psms[!,col_name] = zeros(col_type, N)
         end
-        psms[!,:isotope_captures] = Vector{Tuple{UInt8, UInt8}}(undef, N)
+        psms[!,:isotopes_captured] = Vector{Tuple{UInt8, UInt8}}(undef, N)
         return psms
+end
+
+sd = Vector{Union{Missing, Float64}}(undef, length(gpsms))
+for i in range(1, length(gpsms))
+    psms = gpsms[i]
+    if size(psms, 1) < 3
+        sd[i] = missing
+        continue
+    end
+    sd[i] = std(psms[!,:iRT_observed])
 end

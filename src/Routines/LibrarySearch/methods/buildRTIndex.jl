@@ -202,7 +202,7 @@ function getBestTrace!(psms::DataFrame)
     for i in ProgressBar(range(1, length(grouped_psms)))
 
         #Which traces had psms?
-        iso_ranks = unique(grouped_psms[i][!,:iso_rank])
+        isotope_set = unique(grouped_psms[i][!,:isotpes_captured])
 
         length(iso_ranks)<=1 ? continue : nothing
 

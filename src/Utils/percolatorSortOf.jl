@@ -34,7 +34,7 @@ getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = get
 
 function getProbQuantiles!(psms::DataFrame, prob_column::Symbol, features::Vector{Symbol}, bst::Booster)
     psms[!,prob_column] = XGBoost.predict(bst, psms[!,features])
-    grouped_psms = groupby(psms, [:precursor_idx,:isotopes_captures]); #
+    grouped_psms = groupby(psms, [:precursor_idx,:isotopes_captured]); #
     for i in range(1, length(grouped_psms))
         median_prob = median(grouped_psms[i][!,prob_column])
         max_prob = minimum(grouped_psms[i][!,prob_column])
