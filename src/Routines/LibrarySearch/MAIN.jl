@@ -76,6 +76,15 @@ value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = sort(value_counts(best_psms_passing[!,:], [:file_name]))
 =#
 
+
+###########
+#Normalize Quant 
+###########
+println("Cross-Run Normalization of Precursor Level Quant...")
+score_traces_time = @timed begin
+    include(joinpath(methods_path,"normalizeQuant.jl"))
+end
+
 ###########
 #QC Plots
 ###########

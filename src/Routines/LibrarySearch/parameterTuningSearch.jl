@@ -346,9 +346,9 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     n = 0
     rtPSMs = nothing
     while n <= params_[:presearch_params]["max_presearch_iters"]
-        RESULT =  rtAlignSearch(
+        @time RESULT =  rtAlignSearch(
                                                 MS_TABLE,
-                                                prosit_lib["f_index"],
+                                                prosit_lib["presearch_f_index"],
                                                 prosit_lib["precursors"],
                                                 library_fragment_lookup_table,
                                                 x->x, #RT to iRT map'

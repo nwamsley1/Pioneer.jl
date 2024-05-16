@@ -103,8 +103,17 @@ buildFragmentIndex!(
                     folder_out,
                     simple_fragments,
                     params_[:frag_bin_tol_ppm],
-                    params_[:rt_bin_tol]
+                    params_[:rt_bin_tol],
                     )
+#Index with maximally sized RT bin for presearch 
+buildFragmentIndex!(
+    folder_out,
+    simple_fragments,
+    params_[:frag_bin_tol_ppm],
+    typemax(Float32),
+    index_name = "presearch_"
+    )
+    
 
 
 "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr4_24/pioneer_lib"

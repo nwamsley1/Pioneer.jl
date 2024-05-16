@@ -434,7 +434,8 @@ function buildFragmentIndex!(
                             folder_out::String,
                             frag_ions::Vector{SimpleFrag{T}}, 
                             frag_bin_tol_ppm::AbstractFloat, 
-                            rt_bin_tol::AbstractFloat
+                            rt_bin_tol::AbstractFloat;
+                            index_name::String = ""
                             ) where {T<:AbstractFloat}
 
     function buildFragIndex!(
@@ -616,9 +617,9 @@ function buildFragmentIndex!(
     rt_bins  = (FragIndexBin = rt_bins[1:rt_bin_idx-1],)
     frag_bins = (FragIndexBin = frag_bins[1:frag_bin_idx-1],)
     println("writing tables...")
-    Arrow.write(joinpath(folder_out, "f_index_fragments.arrow"), fragments)
-    Arrow.write(joinpath(folder_out, "f_index_rt_bins.arrow"), rt_bins)
-    Arrow.write(joinpath(folder_out, "f_index_fragment_bins.arrow"), frag_bins)
+    Arrow.write(joinpath(folder_out, index_name*"f_index_fragments.arrow"), fragments)
+    Arrow.write(joinpath(folder_out, index_name*"f_index_rt_bins.arrow"), rt_bins)
+    Arrow.write(joinpath(folder_out, index_name*"f_index_fragment_bins.arrow"), frag_bins)
 
     return 
 end

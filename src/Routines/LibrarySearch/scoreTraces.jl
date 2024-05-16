@@ -92,49 +92,6 @@ prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 #getBestTrace!(best_psms)
 value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_name])
-sum(best_psms[(occursin.("SILAC", best_psms[!,:accession_numbers])),:q_value].<0.01)
-
-@time begin
-normalizeQuant(
-    best_psms,
-    :trapezoid_area
-)
+#sum(best_psms[(occursin.("SILAC", best_psms[!,:accession_numbers])),:q_value].<0.01)
 
 
-normalizeQuant(
-    best_psms,
-    :peak_area
-)
-
-
-normalizeQuant(
-    best_psms,
-    :weight
-)
-end
-
-gpsms = groupby(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:],[:precursor_idx,:isotopes_captured])
-
-CV = Vector{Union{Missing,  Float32}}(undef, length(gpsms))
-for i in range(1, length(gpsms))
-    precgroup = gpsms[i]
-    if size(precgroup, 1) < 3
-        CV[i] = missing
-        continue
-    end
-    CV[i] = std(precgroup[!,:trapezoid_area_normalized])/mean(precgroup[!,:trapezoid_area_normalized])
-end
-CV = skipmissing(CV)
-sum((CV.<=0.2).&(CV.>1e-6))
-
-CV = Vector{Union{Missing,  Float32}}(undef, length(gpsms))
-for i in range(1, length(gpsms))
-    precgroup = gpsms[i]
-    if size(precgroup, 1) < 3
-        CV[i] = missing
-        continue
-    end
-    CV[i] = std(precgroup[!,:trapezoid_area])/mean(precgroup[!,:trapezoid_area])
-end
-CV = skipmissing(CV)
-sum((CV.<=0.2).&(CV.>1e-6))

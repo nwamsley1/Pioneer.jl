@@ -115,6 +115,7 @@ params_ = (
     quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
     irt_err_sigma = params["irt_err_sigma"],
 
+
     presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]),
     first_search_params = Dict{String, Any}(k => v for (k, v) in params["first_search_params"]),
     quant_search_params = Dict{String, Any}(k => v for (k, v) in params["quant_search_params"]),
@@ -123,8 +124,8 @@ params_ = (
     integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
     deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
     summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
-    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"])
-
+    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"]),
+    normalization_params = Dict{String, Any}(k => v for (k, v) in params["normalization_params"])
     );
 
 ##########
@@ -149,8 +150,8 @@ params_ = (
                                                                     "globalConstants.jl",
                                                                     "uniformBasisCubicSpline.jl",
                                                                     "isotopeSplines.jl",
-
-                                                                    
+                                                                    "normalizeQuant.jl",
+                                                                    "SavitskyGolay.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",
@@ -189,6 +190,12 @@ f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"
 f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
 f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
 
+
+presearch_f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragments.arrow"))
+presearch_f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_rt_bins.arrow"))
+presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
+
+
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
 @time detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
@@ -216,7 +223,13 @@ f_index = FragmentIndex(
     f_index_rt_bins[:FragIndexBin],
     f_index_fragments[:IndexFragment],
 );
+presearch_f_index = FragmentIndex(
+    presearch_f_index_frag_bins[:FragIndexBin],
+    presearch_f_index_rt_bins[:FragIndexBin],
+    presearch_f_index_fragments[:IndexFragment],
+);
 prosit_lib["f_index"] = f_index;
+prosit_lib["presearch_f_index"] = presearch_f_index;
 prosit_lib["precursors"] = precursors;
 ###########
 #Load Pre-Allocated Data Structures. One of each for each thread. 

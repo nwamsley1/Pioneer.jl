@@ -85,5 +85,12 @@
     "qc_plot_params":
     {
         "n_files_per_plot": 12
+    },
+    "normalization_params":
+    {
+        "n_rt_bins": 100,
+        "spline_n_knots": 7,
+        "max_q_value": 0.01,
+        "min_points_above_FWHM": 2
     }
 }
