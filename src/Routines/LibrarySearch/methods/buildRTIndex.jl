@@ -145,6 +145,9 @@ end
 
 buildRTIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
+buildRTIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
+
+
 function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
                        precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
                        iRT_RT::Any;
@@ -249,6 +252,29 @@ function getCVFolds(precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}})
         rand(UInt8[0, 1]))
     end
     return precID_to_cv_fold
+end
+
+function getRTErr(psms_dict::Dictionary{String, DataFrame},
+                  RT_iRT::Dictionary{String, Any})
+        
+    for (key, psms) in pairs(psms_dict)
+        psms[!,:iRT_observed] = RT_iRT[key].(psms[!,:RT])
+    end
+
+    combined_psms = vcat(values(psms_dict)...);
+    filter!(x->x.q_value<=0.01, combined_psms)
+    psms_by_prec = groupby(combined_psms, :precursor_idx)
+    irt_mads = Vector{Union{Missing, Float32}}(undef, length(psms_by_prec))
+    j = 1
+    for (prec, psms) in pairs(psms_by_prec)
+        if size(psms, 1) > 1
+            irt_mads[j] = maximum(psms[!,:iRT_observed]) -  minimum(psms[!,:iRT_observed])
+        else
+            irt_mads[j] = missing
+        end
+        j += 1
+    end
+    return quantile(skipmissing(irt_mads), 0.99)#median(skipmissing(rt_mads))*4
 end
 #=
 N = 100000

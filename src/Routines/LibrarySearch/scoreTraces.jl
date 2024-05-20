@@ -93,5 +93,3 @@ prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01) .& (best_psms[:,:decoy].==false),:], [:file_name])
 #sum(best_psms[(occursin.("SILAC", best_psms[!,:accession_numbers])),:q_value].<0.01)
-
-

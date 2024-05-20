@@ -107,7 +107,7 @@ function mainLibrarySearch(
                     irt_tol::Float64 = Inf,
                     sample_rate::Float64 = Inf,
                     spec_order::Set{Int64} = Set(2)
-                    ) where {T,U<:AbstractFloat, 
+                    ) where { 
                                                             L<:LibraryIon{Float32}, 
                                                             S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
@@ -209,7 +209,7 @@ end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    @time PSMs = vcat(mainLibrarySearch(
+    PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -288,11 +288,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 end
 
 
-println("Finished main search in ", main_search_time.time, "seconds")
-println("Finished main search in ", main_search_time, "seconds")
-sum(PSMs_Dict["01"][!,:q_value].<=0.01)
-sum(PSMs_Dict["01"][!,:q_value].<=0.1)
-
+#println("Finished main search in ", main_search_time.time, "seconds")
+#println("Finished main search in ", main_search_time, "seconds")
 #=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(
     MS_TABLE,

@@ -1,6 +1,7 @@
-function quantitationSearch(
+function quantitationSearch2(
     #Mandatory Args
     spectra::Arrow.Table,
+    precursor_subset::Set{UInt32},
     precursors::Arrow.Table,
     ion_list::LibraryFragmentLookup{Float32},
     rt_index::retentionTimeIndex{Float32, Float32},
@@ -23,8 +24,9 @@ function quantitationSearch(
                                             R<:SpectralScores{Float16}}
 
     #fragment_tolerance = quantile(err_dist, params[:frag_tol_quantile])
-    return quantitationSearch(
+    return quantitationSearch2(
         spectra, 
+        precursor_subset,
         precursors,
         ion_list, 
         ms_file_idx,
@@ -63,9 +65,10 @@ function quantitationSearch(
         irt_tol = irt_tol,
     )
 end
-function quantitationSearch(
+function quantitationSearch2(
                     #Mandatory Args
                     spectra::Arrow.Table, 
+                    precursor_subset::Set{UInt32},
                     precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
@@ -164,7 +167,8 @@ function quantitationSearch(
                                 n_frag_isotopes,
                                 rt_index, 
                                 irt_tol,
-                                spec_order
+                                spec_order,
+                                precursor_subset = precursor_subset
                             )
         end
     end
@@ -184,7 +188,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
-        RESULT = quantitationSearch(MS_TABLE, 
+        RESULT = quantitationSearch2(MS_TABLE,
+            precursors_passing,
             prosit_lib["precursors"],
             prosit_lib["f_det"],
             RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
@@ -227,14 +232,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         precs_to_integrate = keys(spectral_scores) ∩ keys(gchroms)
         n_precs = length(precs_to_integrate)
         psms_integrated = initQuantScans(precs_to_integrate)
-
-
         integratePrecursors(spectral_scores,
                             gchroms,
                             precs_to_integrate,
                             psms_integrated,
                             λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]))
-        #Remove examples where maximum point on chromatogram doesn't have a psm
         filter!(x->!ismissing(x.scan_idx), psms_integrated)
         #Add additional features 
         addPostIntegrationFeatures!(psms_integrated, 
@@ -249,8 +251,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                     RT_iRT,
                                     precID_to_iRT
                                     );
+
         psms_integrated[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
         BPSMS[ms_file_idx] = psms_integrated;
 end
 
-best_psms = vcat(values(BPSMS)...)
+best_psms_passing = vcat(values(BPSMS)...)
+best_psms_passing[!,:q_value] .= zero(Float32)
+best_psms_passing[!,:decoy] .= zero(Bool)

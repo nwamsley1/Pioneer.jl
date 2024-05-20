@@ -136,7 +136,6 @@ function parseIsoXML(iso_xml_path::String)
             =#
 
             knots = collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))[1:end - 1]
-            println("knots $knots")
             A = hcat(ones(length(knots)), knots)
             x = A\collect(range(0, length(knots) - 1))
             spline = Float32.(DecodeCoefficients(content(model["coefficients"][1])))
@@ -355,9 +354,10 @@ A Tuple of two integers. (1, 3) would indicate the M+1 through M+3 isotopes were
 function getPrecursorIsotopeSet(prec_mz::Float32, 
                                 prec_charge::UInt8, 
                                 min_prec_mz::Float32, 
-                                max_prec_mz::Float32)
-    first_iso, last_iso = -1, -1
-    for iso_count in range(0, 5) #Arbitrary cutoff after 5 
+                                max_prec_mz::Float32;
+                                max_iso::Int64 = 5)
+    first_iso, last_iso = 0, 0
+    for iso_count in range(0, max_iso) #Arbitrary cutoff after 5 
         iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
         if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz) 
             if first_iso < 0

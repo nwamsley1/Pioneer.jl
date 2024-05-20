@@ -1,7 +1,7 @@
 
 @time begin
     [normalizeQuant(
-        best_psms,
+        best_psms_passing,
         col_name,
         N = params_[:normalization_params]["n_rt_bins"],
         spline_n_knots = params_[:normalization_params]["spline_n_knots"],
@@ -56,9 +56,37 @@ for i in range(1, length(gpsms))
         CV[i] = missing
         continue
     end
+    CV[i] = std(precgroup[!,:weight_normalized])/mean(precgroup[!,:weight_normalized])
+end
+CV = skipmissing(CV)
+sum((CV.<=0.2).&(CV.>1e-6))
+
+
+
+CV = Vector{Union{Missing,  Float32}}(undef, length(gpsms))
+for i in range(1, length(gpsms))
+    precgroup = gpsms[i]
+    if size(precgroup, 1) < 3
+        CV[i] = missing
+        continue
+    end
     CV[i] = std(precgroup[!,:peak_area])/mean(precgroup[!,:peak_area])
 end
 CV = skipmissing(CV)
 sum((CV.<=0.2).&(CV.>1e-6))
+
+
+CV = Vector{Union{Missing,  Float32}}(undef, length(gpsms))
+for i in range(1, length(gpsms))
+    precgroup = gpsms[i]
+    if size(precgroup, 1) < 3
+        CV[i] = missing
+        continue
+    end
+    CV[i] = std(precgroup[!,:peak_area_normalized])/mean(precgroup[!,:peak_area_normalized])
+end
+CV = skipmissing(CV)
+sum((CV.<=0.2).&(CV.>1e-6))
+
 =#
 

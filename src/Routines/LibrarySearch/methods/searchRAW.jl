@@ -639,7 +639,8 @@ function quantPSMs(
                     n_frag_isotopes::Int64,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
-                    spec_order::Set{Int64},
+                    spec_order::Set{Int64};
+                    precursor_subset::Set{UInt32} = Set{UInt32}(),
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
@@ -657,6 +658,7 @@ function quantPSMs(
 
     rt_idx = 0
     prec_temp_size = 0
+    exclude_precursors = length(precursor_subset) > 0 ? true : false
     precs_temp = Vector{UInt32}(undef, 50000)
     ##########
     #Iterate through spectra
@@ -690,26 +692,50 @@ function quantPSMs(
             #the retention time and m/z tolerance constraints
             #test_n += 1
             precs_temp_size = 0
-            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
-                                            ionTemplates,
-                                            precs_temp,
-                                            precs_temp_size,
-                                            library_fragment_lookup,
-                                            precursors[:mz],
-                                            precursors[:prec_charge],
-                                            precursors[:sulfur_count],
-                                            iso_splines,
-                                            isotopes,
-                                            rt_index,
-                                            rt_start,
-                                            rt_stop,
-                                            spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
-                                            spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
-                                            (
-                                                spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
-                                            ),
-                                            isotope_err_bounds,
-                                            10000)
+            if exclude_precursors
+                ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
+                                                ionTemplates,
+                                                precursor_subset,
+                                                precs_temp,
+                                                precs_temp_size,
+                                                library_fragment_lookup,
+                                                precursors[:mz],
+                                                precursors[:prec_charge],
+                                                precursors[:sulfur_count],
+                                                iso_splines,
+                                                isotopes,
+                                                rt_index,
+                                                rt_start,
+                                                rt_stop,
+                                                spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
+                                                spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                                                (
+                                                    spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                                                ),
+                                                isotope_err_bounds,
+                                                10000)
+            else
+                ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
+                    ionTemplates,
+                    precs_temp,
+                    precs_temp_size,
+                    library_fragment_lookup,
+                    precursors[:mz],
+                    precursors[:prec_charge],
+                    precursors[:sulfur_count],
+                    iso_splines,
+                    isotopes,
+                    rt_index,
+                    rt_start,
+                    rt_stop,
+                    spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
+                    spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                    (
+                        spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                    ),
+                    isotope_err_bounds,
+                    10000)
+            end
         end
         ##########
         #Match sorted list of plausible ions to the observed spectra

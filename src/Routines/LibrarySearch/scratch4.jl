@@ -229,3 +229,51 @@ for i in range(1, length(gpsms))
     end
     sd[i] = std(psms[!,:iRT_observed])
 end
+
+test_psms = first(PSMs_Dict)
+
+test_psms_pass = test_psms[test_psms[!,:q_value].<=0.01,:]
+plot(test_psms_pass[!,:RT], 
+        abs.(test_psms_pass[!,:iRT_predicted] .- test_psms_pass[!,:iRT_observed]),
+        seriestype=:scatter,
+        alpha = 0.01)
+
+
+plot(test_psms_pass[!,:iRT_predicted], 
+    test_psms_pass[!,:RT],
+    seriestype=:scatter,
+    alpha = 0.01)
+
+
+plot!(LinRange(0, 30, 100), 
+    first(iRT_RT).(LinRange(0, 30, 100)))
+
+plot(test_psms_pass[!,:RT],
+    test_psms_pass[!,:RT] .- first(iRT_RT).(test_psms_pass[!,:iRT_predicted]),
+    seriestype=:scatter,
+    alpha = 0.01)
+
+test_psms = vcat(values(PSMs_Dict)...);
+filter!(x->x.q_value<=0.01, test_psms)
+psms_by_prec = groupby(test_psms, :precursor_idx)
+rt_mads = Vector{Union{Missing, Float32}}(undef, length(psms_by_prec))
+
+i = 1
+for (prec, psms) in pairs(psms_by_prec)
+    if size(psms, 1) > 2
+        rt_mads[i] = maximum(psms[!,:iRT_observed]) -  minimum(psms[!,:iRT_observed])
+    else
+        rt_mads[i] = missing
+    end
+    i += 1
+end
+
+plot(skipmissing(test_rts), 
+      skipmissing(rt_mads), 
+      seriestype=:scatter,
+      alpha = 0.01,
+      ylim = (0, 0.5))
+
+
+scans = coalesce.(abs.((MS_TABLE[:centerMass] .-  888.45f0)) .< 1e-6, false)
+coalesce.(scans, false)

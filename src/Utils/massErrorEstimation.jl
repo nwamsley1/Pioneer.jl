@@ -9,7 +9,7 @@ getLeftTol(mem::MassErrorModel) = first(mem.mass_tolerance)
 getMassOffset(mem::MassErrorModel) = last(mem.mass_offset)
 
 function getMassCorrection(mem::MassErrorModel)
-    return mem.location
+    return mem.mass_offset
 end
 
 function getLocation(mem::MassErrorModel)
@@ -59,7 +59,9 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
                     ylabel = "Mass Error (ppm)",
                     label = nothing,
                     bins = bins,
-                    ylim = (minimum(ppm_errs), maximum(ppm_errs))
+                    ylim = (minimum(ppm_errs)-2, maximum(ppm_errs)+2),
+                    topmargin =15mm,
+                    #bottommargin = 10mm,
                     )
 
     Plots.hline!([l_bound + mass_err, mass_err, r_bound + mass_err], label = nothing, color = :black, lw = 2)

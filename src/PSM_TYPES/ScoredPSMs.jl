@@ -188,10 +188,6 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     start_idx = last_val
     skipped = 0
     for i in range(1, n_vals)
-
-        #if UInt32(unscored_PSMs[i].precursor_idx) == 10274537
-        #    println("scan_idx ", scan_idx)
-        #end
         
         passing_filter = (
            # (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count

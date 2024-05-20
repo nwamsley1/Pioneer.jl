@@ -81,7 +81,7 @@ function applyNormalization!(
     psms[!,norm_quant_col] = zeros(Float32, size(psms, 1))
     for i in range(1, size(psms, 1))
         hc = corrections[psms[i,:file_name]](psms[i,:RT])
-        best_psms[i,norm_quant_col] = 2^(log2(max(best_psms[i,quant_col], 0.0)) - hc)
+        psms[i,norm_quant_col] = 2^(log2(max(psms[i,quant_col], 0.0)) - hc)
     end
 end
 
