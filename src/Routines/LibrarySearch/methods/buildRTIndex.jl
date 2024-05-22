@@ -150,7 +150,7 @@ buildRTIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTInde
 
 function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
                        precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
-                       iRT_RT::Any;
+                       RT_to_iRT::Any;
                        bin_rt_size = 0.1,
                        min_prob::AbstractFloat = 0.5)
     #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
@@ -160,7 +160,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     for (file_path, psms) in ProgressBar(pairs(psms_dict)) #For each file in the experiment
         #Impute empirical iRT value for psms with probability lower than the threshold
         #filter!(x->x.prob>=min_prob, psms); 
-        RTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
+        iRTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
 
         prec_set = Dictionary(psms[!,:precursor_idx]::Vector{UInt32},
                             zip(psms[!,:RT]::Vector{Float32}, 
@@ -175,20 +175,20 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
             if haskey(prec_set, prec_id) #prec_id ∈ pset::Set{UInt32} 
                 if last(prec_set[prec_id]) >= min_prob #Use empirical iRT/RT
                     rt, mz, _ = prec_set[prec_id]::Tuple{Float32, Float32, Float32}
-                    RTs[i] = rt
+                    iRTs[i] = RT_to_iRT[file_path](rt)
                     mzs[i] = mz
                     continue
                 end
             end
             #Impute empirical iRT from the best observed psm for the precursor accross the experiment 
             irt, mz = irt_mz_imputed::Tuple{Float64, Float32}
-            rt = iRT_RT[file_path](irt)::Float64 #Convert iRT to RT 
-            RTs[i] = rt
+            #rt = iRT_RT[file_path](irt)::Float64 #Convert iRT to RT 
+            iRTs[i] = irt
             mzs[i] = mz
         end
         
         #Build RT index 
-        rt_df = DataFrame(Dict(:RT => RTs,
+        rt_df = DataFrame(Dict(:RT => iRTs,
                                 :prec_mz => mzs,
                                 :precursor_idx => prec_ids))
         sort!(rt_df, :RT)

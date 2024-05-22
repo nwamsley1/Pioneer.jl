@@ -78,13 +78,20 @@ julia> N
 =#
 #wholechrom = gchroms[(precursor_idx = best_precursors[N,1],)]
 
-b = zeros(Float32, 200);
+b = zeros(Float32, 260);
 A = getWittakerHendersonDesignMat(length(b), 1.0f0);
 prob = LinearProblem(A, b);
 linsolve = init(prob);
 u2 = zeros(Float32, length(linsolve.b));
 
-subchrom = gchroms[(precursor_idx = 0x000c4cc1, iso_rank = (0x00, 0x03))]#groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank);
+N = 0
+for i in range(1, length(gchroms))
+    if size(gchroms[i], 1) > N
+        N =  size(gchroms[i], 1)
+    end
+end
+
+subchrom = gchroms[N]#groupby(gchroms[(precursor_idx = best_precursors[N,1],)],:iso_rank);
 
 dtype = Float32;
 gx, gw = gausslegendre(100);
@@ -102,8 +109,11 @@ integrateChrom(subchrom,
 linsolve,
 u2,
 state,
+gw,
+gx,
 α = 0.01f0,
 height_at_integration_width = 0.001f0,
+n_pad = 10,
 isplot = true
 )
 N += 1

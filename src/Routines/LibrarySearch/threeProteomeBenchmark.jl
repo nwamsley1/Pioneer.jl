@@ -105,7 +105,7 @@ end
 
 transform!(best_psms_passing, AsTable(:) => ByRow(precursor -> getCondition(precursor, :file_name)) => [:condition, :biological, :technical]);
 best_psms_passing[!,:species] .= "HUMAN"
-
+println("size(best_psms_passing) ", size(best_psms_passing))
 conditions = unique(best_psms_passing[!,:condition])
 
 quant_name = :trapezoid_area_normalized

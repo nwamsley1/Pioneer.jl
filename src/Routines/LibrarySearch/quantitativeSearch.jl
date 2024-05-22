@@ -5,6 +5,7 @@ function quantitationSearch(
     ion_list::LibraryFragmentLookup{Float32},
     rt_index::retentionTimeIndex{Float32, Float32},
     ms_file_idx::UInt32,
+    rt_to_irt::UniformSpline,
     err_dist::MassErrorModel,
     irt_tol::Float64,
     params::NamedTuple,
@@ -28,6 +29,7 @@ function quantitationSearch(
         precursors,
         ion_list, 
         ms_file_idx,
+        rt_to_irt,
         err_dist,     
         ionMatches,
         ionMisses,
@@ -69,6 +71,7 @@ function quantitationSearch(
                     precursors::Union{Arrow.Table, Missing},
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
+                    rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
@@ -134,6 +137,7 @@ function quantitationSearch(
                                 precursors,
                                 ion_list, 
                                 ms_file_idx,
+                                rt_to_irt,
                                 mass_err_model,
                                 frag_ppm_err,
                                 δ,
@@ -189,8 +193,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             prosit_lib["f_det"],
             RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
             UInt32(ms_file_idx), 
+            RT_iRT[file_id_to_parsed_name[ms_file_idx]],
             frag_err_dist_dict[ms_file_idx],
-            rt_err,#irt_errs[ms_file_idx]/3,
+            irt_err,#irt_errs[ms_file_idx]/3,
             params_,  
             ionMatches,
             ionMisses,
@@ -206,6 +211,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 
         #Format Chromatograms 
         chroms = vcat([last(x) for x in RESULT]...);
+        #sort!(chroms,:rt,alg=QuickSort)
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
 

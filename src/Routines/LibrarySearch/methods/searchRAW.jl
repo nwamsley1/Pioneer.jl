@@ -609,6 +609,7 @@ function quantPSMs(
                     precursors::Union{Arrow.Table, Missing},
                     library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
+                    rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
                     frag_ppm_err::Float32,
                     δ::Float32,
@@ -653,7 +654,7 @@ function quantPSMs(
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, n_frag_isotopes)
-    rt_start, rt_stop = 1, 1
+    irt_start, irt_stop = 1, 1
     prec_mz_string = ""
 
     rt_idx = 0
@@ -677,15 +678,15 @@ function quantPSMs(
         end
         #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-        rt = spectra[:retentionTime][scan_idx]
-        rt_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
-        rt_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
+        irt = rt_to_irt(spectra[:retentionTime][scan_idx])
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
         prec_mz_string_new = string(spectra[:centerMass][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:max(length(prec_mz_string_new), 6)]
 
-        if (rt_start_new != rt_start) | (rt_stop_new != rt_stop) | (prec_mz_string_new != prec_mz_string)
-            rt_start = rt_start_new
-            rt_stop = rt_stop_new
+        if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
+            irt_start = irt_start_new
+            irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
@@ -705,8 +706,8 @@ function quantPSMs(
                                                 iso_splines,
                                                 isotopes,
                                                 rt_index,
-                                                rt_start,
-                                                rt_stop,
+                                                irt_start,
+                                                irt_stop,
                                                 spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
                                                 spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
                                                 (
@@ -726,8 +727,8 @@ function quantPSMs(
                     iso_splines,
                     isotopes,
                     rt_index,
-                    rt_start,
-                    rt_stop,
+                    irt_start,
+                    irt_stop,
                     spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
                     spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
                     (
