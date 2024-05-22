@@ -752,6 +752,7 @@ function quantPSMs(
                                         spectra[:highMass][scan_idx],
                                         UInt32(scan_idx), 
                                         ms_file_idx)
+        sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 

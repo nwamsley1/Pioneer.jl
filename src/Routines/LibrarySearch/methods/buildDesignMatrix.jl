@@ -29,6 +29,8 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
     row = 0
     #Number of unique peaks encountered. 
     last_peak_ind = -1
+    j = 1
+    last_row, last_col = -1, -1
     for i in range(1, nmatches)#matches)
         match = matches[i]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
@@ -44,16 +46,23 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
             #X[row] = getIntensity(match)
         end
 
-        H.colval[i] = precID_to_col[getPrecID(match)]
-        H.rowval[i] = row
-        H.nzval[i] = getPredictedIntenisty(match)
-        H.x[i] = getIntensity(match)#X[row]
-        H.matched[i] = true
-        H.n_vals += 1
+        col =  precID_to_col[getPrecID(match)]
+        if (col == last_col) & (row == last_row)
+            H.colval[j] = col
+            H.rowval[j] = row
+            #+= is important
+            H.nzval[j] += getPredictedIntenisty(match)
+            H.x[j] = getIntensity(match)#X[row]
+            H.matched[j] = true
+            H.n_vals += 1
+            j += 1
+        end
+        last_col = col
+        last_row = row
 
     end
 
-    i = nmatches + 1
+    i = j + 1#nmatches + 1
     for j in range(nmatches + 1, nmatches + nmisses)
         miss = misses[j - nmatches]
         #If a match for this precursor hasn't been encountered yet, then there were no matched ions for this

@@ -188,7 +188,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
-        RESULT = quantitationSearch(MS_TABLE, 
+        @time RESULT = quantitationSearch(MS_TABLE, 
             prosit_lib["precursors"],
             prosit_lib["f_det"],
             RT_INDICES[file_id_to_parsed_name[ms_file_idx]],

@@ -420,9 +420,9 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         end
 
         #WH smoothing 
-        println("nans before ", any(isnan.(linsolve.u)))
+
         solve!(linsolve)
-        println("nans after ", any(isnan.(linsolve.u)))
+
 
         #Best scan is the most intense 
         #best_scan = argmax(linsolve.b)
@@ -445,21 +445,21 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                                    N::Int64,
                                    best_scan::Int64,
                                    n_pad::Int64)
+        max_stop = N
         start_search, stop_search = best_scan + n_pad - 1, best_scan + n_pad + 1
         start, stop = start_search, stop_search
         N += n_pad
-        println("start_search $start_search stop_search $stop_search")
-        println("N $N")
+
         #get RH boundary
         @inbounds @fastmath begin 
-            println("stop $stop")
+
             for i in range(stop_search, N-1)
                 if (u2[i-1] < u2[i]) & (u2[i+1]<u2[i])
                     stop = min(i, N)
                     break
                 end
             end
-            println("stop $stop")
+
             for i in range(stop, N-1)
                 if u[i + 1] > u[i]
                     break
@@ -467,7 +467,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                     stop = i
                 end
             end
-            println("stop $stop")
+
             #get LH boundary 
             for i in reverse(range(2, start_search))
                 if (u2[i] > u2[i - 1]) & (u2[i+1]<u2[i])
@@ -484,7 +484,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                 end
             end
         end
-        return range(start-n_pad, stop-n_pad)#range(max(start-n_pad, 1), max(stop-n_pad, 1))#range( min(best_scan-3, start), max(stop,best_scan+3))
+        return range(max(start-n_pad, 1), min(stop-n_pad,  max_stop))#range(max(start-n_pad, 1), max(stop-n_pad, 1))#range( min(best_scan-3, start), max(stop,best_scan+3))
     end
 
     function fillState!(state::GD_state{HuberParams{Float32}, Float32, Int64, Int64},
@@ -500,8 +500,9 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         best_rt = rt[best_scan]
         #start_rt, best_rt = rt[start], rt[best_scan]
         rt_width = rt[stop] - start_rt
+
         norm_factor = u[best_scan+n_pad]
-        println("norm_factor $norm_factor")
+
         #Write data to state
         #Normalize so that maximum intensity is 1 
         #And time difference from start to finish is 1. 
@@ -569,7 +570,8 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         best_scan::Int64, #peak apex
         scan_range::UnitRange{Int64},
         n_pad::Int64) #start and stop of integration bounds 
-        best_scan + n_pad
+        
+        best_scan  = best_scan + n_pad
         scan_range = (first(scan_range) + n_pad, last(scan_range) + n_pad)
         #Fine LH baseline 
         lmin,li = typemax(Float32),first(scan_range)
@@ -597,10 +599,8 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         rmin = linsolve.u[last(scan_range)]
         =#
         #Subtract the baseline 
-        println("ri $ri li $li")
         
         h = (rmin - lmin)/(ri - li)
-        println("h $h rmin $rmin lmin $lmin")
         @inbounds @fastmath for i in scan_range
             u[i] = u[i]-(lmin + (i - li)*h)
         end
@@ -638,15 +638,14 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         best_scan,
         n_pad
     )
-    println("scan_range $scan_range")
-    println("nans before baseline", any(isnan.(linsolve.u)))
+
     subtractBaseline!(
         linsolve.u,
         best_scan,
         scan_range,
         n_pad
     )
-    println("nans after baseline", any(isnan.(linsolve.u)))
+
     #File `state` to fit EGH function. Get the inensity, and rt normalization factors 
     norm_factor, start_rt, rt_norm, best_rt = fillState!(
         state,
@@ -683,7 +682,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true)
         xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
         plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
-        plot!(chrom.rt[start:stop], u2[start:stop])
+        plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])
         hline!([norm_factor*0.95])
     end
 
@@ -822,6 +821,7 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                                 gw,gx,
                                 α = α,
                                 height_at_integration_width = height_at_integration_width,
+                                n_pad = 10,
                                 isplot = false
                                 );
                 #println("peak_area $peak_area i $i")
