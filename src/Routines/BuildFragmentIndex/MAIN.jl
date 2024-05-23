@@ -18,6 +18,21 @@ ARGS_ = Dict(
 
 )
 
+
+ARGS_ = Dict(
+    "params_json" =>  joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
+                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
+                            "buildFragmentIndex.json"),
+
+    "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
+                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
+                            "test_lib_pioneer_lib.arrow"),
+    "out_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
+    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052224")
+
+)
+
+
 function parse_commandline()
     s = ArgParseSettings()
 
@@ -70,20 +85,20 @@ println("reading pioneer lib...")
 @time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
 
 @time sorted_indices = sortPrositLib(
-    pioneer_lib[:prec_mz],
-    pioneer_lib[:iRT],
+    pioneer_lib[:mz],
+    pioneer_lib[:irt],
     params_[:rt_bin_tol]
 )
 
 #sort!(prosit_lib_all,:prec_mz)
 simple_fragments, folder_out = parsePioneerLib(
     folder_out,
-    pioneer_lib[:modified_sequence],
-    pioneer_lib[:accession_numbers],
+    pioneer_lib[:sequence],
+    pioneer_lib[:protein_name],
     pioneer_lib[:decoy],
     pioneer_lib[:charge],
-    pioneer_lib[:iRT],
-    pioneer_lib[:prec_mz],
+    pioneer_lib[:irt],
+    pioneer_lib[:mz],
     pioneer_lib[:frags],
     params_[:frag_mz_min], 
     params_[:frag_mz_max],

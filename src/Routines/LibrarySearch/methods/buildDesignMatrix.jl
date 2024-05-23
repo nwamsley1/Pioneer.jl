@@ -29,8 +29,9 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
     row = 0
     #Number of unique peaks encountered. 
     last_peak_ind = -1
-    j = 1
     last_row, last_col = -1, -1
+    j = 0
+    H.n_vals = 0
     for i in range(1, nmatches)#matches)
         match = matches[i]
         #If a match for this precursor hasn't been encountered yet, then assign it an unused row of H
@@ -47,24 +48,25 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         end
 
         col =  precID_to_col[getPrecID(match)]
-        if (col == last_col) & (row == last_row)
-            H.colval[j] = col
-            H.rowval[j] = row
-            #+= is important
-            H.nzval[j] += getPredictedIntenisty(match)
-            H.x[j] = getIntensity(match)#X[row]
-            H.matched[j] = true
-            H.n_vals += 1
+        if (col != last_col) | (row != last_row)
             j += 1
+            H.n_vals += 1
         end
+        H.colval[j] = col
+        H.rowval[j] = row
+        #+= is important
+        H.nzval[j] += getPredictedIntenisty(match)
+        H.x[j] = getIntensity(match)
+        H.matched[j] = true
+
         last_col = col
         last_row = row
 
     end
 
     i = j + 1#nmatches + 1
-    for j in range(nmatches + 1, nmatches + nmisses)
-        miss = misses[j - nmatches]
+    for j in range(1, nmisses)#range(nmatches + 1, nmatches + nmisses)
+        miss = misses[j]#j - nmatches]
         #If a match for this precursor hasn't been encountered yet, then there were no matched ions for this
         #precursor and it should not be included in the design matrix. 
         if !iszero(precID_to_col[getPrecID(miss)])
@@ -79,11 +81,5 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
             H.n_vals += 1
         end
     end
-    #if i >= (nmatches - 1)
-    #return X, sparse(vcat(H_COLS, U_COLS), vcat(H_ROWS, U_ROWS), vcat(H_VALS, U_VALS)), sparse(vcat(H_ROWS, U_ROWS), vcat(H_COLS, U_COLS), vcat(H_VALS, U_VALS)), precID_to_row, H_ncol
-    #end
-    #return X, sparse(H_COLS, H_ROWS, H_VALS), sparse(H_ROWS, H_COLS, H_VALS), precID_to_row, H_ncol
-    #sortSparse!(H)
-    #sort!(@view(matches[1:nmatches]), by = x->getPrecID(x), alg = PartialQuickSort(1:nmatches))
     sortSparse!(H)
 end

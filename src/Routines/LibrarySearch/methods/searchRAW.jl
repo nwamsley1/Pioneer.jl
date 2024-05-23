@@ -415,6 +415,7 @@ function getPSMS(
                                         spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)
+        sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         #println("nmatches $nmatches nmisses $nmisses")
         nmisses_all = nmisses
         nmatches_all = nmatches    
@@ -598,6 +599,7 @@ function getMassErrors(
                                         spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)  
+        #sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         #Add fragment matches to all_fmatches 
         frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx)
     end

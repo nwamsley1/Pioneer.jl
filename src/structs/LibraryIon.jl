@@ -75,6 +75,33 @@ PrositFrag() = PrositFrag(zero(Float32), zero(Float32), 'y', zero(UInt8), zero(U
 ArrowTypes.arrowname(::Type{PrositFrag}) = :PrositFrag
 ArrowTypes.JuliaType(::Val{:PrositFrag}) = PrositFrag
 
+struct PioneerFrag
+    mz::Float32
+    intensity::Float16
+    ion_type::UInt16 
+    is_y::Bool
+    frag_index::UInt8 #posiiton of fragment
+    charge::UInt8
+    isotope::UInt8
+    internal::Bool
+    immonium::Bool
+    internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
+    sulfur_count::UInt8
+end
+PrositFrag(pf::PioneerFrag) = PrositFrag(pf.intensity, pf.mz, pf.ion_type, pf.charge, pf.sulfur_count)
+getIntensity(pf::PioneerFrag) = pf.intensity
+getMZ(pf::PrositFrag) = pf.mz
+getType(pf::PioneerFrag) = pf.ion_type
+getIndex(pf::PioneerFrag) = pf.frag_index
+getCharge(pf::PioneerFrag) = pf.charge
+getSulfurCount(pf::PrositFrag) = pf.sulfur_count
+
+
+ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
+ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
+
+
+
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_id::UInt32
 

@@ -8,7 +8,7 @@ precID_to_iRT = getPrecIDtoiRT(PSMs_Dict,
 RT_INDICES = makeRTIndices(PSMs_Dict,
                             precID_to_iRT,
                             RT_iRT,
-                            bin_rt_size = 0.12,
+                            bin_rt_size = 0.21,
                             min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
 precID_to_cv_fold = getCVFolds(precID_to_iRT)
 

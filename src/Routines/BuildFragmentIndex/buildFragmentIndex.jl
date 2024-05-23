@@ -47,7 +47,20 @@ function sortPrositLib(
             alg=QuickSort)
     return sorted_indices
 end
-
+#=
+ prec_frags::Arrow.List{SubArray{PrositFrag, 1, 
+                                    Arrow.Struct{PrositFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
+                                    Arrow.Primitive{Float32, Vector{Float32}}, 
+                                    Arrow.Primitive{Char, Vector{UInt32}}, 
+                                    Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                    Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                    Arrow.Primitive{UInt8, Vector{UInt8}}}, (:intensity, :mass, :type, :index, :charge, :sulfur_count)}, Tuple{UnitRange{Int64}}, true}, Int32, 
+                                        Arrow.Struct{PrositFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
+                                        Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Char, Vector{UInt32}}, 
+                                        Arrow.Primitive{UInt8, Vector{UInt8}},
+                                         Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                         Arrow.Primitive{UInt8, Vector{UInt8}}}, (:intensity, :mass, :type, :index, :charge, :sulfur_count)}}
+=#
 """
     parsePioneerLib(
         folder_out::String,
@@ -141,24 +154,26 @@ Arguments:
 """
 function parsePioneerLib(
                         folder_out::String,
-                        modified_sequence::AbstractArray{String},
-                        accession_numbers::AbstractArray{String},
+                        modified_sequence::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        accession_numbers::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
                         decoy::AbstractArray{Bool},
                         charge::AbstractArray{UInt8},
                         irt::AbstractArray{Float32},
                         prec_mz::AbstractArray{Float32},
-                        prec_frags::Arrow.List{SubArray{PrositFrag, 1, 
-                                    Arrow.Struct{PrositFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
-                                    Arrow.Primitive{Float32, Vector{Float32}}, 
-                                    Arrow.Primitive{Char, Vector{UInt32}}, 
-                                    Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                    Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                    Arrow.Primitive{UInt8, Vector{UInt8}}}, (:intensity, :mass, :type, :index, :charge, :sulfur_count)}, Tuple{UnitRange{Int64}}, true}, Int32, 
-                                        Arrow.Struct{PrositFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
-                                        Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Char, Vector{UInt32}}, 
-                                        Arrow.Primitive{UInt8, Vector{UInt8}},
-                                         Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                         Arrow.Primitive{UInt8, Vector{UInt8}}}, (:intensity, :mass, :type, :index, :charge, :sulfur_count)}},
+                        prec_frags::Arrow.List{SubArray{PioneerFrag, 1, Arrow.Struct{PioneerFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
+                                                Arrow.Primitive{Float16, Vector{Float16}}, 
+                                                Arrow.Primitive{UInt16, Vector{UInt16}}, 
+                                                Arrow.BoolVector{Bool}, 
+                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
+                                                Arrow.BoolVector{Bool}, 
+                                                Arrow.BoolVector{Bool}, 
+                                                Arrow.FixedSizeList{Tuple{UInt8, UInt8}, Vector{UInt8}}, 
+                                                Arrow.Primitive{UInt8, Vector{UInt8}}
+                                                }, (:mz, :intensity, :ion_type, :is_y, :frag_index, :charge, :isotope, :internal, :immonium, :internal_ind, :sulfur_count)}, Tuple{UnitRange{Int64}}, true}, 
+                                                Int32, 
+                                                Arrow.Struct{PioneerFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float16, Vector{Float16}}, Arrow.Primitive{UInt16, Vector{UInt16}}, Arrow.BoolVector{Bool}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.BoolVector{Bool}, Arrow.BoolVector{Bool}, Arrow.FixedSizeList{Tuple{UInt8, UInt8}, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:mz, :intensity, :ion_type, :is_y, :frag_index, :charge, :isotope, :internal, :immonium, :internal_ind, :sulfur_count)}},
                         frag_mz_min::T,
                         frag_mz_max::T,
                         prec_mz_min::T,
@@ -366,7 +381,7 @@ function parsePioneerLib(
         end
         #Write precursor frags into the temporary array 
         for (i, frag) in enumerate(prec_frags[row_idx])
-            frags[i] = frag
+            frags[i] = PrositFrag(frag)
         end 
         #Sort sublist of fragments by descending order of intensity. 
         sort!(@view(frags[1:n_frags]), by = x -> getIntensity(x), rev = true, alg = QuickSort)
