@@ -154,12 +154,19 @@ Arguments:
 """
 function parsePioneerLib(
                         folder_out::String,
-                        modified_sequence::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        accession_numbers::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        decoy::AbstractArray{Bool},
-                        charge::AbstractArray{UInt8},
                         irt::AbstractArray{Float32},
                         prec_mz::AbstractArray{Float32},
+                        decoy::AbstractArray{Bool},
+
+                        accession_numbers::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        sequence::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        structural_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        isotopic_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+
+                        charge::AbstractArray{UInt8},
+                        missed_cleavages::AbstractArray{UInt8},
+                        sulfur_count::AbstractArray{UInt8},
+                        sequence_length::AbstractArray{UInt8}
                         prec_frags::Arrow.List{SubArray{PioneerFrag, 1, Arrow.Struct{PioneerFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
                                                 Arrow.Primitive{Float16, Vector{Float16}}, 
                                                 Arrow.Primitive{UInt16, Vector{UInt16}}, 
@@ -183,8 +190,8 @@ function parsePioneerLib(
                         y_start_index::Int64 = 4, 
                         b_start_index::Int64 = 3,
                         y_start::Int64 = 3, 
-                        b_start::Int64 = 2,
-                        missed_cleavage_regex::Regex = r"[KR][^P|$]") where {T<:AbstractFloat}
+                        b_start::Int64 = 2
+                        ) where {T<:AbstractFloat}
 
     max_rank_index = length(rank_to_score)
 
@@ -312,50 +319,37 @@ function parsePioneerLib(
     #Add a precursor ion to the precursors list 
     function addPrecursor!(precursors::Vector{LibraryPrecursorIon{Float32}}, 
                             precursor_idx::Int64,
-                            accession_numbers::String,
-                            modified_sequence::String,
                             irt::AbstractFloat,
                             prec_mz::AbstractFloat,
+
                             decoy::Bool,
+
+                            accession_numbers::String,
+                            sequence::String,
+                            structural_mods::Union{Missing, String},
+                            isotopic_mods::Union{Missing, String},
+
                             charge::UInt8,
-                            missed_cleavage_regex::Regex)
+                            missed_cleavage::UInt8,
+                            sulfur_count::UInt8,
+                            sequence_length::UInt8)
 
-        sulfur_pattern = r"[MS]"
-        #Modifications are specified in curved braces. For example M(ox) or C(carb). 
-        #Remove modifications to get only the amino acid sequence. 
-        function getPlainSeq(seq::String)
-            pattern = r"\(.*?\)"
-            # Remove all occurrences of the pattern from the input string
-            return replace(seq, pattern => "")
-        end
-
-        function countMissedCleavages(seq::String, pattern::Regex)
-            #pattern = r"[KR][^P|$]"
-            # Count the number of matches of the pattern in the input string
-            return length(collect((eachmatch(pattern, seq))))
-        end
-
-        function countMods(seq::String)
-            pattern = r"\(.*?\)"
-            return length(collect(eachmatch(pattern, seq)))
-        end
         precursor_idx += 1
-        mods_count = countMods(modified_sequence)
-        unmod_seq = getPlainSeq(modified_sequence)
-        sequence_length = length(unmod_seq)
-        sulfur_count = count(sulfur_pattern, unmod_seq)
-        missed_cleavages = countMissedCleavages(unmod_seq, missed_cleavage_regex)
+
         precursors[precursor_idx] = LibraryPrecursorIon(
             Float32(irt),
             Float32(prec_mz), #need to fix chronologer output to include precursor mz from the prosit table
             decoy,
+
             accession_numbers,
-            String(modified_sequence), #sequence,
+            sequence,
+            structural_mods,
+            isotopic_mods,
+
             UInt8(charge),
-            UInt8(missed_cleavages),
-            UInt8(mods_count),
-            UInt8(sequence_length),
-            UInt8(sulfur_count)
+            missed_cleavage,
+            sequence_length,
+            sulfur_count
         )
 
         return precursor_idx
@@ -367,7 +361,7 @@ function parsePioneerLib(
     frag_simple_idx = 1
     frags_simple_idx, precursor_idx = zero(Int64), zero(Int64)
     max_N_frags = 1000
-    frags = Vector{PrositFrag}(undef, max_N_frags)
+    frags = Vector{PioneerFrag}(undef, max_N_frags)
     #Loop through rows of prosit library (1-1 correspondence between rows and precursors)
     for row_idx in ProgressBar(sorted_indices)
         if (prec_mz[row_idx] < prec_mz_min) | (prec_mz[row_idx] > prec_mz_max)
@@ -381,20 +375,24 @@ function parsePioneerLib(
         end
         #Write precursor frags into the temporary array 
         for (i, frag) in enumerate(prec_frags[row_idx])
-            frags[i] = PrositFrag(frag)
+            frags[i] = frag
         end 
         #Sort sublist of fragments by descending order of intensity. 
         sort!(@view(frags[1:n_frags]), by = x -> getIntensity(x), rev = true, alg = QuickSort)
        
         precursor_idx = addPrecursor!(precursors, 
                         precursor_idx,
-                        accession_numbers[row_idx],
-                        modified_sequence[row_idx],
                         irt[row_idx],
                         prec_mz[row_idx],
                         decoy[row_idx],
+                        accession_numbers[row_idx],
+                        sequence[row_idx],
+                        structural_mods[row_idx],
+                        isotopic_mods[row_idx],
                         charge[row_idx],
-                        missed_cleavage_regex
+                        missed_cleavages[row_idx],
+                        sulfur_count[row_idx],
+                        sequence_length[row_idx]
                         )
         #Map the new precursor id to the data table row 
         prec_id_to_library_row[precursor_idx] = UInt32(row_idx)

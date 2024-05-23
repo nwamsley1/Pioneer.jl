@@ -10,10 +10,11 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
 
     accession_numbers::String
     sequence::String
+    structural_mods::Union{Missing, String}
+    isotopic_mods::Union{Missing, String}
 
     prec_charge::UInt8
     missed_cleavages::UInt8
-    variable_mods::UInt8
     length::UInt8
     sulfur_count::UInt8
 end
