@@ -247,6 +247,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         addPostIntegrationFeatures!(psms_integrated, 
                                     MS_TABLE, 
                                     prosit_lib["precursors"][:sequence],
+                                    prosit_lib["precursors"][:structural_mods],
                                     prosit_lib["precursors"][:mz],
                                     prosit_lib["precursors"][:irt],
                                     prosit_lib["precursors"][:prec_charge],

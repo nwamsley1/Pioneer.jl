@@ -90,7 +90,7 @@ end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
-                                prec_sequence::Arrow.List{String, Int32, Vector{UInt8}},
+                                structural_mods::Arrow.List{String, Int32, Vector{UInt8}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
@@ -117,20 +117,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
     scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
     function countMOX(seq::String)
-        mox = zero(UInt8)
-        in_mox = false
-        for aa in seq
-            if in_mox
-                if aa == 'x'
-                    mox += one(UInt8)
-                end
-                in_mox = false
-            end
-            if aa == 'o'
-                in_mox = true
-            end
-        end
-        return mox
+        return UInt8(count("Unimod:35", seq))
     end
 
     #Split data into chunk ranges
@@ -145,7 +132,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
 
                 targets[i] = prec_is_decoy[prec_idx] == false;
                 missed_cleavage[i] = prec_missed_cleavages[prec_idx]
-                Mox[i] = countMOX(prec_sequence[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
+                Mox[i] = countMOX(structural_mods[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 iRT_pred[i] = Float32(prec_irt[prec_idx]);
                 RT[i] = Float32(scan_retention_time[scan_idx[i]]);
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
@@ -535,6 +522,7 @@ end
 function addPostIntegrationFeatures!(psms::DataFrame, 
                                     MS_TABLE::Arrow.Table, 
                                     precursor_sequence::AbstractArray{String},
+                                    structural_mods::AbstractArray{String},
                                     prec_mz::AbstractArray{T},
                                     prec_irt::AbstractArray{T},
                                     prec_charge::AbstractArray{UInt8},
@@ -581,22 +569,10 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
     #precursor_idx = PSMs[!,:precursor_idx]::Vector{UInt32}
-    function countMOX(seq::String)::UInt8
-        mox = zero(UInt8)
-        in_mox = false
-        for aa in seq
-            if in_mox
-                if aa == 'x'
-                    mox += one(UInt8)
-                end
-                in_mox = false
-            end
-            if aa == 'o'
-                in_mox = true
-            end
-        end
-        return mox
+    function countMOX(seq::String)
+        return UInt8(count("Unimod:35", seq))
     end
+
 
     tasks_per_thread = 5
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -615,7 +591,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
                 sequence[i] = precursor_sequence[prec_idx]
                 stripped_sequence[i] = replace(sequence[i], r"\(.*?\)" => "")#replace.(sequence[i], "M(ox)" => "M");
-                Mox[i] = countMOX(sequence[i])
+                Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
                 sequence_length[i] = length(stripped_sequence[i])
 
 

@@ -28,7 +28,7 @@ ARGS_ = Dict(
                             "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
                             "test_lib_pioneer_lib.arrow"),
     "out_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052224")
+    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052324")
 
 )
 
@@ -81,25 +81,46 @@ open(joinpath(folder_out, "config.json"),"w") do f
 end
 
 println("reading pioneer lib...")
+
+ARGS_["pioneer_lib_dir"]
 #@time pioneer_lib = Arrow.Table("/Users/n.t.wamsley/Desktop/test_lib.arrow")
 @time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
+#@time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
+@time prec_frag_ranges = load(joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
+                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
+                            "test_lib_prec_frag_ranges.jld2"))["prec_frag_ranges"];
+
+@time prec_frags = load(joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
+                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
+                            "test_lib_prec_frags.jld2"))["prec_frags"];
 
 @time sorted_indices = sortPrositLib(
     pioneer_lib[:mz],
     pioneer_lib[:irt],
     params_[:rt_bin_tol]
 )
+#using PProf, Profile
+#Profile.clear()
 
-#sort!(prosit_lib_all,:prec_mz)
+#frags_vec, prec_to_frag_range = getFragRanges(pioneer_lib[:frags])
+#@profile 
 simple_fragments, folder_out = parsePioneerLib(
     folder_out,
-    pioneer_lib[:sequence],
-    pioneer_lib[:protein_name],
-    pioneer_lib[:decoy],
-    pioneer_lib[:charge],
     pioneer_lib[:irt],
     pioneer_lib[:mz],
-    pioneer_lib[:frags],
+    pioneer_lib[:decoy],
+
+    pioneer_lib[:proteome_name],
+    pioneer_lib[:protein_name],
+    pioneer_lib[:sequence],
+    pioneer_lib[:structural_mods],
+    pioneer_lib[:isotope_mods],
+
+    pioneer_lib[:charge],
+    pioneer_lib[:sulfur_count],
+    pioneer_lib[:seq_length],
+    prec_frag_ranges,
+    prec_frags,
     params_[:frag_mz_min], 
     params_[:frag_mz_max],
     params_[:prec_mz_min],
@@ -112,8 +133,9 @@ simple_fragments, folder_out = parsePioneerLib(
     b_start = params_[:b_start],
     missed_cleavage_regex = params_[:missed_cleavage_regex]
 );
+#pprof(;webport=58603)
 
-println("building fragment index...")
+#println("building fragment index...")
 buildFragmentIndex!(
                     folder_out,
                     simple_fragments,

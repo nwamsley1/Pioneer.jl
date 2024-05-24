@@ -8,6 +8,7 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
 
     is_decoy::Bool
 
+    proteome_identifiers::String
     accession_numbers::String
     sequence::String
     structural_mods::Union{Missing, String}
@@ -89,15 +90,14 @@ struct PioneerFrag
     internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
     sulfur_count::UInt8
 end
-PrositFrag(pf::PioneerFrag) = PrositFrag(pf.intensity, pf.mz, pf.ion_type, pf.charge, pf.sulfur_count)
+PrositFrag(pf::PioneerFrag) = PrositFrag(pf.intensity, pf.mz, pf.ion_type, pf.frag_index, pf.charge, pf.sulfur_count)
 getIntensity(pf::PioneerFrag) = pf.intensity
-getMZ(pf::PrositFrag) = pf.mz
+getMZ(pf::PioneerFrag) = pf.mz
 getType(pf::PioneerFrag) = pf.ion_type
 getIndex(pf::PioneerFrag) = pf.frag_index
 getCharge(pf::PioneerFrag) = pf.charge
-getSulfurCount(pf::PrositFrag) = pf.sulfur_count
-
-
+getSulfurCount(pf::PioneerFrag) = pf.sulfur_count
+isY(pf::PioneerFrag) = pf.is_y
 ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
 ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
 

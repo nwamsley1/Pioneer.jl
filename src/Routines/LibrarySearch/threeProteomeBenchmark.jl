@@ -19,6 +19,7 @@ function getLog2Diff(prec_group::SubDataFrame,
     end
     group_A = occursin.(first(group_keys), prec_group[:,:condition])
     group_B = occursin.(last(group_keys), prec_group[:,:condition])
+    #if any(group_A) == false
     log2_diff = prec_group[:,:log2_mean][group_B] - prec_group[:,:log2_mean][group_A]
     out = (
      log2_diff = log2_diff, 
@@ -52,7 +53,6 @@ function groupPSMS(
     filter!(x->!isnan(x.CV), pioneer_groupmeans)
     return pioneer_groupmeans#combine(prec_group -> getLog2Diff(prec_group), groupby(pioneer_groupmeans, [:species, :accession_numbers, :modified_sequence, :charge,:isotopes_captured]));
 end
-
 function filterResults(
         psms::DataFrame,
         min_non_missing::Int,
@@ -64,8 +64,40 @@ function filterResults(
      psms[!,:CV_b].<=max_cv)
     return psms[cols_to_keep,:]
 end
+using FASTX, CodecZlib
+function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
 
-test_time = @timed begin
+    function getReader(fasta_path::String)
+        if endswith(fasta_path, ".fasta.gz")
+            return FASTA.Reader(GzipDecompressorStream(open(fasta_path)))
+        elseif endswith(fasta_path, ".fasta")
+            return FASTA.Reader(open(fasta_path))
+        else
+            throw(ErrorException("fasta_path \"$fasta_path\" did not end with `.fasta` or `.fasta.gz`"))
+        end
+    end
+
+    #I/O for Fasta
+    reader = getReader(fasta_path)
+
+    #In memory representation of FastaFile
+    #fasta = Vector{FastaEntry}()
+    fasta = Vector{Tuple{String, String}}()
+    @time begin
+        for record in reader
+                push!(fasta, 
+                        (parse_identifier(FASTA.identifier(record)),
+                         split(split(split(FASTA.description(record), ' ')[1], '|')[end], '_')[end],
+                                #FASTA.sequence(record),
+                                #false
+                        )
+                )
+        end
+    end
+
+    return fasta
+end
+total_time = @timed begin
     println("A")
 end
 #Create results folder 
@@ -107,9 +139,21 @@ transform!(best_psms_passing, AsTable(:) => ByRow(precursor -> getCondition(prec
 best_psms_passing[!,:species] .= "HUMAN"
 println("size(best_psms_passing) ", size(best_psms_passing))
 conditions = unique(best_psms_passing[!,:condition])
-
+conditions = ["E10H50Y40","E30H50Y20"]
 quant_name = :trapezoid_area_normalized
 cv_param = 20.0
+#best_psms_passing_old = copy(best_psms_passing)
+ACC_TO_SPEC = Dict(vcat([parseFasta("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/PROTEOMES/UP000000625_83333_Escherichia_coli.fasta.gz"),
+                   parseFasta("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/PROTEOMES/UP000002311_559292_Saccharomyces_cerevisiae.fasta.gz"),
+                   parseFasta("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/PROTEOMES/UP000005640_9606_human.fasta.gz")]...));
+best_psms_passing[!,:species_names] = [Set([ACC_TO_SPEC[id] for id in ids]) for ids in split.(best_psms_passing[!,:accession_numbers],';')];
+best_psms_passing = best_psms_passing[length.(best_psms_passing[!,:species_names]).==1,:];
+best_psms_passing[!,:species] = first.(best_psms_passing[!,:species_names]);
+best_psms_passing = best_psms_passing[best_psms_passing[!,:Mox].==0,:]
+jldsave(joinpath(benchmark_results_folder, "best_psms_passing_threeproteome.jld2"); best_psms_passing)
+to_keep = occursin.(first(conditions), best_psms_passing[!,:condition]) .| occursin.(last(conditions), best_psms_passing[!,:condition])
+
+best_psms_passing = best_psms_passing[to_keep,:]
 for quant_name in [:peak_area_normalized, :trapezoid_area_normalized, :weight_normalized]
     #Get grouped psms 
     gpsms = groupPSMS(best_psms_passing, quant_name)
@@ -126,15 +170,15 @@ for quant_name in [:peak_area_normalized, :trapezoid_area_normalized, :weight_no
     prec_counts = size(three_proteome_results, 1)
     gdf = groupby(three_proteome_results, [:species])
     nt = NamedTuple.(keys(gdf))
-    p = plot(legenZd=:outertopright, show = true, title = "Puyvelde et al. 2023 w/ PIONEER \n 6of9, CV<$cv_param%, 1% FDR \n $prec_counts Precursors",
+    p = plot(legenZd=:outertopright, show = true, title = "Olsen Astral Benchmark Pioneer \n 3of3, CV<20%, 1% FDR \n $prec_counts Precursors",
     topmargin=5mm, dpi = 300)
     i = 1
     xlim = (quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.001), quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.999))
     ylim = (-3, 3)
-    for (k,v) in pairs(gdf)
-        plot!(p, gdf[k][:,:log2_mean], gdf[k][:,:log2_diff], color = i, label=nothing, xlim = xlim,
+    for k in ["HUMAN","YEAST","ECOLI"]
+        plot!(p, gdf[(species = k,)][:,:log2_mean], gdf[(species = k,)][:,:log2_diff], color = i, label=nothing, xlim = xlim,
             ylim = ylim,
-            alpha = 0.01, seriestype=:scatter)
+            alpha = 0.025, seriestype=:scatter)
         hline!([0.0], color = i, legend = false,
             #label = label="$(nt[i][:species])"
         )
@@ -143,6 +187,46 @@ for quant_name in [:peak_area_normalized, :trapezoid_area_normalized, :weight_no
     end
 
     savefig(p, joinpath(benchmark_results_folder, "PIONEER_SCATTER_"*string(quant_name)*".pdf"))
+
+    p = plot(legenZd=:outertopright, show = true, title = "Olsen Astral Benchmark Pioneer \n 3of3, CV<20%, 1% FDR \n $prec_counts Precursors",
+    topmargin=5mm, dpi = 300)
+    i = 1
+    xlim = (quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.001), quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.999))
+    ylim = (-3, 3)
+    SPECIES_TO_LOG2FC = Dict("HUMAN" => 0.0,
+                         "YEAST" => -1.0,
+                         "ECOLI" => log2(3.0))
+    for k in ["HUMAN","YEAST","ECOLI"]
+        density!(p, gdf[(species = k,)][:,:log2_diff], color = i, label=nothing, bins = LinRange(-3, 3, 100), xlim = (-3, 3.5), show = true, normalize = :probability)
+        vline!([0.0], color = i, legend = false,
+            label = label="$(nt[i][:species])"
+        )
+    
+        i += 1
+    end
+
+    savefig(p, joinpath(benchmark_results_folder, "PIONEER_HIST_"*string(quant_name)*".pdf"))
+
+    p = plot(legenZd=:outertopright, show = true, title = "Olsen Astral Benchmark Pioneer \n 3of3, CV<20%, 1% FDR \n $prec_counts Precursors",
+    topmargin=5mm, dpi = 300)
+    i = 1
+    xlim = (quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.001), quantile(gdf[(species = "HUMAN", )][:,:log2_mean], 0.999))
+    ylim = (-3, 3)
+    SPECIES_TO_LOG2FC = Dict("HUMAN" => 0.0,
+                         "YEAST" => -1.0,
+                         "ECOLI" => log2(3.0))
+    for k in ["HUMAN","YEAST","ECOLI"]
+        violin!(p, gdf[(species = k,)][:,:log2_diff], color = i, label=nothing, ylim = (-3, 3.5), show = true)
+    
+        i += 1
+    end
+    i = 1
+    for k in ["HUMAN","YEAST","ECOLI"]
+      hline!([SPECIES_TO_LOG2FC[nt[i][:species]]], color = i, label = label="$(nt[i][:species])", xlabel="Log2(A/B)")
+        i += 1
+    end
+    savefig(p, joinpath(benchmark_results_folder, "PIONEER_VIOLIN_"*string(quant_name)*".pdf"))
+
 
     open(joinpath(benchmark_results_folder, "results.txt"), "a") do io
         original_stdout = stdout

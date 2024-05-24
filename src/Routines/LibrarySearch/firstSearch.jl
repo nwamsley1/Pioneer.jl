@@ -209,7 +209,7 @@ end
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(mainLibrarySearch(
+    @time PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -233,7 +233,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #scan_range = (100000, 100010)
     )...);
     addMainSearchColumns!(PSMs, MS_TABLE, 
-                        prosit_lib["precursors"][:sequence],
+                        prosit_lib["precursors"][:structural_mods],
                         prosit_lib["precursors"][:missed_cleavages],
                         prosit_lib["precursors"][:is_decoy],
                         prosit_lib["precursors"][:irt],

@@ -51,19 +51,20 @@ ARGS = parse_commandline();
 
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
+library_fragment_lookup_table.prec_frag_ranges[end] = 0x29004baf:(0x29004be8 - 1)
 3-protome PC test March 4th 2024 for hupo
 julia --threads 15 ./src/Routines/LibrarySearch/MAIN.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib -s true 
 
-params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
+params = JSON.parse(read("/Users/n.t.wamsley/RIS_temp/ASMS_2024/INITIAL_TESTS/THREE_PROTEOME/CONFIGS/LibrarySearch_Z.json", String));
 
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
-SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib/"
-MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","test")
+SPEC_LIB_DIR = joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024","UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052324","pioneer_lib")#"/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib/"
+MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","exploris_test")
 #SPEC_LIB_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","test")
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/""
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/ThermoRawFileToParquetConverter-main/parquet_out"
 #MS_DATA_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "HUPO_2023", "CALIBRATION_CURVES", "RAW")
-MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","exploris_test")
+#MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","exploris_test")
 #SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
 #MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
@@ -205,6 +206,9 @@ prosit_lib = Dict{String, Any}()
 detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
 prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
 const library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
+last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
+last_range = range(first(last_range), last(last_range) - 1)
+library_fragment_lookup_table.prec_frag_ranges[end] = last_range
 prosit_lib["f_det"] = library_fragment_lookup_table
 
 #@time begin

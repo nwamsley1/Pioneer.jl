@@ -158,29 +158,17 @@ function parsePioneerLib(
                         prec_mz::AbstractArray{Float32},
                         decoy::AbstractArray{Bool},
 
+                        proteome_names::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
                         accession_numbers::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
                         sequence::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
                         structural_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
                         isotopic_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
 
                         charge::AbstractArray{UInt8},
-                        missed_cleavages::AbstractArray{UInt8},
                         sulfur_count::AbstractArray{UInt8},
-                        sequence_length::AbstractArray{UInt8}
-                        prec_frags::Arrow.List{SubArray{PioneerFrag, 1, Arrow.Struct{PioneerFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, 
-                                                Arrow.Primitive{Float16, Vector{Float16}}, 
-                                                Arrow.Primitive{UInt16, Vector{UInt16}}, 
-                                                Arrow.BoolVector{Bool}, 
-                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                                Arrow.Primitive{UInt8, Vector{UInt8}}, 
-                                                Arrow.BoolVector{Bool}, 
-                                                Arrow.BoolVector{Bool}, 
-                                                Arrow.FixedSizeList{Tuple{UInt8, UInt8}, Vector{UInt8}}, 
-                                                Arrow.Primitive{UInt8, Vector{UInt8}}
-                                                }, (:mz, :intensity, :ion_type, :is_y, :frag_index, :charge, :isotope, :internal, :immonium, :internal_ind, :sulfur_count)}, Tuple{UnitRange{Int64}}, true}, 
-                                                Int32, 
-                                                Arrow.Struct{PioneerFrag, Tuple{Arrow.Primitive{Float32, Vector{Float32}}, Arrow.Primitive{Float16, Vector{Float16}}, Arrow.Primitive{UInt16, Vector{UInt16}}, Arrow.BoolVector{Bool}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}, Arrow.BoolVector{Bool}, Arrow.BoolVector{Bool}, Arrow.FixedSizeList{Tuple{UInt8, UInt8}, Vector{UInt8}}, Arrow.Primitive{UInt8, Vector{UInt8}}}, (:mz, :intensity, :ion_type, :is_y, :frag_index, :charge, :isotope, :internal, :immonium, :internal_ind, :sulfur_count)}},
+                        sequence_length::AbstractArray{UInt8},
+                        prec_frag_ranges::Vector{UnitRange{UInt32}},
+                        prec_frags::Vector{PioneerFrag},
                         frag_mz_min::T,
                         frag_mz_max::T,
                         prec_mz_min::T,
@@ -190,7 +178,8 @@ function parsePioneerLib(
                         y_start_index::Int64 = 4, 
                         b_start_index::Int64 = 3,
                         y_start::Int64 = 3, 
-                        b_start::Int64 = 2
+                        b_start::Int64 = 2,
+                        missed_cleavage_regex::Regex = r"[KR][^U|\$]",
                         ) where {T<:AbstractFloat}
 
     max_rank_index = length(rank_to_score)
@@ -210,15 +199,10 @@ function parsePioneerLib(
     println("allocating memory for output...")            
     N_precs = length(sorted_indices)
     #How many fragments? Determines size of pre-allocated arrays
-    frag_count = 0
-    for prec_idx in sorted_indices
-        frags = prec_frags[prec_idx]
-        frag_count += length(frags)
-    end
+    frag_count = length(prec_frags)
     ###########
     #Initialize Containers
-    #List of lists. The n'th element of the outer list is indexed by the precursor id.
-    #Each inner list contains a list of "LibraryFragment"s. These are a detailed specificaion of a framgent ion
+    println("frag_count $frag_count")
     frags_detailed = Vector{DetailedFrag{Float32}}(undef, frag_count)
     #Keeps track of with fragments in "frags_detailed" correspond to which precursor
     precursor_indices = Vector{UnitRange{UInt32}}(undef, N_precs)
@@ -229,7 +213,7 @@ function parsePioneerLib(
     #maps precursor ids to the original row of the data framgent
     prec_id_to_library_row = Vector{UInt32}(undef, N_precs)
     #Is the fragment within the constraints? m/z scan range and exceeding minimum b,y ion index?
-    function inScanRange(frag::PrositFrag, low_frag_mz::T, high_frag_mz::T, y_start_ind::Int64, b_start_ind::Int64) where {T<:AbstractFloat}
+    function inScanRange(frag::PioneerFrag, low_frag_mz::T, high_frag_mz::T, y_start_ind::Int64, b_start_ind::Int64) where {T<:AbstractFloat}
         mz, index = getMZ(frag), getIndex(frag)
         if getType(frag) == 'y'
             return (mz>low_frag_mz)&(mz<high_frag_mz)&(index>=y_start_ind)
@@ -247,7 +231,7 @@ function parsePioneerLib(
                                 rank_to_score::Vector{UInt8},
                                 prec_idx::Int64,
                                 prec::LibraryPrecursorIon{T},
-                                prosit_frags::Vector{PrositFrag}, #Critically, must be sorted in descending order by predicted intensity
+                                prosit_frags::Vector{PioneerFrag}, #Critically, must be sorted in descending order by predicted intensity
                                 max_frag_idx::Int64,
                                 max_rank_index::Int64,
                                 frag_mz_min::T,
@@ -285,7 +269,7 @@ function parsePioneerLib(
                                 frags_detailed_idx::Int64,
                                 prec_idx::Int64,
                                 prec::LibraryPrecursorIon{T},
-                                prosit_frags::Vector{PrositFrag},
+                                prosit_frags::Vector{PioneerFrag},
                                 max_frag_idx::Int64,
                                 frag_mz_min::T,
                                 frag_mz_max::T,
@@ -301,7 +285,7 @@ function parsePioneerLib(
                     getMZ(frag), #mz
                     Float16(getIntensity(frag)), #intensity
 
-                    getType(frag) == 'y', #will need to extend to a 'Char' to account for different types 
+                    isY(frag), #will need to extend to a 'Char' to account for different types 
                     false, #not isotope
 
                     getCharge(frag), #frag_charge
@@ -324,30 +308,38 @@ function parsePioneerLib(
 
                             decoy::Bool,
 
+                            proteome_name::String,
                             accession_numbers::String,
                             sequence::String,
                             structural_mods::Union{Missing, String},
                             isotopic_mods::Union{Missing, String},
 
                             charge::UInt8,
-                            missed_cleavage::UInt8,
                             sulfur_count::UInt8,
                             sequence_length::UInt8)
 
         precursor_idx += 1
 
+        function countMissedCleavages(seq::String, pattern::Regex)
+            #pattern = r"[KR][^P|$]"
+            # Count the number of matches of the pattern in the input string
+            return length(collect((eachmatch(pattern, seq))))
+        end
+
+        missed_cleavage = countMissedCleavages(sequence, missed_cleavage_regex)
         precursors[precursor_idx] = LibraryPrecursorIon(
             Float32(irt),
             Float32(prec_mz), #need to fix chronologer output to include precursor mz from the prosit table
             decoy,
 
+            proteome_name,
             accession_numbers,
             sequence,
             structural_mods,
             isotopic_mods,
 
             UInt8(charge),
-            missed_cleavage,
+            UInt8(missed_cleavage),
             sequence_length,
             sulfur_count
         )
@@ -368,14 +360,14 @@ function parsePioneerLib(
             continue
         end
         #Grow placeholder fragment array if necessary 
-        n_frags = length(prec_frags[row_idx]) 
+        n_frags = length(prec_frag_ranges[row_idx]) 
         if n_frags > max_N_frags
             max_N_frags = n_frags
-            frags = Vector{PrositFrag}(undef, max_N_frags)
+            frags = Vector{PioneerFrag}(undef, max_N_frags)
         end
         #Write precursor frags into the temporary array 
-        for (i, frag) in enumerate(prec_frags[row_idx])
-            frags[i] = frag
+        for (i, frag_idx) in enumerate(prec_frag_ranges[row_idx])
+            frags[i] = prec_frags[frag_idx]          
         end 
         #Sort sublist of fragments by descending order of intensity. 
         sort!(@view(frags[1:n_frags]), by = x -> getIntensity(x), rev = true, alg = QuickSort)
@@ -385,12 +377,12 @@ function parsePioneerLib(
                         irt[row_idx],
                         prec_mz[row_idx],
                         decoy[row_idx],
+                        proteome_names[row_idx],
                         accession_numbers[row_idx],
                         sequence[row_idx],
                         structural_mods[row_idx],
                         isotopic_mods[row_idx],
                         charge[row_idx],
-                        missed_cleavages[row_idx],
                         sulfur_count[row_idx],
                         sequence_length[row_idx]
                         )

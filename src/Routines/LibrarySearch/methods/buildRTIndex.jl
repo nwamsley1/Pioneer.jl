@@ -198,50 +198,44 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     return rt_indices
 end
 
-function getBestTrace!(psms::DataFrame)
-    grouped_psms = groupby(psms, :precursor_idx)
+function getBestTrace!(psms::DataFrame,
+                       max_q_value::AbstractFloat,
+                       quant_col::Symbol)
+
+    psms[!,:best_trace] .= false
+    grouped_psms = groupby(psms, [:precursor_idx])
 
     #For each precursor
     for i in ProgressBar(range(1, length(grouped_psms)))
 
-        #Which traces had psms?
-        isotope_set = unique(grouped_psms[i][!,:isotpes_captured])
-
-        length(iso_ranks)<=1 ? continue : nothing
-
-        score, best_rank, best_score = 0, minimum(iso_ranks), 0
-        
-        for rank in iso_ranks
-            for j in range(1, size(grouped_psms[i], 1))
-                if grouped_psms[i][j,:iso_rank] == rank
-                    if grouped_psms[i][j,:q_value] <=0.01
-                        score += grouped_psms[i][j,:weight]
-                    end
-                end
+        #For all psms for the given precursor
+        #group by isotope subsets 
+        iso_sets = groupby(grouped_psms[i],:isotopes_captured)
+        best_iso_set = nothing
+        best_score = typemin(Float32)
+        for (iso_set, psms) in pairs(iso_sets)
+            #Score is sum of peak areas where the q_value was 
+            #below the threshold 
+            score = zero(Float32)
+            for i in range(1, size(psms, 1))
+                score += psms[i,quant_col]*(psms[i,:q_value]<=max_q_value)
             end
-            if score == best_score
-                if rank < best_rank
-                    best_score = score
-                    best_rank = rank
-                end
-                score = 0
-            elseif score > best_score
+
+            #If the score is the best encountered so far, 
+            #then this it he best isotope trace so far. 
+            if score > best_score
                 best_score = score
-                best_rank = rank
-                score = 0
-            else
-                score = 0
+                best_iso_set = iso_set
             end
         end
-        
-        for j in range(1, size(grouped_psms[i], 1))
-            if grouped_psms[i][j,:iso_rank] != best_rank
-                grouped_psms[i][j,:best_scan] = false
-            end
+
+        if best_iso_set !== nothing
+            iso_sets[best_iso_set][!,:best_trace] .= true
         end
 
     end
-    filter!(x->x.best_scan, psms);
+
+    #filter!(x->x.best_trace, psms);
 end
 
 function getCVFolds(precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}})

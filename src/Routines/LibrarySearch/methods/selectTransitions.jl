@@ -278,12 +278,45 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         frag, 
                         prec_isotope_set)
 
-        for iso_idx in range(0, length(isotopes) - 1)
+        if length(isotopes) > 0
+            for iso_idx in range(0, length(isotopes) - 1)
 
+                #Skip if missing
+                #iszero(isotopes[iso_idx + 1]) ? continue : nothing
+                frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
+                if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds)) | (frag.intensity < 0.0)
+                    continue
+                end           
+                transition_idx += 1
+                #println("prec_isotope_set $prec_isotope_set iso_idx: $iso_idx frag.intensity: ", frag.intensity, " isotopes[iso_idx + 1]: ", isotopes[iso_idx + 1])
+                transitions[transition_idx] = DetailedFrag(
+                    frag.prec_id,
+
+                    frag_mz, #Estimated isotopic m/z
+                    Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
+
+                    frag.is_y_ion,
+                    iso_idx>0, #Is the fragment an isotope?
+
+                    frag.frag_charge,
+                    frag.ion_position,
+                    frag.prec_charge,
+                    frag.rank,
+                    frag.sulfur_count
+                )#::LibraryFragment{T}
+                
+
+                #Grow array if exceeds length
+                
+                if transition_idx >= length(transitions)
+                    append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
+                end
+            end
+        else
             #Skip if missing
             #iszero(isotopes[iso_idx + 1]) ? continue : nothing
-            frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
-            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
+            frag_mz = Float32(frag.mz)#Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
+            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds)) | (frag.intensity < 0.005)
                 continue
             end           
             transition_idx += 1
@@ -292,10 +325,10 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                 frag.prec_id,
 
                 frag_mz, #Estimated isotopic m/z
-                Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
+                Float16(frag.intensity), #Estimated relative abundance 
 
                 frag.is_y_ion,
-                iso_idx>0, #Is the fragment an isotope?
+                false, #Is the fragment an isotope?
 
                 frag.frag_charge,
                 frag.ion_position,
