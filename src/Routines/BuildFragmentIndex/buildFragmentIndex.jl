@@ -154,6 +154,7 @@ Arguments:
 """
 function parsePioneerLib(
                         folder_out::String,
+                        id_to_annotation::Vector{PioneerFragAnnotation},
                         irt::AbstractArray{Float32},
                         prec_mz::AbstractArray{Float32},
                         decoy::AbstractArray{Bool},
@@ -169,12 +170,12 @@ function parsePioneerLib(
                         sequence_length::AbstractArray{UInt8},
                         prec_frag_ranges::Vector{UnitRange{UInt32}},
                         prec_frags::Vector{PioneerFrag},
-                        frag_mz_min::T,
-                        frag_mz_max::T,
+                        frag_bounds::FragBoundModel,
                         prec_mz_min::T,
                         prec_mz_max::T;
                         rank_to_score::Vector{UInt8}=UInt8[4, 2, 2, 1, 1],
                         rt_bin_tol::T = 1.0f0,
+                        exclude_from_index::Set{Char} = Set{Char}(),
                         y_start_index::Int64 = 4, 
                         b_start_index::Int64 = 3,
                         y_start::Int64 = 3, 
@@ -227,6 +228,8 @@ function parsePioneerLib(
     #to the simple frags vector `Vector{SimpleFrag{T}}`
     #This is used to build the framgent index. 
     function addSimpleFrags!(frags_simple::Vector{SimpleFrag{T}}, 
+                                id_to_annotation::Vector{PioneerFragAnnotation},
+                                exclude_from_index::Set{Char},
                                 frags_simple_idx::Int64, 
                                 rank_to_score::Vector{UInt8},
                                 prec_idx::Int64,
@@ -244,6 +247,9 @@ function parsePioneerLib(
         for i in range(1, max_frag_idx)
             frag = prosit_frags[i]
             #If the fragment meets the constraints add to the simple frags list 
+            if getBaseType(id_to_annotation[getType(frag)]) ∈ exclude_from_index
+                continue
+            end
             if inScanRange(frag, frag_mz_min, frag_mz_max, y_start, b_start)
                 score = rank_to_score[simple_frags_added+1]#getScore(simple_frags_added+1) #score added to precursor for matching this fragment
                 frags_simple[frags_simple_idx + simple_frags_added] = SimpleFrag(
@@ -359,6 +365,8 @@ function parsePioneerLib(
         if (prec_mz[row_idx] < prec_mz_min) | (prec_mz[row_idx] > prec_mz_max)
             continue
         end
+        #Get frag_mz bounds 
+        frag_mz_min, frag_mz_max = frag_bounds(prec_mz[row_idx])
         #Grow placeholder fragment array if necessary 
         n_frags = length(prec_frag_ranges[row_idx]) 
         if n_frags > max_N_frags
@@ -402,6 +410,8 @@ function parsePioneerLib(
         precursor_indices[precursor_idx] = frag_det_idx_start:frag_det_idx_stop
         frag_det_idx_start = frag_det_idx_stop + 1
         frag_simple_idx = addSimpleFrags!(frags_simple,
+                                            id_to_annotation,
+                                            exclude_from_index,
                                             frag_simple_idx,
                                             rank_to_score,
                                             precursor_idx,

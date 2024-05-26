@@ -101,6 +101,21 @@ isY(pf::PioneerFrag) = pf.is_y
 ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
 ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
 
+#Need this information for each distinct fragment type
+struct PioneerFragAnnotation
+    base_type::Char
+    frag_index::UInt8
+    charge::UInt8
+    isotope::UInt8
+    internal::Bool
+    immonium::Bool
+    sulfur_diff::Int8
+end
+getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
+
+ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
+ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
+
 
 
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}

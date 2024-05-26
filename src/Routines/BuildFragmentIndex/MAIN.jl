@@ -4,8 +4,8 @@ using Base.Iterators: partition
 include("src/structs/Ion.jl")
 include("src/structs/LibraryIon.jl")
 include("src/structs/LibraryFragmentIndex.jl")
+include("src/Routines/buildFragmentIndex/fragBounds.jl")
 include("src/Routines/buildFragmentIndex/buildFragmentIndex.jl")
-
 ARGS_ = Dict(
     "params_json" =>  joinpath(pwd(), "data", "example_config","buildFragmentIndex.json"),
     "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","TEST_DATA",
@@ -21,14 +21,13 @@ ARGS_ = Dict(
 
 ARGS_ = Dict(
     "params_json" =>  joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
+                            "UNISPEC_LIBS","THREE_PROTEOME_ASTRAL_by_052424",
                             "buildFragmentIndex.json"),
 
     "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
-                            "test_lib_pioneer_lib.arrow"),
+                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25"),
     "out_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052324")
+    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_by_052424")
 
 )
 
@@ -55,12 +54,15 @@ println("Parsing Arguments...")
 ARGS = parse_commandline();
 params = JSON.parse(read(ARGS_["params_json"], String));
 params_ = (
-    rt_bin_tol = Float32(params["rt_bin_tol"]),
+    rt_bin_tol = Float64(params["rt_bin_tol"]),
     frag_bin_tol_ppm = Float32(params["frag_bin_tol_ppm"]),
     frag_mz_min = Float32(params["frag_mz_min"]),
     frag_mz_max = Float32(params["frag_mz_max"]),
+    auto_detect_frag_bounds = parse(Bool, params["auto_detect_frag_bounds"]),
+    frag_bound_detection_raw_file = params["frag_bounds_detection_raw_file"],
     prec_mz_min = Float32(params["prec_mz_min"]),
     prec_mz_max = Float32(params["prec_mz_max"]),
+    exclude_types_from_index = Set([Char(first(x)) for x in params["exclude_from_index"]]),
     y_start_index = Int64(params["y_start_index"]),
     b_start_index = Int64(params["b_start_index"]),
     y_start = Int64(params["y_start"]),
@@ -84,7 +86,15 @@ println("reading pioneer lib...")
 
 ARGS_["pioneer_lib_dir"]
 #@time pioneer_lib = Arrow.Table("/Users/n.t.wamsley/Desktop/test_lib.arrow")
-@time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
+
+PIONEER_LIB_DIR = ARGS_["pioneer_lib_dir"]
+pioneer_lib_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"pioneer_lib.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+id_to_annotation_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"id_to_annotation.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+
+
+@time pioneer_lib = Arrow.Table(pioneer_lib_path)
+@time id_to_annotation = Arrow.Table(id_to_annotation_path)
+id_to_annotation = [x for x in id_to_annotation[:id_to_annotation]]
 #@time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
 @time prec_frag_ranges = load(joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
                             "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
@@ -99,13 +109,29 @@ ARGS_["pioneer_lib_dir"]
     pioneer_lib[:irt],
     params_[:rt_bin_tol]
 )
-#using PProf, Profile
-#Profile.clear()
+frag_bounds, prec_mz_min, prec_mz_max = nothing, nothing, nothing
+if params_[:auto_detect_frag_bounds]
 
-#frags_vec, prec_to_frag_range = getFragRanges(pioneer_lib[:frags])
-#@profile 
+    MS_TABLE = Arrow.Table(params_[:frag_bound_detection_raw_file])
+    frag_bounds, prec_mz_min, prec_mz_max = getFragBounds(
+        MS_TABLE[:centerMass],
+        MS_TABLE[:isolationWidth],
+        MS_TABLE[:msOrder],
+        MS_TABLE[:lowMass],
+        MS_TABLE[:highMass])
+    prec_mz_min -= 1.0f0
+    prec_mz_max += 1.0f0
+else
+    frag_bounds = FragBoundModel(
+        ImmutablePolynomial([params_[:frag_mz_min]]),
+        ImmutablePolynomial(params_[:frag_mz_max]) 
+    )
+    prec_mz_min, prec_mz_max = params_[:prec_mz_min], params_[:prec_mz_max]
+end
+
 simple_fragments, folder_out = parsePioneerLib(
     folder_out,
+    id_to_annotation,
     pioneer_lib[:irt],
     pioneer_lib[:mz],
     pioneer_lib[:decoy],
@@ -121,12 +147,12 @@ simple_fragments, folder_out = parsePioneerLib(
     pioneer_lib[:seq_length],
     prec_frag_ranges,
     prec_frags,
-    params_[:frag_mz_min], 
-    params_[:frag_mz_max],
-    params_[:prec_mz_min],
-    params_[:prec_mz_max],
+    frag_bounds,
+    prec_mz_min, 
+    prec_mz_max,
     rank_to_score=params_[:rank_to_score],
     rt_bin_tol = params_[:rt_bin_tol],
+    exclude_from_index = params_[:exclude_types_from_index],
     y_start_index = params_[:y_start_index],
     b_start_index = params_[:b_start_index],
     y_start = params_[:y_start],
@@ -151,6 +177,3 @@ buildFragmentIndex!(
     index_name = "presearch_"
     )
     
-
-
-"/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr4_24/pioneer_lib"
