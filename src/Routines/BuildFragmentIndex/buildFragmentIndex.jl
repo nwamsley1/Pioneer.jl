@@ -288,6 +288,7 @@ function parsePioneerLib(
                                 prec_idx::Int64,
                                 prec::LibraryPrecursorIon{T},
                                 prosit_frags::Vector{PioneerFrag},
+                                id_to_annotation::Vector{PioneerFragAnnotation},
                                 max_frag_idx::Int64,
                                 frag_mz_min::T,
                                 frag_mz_max::T,
@@ -295,6 +296,15 @@ function parsePioneerLib(
         detailed_frags_added = 0
         for i in range(1, max_frag_idx)
             frag = prosit_frags[i]
+            annotation = id_to_annotation[getType(frag)]
+            ion_type = zero(UInt8)
+            if  annotation.base_type=='b'
+                ion_type = one(UInt8)
+            elseif annotation.base_type=='y'
+                ion_type = UInt8(2)
+            elseif annotation.base_type=='p'
+                ion_type = UInt8(3)
+            end
              #If the fragment meets the constraints add to the detailed frags list 
             if inScanRange(frag,frag_mz_min,frag_mz_max,y_start,b_start)
                 frags_detailed[frags_detailed_idx + detailed_frags_added] = DetailedFrag(
@@ -303,7 +313,7 @@ function parsePioneerLib(
                     getMZ(frag), #mz
                     Float16(getIntensity(frag)), #intensity
 
-                    isY(frag), #will need to extend to a 'Char' to account for different types 
+                    ion_type,
                     false, #not isotope
 
                     getCharge(frag), #frag_charge
@@ -426,6 +436,7 @@ function parsePioneerLib(
                                                                     precursor_idx,
                                                                     precursors[precursor_idx],
                                                                     frags,
+                                                                    id_to_annotation,
                                                                     n_frags,
                                                                     frag_mz_min,
                                                                     frag_mz_max,

@@ -124,7 +124,7 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     mz::T
     intensity::Float16
     
-    is_y_ion::Bool
+    ion_type::UInt8
     is_isotope::Bool
 
     frag_charge::UInt8
@@ -154,6 +154,9 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(Float16), #intensity
 
                 false, #is_y_ion
+                false,
+                false,
+                false,
                 false, #is_isotope
                 
                 zero(UInt8), #frag_charge

@@ -300,7 +300,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                     frag_mz, #Estimated isotopic m/z
                     Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
 
-                    frag.is_y_ion,
+                    frag.ion_type,
                     iso_idx>0, #Is the fragment an isotope?
 
                     frag.frag_charge,
@@ -332,7 +332,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                 frag_mz, #Estimated isotopic m/z
                 Float16(frag.intensity), #Estimated relative abundance 
 
-                frag.is_y_ion,
+                frag.ion_type,
                 false, #Is the fragment an isotope?
 
                 frag.frag_charge,

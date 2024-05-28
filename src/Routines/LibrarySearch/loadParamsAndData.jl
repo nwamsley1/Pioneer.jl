@@ -59,8 +59,8 @@ params = JSON.parse(read("/Users/n.t.wamsley/RIS_temp/ASMS_2024/INITIAL_TESTS/TH
 
 #SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
 SPEC_LIB_DIR = joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024","UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_052324","pioneer_lib")#"/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib/"
-SPEC_LIB_DIR  = "/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/pioneer_lib"
-MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","astral_test")
+SPEC_LIB_DIR "/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/pioneer_lib"
+MS_DATA_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","_test")
 #SPEC_LIB_DIR = joinpath("/Users","n.t.wamsley","TEST_DATA","PXD046444","arrow","test")
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/""
 #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/ThermoRawFileToParquetConverter-main/parquet_out"
@@ -80,39 +80,6 @@ SPEC_LIB_DIR = ARGS["spec_lib_dir"];
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 MS_TABLE_PATH_TO_ID = Dictionary(MS_TABLE_PATHS, UInt32.(collect(range(1,length(MS_TABLE_PATHS)))))
 MS_TABLE_ID_TO_PATH = Dictionary(UInt32.(collect(range(1,length(MS_TABLE_PATHS)))), MS_TABLE_PATHS)
-
-#MS_DATA_DIR = joinpath(MS_DATA_DIR, EXPERIMENT_NAME);
-const RESULTS_DIR = params_[:benchmark_params]["results_folder"]
-out_folder = joinpath(RESULTS_DIR, "Search")
-if !isdir(out_folder)
-    mkpath(out_folder)
-end
-qc_plot_folder = joinpath(RESULTS_DIR, "Search", "QC_PLOTS")
-if !isdir(qc_plot_folder)
-    mkpath(qc_plot_folder)
-else
-    [rm(joinpath(qc_plot_folder, x)) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
-end
-const rt_alignment_folder = joinpath(RESULTS_DIR, "Search", "QC_PLOTS","rt_alignment")
-if !isdir(rt_alignment_folder)
-    mkpath(rt_alignment_folder)
-end
-const mass_err_estimation_folder = joinpath(RESULTS_DIR, "Search", "QC_PLOTS","mass_error_estimation")
-if !isdir(mass_err_estimation_folder)
-    mkpath(mass_err_estimation_folder)
-end
-const results_folder = joinpath(RESULTS_DIR, "Search", "RESULTS")
-if !isdir(results_folder)
-    mkpath(results_folder)
-end
-const params_folder = joinpath(RESULTS_DIR, "Search", "PARAMS")
-if !isdir(params_folder )
-    mkpath(params_folder)
-end
-#Write params to folder 
-open(joinpath(params_folder, "config.json"),"w") do f 
-    JSON.print(f, params)
-end
 
 params_ = (
     expected_matches = Int64(params["expected_matches"]),
@@ -134,6 +101,42 @@ params_ = (
     normalization_params = Dict{String, Any}(k => v for (k, v) in params["normalization_params"]),
     benchmark_params = Dict{String, Any}(k => v for (k, v) in params["benchmark_params"])
     );
+
+
+MS_DATA_DIR = joinpath(params_[:benchmark_params]["results_folder"], EXPERIMENT_NAME);
+out_folder = joinpath(MS_DATA_DIR, "Search")
+RESULTS_DIR = MS_DATA_DIR
+if !isdir(out_folder)
+    mkpath(out_folder)
+end
+qc_plot_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS")
+if !isdir(qc_plot_folder)
+    mkpath(qc_plot_folder)
+else
+    [rm(joinpath(qc_plot_folder, x)) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
+end
+const rt_alignment_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","rt_alignment")
+if !isdir(rt_alignment_folder)
+    mkpath(rt_alignment_folder)
+end
+const mass_err_estimation_folder = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS","mass_error_estimation")
+if !isdir(mass_err_estimation_folder)
+    mkpath(mass_err_estimation_folder)
+end
+const results_folder = joinpath(MS_DATA_DIR, "Search", "RESULTS")
+if !isdir(results_folder)
+    mkpath(results_folder)
+end
+const params_folder = joinpath(MS_DATA_DIR, "Search", "PARAMS")
+if !isdir(params_folder )
+    mkpath(params_folder)
+end
+#Write params to folder 
+open(joinpath(params_folder, "config.json"),"w") do f 
+    JSON.print(f, params)
+end
+
+
 
 ##########
 #Load Dependencies 

@@ -47,7 +47,7 @@ struct FragmentMatch{T<:AbstractFloat} <: MatchIon{T}
     frag_index::UInt8
     frag_charge::UInt8
     frag_isotope::UInt8
-    ion_type::Char
+    ion_type::UInt8
     is_isotope::Bool
     prec_id::UInt32
     count::UInt8
