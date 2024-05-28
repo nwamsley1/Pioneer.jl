@@ -244,7 +244,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
 
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
-                    :iRT_error,:missed_cleavage,:Mox,:charge,:TIC,
+                    :iRT_error,:missed_cleavage,:Mox,
+                    :charge,:TIC,
                     :y_count,:err_norm,:spectrum_peak_count,:intercept]
 
     scoreMainSearchPSMs!(PSMs,

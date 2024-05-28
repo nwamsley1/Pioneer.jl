@@ -42,7 +42,7 @@ function groupPSMS(
                 ),:]
     psms[!,quant_col] = max.(psms[!,quant_col], 0.0)
     gpsms = groupby(psms, 
-                            [:species,:accession_numbers,:sequence,:charge,:isotopes_captured,:condition]
+                            [:species,:accession_numbers,:modified_sequence,:charge,:isotopes_captured,:condition]
                         );
 
     pioneer_groupmeans = combine(prec_group -> (log2_mean = log2(mean(prec_group[!,quant_col])), 
@@ -64,6 +64,50 @@ function filterResults(
      psms[!,:CV_b].<=max_cv)
     return psms[cols_to_keep,:]
 end
+function parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
+    #Example: "1(7,M,Oxidation)(13,K,AnExampleMod)"
+    mods_regex = r"(?<=\().*?(?=\))"
+    return eachmatch(mods_regex, mods_string)
+end
+function getModIndex(mod_string::AbstractString)::UInt8
+    parse(UInt8, match(r"^[0-9]+(?=,)", mod_string).match)
+end
+function getModName(mod_string::AbstractString)::String
+    match(r"[^,]+(?=$)", mod_string).match
+end
+function insert_at_indices(original::String, insertions::Vector{Tuple{String, UInt8}})
+    # Convert the original string into an array of characters for easier manipulation
+    char_array = collect(original)
+
+    # Sort the insertions by index in ascending order
+    sorted_insertions = sort(insertions, by = x -> x[2])
+
+    # Adjust the index for each insertion
+    offset = 0
+    for (substr, idx) in sorted_insertions
+        # Adjust the index with the current offset
+        insertion_index = idx + offset
+        # Insert each character of the substring at the specified index
+        for (i, char) in enumerate(substr)
+            insert!(char_array, insertion_index + i, char)
+        end
+        # Update the offset by the length of the inserted substring
+        offset += length(substr)
+    end
+
+    # Join the array of characters back into a single string
+    return join(char_array)
+end
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::String,
+    structural_mods::String)
+
+    mods = structural_mods*isotope_mods
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return insert_at_indices(sequence, mods)
+end
+
 using FASTX, CodecZlib
 function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
 
@@ -101,7 +145,7 @@ total_time = @timed begin
     println("A")
 end
 #Create results folder 
-benchmark_results_folder = params_[:benchmark_params]["results_folder"]
+benchmark_results_folder = results_folder#params_[:benchmark_params]["results_folder"]
 if !isdir(benchmark_results_folder )
     mkpath(benchmark_results_folder )
 end
@@ -135,6 +179,20 @@ open(joinpath(benchmark_results_folder, "results.txt"), "a") do io
     #[println("Precursors w/ CV under $x ", sum(gpsms[!,:CV].<=x)) for x in [5.0, 10.0, 20.0, 30.0]]
 end
 
+best_psms_passing[!,:sequence]
+best_psms_passing[!,:structural_mods] = [precursors[:structural_mods][pid] for pid in best_psms_passing[!,:precursor_idx]]
+best_psms_passing[!,:isotopic_mods] = [precursors[:isotopic_mods][pid] for pid in best_psms_passing[!,:precursor_idx]]
+best_psms_passing[!,:modified_sequence] .= ""
+for i in range(1, size(best_psms_passing, 1))
+    best_psms_passing[i,:modified_sequence] = getModifiedSequence(
+        best_psms_passing[i,:sequence],
+        best_psms_passing[i,:structural_mods],
+        ""
+    )
+    best_psms_passing[i,:modified_sequence] = "_"*best_psms_passing[i,:modified_sequence]*"_."*string(best_psms_passing[i,:charge])
+end
+jldsave(joinpath(benchmark_results_folder, "pioneer_all_passing.jld2"); best_psms_passing)
+
 transform!(best_psms_passing, AsTable(:) => ByRow(precursor -> getCondition(precursor, :file_name)) => [:condition, :biological, :technical]);
 best_psms_passing[!,:species] .= "HUMAN"
 println("size(best_psms_passing) ", size(best_psms_passing))
@@ -150,11 +208,11 @@ best_psms_passing[!,:species_names] = [Set([ACC_TO_SPEC[id] for id in ids]) for 
 best_psms_passing = best_psms_passing[length.(best_psms_passing[!,:species_names]).==1,:];
 best_psms_passing[!,:species] = first.(best_psms_passing[!,:species_names]);
 best_psms_passing = best_psms_passing[best_psms_passing[!,:Mox].==0,:]
-jldsave(joinpath(benchmark_results_folder, "best_psms_passing_threeproteome.jld2"); best_psms_passing)
+
 to_keep = occursin.(first(conditions), best_psms_passing[!,:condition]) .| occursin.(last(conditions), best_psms_passing[!,:condition])
 
 best_psms_passing = best_psms_passing[to_keep,:]
-for quant_name in [:peak_area_normalized, :trapezoid_area_normalized, :weight_normalized]
+for quant_name in [:trapezoid_area_normalized]
     #Get grouped psms 
     gpsms = groupPSMS(best_psms_passing, quant_name)
     #Filter out psms not common to all three replicates 
@@ -163,8 +221,9 @@ for quant_name in [:peak_area_normalized, :trapezoid_area_normalized, :weight_no
     three_proteome_results = combine(prec_group -> getLog2Diff(prec_group, 
     (string(first(conditions)), string(last(conditions)))#("E5H50Y45","E20H50Y30")
     ), 
-    groupby(gpsms, [:species, :accession_numbers, :sequence, :charge, :isotopes_captured]));
+    groupby(gpsms, [:species, :accession_numbers, :modified_sequence, :charge, :isotopes_captured]));
 
+    jldsave(joinpath(benchmark_results_folder, "pioneer_combined.jld2"); three_proteome_results)
 
     three_proteome_results = filterResults(three_proteome_results, 3, 20.0)
     prec_counts = size(three_proteome_results, 1)

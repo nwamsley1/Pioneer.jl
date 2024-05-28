@@ -25,9 +25,9 @@ ARGS_ = Dict(
                             "buildFragmentIndex.json"),
 
     "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-                            "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25"),
+    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_052624"),
     "out_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_by_052424")
+    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_052624")
 
 )
 
@@ -88,14 +88,23 @@ ARGS_["pioneer_lib_dir"]
 #@time pioneer_lib = Arrow.Table("/Users/n.t.wamsley/Desktop/test_lib.arrow")
 
 PIONEER_LIB_DIR = ARGS_["pioneer_lib_dir"]
-pioneer_lib_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"pioneer_lib.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+pioneer_lib_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"prec_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
 id_to_annotation_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"id_to_annotation.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+frags_table_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"frag_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+frag_ranges_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"frag_range_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
 
 
 @time pioneer_lib = Arrow.Table(pioneer_lib_path)
 @time id_to_annotation = Arrow.Table(id_to_annotation_path)
+@time frags_table = Arrow.Table(frags_table_path)
+@time frag_ranges_table = Arrow.Table(frag_ranges_path)
+frag_ranges = Vector{UnitRange{UInt32}}(undef, length(frag_ranges_table[:start]))
+for i in range(1, length(frag_ranges))
+    frag_ranges[i] = range(UInt32(frag_ranges_table[:start][i]), UInt32(frag_ranges_table[:stop][i]))
+end
 id_to_annotation = [x for x in id_to_annotation[:id_to_annotation]]
 #@time pioneer_lib = Arrow.Table(ARGS_["pioneer_lib_dir"])
+#=
 @time prec_frag_ranges = load(joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
                             "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
                             "test_lib_prec_frag_ranges.jld2"))["prec_frag_ranges"];
@@ -103,7 +112,7 @@ id_to_annotation = [x for x in id_to_annotation[:id_to_annotation]]
 @time prec_frags = load(joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
                             "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
                             "test_lib_prec_frags.jld2"))["prec_frags"];
-
+=#
 @time sorted_indices = sortPrositLib(
     pioneer_lib[:mz],
     pioneer_lib[:irt],
@@ -136,6 +145,18 @@ simple_fragments, folder_out = parsePioneerLib(
     pioneer_lib[:mz],
     pioneer_lib[:decoy],
 
+    collect(frags_table[:mz]),
+    collect(frags_table[:intensity]),
+    collect(frags_table[:ion_type]),
+    collect(frags_table[:is_y]),
+    collect(frags_table[:frag_index]),
+    collect(frags_table[:charge]),
+    collect(frags_table[:isotope]),
+    collect( frags_table[:internal]),
+    collect(frags_table[:immonium]),
+    collect(frags_table[:internal_ind]),
+    collect(frags_table[:sulfur_count]),
+
     pioneer_lib[:proteome_name],
     pioneer_lib[:protein_name],
     pioneer_lib[:sequence],
@@ -145,8 +166,8 @@ simple_fragments, folder_out = parsePioneerLib(
     pioneer_lib[:charge],
     pioneer_lib[:sulfur_count],
     pioneer_lib[:seq_length],
-    prec_frag_ranges,
-    prec_frags,
+    frag_ranges,
+    #prec_frags,
     frag_bounds,
     prec_mz_min, 
     prec_mz_max,
@@ -176,4 +197,31 @@ buildFragmentIndex!(
     typemax(Float32),
     index_name = "presearch_"
     )
-    
+
+prec_table_second= Arrow.Table("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/pioneer_lib/precursor_table.arrow")
+prec_frags_second = load("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/pioneer_lib/detailed_fragments.jld2")["detailed_fragments"]
+prec_to_frag_ranges_second = load("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/pioneer_lib/precursor_to_fragment_indices.jld2")["precursor_to_fragment_indices"]
+
+prec_table_first = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_by_052424/pioneer_lib/precursor_table.arrow")
+prec_frags_first = load("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_by_052424/pioneer_lib/detailed_fragments.jld2")["detailed_fragments"]
+prec_to_frag_ranges_first = load("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_by_052424/pioneer_lib/precursor_to_fragment_indices.jld2")["precursor_to_fragment_indices"]
+
+
+N = 1
+size(prec_table_first[:sequence])
+prec_table_first[:sequence][N]
+size(prec_table_second[:sequence])
+prec_table_second[:sequence][N]
+
+prec_frags_first[prec_to_frag_ranges_first[N]]
+prec_frags_second[prec_to_frag_ranges_second[N]]
+
+N += 1
+
+
+prec_table = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/prec_table.arrow")
+frag_range_table = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/frag_range_table.arrow")
+frag_table = Arrow.Table("/Users/n.t.wamsley/RIS_temp/ASMS_2024/UNISPEC_LIBS/THREE_PROTEOME_052224/ASTRAL_NCE25/THREE_PROTEOME_ASTRAL_052624/frag_table.arrow")
+
+
+frag_table[frag_range_table[:start][N]:frag_range_table[:stop][N],:]

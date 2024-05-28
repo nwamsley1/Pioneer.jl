@@ -270,13 +270,18 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
 
         frag = fragment_ions[frag_idx]
         #Estimate isotope abundances 
-        getFragIsotopes!(isotopes, 
-                        iso_splines, 
-                        prec_mz,
-                        prec_charge, 
-                        prec_sulfur_count,
-                        frag, 
-                        prec_isotope_set)
+        try
+            getFragIsotopes!(isotopes, 
+                            iso_splines, 
+                            prec_mz,
+                            prec_charge, 
+                            prec_sulfur_count,
+                            frag, 
+                            prec_isotope_set)
+        catch
+            println("precursor_fragment_range $precursor_fragment_range")
+            error("oops")
+        end
 
         if length(isotopes) > 0
             for iso_idx in range(0, length(isotopes) - 1)

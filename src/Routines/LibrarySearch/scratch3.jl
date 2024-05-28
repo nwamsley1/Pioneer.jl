@@ -423,3 +423,10 @@ plot(LinRange(0, 4000.0, 100), iso_splines[1][1].(LinRange(0, 4000.0, 100)))
 test_p = Polynomial(iso_splines[1][1].coeffs[1:4])
 plot!(LinRange(0, 1000.0, 100), test_p.(LinRange(0, 1000.0, 100)))
 
+
+N = 1000000
+library_fragment_lookup_table.frags[library_fragment_lookup_table.prec_frag_ranges[N]]
+precursors_df[N,:]
+
+library_fragment_lookup_table.frags[0x014882b8:0x014882f4]
+precursors_df[library_fragment_lookup_table.frags[0x014882b8:0x014882f4][1].prec_id,:]

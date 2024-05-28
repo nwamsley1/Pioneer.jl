@@ -159,17 +159,29 @@ function parsePioneerLib(
                         prec_mz::AbstractArray{Float32},
                         decoy::AbstractArray{Bool},
 
-                        proteome_names::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        accession_numbers::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        sequence::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        structural_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
-                        isotopic_mods::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        frag_mz::AbstractArray{Float32},
+                        frag_intensity::AbstractArray{Float16},
+                        ion_type::AbstractArray{UInt16},
+                        frag_is_y::AbstractArray{Bool},
+                        frag_index::AbstractArray{UInt8},
+                        frag_charge::AbstractArray{UInt8},
+                        frag_isotope::AbstractArray{UInt8},
+                        frag_internal::AbstractArray{Bool},
+                        frag_immonium::AbstractArray{Bool},
+                        frag_internal_ind::AbstractArray{Tuple{UInt8, UInt8}},
+                        frag_sulfur_count::AbstractArray{UInt8},
+
+                        proteome_names::AbstractArray{Union{Missing, String}},#Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}},
+                        accession_numbers::AbstractArray{Union{Missing, String}},
+                        sequence::AbstractArray{Union{Missing, String}},
+                        structural_mods::AbstractArray{Union{Missing, String}},
+                        isotopic_mods::AbstractArray{Union{Missing, String}},
 
                         charge::AbstractArray{UInt8},
                         sulfur_count::AbstractArray{UInt8},
                         sequence_length::AbstractArray{UInt8},
                         prec_frag_ranges::Vector{UnitRange{UInt32}},
-                        prec_frags::Vector{PioneerFrag},
+                        #prec_frags::Vector{PioneerFrag},
                         frag_bounds::FragBoundModel,
                         prec_mz_min::T,
                         prec_mz_max::T;
@@ -200,7 +212,7 @@ function parsePioneerLib(
     println("allocating memory for output...")            
     N_precs = length(sorted_indices)
     #How many fragments? Determines size of pre-allocated arrays
-    frag_count = length(prec_frags)
+    frag_count = length(frag_mz)
     ###########
     #Initialize Containers
     println("frag_count $frag_count")
@@ -375,7 +387,19 @@ function parsePioneerLib(
         end
         #Write precursor frags into the temporary array 
         for (i, frag_idx) in enumerate(prec_frag_ranges[row_idx])
-            frags[i] = prec_frags[frag_idx]          
+            frags[i] = PioneerFrag(
+                frag_mz[frag_idx],
+                frag_intensity[frag_idx],
+                ion_type[frag_idx],
+                frag_is_y[frag_idx],
+                frag_index[frag_idx],
+                frag_charge[frag_idx],
+                frag_isotope[frag_idx],
+                frag_internal[frag_idx],
+                frag_immonium[frag_idx],
+                frag_internal_ind[frag_idx],
+                frag_sulfur_count[frag_idx],
+            )#prec_frags[frag_idx]          
         end 
         #Sort sublist of fragments by descending order of intensity. 
         sort!(@view(frags[1:n_frags]), by = x -> getIntensity(x), rev = true, alg = QuickSort)
