@@ -21,7 +21,7 @@ algorithm and heuristics to statistically infer the identification status and ab
 - **Fast:** Use of simple heuristics and carefully implemented, efficient algorithms should ensure that data can be analyzed many times faster than it is aquired for typical experiments. 
 
 ## Status
-- We are excited to present preiminary results at US HUPO 2024 in Portland, Oregon! See a copy of the poster below.
+- We are excited to present preiminary results at ASMS 2024 in Anaheim, California! See a copy of the poster below.
 - Pioneer is in an early stage of development and not yet ready for use in research. If curious, please contact us at n.t.wamsley@wustl.edu.
 - Updates will be continuously added to github as the project progresses.
 - Cross-platform conversion of Thermo RAW files to Pioneer compatible Apache Arrow tables. https://github.com/nwamsley1/ThermoRawFileToParquetConverter
