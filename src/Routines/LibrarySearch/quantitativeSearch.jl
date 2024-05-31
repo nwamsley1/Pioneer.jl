@@ -179,9 +179,7 @@ BPSMS = Dict{Int64, DataFrame}()
 #PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 #PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 
-features = [:intercept, :charge, :total_ions, :err_norm, 
-:scribe, :city_block, :city_block_fitted, 
-:spectral_contrast, :entropy_score, :weight]
+
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
@@ -223,7 +221,12 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
                                         precID_to_cv_fold);
-
+        features = [:intercept, :charge, :total_ions, :err_norm, 
+        :scribe, :city_block, :city_block_fitted, 
+        :spectral_contrast, :entropy_score, :weight]
+        if sum(psms[!,:p_count])>0
+            push!(features, :p_count)
+        end
         getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         psms[!,:prob] = zeros(Float32, size(psms, 1));
         scoreSecondSearchPSMs!(psms,features);

@@ -64,7 +64,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         H2_norm = sqrt(H2_norm)
         #H2_norm_fitted = sqrt(H2_norm_fitted)
         X2_norm = sqrt(X2_norm)
-
+        #=
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
@@ -77,7 +77,19 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             )        
 
         end
+        =#
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            scribe_score +=  (
+                                (sqrt(H.nzval[i])/H_sqrt_sum) - 
+                                (sqrt(H.x[i])/X_sqrt_sum)
+                                )^2  
 
+            city_block_dist += abs(
+                (H.nzval[i]/H2_norm) -
+                (H.x[i]/X2_norm)
+            )        
+
+        end
         spectral_scores[col] = SpectralScoresSimple(
             Float16(-log((scribe_score)/N)), #scribe_score
             Float16(-log((city_block_dist)/N)), #city_block

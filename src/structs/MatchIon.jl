@@ -57,7 +57,7 @@ struct FragmentMatch{T<:AbstractFloat} <: MatchIon{T}
 end
 
 FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
-FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
+FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0), zero(UInt8), false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
 
 
 getMZ(f::FragmentMatch) = f.theoretical_mz

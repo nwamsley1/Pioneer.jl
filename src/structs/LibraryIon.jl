@@ -153,11 +153,8 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(T), #mz
                 zero(Float16), #intensity
 
-                false, #is_y_ion
+                zero(UInt8),
                 false,
-                false,
-                false,
-                false, #is_isotope
                 
                 zero(UInt8), #frag_charge
                 zero(UInt8), #ion_position

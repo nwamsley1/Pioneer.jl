@@ -12,7 +12,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     b_count::UInt8
     y_count::UInt8
-
+    p_count::UInt8
     #Basic Metrics 
     error::H
 
@@ -40,6 +40,8 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     longest_b::UInt8
     b_count::UInt8
     y_count::UInt8
+    p_count::UInt8
+    non_cannonical_count::UInt8
     isotope_count::UInt8
     prec_mz_offset::Float32
 
@@ -127,7 +129,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
 
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
-
+            unscored_PSMs[i].p_count,
             unscored_PSMs[i].error,
             
             spectral_scores[scores_idx].scribe,
@@ -238,6 +240,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             unscored_PSMs[i].longest_b,
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
+            unscored_PSMs[i].p_count,
+            unscored_PSMs[i].non_cannonical_count,
             unscored_PSMs[i].isotope_count,
             zero(Float32),
 

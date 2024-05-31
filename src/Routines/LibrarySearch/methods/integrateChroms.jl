@@ -858,6 +858,7 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                 psms_integrated[i,:longest_y] = psms[best_scan,:longest_y]
                 psms_integrated[i,:b_count] = psms[best_scan,:b_count]
                 psms_integrated[i,:y_count] = psms[best_scan,:y_count]
+                psms_integrated[i,:p_count] = psms[best_scan,:p_count]
                 psms_integrated[i,:isotope_count] = psms[best_scan,:isotope_count]
                 psms_integrated[i,:total_ions] = psms[best_scan,:total_ions]
                 psms_integrated[i,:poisson] = psms[best_scan,:poisson]

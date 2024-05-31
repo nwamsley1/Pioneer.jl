@@ -242,12 +242,14 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-
+    
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
                     :iRT_error,:missed_cleavage,:Mox,
                     :charge,:TIC,
                     :y_count,:err_norm,:spectrum_peak_count,:intercept]
-
+    if sum(PSMs[!,:p_count])>0
+        push!(column_names, :p_count)
+    end
     scoreMainSearchPSMs!(PSMs,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],

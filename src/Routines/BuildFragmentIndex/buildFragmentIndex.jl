@@ -161,7 +161,7 @@ function parsePioneerLib(
 
                         frag_mz::AbstractArray{Float32},
                         frag_intensity::AbstractArray{Float16},
-                        ion_type::AbstractArray{UInt16},
+                        ion_types::AbstractArray{UInt16},
                         frag_is_y::AbstractArray{Bool},
                         frag_index::AbstractArray{UInt8},
                         frag_charge::AbstractArray{UInt8},
@@ -226,9 +226,11 @@ function parsePioneerLib(
     #maps precursor ids to the original row of the data framgent
     prec_id_to_library_row = Vector{UInt32}(undef, N_precs)
     #Is the fragment within the constraints? m/z scan range and exceeding minimum b,y ion index?
-    function inScanRange(frag::PioneerFrag, low_frag_mz::T, high_frag_mz::T, y_start_ind::Int64, b_start_ind::Int64) where {T<:AbstractFloat}
+    function inScanRange(frag::PioneerFrag, ion_type::Char, low_frag_mz::T, high_frag_mz::T, y_start_ind::Int64, b_start_ind::Int64) where {T<:AbstractFloat}
         mz, index = getMZ(frag), getIndex(frag)
-        if getType(frag) == 'y'
+        if ion_type == 'p'
+            return true
+        elseif ion_type == 'y'
             return (mz>low_frag_mz)&(mz<high_frag_mz)&(index>=y_start_ind)
         else
             return (mz>low_frag_mz)&(mz<high_frag_mz)&(index>=b_start_ind)
@@ -262,7 +264,7 @@ function parsePioneerLib(
             if getBaseType(id_to_annotation[getType(frag)]) ∈ exclude_from_index
                 continue
             end
-            if inScanRange(frag, frag_mz_min, frag_mz_max, y_start, b_start)
+            if inScanRange(frag, getBaseType(id_to_annotation[getType(frag)]),frag_mz_min, frag_mz_max, y_start, b_start)
                 score = rank_to_score[simple_frags_added+1]#getScore(simple_frags_added+1) #score added to precursor for matching this fragment
                 frags_simple[frags_simple_idx + simple_frags_added] = SimpleFrag(
                     getMZ(frag),
@@ -297,6 +299,7 @@ function parsePioneerLib(
         for i in range(1, max_frag_idx)
             frag = prosit_frags[i]
             annotation = id_to_annotation[getType(frag)]
+
             ion_type = zero(UInt8)
             if  annotation.base_type=='b'
                 ion_type = one(UInt8)
@@ -305,8 +308,13 @@ function parsePioneerLib(
             elseif annotation.base_type=='p'
                 ion_type = UInt8(3)
             end
+    
              #If the fragment meets the constraints add to the detailed frags list 
-            if inScanRange(frag,frag_mz_min,frag_mz_max,y_start,b_start)
+            if inScanRange(frag,annotation.base_type,frag_mz_min,frag_mz_max,y_start,b_start)
+                f_charge = getCharge(frag)
+                if annotation.base_type=='p'
+                    f_charge = getCharge(prec)
+                end
                 frags_detailed[frags_detailed_idx + detailed_frags_added] = DetailedFrag(
                     UInt32(prec_idx), #prec_id
 
@@ -316,7 +324,7 @@ function parsePioneerLib(
                     ion_type,
                     false, #not isotope
 
-                    getCharge(frag), #frag_charge
+                    f_charge, #frag_charge
                     getIndex(frag), #ion_position
                     getCharge(prec), #prec_charge
                     UInt8(detailed_frags_added+1), #rank
@@ -397,10 +405,11 @@ function parsePioneerLib(
         end
         #Write precursor frags into the temporary array 
         for (i, frag_idx) in enumerate(prec_frag_ranges[row_idx])
+            try
             frags[i] = PioneerFrag(
                 frag_mz[frag_idx],
                 frag_intensity[frag_idx],
-                ion_type[frag_idx],
+                ion_types[frag_idx],
                 frag_is_y[frag_idx],
                 frag_index[frag_idx],
                 frag_charge[frag_idx],
@@ -409,7 +418,20 @@ function parsePioneerLib(
                 frag_immonium[frag_idx],
                 frag_internal_ind[frag_idx],
                 frag_sulfur_count[frag_idx],
-            )#prec_frags[frag_idx]          
+            )#prec_frags[frag_idx]    
+            catch
+                println(typeof(frag_mz))
+                println(typeof(frag_intensity))
+                println(typeof(ion_types))
+                println(typeof(frag_is_y))
+                println(typeof(frag_index))
+                println(typeof(frag_charge))
+                println(typeof(frag_isotope))
+                println(typeof(frag_internal))
+                println(typeof(frag_internal_ind))
+                println(typeof(frag_sulfur_count))
+                error("urmom")
+            end      
         end 
         #Sort sublist of fragments by descending order of intensity. 
         sort!(@view(frags[1:n_frags]), by = x -> getIntensity(x), rev = true, alg = QuickSort)

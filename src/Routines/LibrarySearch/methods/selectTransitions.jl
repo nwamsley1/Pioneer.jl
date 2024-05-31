@@ -270,18 +270,13 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
 
         frag = fragment_ions[frag_idx]
         #Estimate isotope abundances 
-        try
-            getFragIsotopes!(isotopes, 
-                            iso_splines, 
-                            prec_mz,
-                            prec_charge, 
-                            prec_sulfur_count,
-                            frag, 
-                            prec_isotope_set)
-        catch
-            println("precursor_fragment_range $precursor_fragment_range")
-            error("oops")
-        end
+        getFragIsotopes!(isotopes, 
+                        iso_splines, 
+                        prec_mz,
+                        prec_charge, 
+                        prec_sulfur_count,
+                        frag, 
+                        prec_isotope_set)
 
         if length(isotopes) > 0
             for iso_idx in range(0, length(isotopes) - 1)
@@ -289,7 +284,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                 #Skip if missing
                 #iszero(isotopes[iso_idx + 1]) ? continue : nothing
                 frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
-                if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds)) | (frag.intensity < 0.0)
+                if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                     continue
                 end           
                 transition_idx += 1
@@ -321,7 +316,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
             #Skip if missing
             #iszero(isotopes[iso_idx + 1]) ? continue : nothing
             frag_mz = Float32(frag.mz)#Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
-            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds)) | (frag.intensity < 0.005)
+            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                 continue
             end           
             transition_idx += 1

@@ -5,12 +5,13 @@ struct SimpleUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     topn::UInt8 #How many of the topN predicted fragments were observed. 
     b_count::UInt8
     y_count::UInt8
+    p_count::UInt8
     intensity::T
     error::T
     precursor_idx::UInt32
 end
 
-SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
+SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
 #LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 #SimpleUnscoredPSM() = SimpleUnscoredPSM(Float32)
 
@@ -24,12 +25,14 @@ struct ComplexUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     b_int::T
     y_count::UInt8
     y_int::T
+    p_count::UInt8
+    non_cannonical_count::UInt8
     error::T
     precursor_idx::UInt32
     ms_file_idx::UInt32
 end
 
-ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), Float32(0), UInt32(0), UInt32(0))
+ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
 
 function ScoreFragmentMatches!(results::Vector{P}, 
@@ -52,14 +55,17 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     topn = score.topn
     b_count = score.b_count
     y_count = score.y_count
+    p_count = score.p_count
     intensity = score.intensity
     error = score.error
     precursor_idx = prec_id
 
-    if getIonType(match) == 'b'
+    if getIonType(match) == one(UInt8)
         b_count += 1
-    else getIonType(match) == 'y'
+    elseif getIonType(match) == UInt8(2)
         y_count += 1
+    elseif getIonType(match) == UInt8(3)
+        p_count += 1
     end
 
     intensity += getIntensity(match)
@@ -83,6 +89,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         topn,
         b_count,
         y_count, 
+        p_count,
         intensity,
         error,
         precursor_idx
@@ -100,6 +107,8 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
     b_int = score.b_int
     y_count = score.y_count
     y_int = score.y_int
+    p_count = score.p_count
+    non_cannonical_count = score.non_cannonical_count
     error = score.error
     precursor_idx = prec_id
 
@@ -109,7 +118,7 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
         #score.precursor_idx = getPrecID(match)
         precursor_idx = getPrecID(match)
         #return 
-    elseif getIonType(match) == 'b'
+    elseif getIonType(match) == one(UInt8)
         #score.b_count += 1
         #score.b_int += getIntensity(match)
         b_count += 1
@@ -117,12 +126,16 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
         if getFragInd(match) > longest_b
             longest_b = getFragInd(match)
         end
-    elseif getIonType(match) == 'y'
+    elseif getIonType(match) == UInt8(2)
         y_count += 1
         y_int +=  getIntensity(match)
         if getFragInd(match) > longest_y
             longest_y = getFragInd(match)
         end
+    elseif getIonType(match) == UInt8(3)
+        p_count += 1
+    else
+        non_canonnical_count += 1
     end
 
     ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/1e6)
@@ -149,6 +162,8 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
         b_int,
         min(y_count,255),
         y_int,
+        p_count,
+        non_cannonical_count,
         error,
         precursor_idx,
         score.ms_file_idx)

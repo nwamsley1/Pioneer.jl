@@ -28,6 +28,8 @@ features = [
     :longest_y,
     :y_count,
     :b_count,
+    :p_count,
+    #:non_cannonical_count,
     :isotope_count,
     :total_ions,
     :best_rank,
@@ -80,7 +82,7 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
                         train_fraction = 9.0/9.0,
                         iter_scheme = [100, 100, 200],
                         #iter_scheme = [200],
-                        print_importance = false);
+                        print_importance = true);
 best_psms = bst[2];
 best_psms[!,:prob] =Float32.(best_psms[!,:prob])
 

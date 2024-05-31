@@ -20,14 +20,11 @@ ARGS_ = Dict(
 
 
 ARGS_ = Dict(
-    "params_json" =>  joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-                            "UNISPEC_LIBS","THREE_PROTEOME_ASTRAL_by_052424",
+    "params_json" =>  joinpath("../","spec_lib",
                             "buildFragmentIndex.json"),
 
-    "pioneer_lib_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_052624"),
-    "out_dir" => joinpath("/Users","n.t.wamsley","RIS_temp","ASMS_2024",
-    "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25","THREE_PROTEOME_ASTRAL_052624")
+    "pioneer_lib_dir" => joinpath("../","spec_lib"),
+    "out_dir" => joinpath("../","spec_lib")
 
 )
 
@@ -91,7 +88,7 @@ PIONEER_LIB_DIR = ARGS_["pioneer_lib_dir"]
 pioneer_lib_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"prec_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
 id_to_annotation_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"id_to_annotation.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
 frags_table_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"frag_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
-frag_ranges_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"frag_range_table.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
+frag_ranges_path = [joinpath(PIONEER_LIB_DIR , file) for file in filter(file -> isfile(joinpath(PIONEER_LIB_DIR , file)) && match(r"frag_ranges.arrow", file) != nothing, readdir(PIONEER_LIB_DIR ))][1];
 
 
 @time pioneer_lib = Arrow.Table(pioneer_lib_path)
@@ -113,11 +110,13 @@ id_to_annotation = [x for x in id_to_annotation[:id_to_annotation]]
                             "UNISPEC_LIBS","THREE_PROTEOME_052224","ASTRAL_NCE25",
                             "test_lib_prec_frags.jld2"))["prec_frags"];
 =#
+#=
 @time sorted_indices = sortPrositLib(
     pioneer_lib[:mz],
     pioneer_lib[:irt],
     params_[:rt_bin_tol]
 )
+=#
 frag_bounds, prec_mz_min, prec_mz_max = nothing, nothing, nothing
 if params_[:auto_detect_frag_bounds]
 
@@ -137,6 +136,8 @@ else
     )
     prec_mz_min, prec_mz_max = params_[:prec_mz_min], params_[:prec_mz_max]
 end
+
+
 
 simple_fragments, folder_out = parsePioneerLib(
     folder_out,
