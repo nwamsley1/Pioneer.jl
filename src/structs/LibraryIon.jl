@@ -8,12 +8,14 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
 
     is_decoy::Bool
 
+    proteome_identifiers::String
     accession_numbers::String
     sequence::String
+    structural_mods::Union{Missing, String}
+    isotopic_mods::Union{Missing, String}
 
     prec_charge::UInt8
     missed_cleavages::UInt8
-    variable_mods::UInt8
     length::UInt8
     sulfur_count::UInt8
 end
@@ -75,13 +77,54 @@ PrositFrag() = PrositFrag(zero(Float32), zero(Float32), 'y', zero(UInt8), zero(U
 ArrowTypes.arrowname(::Type{PrositFrag}) = :PrositFrag
 ArrowTypes.JuliaType(::Val{:PrositFrag}) = PrositFrag
 
+struct PioneerFrag
+    mz::Float32
+    intensity::Float16
+    ion_type::UInt16 
+    is_y::Bool
+    frag_index::UInt8 #posiiton of fragment
+    charge::UInt8
+    isotope::UInt8
+    internal::Bool
+    immonium::Bool
+    internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
+    sulfur_count::UInt8
+end
+PrositFrag(pf::PioneerFrag) = PrositFrag(pf.intensity, pf.mz, pf.ion_type, pf.frag_index, pf.charge, pf.sulfur_count)
+getIntensity(pf::PioneerFrag) = pf.intensity
+getMZ(pf::PioneerFrag) = pf.mz
+getType(pf::PioneerFrag) = pf.ion_type
+getIndex(pf::PioneerFrag) = pf.frag_index
+getCharge(pf::PioneerFrag) = pf.charge
+getSulfurCount(pf::PioneerFrag) = pf.sulfur_count
+isY(pf::PioneerFrag) = pf.is_y
+ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
+ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
+
+#Need this information for each distinct fragment type
+struct PioneerFragAnnotation
+    base_type::Char
+    frag_index::UInt8
+    charge::UInt8
+    isotope::UInt8
+    internal::Bool
+    immonium::Bool
+    sulfur_diff::Int8
+end
+getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
+
+ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
+ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
+
+
+
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     prec_id::UInt32
 
     mz::T
     intensity::Float16
     
-    is_y_ion::Bool
+    ion_type::UInt8
     is_isotope::Bool
 
     frag_charge::UInt8
@@ -110,8 +153,8 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(T), #mz
                 zero(Float16), #intensity
 
-                false, #is_y_ion
-                false, #is_isotope
+                zero(UInt8),
+                false,
                 
                 zero(UInt8), #frag_charge
                 zero(UInt8), #ion_position

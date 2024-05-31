@@ -198,7 +198,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     rt_bin_idx::Int64,
                     irt_high::Float32, 
                     ppm_err::Float32, 
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     min_max_ppm::Tuple{Float32, Float32},
                     prec_mz::Float32, 
                     prec_tol::Float32, 
@@ -208,7 +208,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
     function getFragTol(mass::Float32, 
                         ppm_err::Float32, 
                         intensity::Float32, 
-                        mass_err_model::MassErrorModel{Float32},
+                        mass_err_model::MassErrorModel,
                         min_max_ppm::Tuple{Float32, Float32})
         mass -= Float32(ppm_err*mass/1e6)
         ppm = mass_err_model(intensity)
@@ -232,7 +232,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         for (mass, intensity) in zip(masses, intensities)
 
             #Get intensity dependent fragment tolerance.
-            frag_absolute_min, frag_min, frag_max = getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
+            frag_absolute_min, frag_min, frag_max = mass_err_model(mass, log2(intensity), 0.995f0)#getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
             #For every precursor that could have produced the observed ion
             #award to it the corresponding score
             lower_bound_guess, upper_bound_guess = queryFragment!(prec_id_to_score, 

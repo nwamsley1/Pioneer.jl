@@ -64,7 +64,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         H2_norm = sqrt(H2_norm)
         #H2_norm_fitted = sqrt(H2_norm_fitted)
         X2_norm = sqrt(X2_norm)
-
+        #=
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
@@ -77,13 +77,25 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             )        
 
         end
+        =#
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            scribe_score +=  (
+                                (sqrt(H.nzval[i])/H_sqrt_sum) - 
+                                (sqrt(H.x[i])/X_sqrt_sum)
+                                )^2  
 
+            city_block_dist += abs(
+                (H.nzval[i]/H2_norm) -
+                (H.x[i]/X2_norm)
+            )        
+
+        end
         spectral_scores[col] = SpectralScoresSimple(
             Float16(-log((scribe_score)/N)), #scribe_score
             Float16(-log((city_block_dist)/N)), #city_block
             Float16(dot_product/(H2_norm*X2_norm)), #dot_p
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(getEntropy(H, col)) #entropy
+            Float16(Float16(-1.0)*getEntropy(H, col)) #entropy
         )
     end
 end
@@ -123,7 +135,8 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
         #Sqrt of sum of squares
         H2_norm = sqrt(H2_norm)
         X2_norm = sqrt(X2_norm)
-        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+        for i in range(H.colptr[col], H.colptr[col + 1]-1)    
             #MASK is true for selected ions and false otherwise
             scribe_score +=  (
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
@@ -145,7 +158,7 @@ function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores:
             Float16(dot_product/(H2_norm*X2_norm)), #dot_p
             zero(Float16),#Float16(dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)), #spectral_contrast_corrected
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(getEntropy(H, col)) #entropy
+            Float16(Float16(-1.0)*getEntropy(H, col)) #entropy
         )
     end
 end

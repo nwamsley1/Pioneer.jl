@@ -26,7 +26,7 @@ function plotAbundanceECDF(
         sampled_range = 1:20:length(sorted_precursor_abundances)
 
         Plots.plot!(p, sampled_range,
-                [log2.(sorted_precursor_abundances[x]) for x in sampled_range],
+                [log2.(max(sorted_precursor_abundances[x], 0.0)) for x in sampled_range],
                 ylim = (0, log2(maximum(sorted_precursor_abundances))),
                 subplot = 1,
                 label = parsed_fname
@@ -235,7 +235,7 @@ function plotMS2MassErrors(
     for parsed_fname in parsed_fnames
         Plots.boxplot!(p, 
         [parsed_fname],
-        gpsms[(file_name = parsed_fname,)][!,:err_norm],
+        gpsms[(file_name = parsed_fname,)][!,:error_norm],
         subplot = 1,
         outliers = false,
         fill = :white,
@@ -325,7 +325,7 @@ function plotFWHM(
         psms =  gpsms[(file_name = parsed_fname,)]
         Plots.boxplot!(p, 
         [parsed_fname],
-        psms[psms[!,:data_points].>1,:FWHM],
+        psms[psms[!,:points_above_FWHM_01].>1,:FWHM],
         subplot = 1,
         outliers = false,
         fill = :white,

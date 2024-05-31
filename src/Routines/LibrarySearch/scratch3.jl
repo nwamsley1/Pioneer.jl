@@ -158,39 +158,67 @@ end
 using PProf, Profile
 Profile.clear()
 MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-@profile PSMS = vcat(quantitationSearch(MS_TABLE, 
-                prosit_lib["precursors"],
-                prosit_lib["f_det"],
-                RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
-                UInt32(ms_file_idx), 
-                frag_err_dist_dict[ms_file_idx],
-                irt_errs[ms_file_idx],
-                params_,  
-                ionMatches,
-                ionMisses,
-                IDtoCOL,
-                ionTemplates,
-                iso_splines,
-                complex_scored_PSMs,
-                complex_unscored_PSMs,
-                complex_spectral_scores,
-                precursor_weights,
-                )...);
-                pprof(;webport=58603)
+@time begin
+@profile RESULT = quantitationSearch(MS_TABLE, 
+prosit_lib["precursors"],
+prosit_lib["f_det"],
+RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+UInt32(ms_file_idx), 
+RT_iRT[file_id_to_parsed_name[ms_file_idx]],
+frag_err_dist_dict[ms_file_idx],
+irt_err,#irt_errs[ms_file_idx]/3,
+params_,  
+ionMatches,
+ionMisses,
+IDtoCOL,
+ionTemplates,
+iso_splines,
+chromatograms,
+complex_scored_PSMs,
+complex_unscored_PSMs,
+complex_spectral_scores,
+precursor_weights,
+);
+
+end
+pprof(;webport=58603)
+
+
+using PProf, Profile
+Profile.clear()
+test_spline = BSplineApprox(test_shapes, 
+test_intensities, 3, 4, :ArcLen, :Uniform, extrapolate = true)
+@profile @btime test_spline(10.0f0) 
+pprof(;webport=58603)
+
+
 N = 100
 a = rand(100)
 p = zeros(UInt32, N)
 sortperm!(@view(p[1:20]),@view(a[1:20]),alg = PartialQuickSort(1:4))
 issorted([a[i] for i in p[1:20]])
 
+PSMs[!,:prec_mz] = [precursors[:mz][x] for x in PSMs[!,:precursor_idx]]
+println("max observed mz ", maximum(PSMs[!,:prec_mz]))
+println("min observed mz ", minimum(PSMs[!,:prec_mz]))
+MS_TABLE[:centerMass][PSMs[!,:scan_idx][1]] -  MS_TABLE[:isolationWidth][PSMs[!,:scan_idx][1]]/2
+MS_TABLE[:centerMass][PSMs[!,:scan_idx][1]] +  MS_TABLE[:isolationWidth][PSMs[!,:scan_idx][1]]/2
+
+ms2_scans = MS_TABLE[:msOrder].==2
+MS_TABLE[:lowMass][ms2_scans]
 
 H, Hs = RESULT[1]
 n = H.n_vals
 H.idx[1:30]
 Hs.idx[1:30]
 
+MS2_CHROMS = groupby(PSMS, [:precursor_idx]);
 
 
+MS2_CHROMS[N][!,[:RT,:weight,:b_count,:y_count,:scribe_fitted,:city_block_fitted,:spectral_contrast,:matched_ratio,:iso_rank]]
+plot(MS2_CHROMS[N][!,:RT],
+MS2_CHROMS[N][!,:weight], seriestype=:scatter)
+N += 1
 b = iso_splines.splines[1][1].knots[1:end - 1]
 A = hcat(ones(length(b)), b)
 x = A\[x for x in range(0, length(b)-1)]
@@ -265,3 +293,140 @@ hcat([testHX.nzval[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.mask[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.x[range(testHX.colptr[104], testHX.colptr[105]-1)],
     testHX.rowval[range(testHX.colptr[104], testHX.colptr[105]-1)]])
+
+
+    bins = LinRange(0, 2, 100)
+    histogram(best_psms[best_psms[!,:target].&(best_psms[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(best_psms[best_psms[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
+    
+PSM_FIRST = copy(PSMs_Dict[""]) # sum(PSM_FIRST[!,:q_value].<=0.01)
+#=
+julia> sum(PSM_FIRST[!,:q_value].<=0.01)
+95119
+=#
+best_psms_a = copy(best_psms)
+#=
+julia> value_counts(best_psms_a[(best_psms_a[:,:q_value].<=0.01) .& (best_psms_a[:,:decoy].==false),:], [:file_name])
+1×2 DataFrame
+Row │ file_name  nrow  
+    │ String     Int64 
+─────┼──────────────────
+1 │            97628
+=#
+post_quant_set = Set(best_psms_a[(best_psms_a[:,:q_value].<=0.01) .& (best_psms_a[:,:decoy].==false),:precursor_idx])
+pre_quant_set = Set(PSM_FIRST[PSM_FIRST[!,:q_value].<=0.01,:precursor_idx])
+
+setdiff(post_quant_set, pre_quant_set) #13974
+
+missing_from_qaunt = collect(setdiff(pre_quant_set, post_quant_set)) #11465 Why are these missing
+PSMS[!,:prec_mz] = [MS_TABLE[:centerMass][i] for i in PSMS[!,:scan_idx]]
+N = 1000
+
+MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,
+[:b_count,:y_count,:isotope_count,:scribe,:spectral_contrast,:matched_ratio,:city_block_fitted,:entropy_score,:max_entropy,:scan_idx,:prec_mz,:RT,:weight,:peak_area,:target]]
+plot(MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,:RT], 
+MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)][!,:weight], seriestype=:scatter)
+
+dtype = Float32;
+gx, gw = gausslegendre(100);
+state = GD_state(
+    HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+    zeros(dtype, N), #t
+    zeros(dtype, N), #y
+    zeros(dtype, N), #data
+    falses(N), #mask
+    0, #number of iterations
+    N #max index
+    );
+integratePrecursorMS2(MS2_CHROMS[(precursor_idx = missing_from_qaunt[N],iso_rank = 1)],
+state,
+gx::Vector{Float64},
+gw::Vector{Float64},
+intensity_filter_fraction =  Float32(params_[:integration_params]["intensity_filter_threshold"]),
+α = 0.001f0,
+half_width_at_α = 0.15f0,
+isplot = true
+);
+best_psms_a[best_psms_a[!,:precursor_idx] .== missing_from_qaunt[N],[:precursor_idx,:scribe,:entropy_score,:weight,:q_value]]
+N += 1
+
+intensities, shapes = ModelMassErrs(
+           frag_ppm_intensities,
+           frag_ppm_errs,
+           Float64(max_ppm),#params_[:presearch_params]["frag_tol_ppm"],
+           n_intensity_bins = length(frag_ppm_errs)÷1500,#Int64(params_[:presearch_params]["samples_per_mass_err_bin"]),
+           frag_err_quantile = 0.975,#params_[:frag_tol_params]["frag_tol_quantile"],
+           out_fdir = mass_err_estimation_folder,
+           out_fname = out_fname
+       )
+
+
+m6 = rlm(Float64.(intensities), Float64.(shapes), TauEstimator{TukeyLoss}(); initial_scale=:mad)
+
+
+m, b = RobustModels.coef(m6)
+
+
+#m, b = intensities[10:20,:]\(shapes[10:20])
+
+plot(2 .^intensities[:,1], 2 .^shapes, seriestype=:scatter)
+bins = LinRange(minimum(intensities[:,1]), maximum(intensities[:,1]), 1000)
+plot!(2 .^bins, 2 .^[m*x + b for x in bins])
+
+
+plot(intensities[:,1], 2 .^shapes, seriestype=:scatter)
+bins = LinRange(minimum(intensities[:,1]), maximum(intensities[:,1]), 1000)
+plot!(bins, 2 .^[m*x + b for x in bins])
+hline!([2 .^shapes[end]])
+hline!([2 .^shapes[1]])
+
+
+
+S_interp = approximate(f, B, ApproxByInterpolation(B))  # or simply approximate(f, B)
+
+using BSplineKit
+x_interval = 0
+ξs = range(0, 1; length = 15)
+B = BSplineBasis(BSplineOrder(4), ξs)
+
+
+test_interp = LinearInterpolation(ξs, 
+                                    sin.(ξs),
+                                    #savitzky_golay(ys, w, 3).y, 
+                                    extrapolation_bc = Line())
+
+
+S_minL2 = approximate(test_interp, B, MinimiseL2Error())
+
+function testSplineFunc(a::BSplineKit.SplineApproximations.SplineApproximation,b::Float32)
+    return a(b)
+end
+
+quantile(d::Laplace, p::Real) = p < 1/2 ? xval(d, log(2p)) : xval(d, -log(2(1 - p)))
+
+function testfunc(a)
+    (mean(a) - 0.9924999999999999)*2262.443438914029 + 2000
+end
+
+function testfunc(a)
+    (mean(a) - 0.5569999999999999)*2222 + 1000
+end
+
+
+
+plot(LinRange(0, 4000.0, 100), iso_splines.splines[4][1].(LinRange(0, 4000.0, 100)))
+plot!(LinRange(0, 4000.0, 100), iso_splines.splines[4][2].(LinRange(0, 4000.0, 100)))
+plot!(LinRange(0, 4000.0, 100), iso_splines.splines[4][3].(LinRange(0, 4000.0, 100)))
+vline!([384.499, 384.499 + 1000.0f0])
+plot(LinRange(0, 4000.0, 100), iso_splines[1][1].(LinRange(0, 4000.0, 100)))
+
+test_p = Polynomial(iso_splines[1][1].coeffs[1:4])
+plot!(LinRange(0, 1000.0, 100), test_p.(LinRange(0, 1000.0, 100)))
+
+
+N = 1000000
+library_fragment_lookup_table.frags[library_fragment_lookup_table.prec_frag_ranges[N]]
+precursors_df[N,:]
+
+library_fragment_lookup_table.frags[0x014882b8:0x014882f4]
+precursors_df[library_fragment_lookup_table.frags[0x014882b8:0x014882f4][1].prec_id,:]

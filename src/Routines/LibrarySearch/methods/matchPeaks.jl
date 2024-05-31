@@ -51,7 +51,7 @@ function setMatch!(matches::Vector{M},
                                  getIonPosition(transition)::UInt8,
                                  getFragCharge(transition)::UInt8,
                                  UInt8(0),
-                                 true == isyIon(transition) ? 'y' : 'b',
+                                 transition.ion_type,
                                  transition.is_isotope,
                                  getPrecID(transition),
                                  UInt8(1), 
@@ -98,7 +98,7 @@ function setNearest!(matches::Vector{M},
                     intensities::AbstractArray{Union{Missing, Float32}},
                     Ion::DetailedFrag{Float32},
                     max_mz::Float32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     min_max_ppm::Tuple{Float32, Float32},
                     δ::Float32,
                     peak_idx::Int64,
@@ -110,7 +110,7 @@ function setNearest!(matches::Vector{M},
 
     #Get maximum and minimum m/z of a theoretical ion that could match a peak given 
     #the intensity. (tolerance is inversely proportional to the sqrt of the intensity)       
-    function getMzBounds(mz::Float32, mass_err_model::MassErrorModel{Float32}, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
+    function getMzBounds(mz::Float32, mass_err_model::MassErrorModel, intensity::Float32, min_max_ppm::Tuple{Float32, Float32})
         ppm = mass_err_model(intensity)
         ppm = max(
             min(ppm, last(min_max_ppm)), 
@@ -129,7 +129,9 @@ function setNearest!(matches::Vector{M},
     #greater in m/z than the upper bound of the `transition` tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
     @inbounds while (masses[peak_idx + i]-δ<= max_mz)
-        low, high = getMzBounds(theoretical_mz, mass_err_model, intensities[peak_idx + i], min_max_ppm)
+        _, low, high = mass_err_model(theoretical_mz, log2(intensities[peak_idx + i]), 0.995f0)
+ 
+        #low, high = getMzBounds(theoretical_mz, mass_err_model, intensities[peak_idx + i], min_max_ppm)
         if (masses[peak_idx + i]-δ> low) & (masses[peak_idx + i]-δ< high)
             mz_diff = abs(masses[peak_idx + i]-δ-theoretical_mz)
             if mz_diff < smallest_diff
@@ -211,8 +213,9 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                     masses::AbstractArray{Union{Missing, Float32}}, 
                     intensities::AbstractArray{Union{Missing, Float32}}, 
                     ppm_err::Float32, 
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     min_max_ppm::Tuple{Float32, Float32},
+                    high_mass::Float32,
                     scan_idx::UInt32, 
                     ms_file_idx::UInt32
                     ) where {I<:LibraryIon{Float32},M<:MatchIon{Float32}}
@@ -296,6 +299,9 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
     #Remaining templates with higher m/z than the highest
     #m/z peak in the spectrum are written to 'unmatched'
     while ion_idx <= max_ions_idx#length(Ions)
+        if getMZ(ions[ion_idx]) > high_mass
+            break
+        end
         unmatched_idx = setMatch!(unmatched,
                                     ions[ion_idx], 
                                     zero(Float32), 

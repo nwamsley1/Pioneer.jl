@@ -12,7 +12,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     b_count::UInt8
     y_count::UInt8
-
+    p_count::UInt8
     #Basic Metrics 
     error::H
 
@@ -40,6 +40,8 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     longest_b::UInt8
     b_count::UInt8
     y_count::UInt8
+    p_count::UInt8
+    non_cannonical_count::UInt8
     isotope_count::UInt8
     prec_mz_offset::Float32
 
@@ -127,7 +129,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
 
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
-
+            unscored_PSMs[i].p_count,
             unscored_PSMs[i].error,
             
             spectral_scores[scores_idx].scribe,
@@ -151,6 +153,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 spectral_scores::Vector{SpectralScoresComplex{L}},
                 weight::Vector{H}, 
                 IDtoCOL::ArrayDict{UInt32, UInt16},
+                cycle_idx::Int64,
                 expected_matches::Float64,
                 last_val::Int64,
                 n_vals::Int64,
@@ -187,10 +190,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     start_idx = last_val
     skipped = 0
     for i in range(1, n_vals)
-
-        #if UInt32(unscored_PSMs[i].precursor_idx) == 10274537
-        #    println("scan_idx ", scan_idx)
-        #end
+        
         passing_filter = (
            # (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
            (unscored_PSMs[i].y_count) >= min_frag_count
@@ -205,6 +205,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )
+        
+        #passing_filter = true
         #=
         if UInt32(unscored_PSMs[i].precursor_idx) == 11083883
             println("scan_idx passing? ", scan_idx, " ", passing_filter)
@@ -238,6 +240,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             unscored_PSMs[i].longest_b,
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
+            unscored_PSMs[i].p_count,
+            unscored_PSMs[i].non_cannonical_count,
             unscored_PSMs[i].isotope_count,
             zero(Float32),
 
@@ -259,7 +263,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
 
             
             UInt32(unscored_PSMs[i].precursor_idx),
-            UInt32(unscored_PSMs[i].ms_file_idx),
+            #UInt32(unscored_PSMs[i].ms_file_idx),
+            UInt32(cycle_idx),
             UInt32(scan_idx)
         )
         last_val += 1

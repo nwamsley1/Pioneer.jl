@@ -6,7 +6,7 @@ function mainLibrarySearch(
     ion_list::LibraryFragmentLookup{Float32},
     iRT_to_RT_spline::Any,
     ms_file_idx::UInt32,
-    err_dist::MassErrorModel{Float32},
+    err_dist::MassErrorModel,
     irt_tol::Float64,
     params::NamedTuple,
     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -14,7 +14,7 @@ function mainLibrarySearch(
     all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
     ionTemplates::Vector{Vector{DetailedFrag{Float32}}},
-    iso_splines::IsotopeSplineModel{Float32},
+    iso_splines::IsotopeSplineModel,
     scored_PSMs::Vector{Vector{S}},
     unscored_PSMs::Vector{Vector{Q}},
     spectral_scores::Vector{Vector{R}},
@@ -36,7 +36,6 @@ function mainLibrarySearch(
 
         ionMatches,
         ionMisses,
-        all_fmatches,
         IDtoCOL,
         ionTemplates,
         iso_splines,
@@ -51,18 +50,17 @@ function mainLibrarySearch(
 
 
         isotope_err_bounds = Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
-        expected_matches = params[:expected_matches],
         min_frag_count = Int64(params[:first_search_params]["min_frag_count"]),
+        n_frag_isotopes = Int64(params[:first_search_params]["n_frag_isotopes"]),
         min_log2_matched_ratio = Float32(params[:first_search_params]["min_log2_matched_ratio"]),
+        min_spectral_contrast = Float32(params[:first_search_params]["min_spectral_contrast"]),
         min_index_search_score = UInt8(params[:first_search_params]["min_index_search_score"]),
         min_topn_of_m = Tuple([Int64(x) for x in params[:first_search_params]["min_topn_of_m"]]),
         min_max_ppm = Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),#(10.0f0, 30.0f0),
-        quadrupole_isolation_width = params[:quadrupole_isolation_width],
         irt_tol = irt_tol
        
     )
 end
-
 function mainLibrarySearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -71,24 +69,20 @@ function mainLibrarySearch(
                     ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel{Float32},
+                    mass_err_model::MassErrorModel,
                     searchScan!::Union{Function, Missing},
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
                     ionMisses::Vector{Vector{FragmentMatch{Float32}}},
-                    all_fmatches::Vector{Vector{FragmentMatch{Float32}}},
                     IDtoCOL::Vector{ArrayDict{UInt32, UInt16}},
                     ionTemplates::Vector{Vector{L}},
-                    iso_splines::IsotopeSplineModel{Float32},
+                    iso_splines::IsotopeSplineModel,
                     scored_PSMs::Vector{Vector{S}},
                     unscored_PSMs::Vector{Vector{Q}},
                     spectral_scores::Vector{Vector{R}},
                     precursor_weights::Vector{Vector{Float32}},
                     precs::Union{Missing, Vector{Counter{UInt32, UInt8}}};
                     #keyword args
-                    collect_fmatches = false,
-                    expected_matches::Int64 = 100000,
                     frag_ppm_err::Float32 = 0.0f0,
-
                     δ::Float32 = 10000f0,
                     λ::Float32 = 0f0,
                     max_iter_newton::Int64 = 100,
@@ -98,7 +92,6 @@ function mainLibrarySearch(
                     accuracy_bisection::Float32 = 100000f0,
                     max_diff::Float32 = 0.01f0,
 
-                    isotope_dict::Union{UnorderedDictionary{UInt32, Vector{Isotope{Float32}}}, Missing} = missing,
                     isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
                     min_frag_count::Int64 = 1,
                     min_spectral_contrast::Float32  = 0f0,
@@ -111,11 +104,10 @@ function mainLibrarySearch(
                     max_best_rank::Int64 = one(Int64),
                     n_frag_isotopes::Int64 = 1,
                     quadrupole_isolation_width::Float64 = 8.5,
-                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing} = missing,
                     irt_tol::Float64 = Inf,
                     sample_rate::Float64 = Inf,
                     spec_order::Set{Int64} = Set(2)
-                    ) where {T,U<:AbstractFloat, 
+                    ) where { 
                                                             L<:LibraryIon{Float32}, 
                                                             S<:ScoredPSM{Float32, Float16},
                                                             Q<:UnscoredPSM{Float32},
@@ -129,7 +121,7 @@ function mainLibrarySearch(
     #of scans have an equal number of fragment peaks in the spectra
     thread_tasks, total_peaks = partitionScansToThreads2(spectra[:masses],
                                                         spectra[:retentionTime],
-                                                         spectra[:precursorMZ],
+                                                         spectra[:centerMass],
                                                          spectra[:msOrder],
                                                         Threads.nthreads(),
                                                         1)
@@ -176,7 +168,6 @@ function mainLibrarySearch(
                                 rt_to_irt_spline,
                                 ms_file_idx,
                                 mass_err_model,
-                                collect_fmatches,
                                 frag_ppm_err,
                                 δ,
                                 λ,
@@ -188,15 +179,14 @@ function mainLibrarySearch(
                                 max_diff,
                                 ionMatches[thread_id],
                                 ionMisses[thread_id],
-                                all_fmatches[thread_id],
                                 IDtoCOL[thread_id],
                                 ionTemplates[thread_id],
+                                iso_splines,
                                 scored_PSMs[thread_id],
                                 unscored_PSMs[thread_id],
                                 spectral_scores[thread_id],
                                 precursor_weights[thread_id],
                                 precs[thread_id],
-                                isotope_dict,
                                 isotope_err_bounds,
                                 min_frag_count,
                                 min_spectral_contrast,
@@ -206,8 +196,7 @@ function mainLibrarySearch(
                                 filter_by_rank,
                                 filter_by_count,
                                 max_best_rank,
-                                n_frag_isotopes
-                                ,quadrupole_isolation_width,
+                                n_frag_isotopes,
                                 irt_tol,
                                 spec_order
                             )
@@ -216,11 +205,11 @@ function mainLibrarySearch(
     psms = fetch.(tasks)
     return psms
 end
-
+#frag_err_dist_dict[1] = MassErrorModel(frag_err_dist_dict[1].mass_offset, frag_err_dist_dict[1].mass_tolerance, 7.0f0, 15.0f0)
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(mainLibrarySearch(
+    @time PSMs = vcat(mainLibrarySearch(
         MS_TABLE,
         prosit_lib["f_index"],
         prosit_lib["precursors"],
@@ -244,19 +233,23 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #scan_range = (100000, 100010)
     )...);
     addMainSearchColumns!(PSMs, MS_TABLE, 
-                        prosit_lib["precursors"][:sequence],
+                        prosit_lib["precursors"][:structural_mods],
                         prosit_lib["precursors"][:missed_cleavages],
                         prosit_lib["precursors"][:is_decoy],
                         prosit_lib["precursors"][:irt],
                         prosit_lib["precursors"][:prec_charge]);
+    
     #Observed iRT estimates based on pre-search
-    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx](PSMs[!,:RT])
+    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-
+    
     column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
-                    :iRT_error,:missed_cleavage,:Mox,:charge,:TIC,
+                    :iRT_error,:missed_cleavage,:Mox,
+                    :charge,:TIC,
                     :y_count,:err_norm,:spectrum_peak_count,:intercept]
-
+    if sum(PSMs[!,:p_count])>0
+        push!(column_names, :p_count)
+    end
     scoreMainSearchPSMs!(PSMs,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
@@ -264,7 +257,28 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
+    #=
+    bins = LinRange(0, 2, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
     
+
+    bins = LinRange(0, 2, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :spectral_contrast], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :spectral_contrast], alpha = 0.5, bins = bins, normalize=:pdf)
+
+    bins = LinRange(0, 25, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :total_ions], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :total_ions], alpha = 0.5, bins = bins, normalize=:pdf)
+
+    bins = LinRange(-1, 5, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :matched_ratio], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :matched_ratio], alpha = 0.5, bins = bins, normalize=:pdf)
+
+    bins = LinRange(0, 25, 100)
+    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :topn], alpha = 0.5, bins = bins, normalize = :pdf)
+    histogram!(PSMs[PSMs[!,:target].==false, :topn], alpha = 0.5, bins = bins, normalize=:pdf)
+    =#
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
@@ -277,10 +291,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 end
 
 
-println("Finished main search in ", main_search_time.time, "seconds")
-println("Finished main search in ", main_search_time, "seconds")
-
-
+#println("Finished main search in ", main_search_time.time, "seconds")
+#println("Finished main search in ", main_search_time, "seconds")
 #=
 @time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(
     MS_TABLE,

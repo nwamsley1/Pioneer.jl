@@ -47,7 +47,7 @@ struct FragmentMatch{T<:AbstractFloat} <: MatchIon{T}
     frag_index::UInt8
     frag_charge::UInt8
     frag_isotope::UInt8
-    ion_type::Char
+    ion_type::UInt8
     is_isotope::Bool
     prec_id::UInt32
     count::UInt8
@@ -57,7 +57,7 @@ struct FragmentMatch{T<:AbstractFloat} <: MatchIon{T}
 end
 
 FragmentMatch{Float64}() = FragmentMatch(Float64(0), Float64(0), Float64(0), Float64(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
-FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0),'y', false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
+FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Float32(0), 0, UInt8(0), UInt8(0), UInt8(0), zero(UInt8), false, UInt32(0), UInt8(0), UInt32(0), UInt32(0), zero(UInt8))
 
 
 getMZ(f::FragmentMatch) = f.theoretical_mz

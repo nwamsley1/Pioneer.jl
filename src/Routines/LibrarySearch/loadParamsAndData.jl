@@ -8,12 +8,12 @@ using ArgParse
 using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
 using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
 #DataStructures 
-using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays
+using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays, StaticArrays
 #Algorithms 
-using Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, StaticArrays
+using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, LinearSolve
 using Base.Order
 using Base.Iterators: partition
-using PDFmerger
+using PDFmerger, Measures
 
 ##########
 #Parse Arguments 
@@ -51,19 +51,19 @@ ARGS = parse_commandline();
 
 params = JSON.parse(read(ARGS["params_json"], String));
 #=
+library_fragment_lookup_table.prec_frag_ranges[end] = 0x29004baf:(0x29004be8 - 1)
 3-protome PC test March 4th 2024 for hupo
-params = JSON.parse(read("./data/example_config/LibrarySearch.json", String));
+julia --threads 15 ./src/Routines/LibrarySearch/MAIN.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib -s true 
 
-#SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/"
-#SPEC_LIB_DIR = "/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr4_24/pioneer_lib/"
-SPEC_LIB_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "LIBS", "UP000005640_9606_Apr4_24", "pioneer_lib")
-#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/HEIL_2023/"
-#MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/ThermoRawFileToParquetConverter-main/parquet_out"
-MS_DATA_DIR = joinpath("C:\\Users", "n.t.wamsley", "PROJECTS", "HUPO_2023", "CALIBRATION_CURVES", "RAW")
-#SPEC_LIB_DIR =  "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\LIB"
-#MS_DATA_DIR = "C:\\Users\\n.t.wamsley\\PROJECTS\\HUPO_2023\\HUMAN_YEAST_ECOLI\\PIONEER\\RAW"
+params = JSON.parse(read("../OAT_103ISO/LibrarySearch.json", String));
+
+SPEC_LIB_DIR ="../spec_lib/pioneer_lib"
+
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
+
+
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-EXPERIMENT_NAME = "TEST_FOR_EWZ"
+EXPERIMENT_NAME = "EXPERIMENT"
 =#
 
 MS_DATA_DIR = ARGS["data_dir"];
@@ -75,8 +75,31 @@ MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(
 MS_TABLE_PATH_TO_ID = Dictionary(MS_TABLE_PATHS, UInt32.(collect(range(1,length(MS_TABLE_PATHS)))))
 MS_TABLE_ID_TO_PATH = Dictionary(UInt32.(collect(range(1,length(MS_TABLE_PATHS)))), MS_TABLE_PATHS)
 
-MS_DATA_DIR = joinpath(MS_DATA_DIR, EXPERIMENT_NAME);
+params_ = (
+    expected_matches = Int64(params["expected_matches"]),
+    isotope_err_bounds = Tuple([Int64(bound) for bound in params["isotope_err_bounds"]]),
+    choose_most_intense = Bool(params["choose_most_intense"]),
+    quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
+    irt_err_sigma = params["irt_err_sigma"],
+
+
+    presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]),
+    first_search_params = Dict{String, Any}(k => v for (k, v) in params["first_search_params"]),
+    quant_search_params = Dict{String, Any}(k => v for (k, v) in params["quant_search_params"]),
+    frag_tol_params = Dict{String, Any}(k => v for (k, v) in params["frag_tol_params"]),
+    irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]),
+    integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
+    deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
+    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
+    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"]),
+    normalization_params = Dict{String, Any}(k => v for (k, v) in params["normalization_params"]),
+    benchmark_params = Dict{String, Any}(k => v for (k, v) in params["benchmark_params"])
+    );
+
+
+MS_DATA_DIR = joinpath(params_[:benchmark_params]["results_folder"], EXPERIMENT_NAME);
 out_folder = joinpath(MS_DATA_DIR, "Search")
+RESULTS_DIR = MS_DATA_DIR
 if !isdir(out_folder)
     mkpath(out_folder)
 end
@@ -107,24 +130,7 @@ open(joinpath(params_folder, "config.json"),"w") do f
     JSON.print(f, params)
 end
 
-params_ = (
-    expected_matches = Int64(params["expected_matches"]),
-    isotope_err_bounds = Tuple([Int64(bound) for bound in params["isotope_err_bounds"]]),
-    choose_most_intense = Bool(params["choose_most_intense"]),
-    quadrupole_isolation_width = Float64(params["quadrupole_isolation_width"]),
-    irt_err_sigma = params["irt_err_sigma"],
 
-    presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]),
-    first_search_params = Dict{String, Any}(k => v for (k, v) in params["first_search_params"]),
-    quant_search_params = Dict{String, Any}(k => v for (k, v) in params["quant_search_params"]),
-    frag_tol_params = Dict{String, Any}(k => v for (k, v) in params["frag_tol_params"]),
-    irt_mapping_params = Dict{String, Any}(k => v for (k, v) in params["irt_mapping_params"]),
-    integration_params = Dict{String, Any}(k => v for (k, v) in params["integration_params"]),
-    deconvolution_params = Dict{String, Any}(k => v for (k, v) in params["deconvolution_params"]),
-    summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
-    qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"])
-
-    );
 
 ##########
 #Load Dependencies 
@@ -132,6 +138,7 @@ params_ = (
 #Fragment Library Parsing
 
 [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
+                                                                    "ChromObject.jl",
                                                                     "ArrayDict.jl",
                                                                     "Counter.jl",
                                                                     "Ion.jl",
@@ -145,11 +152,14 @@ params_ = (
                                                                     "ExponentialGaussianHybrid.jl",
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
+                                                                    "uniformBasisCubicSpline.jl",
                                                                     "isotopeSplines.jl",
+                                                                    "Normalization.jl",
+                                                                    "SavitskyGolay.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",
-                                                                    "kdeRTAlignment.jl",
+                                                                    "plotRTAlignment.jl",
                                                                     "probitRegression.jl",
                                                                     "partitionThreadTasks.jl"]];
 
@@ -184,11 +194,20 @@ f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"
 f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
 f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
 
+
+presearch_f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragments.arrow"))
+presearch_f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_rt_bins.arrow"))
+presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
+
+
 println("Loading spectral libraries into main memory...")
 prosit_lib = Dict{String, Any}()
-@time detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
-@time prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
+detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
+prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
 const library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
+last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
+last_range = range(first(last_range), last(last_range) - 1)
+library_fragment_lookup_table.prec_frag_ranges[end] = last_range
 prosit_lib["f_det"] = library_fragment_lookup_table
 
 #@time begin
@@ -211,12 +230,17 @@ f_index = FragmentIndex(
     f_index_rt_bins[:FragIndexBin],
     f_index_fragments[:IndexFragment],
 );
+presearch_f_index = FragmentIndex(
+    presearch_f_index_frag_bins[:FragIndexBin],
+    presearch_f_index_rt_bins[:FragIndexBin],
+    presearch_f_index_fragments[:IndexFragment],
+);
 prosit_lib["f_index"] = f_index;
+prosit_lib["presearch_f_index"] = presearch_f_index;
 prosit_lib["precursors"] = precursors;
 ###########
 #Load Pre-Allocated Data Structures. One of each for each thread. 
 ###########
-@time begin
 N = Threads.nthreads()
 M = 250000
 n_precursors = length(precursors[:mz])
@@ -231,11 +255,10 @@ unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in
 spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
 precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
 precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
+chromatograms = [Vector{ChromObject}(undef, 5000) for _ in range(1, N)];
 complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
 complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
 complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-end;
-
 
 ###########
 #File Names Parsing 
@@ -277,3 +300,5 @@ end
 const file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
 #Parsed file names 
 const parsed_fnames = sort(collect(values(file_id_to_parsed_name)))
+
+

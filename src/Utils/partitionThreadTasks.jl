@@ -78,8 +78,7 @@ function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Uni
     end
     return thread_tasks, total_peaks
 end
-#test_tasks, total_peaks = partitionScansToThreadsTest(MS_TABLE[:intensities],
-#       MS_TABLE[:precursorMZ], MS_TABLE[:msOrder],12,1)
+
 function partitionScansToThreadsTest(spectra::Arrow.List{Union{Missing, 
                                                                 SubArray{Union{Missing, Float32}, 
                                                                     1, 

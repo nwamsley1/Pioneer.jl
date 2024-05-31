@@ -34,7 +34,7 @@ getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = get
 
 function getProbQuantiles!(psms::DataFrame, prob_column::Symbol, features::Vector{Symbol}, bst::Booster)
     psms[!,prob_column] = XGBoost.predict(bst, psms[!,features])
-    grouped_psms = groupby(psms, [:precursor_idx,:iso_rank]); #
+    grouped_psms = groupby(psms, [:precursor_idx,:isotopes_captured]); #
     for i in range(1, length(grouped_psms))
         median_prob = median(grouped_psms[i][!,prob_column])
         max_prob = minimum(grouped_psms[i][!,prob_column])
@@ -64,7 +64,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
     unique_cv_folds = unique(folds)
     bst = ""
     Random.seed!(128);
-    pbar = ProgressBar(total = sum(iter_scheme)*length(unique_cv_folds))
+    #pbar = ProgressBar(total = sum(iter_scheme)*length(unique_cv_folds))
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
     psms_test_folds = []
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
@@ -99,12 +99,12 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
                             watchlist=(;)
                             )
             bst.feature_names = [string(x) for x in features]
-            print_importance ? print(collect(zip(importance(bst)))[1:10]) : nothing
+            print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
             ###################
             #Apply to held-out data
             getProbQuantiles!(psms_train_sub, :prob_temp, features, bst)
             getProbQuantiles!(psms_test_sub, :prob, features, bst)
-            update(pbar, num_round)
+            #update(pbar, num_round)
         end
         push!(psms_test_folds, psms_test_sub)
   
