@@ -9,7 +9,8 @@
 <!---
 [![Build Status](https://github.com/nwamsley1/Titus.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/nwamsley1/Titus.jl/actions/workflows/CI.yml?query=branch%3Amain)
 --->
-<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.jpg" align="right" width="150px"/>
+<h1><img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.jpg" align="right" width="150px"/><br><h1>
+  
 ##  Development Aims
   Pioneer is a cross-platform and open-source tool fully implemented 
 in Juilia that identifies and quantifies proteins and peptides from data independent acquisition (DIA) experiments. Given a 
