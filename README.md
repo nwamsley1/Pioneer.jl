@@ -26,5 +26,8 @@ algorithm and heuristics to statistically infer the identification status and ab
 - Updates will be continuously added to github as the project progresses.
 - Cross-platform conversion of Thermo RAW files to Pioneer compatible Apache Arrow tables. https://github.com/nwamsley1/ThermoRawFileToParquetConverter
 
+## ASMS 2024
+<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/asms_2024_image.jpg"/>
+
 ## US HUPO 2024
 <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/HUPO_POSTER_2024_FORFEDEX.jpg"/>
