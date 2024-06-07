@@ -68,16 +68,6 @@ end
 
 
 function buildPolynomials(coefficients::Vector{T}, order::I) where {T<:Real, I<:Integer}
-    #order += 1
-    #n_knots = length(coefficients)÷order
-    #polynomials = Vector{CubicPolynomial{T}}()
-    #SVector{n_knots*4}
-    
-    #for n in range(1, n_knots)
-    #    start = ((n - 1)*order + 1)
-    #    stop = (n)*order
-    #    push!(polynomials, CubicPolynomial(coefficients[start], coefficients[start+1], coefficients[start+2], coefficients[start+3]))
-    #end
     return SVector{length(coefficients)}(coefficients)#polynomials
 end
 
@@ -111,13 +101,6 @@ function parseIsoXML(iso_xml_path::String)
                     0.0f0,
                     0.0f0,
                     0.0f0)
-                #UniformSpline(SVector{1, Float32}(Float32[0]))
-                #PolynomialSpline(
-                #                buildPolynomials(Float32[0, 0, 0], 3),
-                #                zero(Float32),
-                ##                zero(Float32),
-                #                Float32[0]
-                #                            )
             )
         end
     end
@@ -127,14 +110,6 @@ function parseIsoXML(iso_xml_path::String)
         if (haskey(attributes_dict(model),"S"))
             S = parse(Int64, attributes_dict(model)["S"])
             iso =  parse(Int64, attributes_dict(model)["isotope"]) 
-
-            #=
-            polynomials =                 buildPolynomials(
-                collect(Float32.(DecodeCoefficients(content(model["coefficients"][1])))),
-                parse(Int64, attributes_dict(model)["order"]) - 1
-                )
-            =#
-
             knots = collect(Float32.(DecodeCoefficients(content(model["knots"][1]))))[1:end - 1]
             A = hcat(ones(length(knots)), knots)
             x = A\collect(range(0, length(knots) - 1))
@@ -144,10 +119,6 @@ function parseIsoXML(iso_xml_path::String)
                 Float32(first(knots)),
                 Float32(last(knots)),
                 Float32((last(knots)-first(knots))/(length(knots) - 1))
-                #polynomials,
-                #Float32(last(x)),
-                #Float32(first(x)),
-                #knots
             )
         end
     end

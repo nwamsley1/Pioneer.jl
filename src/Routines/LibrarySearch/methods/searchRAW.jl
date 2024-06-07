@@ -190,9 +190,7 @@ function searchFragmentIndex(
         end
         thread_peaks += length(spectra[:masses][i])
         if thread_peaks > 100000
-            #lock(lk) do 
-            #    update(pbar, thread_peaks)
-            #end
+
             thread_peaks = 0
         end
         #if i != 200000

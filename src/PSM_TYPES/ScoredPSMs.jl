@@ -205,21 +205,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )
-        
-        #passing_filter = true
-        #=
-        if UInt32(unscored_PSMs[i].precursor_idx) == 11083883
-            println("scan_idx passing? ", scan_idx, " ", passing_filter)
-        end
-        if (scan_idx == 119733) .& (UInt32(unscored_PSMs[i].precursor_idx) == 11083883)
-            println("min_frag_count $min_frag_count ", unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
-            println("min_spectral_contrast $min_spectral_contrast ", (spectral_scores[i].spectral_contrast))
-            println("min_log2_matched_ratio $min_log2_matched_ratio ", spectral_scores[i].matched_ratio)
-            println("min_weight $min_weight ", weight[i])
-            println("min_topn $min_topn ", UInt8(unscored_PSMs[i].topn))
-            println("best_rank ", UInt8(unscored_PSMs[i].best_rank))
-        end
-        =#
+    
         if !passing_filter #Skip this scan
             skipped += 1
             continue

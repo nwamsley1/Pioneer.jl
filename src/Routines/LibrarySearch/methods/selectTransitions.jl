@@ -177,6 +177,7 @@ function selectRTIndexedTransitions!(
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
+
 function selectRTIndexedTransitions!(
                             transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_subset::Set{UInt32},
@@ -264,9 +265,8 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                                             prec_charge, 
                                             min_prec_mz, 
                                             max_prec_mz)
-    #prec_isotope_set = (0, 3)
-    #for frag in fragment_list[getID(counter, i)]
-    for frag_idx in precursor_fragment_range#getPrecFragRange(library_fragment_lookup, prec_idx)
+
+    for frag_idx in precursor_fragment_range
 
         frag = fragment_ions[frag_idx]
         #Estimate isotope abundances 
@@ -281,14 +281,11 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         if length(isotopes) > 0
             for iso_idx in range(0, length(isotopes) - 1)
 
-                #Skip if missing
-                #iszero(isotopes[iso_idx + 1]) ? continue : nothing
                 frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
                 if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                     continue
                 end           
                 transition_idx += 1
-                #println("prec_isotope_set $prec_isotope_set iso_idx: $iso_idx frag.intensity: ", frag.intensity, " isotopes[iso_idx + 1]: ", isotopes[iso_idx + 1])
                 transitions[transition_idx] = DetailedFrag(
                     frag.prec_id,
 

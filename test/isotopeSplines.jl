@@ -1,7 +1,7 @@
 include("src/Utils/isotopeSplines.jl")
 iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
-
-
+SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib/"
+ 
 #Use exact isotope composition from expasy.org 
 #https://education.expasy.org/student_projects/isotopident/cgi-bin/iso.pl
 
@@ -36,3 +36,61 @@ exact_iso_abundances = Float32[0.411367694,0.852177261,1.000000000,0.851991166,0
 spline_iso_abundances = [iso_splines.splines[pep_sulfur_count][x](pep_mass_a) for x in range(1, 6)]
 spline_iso_abundances = spline_iso_abundances./maximum(spline_iso_abundances)
 percent_deviance = 100.0*(exact_iso_abundances .- spline_iso_abundances)./exact_iso_abundances
+
+
+prec_id = 1
+prec_mz = precursors[:mz][prec_id]
+isotopes = zeros(Float32, 3)
+getFragIsotopes!(
+    isotopes,
+    iso_splines,
+    precursors[:mz][prec_id],
+    precursors[:prec_charge][prec_id],
+    precursors[:sulfur_count][prec_id],
+    detailed_frags[prec_frag_ranges[prec_id][1]],
+    (0, 5)
+)
+
+
+prec_id = 1
+prec_mz = precursors[:mz][prec_id]
+isotopes = zeros(Float32, 5)
+getFragIsotopes!(
+    isotopes,
+    iso_splines,
+    precursors[:mz][prec_id],
+    precursors[:prec_charge][prec_id],
+    precursors[:sulfur_count][prec_id],
+    detailed_frags[prec_frag_ranges[prec_id][1]],
+    (0, 1)
+)
+isotopes = isotopes./sum(isotopes)
+
+isotopes = zeros(Float32, 5)
+frag = detailed_frags[prec_frag_ranges[prec_id][1]]
+getFragIsotopes!(
+    isotopes,
+    iso_splines,
+    precursors[:mz][prec_id],
+    precursors[:prec_charge][prec_id],
+    precursors[:sulfur_count][prec_id],
+    frag,
+    (1, 3)
+)
+isotopes = isotopes./sum(isotopes)
+
+isotopes = zeros(Float32, 2)
+frag = detailed_frags[prec_frag_ranges[prec_id][1]]
+getFragIsotopes!(
+    isotopes,
+    iso_splines,
+    precursors[:mz][prec_id],
+    precursors[:prec_charge][prec_id],
+    precursors[:sulfur_count][prec_id],
+    frag,
+    (1, 3)
+)
+isotopes
+isotopes = isotopes./sum(isotopes)
+
+

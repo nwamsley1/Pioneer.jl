@@ -55,11 +55,11 @@ library_fragment_lookup_table.prec_frag_ranges[end] = 0x29004baf:(0x29004be8 - 1
 3-protome PC test March 4th 2024 for hupo
 julia --threads 15 ./src/Routines/LibrarySearch/MAIN.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib -s true 
 
-params = JSON.parse(read("../OAT_103ISO/LibrarySearch.json", String));
+params = JSON.parse(read("OAT_103ISO/LibrarySearch.json", String));
 
-SPEC_LIB_DIR ="../spec_lib/pioneer_lib"
+SPEC_LIB_DIR ="spec_lib/pioneer_lib"
 
-MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
+MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow"
 
 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
