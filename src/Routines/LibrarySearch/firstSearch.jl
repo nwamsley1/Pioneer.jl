@@ -205,6 +205,7 @@ function mainLibrarySearch(
     psms = fetch.(tasks)
     return psms
 end
+
 #frag_err_dist_dict[1] = MassErrorModel(frag_err_dist_dict[1].mass_offset, frag_err_dist_dict[1].mass_tolerance, 7.0f0, 15.0f0)
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
@@ -257,111 +258,13 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
-    #=
-    bins = LinRange(0, 2, 100)
-    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :entropy_score], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(PSMs[PSMs[!,:target].==false, :entropy_score], alpha = 0.5, bins = bins, normalize=:pdf)
-    
-
-    bins = LinRange(0, 2, 100)
-    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :spectral_contrast], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(PSMs[PSMs[!,:target].==false, :spectral_contrast], alpha = 0.5, bins = bins, normalize=:pdf)
-
-    bins = LinRange(0, 25, 100)
-    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :total_ions], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(PSMs[PSMs[!,:target].==false, :total_ions], alpha = 0.5, bins = bins, normalize=:pdf)
-
-    bins = LinRange(-1, 5, 100)
-    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :matched_ratio], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(PSMs[PSMs[!,:target].==false, :matched_ratio], alpha = 0.5, bins = bins, normalize=:pdf)
-
-    bins = LinRange(0, 25, 100)
-    histogram(PSMs[PSMs[!,:target].&(PSMs[!,:q_value].<=0.01), :topn], alpha = 0.5, bins = bins, normalize = :pdf)
-    histogram!(PSMs[PSMs[!,:target].==false, :topn], alpha = 0.5, bins = bins, normalize=:pdf)
-    =#
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
-    println("for $ms_file_idx 1% ", sum(PSMs[!,:q_value].<=0.01))
-    println("for $ms_file_idx 10% ", sum(PSMs[!,:q_value].<=0.1))
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
         PSMs
     );
 end
-
-
-#println("Finished main search in ", main_search_time.time, "seconds")
-#println("Finished main search in ", main_search_time, "seconds")
-#=
-@time scan_to_prec_idx, precursors_passed_scoring, thread_tasks = mainLibrarySearch(
-    MS_TABLE,
-    prosit_lib["f_index"],
-    prosit_lib["precursors"],
-    library_fragment_lookup_table,
-    RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-    UInt32(ms_file_idx), #MS_FILE_IDX
-    frag_err_dist_dict[ms_file_idx],
-    irt_errs[ms_file_idx],
-    params_,
-    ionMatches,
-    ionMisses,
-    all_fmatches,
-    IDtoCOL,
-    ionTemplates,
-    iso_splines,
-    scored_PSMs,
-    unscored_PSMs,
-    spectral_scores,
-    precursor_weights,
-    precs
-#scan_range = (100000, 100010)
-);
-
-@time subset_lookup_table = buildSubsetLibraryFragmentLookupTable!(
-    precursors_passed_scoring,
-    library_fragment_lookup_table,
-    length(precursors[:irt])
-)
-precursor_sets = [x for x in precursors_passed_scoring]
-union(precursor_sets...)
-[scan_to_prec_idx[thread_tasks[1][end][x]] for x in range(3012, 4000)]
-scan_to_prec_idx[]
-prec_diffs = zeros(Union{Missing, Int64}, length(thread_tasks[1][end]) - 1)
-prec_totals = zeros(Union{Missing, Int64}, length(thread_tasks[1][end]) - 1)
-for i in range(1, length(thread_tasks[1][end]) - 1)
-    if iszero(thread_tasks[1][end][i])
-        prec_diffs[i] = missing
-        continue
-    end
-    prec_range_a = scan_to_prec_idx[thread_tasks[1][end][i]]
-    prec_range_b = scan_to_prec_idx[thread_tasks[1][end][i+1]]
-    if ismissing(prec_range_a) | ismissing(prec_range_b)
-        prec_diffs[i] = missing
-        continue
-    end
-    if (last(prec_range_a) - first(prec_range_a) > 0) & (last(prec_range_b) - first(prec_range_b) > 0)
-        a = Set(precursors_passed_scoring[1][prec_range_a])
-        b = Set(precursors_passed_scoring[1][prec_range_b])
-        prec_totals[i] = length(a) + length(b)
-        println(length(setdiff(b, a)))
-        prec_diffs[i] = length(setdiff(b, a))
-    end
-end
-to_keep = iszero.(prec_totals).==false
-
-to_keep = prec_totals.>30
-prec_totals = prec_totals[to_keep]
-prec_diffs = prec_diffs[to_keep]
-histogram(1.0 .- prec_diffs./prec_totals)
-
-a = Set(precursors_passed_scoring[1][scan_to_prec_idx[thread_tasks[1][end][3013]]])
-b = Set(precursors_passed_scoring[1][scan_to_prec_idx[thread_tasks[1][end][3014]]])
-length(b)
-length(a)
-length(setdiff(a, b))
-length(setdiff(b, a))
-
-=#
