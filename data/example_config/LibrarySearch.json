@@ -7,6 +7,9 @@
     "presearch_params":
     {
         "min_index_search_score": 22,
+        "filter_on_frag_count": false,
+        "filter_by_rank": false,
+        "n_frag_isotopes": 1,
         "min_frag_count": 7,
         "min_log2_matched_ratio": 1.5,
         "min_spectral_contrast": 0.9,

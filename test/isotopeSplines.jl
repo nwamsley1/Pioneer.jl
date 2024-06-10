@@ -104,6 +104,35 @@ end
 #########
 #Fragment Isotope Correction
 #########
+
+function plotIsotopes(
+    iso_a,
+    iso_b,
+    label_a,
+    label_b,
+    test_frag;
+    title::String = "title here"
+    )
+
+    frag_charge = test_frag.frag_charge
+    p = plot(title = title)
+    iso_idx = 0
+    for i in range(1, length(iso_a))
+        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        plot!(p, [mz, mz], [0.0, iso_a[i]], color = 1, alpha = 0.5, lw = 5, label = nothing)
+        iso_idx += 1
+    end
+    hline!(p,[0.0], lw = 4, color = 1, labels = label_a)
+    iso_idx = 0
+    for i in range(1, length(iso_b))
+        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
+        plot!(p, [mz, mz], [0.0, iso_b[i]], color = 2, alpha = 0.5, lw = 5, label = nothing)
+        iso_idx += 1
+    end
+    hline!(p,[0.0], lw = 4, color = 2, labels = label_b)
+    plot!(p, show = true)
+end
+
 test_precursor = (mz = 981.5947f0,
  sequence = "TFTLKTVLMIAIQLITR",
  prec_charge = 0x02,
@@ -167,6 +196,7 @@ test_fragments = [
     DetailedFrag{Float32}(0x0087b1fe, 251.671f0, Float16(0.0027), 0x02, false, 0x02, 0x04, 0x02, 0x37, 0x00)
     DetailedFrag{Float32}(0x0087b1fe, 635.8994f0, Float16(0.0026), 0x02, false, 0x02, 0x0b, 0x02, 0x38, 0x01)
 ]
+
 @testset "fragment_isotope_correction" begin 
     #If only the precursor monoisotope is sampled,
     #then the fragment should be all mono
@@ -185,7 +215,8 @@ test_fragments = [
     @test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
 
     isotopes = zeros(Float32, 5)
-    test_frag = test_fragments[1]
+    test_frag = DetailedFrag{Float32}(0x0087b1fe, 1371.8392f0, Float16(1.0), 0x02, false, 0x01, 0x0c, 0x02, 0x01, 0x01)
+
     getFragIsotopes!(
         isotopes,
         iso_splines,
@@ -198,7 +229,6 @@ test_fragments = [
     isotopes05 = isotopes./sum(isotopes)
     #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
     isotopes = zeros(Float32, 5)
-    test_frag = test_fragments[1]
     getFragIsotopes!(
         isotopes,
         iso_splines,
@@ -210,89 +240,71 @@ test_fragments = [
     )
     isotopes15 = isotopes./sum(isotopes)
 
-    plotIsotopes(isotopes05, isotopes15, test_frag; title = "y12+1 of TFTLKTVLMIAIQLITR")
+    @test isotopes05[1]>isotopes15[1]
+    @test all(isotopes15[2:end].>isotopes05[2:end])
 
-end
+    plotIsotopes(isotopes05, isotopes15, "(0, 5)", "(1, 5)", test_frag; title = "y12+1 of TFTLKTVLMIAIQLITR")
 
-function plotIsotopes(
-    iso_a,
-    iso_b,
-    test_frag;
-    title::String = "title here"
+
+    isotopes = zeros(Float32, 5)
+    test_frag = DetailedFrag{Float32}(0x0087b1fe, 350.171f0, Float16(0.919), 0x01, false, 0x01, 0x03, 0x02, 0x02, 0x00)
+    getFragIsotopes!(
+        isotopes,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag,
+        (0, 5)
     )
+    isotopes05 = isotopes./sum(isotopes)
+    #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
+    isotopes = zeros(Float32, 5)
+    getFragIsotopes!(
+        isotopes,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag,
+        (1, 5)
+    )
+    isotopes15 = isotopes./sum(isotopes)
 
-    frag_charge = test_frag.frag_charge
-    p = plot(title = title)
-    plot!(p, color = 1, labels = ["test"])
-    iso_idx = 0
-    for i in range(1, length(iso_a))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
-        plot!(p, [mz, mz], [0.0, iso_a[i]], color = 1, alpha = 0.5, lw = 5, label = nothing)
-        iso_idx += 1
-    end
-    iso_idx = 0
-    for i in range(1, length(iso_b))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
-        plot!(p, [mz, mz], [0.0, iso_b[i]], color = 2, alpha = 0.5, lw = 5, label = nothing)
-        iso_idx += 1
-    end
-    plot!(p, show = true)
+    @test isotopes05[1]>isotopes15[1]
+    @test all(isotopes15[2:end].>isotopes05[2:end])
+
+    plotIsotopes(isotopes05, isotopes15, "(0, 5)", "(1, 5)", test_frag; title = "b3+1 of TFTLKTVLMIAIQLITR")
+    b3_isotopes15 = copy(isotopes15)
+
+    isotopes = zeros(Float32, 5)
+    test_frag = DetailedFrag{Float32}(0x0087b1fe, 1861.1343f0, Float16(0.0031), 0x02, false, 0x01, 0x10, 0x02, 0x36, 0x01)
+    getFragIsotopes!(
+        isotopes,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag,
+        (0, 5)
+    )
+    isotopes05 = isotopes./sum(isotopes)
+    #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
+    isotopes = zeros(Float32, 5)
+    getFragIsotopes!(
+        isotopes,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag,
+        (1, 5)
+    )
+    isotopes15 = isotopes./sum(isotopes)
+
+    @test isotopes05[1]>isotopes15[1]
+    @test all(isotopes15[2:end].>isotopes05[2:end])
+    @test isotopes15[1] < b3_isotopes15[1]
+    plotIsotopes(isotopes05, isotopes15, "(0, 5)", "(1, 5)", test_frag; title = "y16+1 of TFTLKTVLMIAIQLITR")
 end
-
-isotopes = zeros(Float32, 5)
-getFragIsotopes!(
-    isotopes,
-    iso_splines,
-    test_precursor[:mz],
-    test_precursor[:prec_charge],
-    test_precursor[:sulfur_count],
-     test_fragments[1],
-    (0, 5)
-)
-isotopes = isotopes./sum(isotopes)
-
-
-
-
-prec_id = 1
-prec_mz = precursors[:mz][prec_id]
-isotopes = zeros(Float32, 5)
-getFragIsotopes!(
-    isotopes,
-    iso_splines,
-    precursors[:mz][prec_id],
-    precursors[:prec_charge][prec_id],
-    precursors[:sulfur_count][prec_id],
-    detailed_frags[prec_frag_ranges[prec_id][1]],
-    (0, 1)
-)
-isotopes = isotopes./sum(isotopes)
-
-isotopes = zeros(Float32, 5)
-frag = detailed_frags[prec_frag_ranges[prec_id][1]]
-getFragIsotopes!(
-    isotopes,
-    iso_splines,
-    precursors[:mz][prec_id],
-    precursors[:prec_charge][prec_id],
-    precursors[:sulfur_count][prec_id],
-    frag,
-    (1, 3)
-)
-isotopes = isotopes./sum(isotopes)
-
-isotopes = zeros(Float32, 2)
-frag = detailed_frags[prec_frag_ranges[prec_id][1]]
-getFragIsotopes!(
-    isotopes,
-    iso_splines,
-    precursors[:mz][prec_id],
-    precursors[:prec_charge][prec_id],
-    precursors[:sulfur_count][prec_id],
-    frag,
-    (1, 3)
-)
-isotopes
-isotopes = isotopes./sum(isotopes)
-
 
