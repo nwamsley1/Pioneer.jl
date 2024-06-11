@@ -7,6 +7,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             prec_sulfur_counts::Arrow.Primitive{UInt8, Vector{UInt8}},
                             iso_splines::IsotopeSplineModel,
                             isotopes::Vector{Float32},
+                            n_frag_isotopes::Int64,
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             iRT::Float32, 
                             iRT_tol::Float32, 
@@ -44,6 +45,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                                                     prec_sulfur_count,
                                                     transition_idx,
                                                     isotopes, 
+                                                    n_frag_isotopes,
                                                     iso_splines, 
                                                     first(mz_bounds),
                                                     last(mz_bounds),
@@ -254,6 +256,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_sulfur_count::UInt8,
                             transition_idx::Int64, 
                             isotopes::Vector{Float32}, 
+                            n_frag_isotopes::Int64,
                             iso_splines::IsotopeSplineModel, 
                             min_prec_mz::Float32,
                             max_prec_mz::Float32,
@@ -278,54 +281,21 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         frag, 
                         prec_isotope_set)
 
-        if length(isotopes) > 0
-            for iso_idx in range(0, length(isotopes) - 1)
+        for iso_idx in range(0, n_frag_isotopes - 1)
 
-                frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
-                if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
-                    continue
-                end           
-                transition_idx += 1
-                transitions[transition_idx] = DetailedFrag(
-                    frag.prec_id,
-
-                    frag_mz, #Estimated isotopic m/z
-                    Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
-
-                    frag.ion_type,
-                    iso_idx>0, #Is the fragment an isotope?
-
-                    frag.frag_charge,
-                    frag.ion_position,
-                    frag.prec_charge,
-                    frag.rank,
-                    frag.sulfur_count
-                )#::LibraryFragment{T}
-                
-
-                #Grow array if exceeds length
-                
-                if transition_idx >= length(transitions)
-                    append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
-                end
-            end
-        else
-            #Skip if missing
-            #iszero(isotopes[iso_idx + 1]) ? continue : nothing
-            frag_mz = Float32(frag.mz)#Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
+            frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
             if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                 continue
             end           
             transition_idx += 1
-            #println("prec_isotope_set $prec_isotope_set iso_idx: $iso_idx frag.intensity: ", frag.intensity, " isotopes[iso_idx + 1]: ", isotopes[iso_idx + 1])
             transitions[transition_idx] = DetailedFrag(
                 frag.prec_id,
 
                 frag_mz, #Estimated isotopic m/z
-                Float16(frag.intensity), #Estimated relative abundance 
+                Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
 
                 frag.ion_type,
-                false, #Is the fragment an isotope?
+                iso_idx>0, #Is the fragment an isotope?
 
                 frag.frag_charge,
                 frag.ion_position,

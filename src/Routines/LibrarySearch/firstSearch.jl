@@ -1,7 +1,9 @@
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    params_[:first_search_params]["n_frag_isotopes"] = 3
+    params_[:first_search_params]["n_frag_isotopes"] = 1
+    params_[:first_search_params]["min_spectral_contrast"] = 0.5
+    params_[:first_search_params]["min_log2_matched_ratio"] = 0.0
     @time PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
@@ -25,7 +27,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         sample_rate = Inf,#params_[:presearch_params]["sample_rate"],
         params = params_[:first_search_params]
                         )...)
-    
+
+    sort!(PSMs, [:precursor_idx, :scan_idx])
+    filter!(x->isnan(x.entropy_score)==false, PSMs)
+    #filter!(x->isnan(x.city_block)==false, PSMs)
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:structural_mods],
                         prosit_lib["precursors"][:missed_cleavages],
@@ -36,11 +41,19 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-    
-    column_names = [:spectral_contrast,:scribe,:city_block,:entropy_score,
-                    :iRT_error,:missed_cleavage,:Mox,
-                    :charge,:TIC,
-                    :y_count,:err_norm,:spectrum_peak_count,:intercept]
+   # PSMs[!,:city_block] = PSMs[!,:city_block] .- PSMs[!,:entropy_score]
+    column_names = [:spectral_contrast,
+                    :scribe,
+                    #:city_block,
+                    :entropy_score,
+                    :iRT_error,
+                    :missed_cleavage,
+                    :Mox,
+                    :charge,
+                    :TIC,
+                    #:y_count,
+                    #:err_norm,
+                    :spectrum_peak_count,:intercept]
     if sum(PSMs[!,:p_count])>0
         push!(column_names, :p_count)
     end

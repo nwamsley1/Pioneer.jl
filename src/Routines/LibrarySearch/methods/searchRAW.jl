@@ -159,7 +159,7 @@ function getPSMS(
     msms_counts = Dict{Int64, Int64}()
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
     Hs = SparseArray(UInt32(5000));
-    isotopes = zeros(Float32, n_frag_isotopes);
+    isotopes = zeros(Float32, 5)#n_frag_isotopes);
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -195,6 +195,7 @@ function getPSMS(
                                         precursors[:sulfur_count],
                                         iso_splines,
                                         isotopes,
+                                        n_frag_isotopes,
                                         ion_list,
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol), #rt_tol
@@ -229,9 +230,7 @@ function getPSMS(
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
-            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL,
-            #Reduce predicted intensities for unmatched ions by this factor
-                                )
+            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(spectral_scores)
                 new_entries = IDtoCOL.size - length(spectral_scores) + 1000 
