@@ -20,7 +20,7 @@ struct SpectralScoresSimple{T<:AbstractFloat} <: SpectralScores{T}
     entropy_score::T
 end
 
-function getDistanceMetrics(w::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresSimple{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+function getDistanceMetrics(H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresSimple{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
 
     for col in range(1, H.n)
         H_sqrt_sum = zero(T)

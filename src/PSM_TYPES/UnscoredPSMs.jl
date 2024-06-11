@@ -60,28 +60,27 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     error = score.error
     precursor_idx = prec_id
 
-    if getIonType(match) == one(UInt8)
-        b_count += 1
-    elseif getIonType(match) == UInt8(2)
-        y_count += 1
-    elseif getIonType(match) == UInt8(3)
-        p_count += 1
-    end
+    if match.is_isotope == false
+        if getIonType(match) == one(UInt8)
+            b_count += 1
+        elseif getIonType(match) == UInt8(2)
+            y_count += 1
+        elseif getIonType(match) == UInt8(3)
+            p_count += 1
+        end
+        intensity += getIntensity(match)
 
-    intensity += getIntensity(match)
+        ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/Float32(1e6))
+        error += abs(ppm_err)#Distributions.logpdf(Laplace{Float64}(-1.16443, 4.36538), ppm_err)
+        precursor_idx = getPrecID(match)
 
-    ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/Float32(1e6))
-    #error +=  Distributions.logpdf(errdist, ppm_err*sqrt(getIntensity(match)))
-    #error += getMassErrorLogLik(errdist, getIntensity(match), ppm_err)#Distributions.logpdf(errdist, ppm_err)
-    error += abs(ppm_err)#Distributions.logpdf(Laplace{Float64}(-1.16443, 4.36538), ppm_err)
-    precursor_idx = getPrecID(match)
+        if match.predicted_rank < best_rank
+            best_rank = match.predicted_rank
+        end
 
-    if match.predicted_rank < best_rank
-        best_rank = match.predicted_rank
-    end
-
-    if match.predicted_rank <= m_rank
-        topn += one(UInt8)
+        if match.predicted_rank <= m_rank
+            topn += one(UInt8)
+        end
     end
 
     return SimpleUnscoredPSM{T}(

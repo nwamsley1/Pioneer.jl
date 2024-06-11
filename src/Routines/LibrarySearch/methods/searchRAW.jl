@@ -149,9 +149,6 @@ function getPSMS(
                     min_spectral_contrast::AbstractFloat,
                     min_log2_matched_ratio::AbstractFloat,
                     min_topn_of_m::Tuple{Int64, Int64},
-                    min_max_ppm::Tuple{AbstractFloat, AbstractFloat},
-                    filter_by_rank::Bool,
-                    filter_by_count::Bool,
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     irt_tol::AbstractFloat,
@@ -159,19 +156,10 @@ function getPSMS(
                     ) where {L<:LibraryIon{Float32}}
     ##########
     #Initialize 
-    #println("mass_err_model $mass_err_model")
-    println("min_max_ppm $min_max_ppm")
-    min_max_ppm = (20.0f0, 20.0f0)#(maximum(mass_err_model.mass_tolerance), maximum(mass_err_model.mass_tolerance))
-    frag_ppm_err = mass_err_model.mass_offset#20.0f0#maximum(mass_err_model.mass_tolerance)
-    println("frag_ppm_err $frag_ppm_err")
     msms_counts = Dict{Int64, Int64}()
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
     Hs = SparseArray(UInt32(5000));
-    _weights_ = zeros(Float32, 5000);
-    _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, n_frag_isotopes);
-    #prec_id = 0
-    #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -192,16 +180,8 @@ function getPSMS(
         end
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-        
-        #if (i < 100000) | (i > 100000)
-        #    continue
-        #end
-        iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
-        
         ##########
         #Ion Template Selection
-        #SearchScan! applies a fragment-index based search (MS-Fragger) to quickly identify high-probability candidates to explain the spectrum  
-
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
@@ -238,37 +218,11 @@ function getPSMS(
                                         ion_idx, 
                                         spectra[:masses][i], 
                                         spectra[:intensities][i], 
-                                        frag_ppm_err,
                                         mass_err_model,
-                                        min_max_ppm,
                                         spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)
         sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
-        #println("nmatches $nmatches nmisses $nmisses")
-        nmisses_all = nmisses
-        nmatches_all = nmatches    
- 
-        if filter_by_count
-            nmatches_all, nmisses_all, nmatches, nmisses = filterMatchedIons!(IDtoCOL, 
-                                                                                ionMatches, 
-                                                                                ionMisses, 
-                                                                                nmatches, 
-                                                                                nmisses,
-                                                                                min_frag_count #Remove precursors matching fewer than this many fragments
-                                                                            )
-        end                                                       
-        if filter_by_rank
-        #println("nmatches_all $nmatches_all, nmatches $nmatches")
-            _, _, nmatches, nmisses = filterMatchedIonsTop!(IDtoCOL, 
-                                                        ionMatches, ionMisses, 
-                                                        nmatches, nmisses, 
-                                                        last(min_topn_of_m), 
-                                                        first(min_topn_of_m),
-                                                        )
-        end
-        #println("post filter nmatches $nmatches nmisses $nmisses")
-        
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
@@ -279,49 +233,43 @@ function getPSMS(
             #Reduce predicted intensities for unmatched ions by this factor
                                 )
             #Adjuste size of pre-allocated arrays if needed 
-            if IDtoCOL.size > length(_weights_)
-                new_entries = IDtoCOL.size - length(_weights_) + 1000 
-                append!(_weights_, zeros(eltype(_weights_), new_entries))
+            if IDtoCOL.size > length(spectral_scores)
+                new_entries = IDtoCOL.size - length(spectral_scores) + 1000 
                 append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, new_entries))
-                #append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, (IDtoCOL.size - length(spectral_scores) + 1000 )))
                 append!(unscored_PSMs, [eltype(unscored_PSMs)() for _ in 1:new_entries]);
-            end            
-            getDistanceMetrics(_weights_, Hs, spectral_scores)
+            end 
+
+            getDistanceMetrics(Hs, spectral_scores)
 
             ##########
             #Scoring and recording data
-            #if false==true#!ismissing(scored_PSMs)
-                ScoreFragmentMatches!(unscored_PSMs,
-                                    IDtoCOL,
-                                    ionMatches, 
-                                    nmatches, 
-                                    mass_err_model,
-                                    last(min_topn_of_m)
-                                    )
+            ScoreFragmentMatches!(unscored_PSMs,
+                                IDtoCOL,
+                                ionMatches, 
+                                nmatches, 
+                                mass_err_model,
+                                last(min_topn_of_m)
+                                )
 
-                last_val = Score!(scored_PSMs, 
-                    unscored_PSMs,
-                    spectral_scores,
-                    _weights_,
-                    IDtoCOL,
-                    #match_count/prec_count,
-                    nmatches/(nmatches + nmisses),
-                    last_val,
-                    Hs.n,
-                    Float32(sum(spectra[:intensities][i])), 
-                    i,
-                    min_spectral_contrast = min_spectral_contrast,
-                    min_log2_matched_ratio = min_log2_matched_ratio,
-                    min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
-                    max_best_rank = max_best_rank,
-                    min_topn = first(min_topn_of_m),
-                    block_size = 500000,
-                    )
-            #end
+            last_val = Score!(scored_PSMs, 
+                unscored_PSMs,
+                spectral_scores,
+                IDtoCOL,
+                #match_count/prec_count,
+                nmatches/(nmatches + nmisses),
+                last_val,
+                Hs.n,
+                Float32(sum(spectra[:intensities][i])), 
+                i,
+                min_spectral_contrast = min_spectral_contrast,
+                min_log2_matched_ratio = min_log2_matched_ratio,
+                min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
+                max_best_rank = max_best_rank,
+                min_topn = first(min_topn_of_m),
+                block_size = 500000,
+                )
         end
         #Add fragment matches to all_fmatches 
-        #frag_err_idx = collectFragErrs(all_fmatches, ionMatches, nmatches, frag_err_idx, collect_fmatches)
-    
         ##########
         #Reset pre-allocated arrays 
         for i in range(1, Hs.n)
@@ -330,14 +278,7 @@ function getPSMS(
         reset!(IDtoCOL);
         reset!(Hs);
     end
-    #println("prec_idx $prec_idx")
-    #println("scan_to_prec_idx $scan_to_prec_idx")
-
-    #if collect_fmatches
-    #    return DataFrame(@view(scored_PSMs[1:last_val])), @view(all_fmatches[1:frag_err_idx])
-    #else
     return DataFrame(@view(scored_PSMs[1:last_val]))
-    #end
 end
 function getMassErrors(
                     spectra::Arrow.Table,
@@ -397,9 +338,7 @@ function getMassErrors(
                                         ion_idx, 
                                         spectra[:masses][i], 
                                         spectra[:intensities][i], 
-                                        frag_ppm_err,
                                         mass_err_model,
-                                        min_max_ppm,
                                         spectra[:highMass][i],
                                         UInt32(i), 
                                         ms_file_idx)  
@@ -809,9 +748,6 @@ function LibrarySearch(
                                 Float32(kwargs[:params]["min_spectral_contrast"]),
                                 Float32(kwargs[:params]["min_log2_matched_ratio"]),
                                 Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
-                                Tuple([Float32(x) for x in params[:frag_tol_params]["frag_tol_bounds"]]),
-                                Bool(kwargs[:params]["filter_on_frag_count"]),
-                                Bool(kwargs[:params]["filter_by_rank"]),
                                 1,
                                 Int64(kwargs[:params]["n_frag_isotopes"]),
                                 Float32(kwargs[:irt_tol]),

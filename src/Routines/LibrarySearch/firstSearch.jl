@@ -1,6 +1,7 @@
 PSMs_Dict = Dictionary{String, DataFrame}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+    params_[:first_search_params]["n_frag_isotopes"] = 3
     @time PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
@@ -22,81 +23,9 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         prec_to_score = precs,
         mass_err_model = frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,#params_[:presearch_params]["sample_rate"],
-        params = params_[:presearch_params]
+        params = params_[:first_search_params]
                         )...)
     
-    #=vcat(LibrarySearch(
-        MS_TABLE,
-        params_;
-        frag_index = prosit_lib["f_index"],
-        precursors = prosit_lib["precursors"],
-        fragment_lookup_table = library_fragment_lookup_table,
-        rt_to_irt_spline =  RT_to_iRT_map_dict[ms_file_idx],
-        ms_file_idx = UInt32(ms_file_idx),
-        mass_err_model = frag_err_dist_dict[ms_file_idx],
-        irt_tol = irt_errs[ms_file_idx],
-        ion_matches = ionMatches,
-        ion_misses = ionMisses,
-        id_to_col = IDtoCOL,
-        ion_templates = ionTemplates,
-        iso_splines = iso_splines,
-        scored_psms = scored_PSMs,
-        unscored_psms = unscored_PSMs,
-        spectral_scores = spectral_scores,
-        prec_to_score = precs,
-        params = params_[:first_search_params]
-
-    )...)
-    =#
-
-
-    MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    @time PSMs = vcat(LibrarySearch(
-        MS_TABLE,
-        params_;
-        frag_index = prosit_lib["presearch_f_index"],
-        precursors = prosit_lib["precursors"],
-        fragment_lookup_table = library_fragment_lookup_table,
-        rt_to_irt_spline =  x->x,#RT_to_iRT_map_dict[ms_file_idx],
-        ms_file_idx = UInt32(ms_file_idx),
-        mass_err_model = frag_err_dist_dict[ms_file_idx],
-        irt_tol = irt_errs[ms_file_idx],
-        ion_matches = ionMatches,
-        ion_misses = ionMisses,
-        id_to_col = IDtoCOL,
-        ion_templates = ionTemplates,
-        iso_splines = iso_splines,
-        scored_psms = scored_PSMs,
-        unscored_psms = unscored_PSMs,
-        spectral_scores = spectral_scores,
-        prec_to_score = precs,
-        params = params_[:first_search_params]
-
-    )...)
-
-    @time PSMs = vcat(mainLibrarySearch(
-        MS_TABLE,
-        prosit_lib["f_index"],
-        prosit_lib["precursors"],
-        library_fragment_lookup_table,
-        RT_to_iRT_map_dict[ms_file_idx], #RT to iRT map'
-        UInt32(ms_file_idx), #MS_FILE_IDX
-        frag_err_dist_dict[ms_file_idx],
-        irt_errs[ms_file_idx],
-        params_,
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precursor_weights,
-        precs
-    #scan_range = (100000, 100010)
-    )...);
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:structural_mods],
                         prosit_lib["precursors"][:missed_cleavages],
@@ -127,6 +56,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
+                sum(PSMs[!,:q_value].<=0.01)
+                sum(PSMs[!,:q_value].<=0.1)
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
         PSMs

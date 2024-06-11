@@ -141,7 +141,7 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
     )...);
 
     function _getPPM(a::T, b::T) where {T<:AbstractFloat}
-        Float32((a-b)/(a/1e6))
+        Float32((a-b)/(b/1e6))
     end
     #Get Retention Times and Target/Decoy Status 
     ####################

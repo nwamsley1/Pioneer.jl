@@ -16,16 +16,37 @@ function getLocation(mem::MassErrorModel)
     return mem.location
 end
 
-function (mem::MassErrorModel)(mass::Float32, log_intensity::Float32, quantile::Float32)
+
+function (mem::MassErrorModel)(mass::Float32)
     ppm_norm = Float32(1e6)
     ppm = mass/ppm_norm
-    mass -= getMassOffset(mem)*ppm
-    ppm = mass/ppm_norm
+    mass += getMassOffset(mem)*ppm
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
-    return Float32(mass - r_tol), Float32(mass - r_tol), Float32(mass + l_tol)
+    return Float32(mass - l_tol), Float32(mass + r_tol)
 end
 
+function getCorrectedMz(mem::MassErrorModel, mz::Float32)
+    return  Float32(mz + getMassOffset(mem)*(mz/1e6))
+end
+
+
+function getMzBounds(mem::MassErrorModel, mass::Float32)
+    ppm = mass/(1e6)
+    r_tol = getRightTol(mem)*ppm
+    l_tol = getLeftTol(mem)*ppm
+    return Float32(mass - l_tol), Float32(mass + r_tol)
+end
+
+
+#=
+function (mem::MassErrorModel)(mass::Float32)
+    ppm = mass/(1e6)
+    r_tol = getRightTol(mem)*ppm
+    l_tol = getLeftTol(mem)*ppm
+    return Float32(mass - r_tol), Float32(mass + l_tol)
+end
+=#
 function ModelMassErrs(ppm_errs::Vector{Float32};
                        frag_err_quantile::Float32 = 0.01f0,
                        out_fdir::String = "./",
@@ -33,11 +54,11 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
 
     bins = LinRange(minimum(ppm_errs), maximum(ppm_errs), 100)
     mass_err = median(ppm_errs)
-    ppm_errs = ppm_errs .- mass_err
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile) 
-    l_bound = quantile(ppm_errs, frag_err_quantile)
-
-
+    #ppm_errs = ppm_errs .- mass_err
+    #l_bound = quantile(ppm_errs, 1 - frag_err_quantile) 
+    #r_bound = quantile(ppm_errs, frag_err_quantile)
+    l_bound = quantile(mass_err .- ppm_errs, frag_err_quantile)
+    r_bound = quantile(ppm_errs .- mass_err, 1 - frag_err_quantile)
     errs = ppm_errs .+ mass_err
     plot_title = ""
     n = 0
@@ -73,8 +94,8 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
     savefig(p, joinpath(out_fdir, out_fname)*".pdf")
 
     MassErrorModel(
-                   Float32(mass_err),
-                (Float32(abs(l_bound)), Float32(abs(r_bound)))
+                    Float32(mass_err),
+                    (Float32(abs(l_bound)), Float32(abs(r_bound)))
                     )
 end
 
