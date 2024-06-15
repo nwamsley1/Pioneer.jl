@@ -6,6 +6,11 @@ RT_to_iRT_map_dict = Dict{Int64, Any}()
 frag_err_dist_dict = Dict{Int64,MassErrorModel}()
 irt_errs = Dict{Int64, Float64}()
 #MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"
+#=
+MS_TABLE_PATHS = ["/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test/20230324_OLEP08_200ng_30min_E10H50Y40_180K_2Th3p5ms_01.arrow"]
+MS_TABLE_PATH = MS_TABLE_PATHS[1]
+ms_file_idx = 1
+=#
 for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));

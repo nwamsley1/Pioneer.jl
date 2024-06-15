@@ -268,3 +268,43 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
     end
     return (first_iso, last_iso)
 end
+
+function correctPrecursorAbundance(
+    abundance::Float32,
+    isotope_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::Tuple{I, I},
+    precursor_mass::Float32,
+    sulfur_count::UInt8,
+    ) where {I<:Real}
+
+    probability = 0.0f0
+    for i in range(first(precursor_isotopes), last(precursor_isotopes))
+       # println(isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass))
+        probability += isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass)
+    end
+    return abundance/probability
+end
+
+function correctPrecursorAbundances!(
+    abundances::AbstractVector{Float32},
+    isotope_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::AbstractVector{Tuple{I,I}},
+    precursor_idxs::AbstractVector{UInt32},
+    precursor_mzs::AbstractVector{Float32},
+    precursor_charges::AbstractVector{UInt8},
+    sulfur_counts::AbstractVector{UInt8}) where {I<:Real}
+    for i in ProgressBar(range(1, length(abundances)))
+        prec_isotopes = precursor_isotopes[i]
+        prec_idx = precursor_idxs[i]
+        sulfur_count = sulfur_counts[prec_idx]
+        prec_mz = precursor_mzs[prec_idx]
+        prec_charge = precursor_charges[prec_idx]
+        abundances[i] = correctPrecursorAbundance(
+            abundances[i],
+            isotope_splines,
+            prec_isotopes,
+            prec_mz*prec_charge,
+            sulfur_count
+        )
+    end
+end

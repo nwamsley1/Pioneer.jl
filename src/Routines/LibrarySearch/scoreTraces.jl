@@ -2,39 +2,26 @@ features = [
     #:max_prob,
     :median_prob,
     :q90_prob,
-    :assymetry,
-    #:fraction_censored,
-    :FWHM,
-    :FWHM_01,
-    :base_width_min,
-    :peak_area,
-    :points_above_FWHM,
-    :points_above_FWHM_01,
-
     :missed_cleavage,
     :Mox,
     :prec_mz,
     :sequence_length,
     :charge,
-
     :irt_pred,
     :irt_error,
     :irt_obs,
     :RT,
     :irt_diff,
-
     :max_y_ions,
     :y_ions_sum,
     :longest_y,
     :y_count,
     :b_count,
     :p_count,
-    #:non_cannonical_count,
     :isotope_count,
     :total_ions,
     :best_rank,
     :topn,
-
     :max_score,
     :mean_score,
     :max_city_fitted,
@@ -44,26 +31,19 @@ features = [
     :entropy_score,
     :max_entropy,
     :scribe,
-    #:scribe_corrected,
     :scribe_fitted,
     :spectral_contrast,
-    #:spectral_contrast_corrected,
     :max_matched_ratio,
     :max_scribe_score,
-    
-    #:data_points,
     :error_norm,
     :error,
     :matched_ratio,
     :poisson,
-
     :weight,
     :log2_intensity_explained,
     :tic,
     :adjusted_intensity_explained
 ];
-
-
 best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
 best_psms[!,:decoy] = best_psms[!,:target].==false;
 xgboost_time = @timed bst = rankPSMs!(best_psms, 

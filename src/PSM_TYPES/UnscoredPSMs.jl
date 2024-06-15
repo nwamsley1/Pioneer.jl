@@ -6,12 +6,13 @@ struct SimpleUnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
     b_count::UInt8
     y_count::UInt8
     p_count::UInt8
+    i_count::UInt8
     intensity::T
     error::T
     precursor_idx::UInt32
 end
 
-SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
+SimpleUnscoredPSM{Float32}() = SimpleUnscoredPSM(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(Float32), zero(Float32), UInt32(0))
 #LXTandem(::Type{Float64}) = LXTandem(UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float64(0), zero(UInt8), Float64(0), Float64(0), UInt32(0), UInt32(0))
 #SimpleUnscoredPSM() = SimpleUnscoredPSM(Float32)
 
@@ -56,24 +57,12 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
     b_count = score.b_count
     y_count = score.y_count
     p_count = score.p_count
+    i_count = score.i_count
     intensity = score.intensity
     error = score.error
     precursor_idx = prec_id
 
     if match.is_isotope == false
-        if getIonType(match) == one(UInt8)
-            b_count += 1
-        elseif getIonType(match) == UInt8(2)
-            y_count += 1
-        elseif getIonType(match) == UInt8(3)
-            p_count += 1
-        end
-        intensity += getIntensity(match)
-
-        ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/Float32(1e6))
-        error += abs(ppm_err)#Distributions.logpdf(Laplace{Float64}(-1.16443, 4.36538), ppm_err)
-        precursor_idx = getPrecID(match)
-
         if match.predicted_rank < best_rank
             best_rank = match.predicted_rank
         end
@@ -81,7 +70,24 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         if match.predicted_rank <= m_rank
             topn += one(UInt8)
         end
+
+        if getIonType(match) == one(UInt8)
+            b_count += 1
+        elseif getIonType(match) == UInt8(2)
+            y_count += 1
+        elseif getIonType(match) == UInt8(3)
+            p_count += 1
+        end
+
+    else
+        i_count += 1
     end
+
+
+    ppm_err = (getMZ(match) - getMatchMZ(match))/(getMZ(match)/Float32(1e6))
+    error += abs(ppm_err)#Distributions.logpdf(Laplace{Float64}(-1.16443, 4.36538), ppm_err)
+    precursor_idx = getPrecID(match)
+    intensity += getIntensity(match)
 
     return SimpleUnscoredPSM{T}(
         best_rank,
@@ -89,6 +95,7 @@ function ModifyFeatures!(score::SimpleUnscoredPSM{T}, prec_id::UInt32, match::Fr
         b_count,
         y_count, 
         p_count,
+        i_count,
         intensity,
         error,
         precursor_idx

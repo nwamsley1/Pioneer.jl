@@ -1,13 +1,28 @@
+mutable struct Chromatogram{T<:Real, J<:Integer}
+    t::Vector{T}
+    data::Vector{T}
+    max_index::J
+end
+
+function reset!(state::Chromatogram)
+    for i in range(1, state.max_index)
+        state.t[i], state.data[i] = zero(eltype(state.t)), zero(eltype(state.data))
+    end
+    state.max_index = 0
+    return 
+end
+
+
+
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
                                 linsolve::LinearSolve.LinearCache,
                                 u2::Vector{Float32},
-                                state::GD_state{HuberParams{U}, V, I, J},
+                                state::Chromatogram,
                                 gw::Vector{Float64},
                                 gx::Vector{Float64}; 
-                                α::Float32 = 0.01f0, 
                                 height_at_integration_width::Float32 = 0.001f0,
                                 n_pad::Int64 = 0,
-                                isplot::Bool = false) where {U,V<:AbstractFloat, I,J<:Integer}
+                                isplot::Bool = false)
     
     #########
     #Helper Functions  
@@ -30,15 +45,8 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
             end
             linsolve.b[i+n_pad] = intensities[i]
         end
-
         #WH smoothing 
-
         solve!(linsolve)
-
-
-        #Best scan is the most intense 
-        #best_scan = argmax(linsolve.b)
-        
         return best_scan, linsolve.b[best_scan+n_pad]
     end
 
@@ -99,7 +107,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         return range(max(start-n_pad, 1), min(stop-n_pad,  max_stop))#range(max(start-n_pad, 1), max(stop-n_pad, 1))#range( min(best_scan-3, start), max(stop,best_scan+3))
     end
 
-    function fillState!(state::GD_state{HuberParams{Float32}, Float32, Int64, Int64},
+    function fillState!(state::Chromatogram,
                         u::Vector{Float32},
                         rt::AbstractVector{Float16},
                         start::Int64, 
@@ -129,36 +137,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         return norm_factor, start_rt, rt_width, best_rt
     end
 
-    function fitEGH(state::GD_state{HuberParams{T}, U, I, J}, 
-                    lower_bounds::HuberParams{T}, 
-                    upper_bounds::HuberParams{T},
-                    α::T,
-                    half_width_at_α::T,
-                    best_rt::T) where {T,U<:AbstractFloat, I,J<:Integer}
-
-        #half_width_at_α = 0.15
-        #Initial Parameter Guesses
-        state.params = getP0(T(α), 
-                            T(half_width_at_α), 
-                            T(half_width_at_α),
-                            T(best_rt),
-                            T(0.6),
-                            lower_bounds, upper_bounds)
-
-        GD(state,
-                lower_bounds,
-                upper_bounds,
-                tol = 1e-4, 
-                max_iter = 300, 
-                δ = 1e-5,#1e-3, #Huber loss parameter. 
-                α=Float64(α),
-                β1 = 0.9,
-                β2 = 0.999,
-                ϵ = 1e-8)
-        
-    end
-
-    function getPeakProperties(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function getPeakProperties(state::Chromatogram)
         points_above_FWHM = zero(Int32)
         points_above_FWHM_01 = zero(Int32)
         for i in range(1, state.max_index)
@@ -219,7 +198,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
 
     end
 
-    function integrateTrapezoidal(state::GD_state{HuberParams{T}, U, I, J}) where {T,U<:AbstractFloat, I,J<:Integer}
+    function integrateTrapezoidal(state::Chromatogram)
         retval = state.data[2]
         #Assumption that state.max_index is at least 4. 
         for i in range(3, state.max_index - 1)
@@ -269,22 +248,6 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         n_pad
     )
     
-    #Initial estimate for FWHM
-    a = max(best_scan - 1, 1)
-    b = min(best_scan + 1, size(chrom, 1))
-
-    half_width_at_α = Float32(((chrom[b,:rt]-start_rt)/rt_norm - (chrom[a,:rt] - start_rt)/rt_norm)/2)
-    T = eltype(chrom.intensity)
-    ##########
-    #Fit EGH to data. 
-    fitEGH(state, 
-            HuberParams(T(0.001), T(0), T(-1), T(0.95)),
-            HuberParams(T(1),  T(Inf), T(1), T(1.05)),
-            α,
-            half_width_at_α,
-            best_rt
-            )
-
     if isplot
         mi = state.max_index
         start = max(best_scan - 18, 1)
@@ -298,16 +261,14 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         hline!([norm_factor*0.95])
     end
 
-    peak_area = rt_norm*norm_factor*Integrate(state, 
-                                        gx,
-                                        gw, 
-                                        α = height_at_integration_width)
+    
+    peak_area = 0.0f0
 
 
     trapezoid_area = rt_norm*norm_factor*integrateTrapezoidal(state)
 
     #trapezoid_area = 0.0f0
-    FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = getPeakProperties(state)
+    FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = 0.0f0, 0.0f0, 0.0f0, 0.0f0#getPeakProperties(state)
     best_scan_idx = chrom[best_scan,:scan_idx]
     return best_scan_idx, peak_area, trapezoid_area, max_intensity,  FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 
 end
@@ -410,13 +371,9 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
             linsolve = init(prob);
             u2 = zeros(Float32, length(linsolve.b));
 
-            state = GD_state(
-                HuberParams(zero(dtype), zero(dtype),zero(dtype),zero(dtype)), #Initial params
+            state = Chromatogram(
                 zeros(dtype, N), #t
-                zeros(dtype, N), #y
                 zeros(dtype, N), #data
-                falses(N), #mask
-                0, #number of iterations
                 N #max index
                 )
             for i in chunk
@@ -431,7 +388,6 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                                 u2,
                                 state,
                                 gw,gx,
-                                α = α,
                                 height_at_integration_width = height_at_integration_width,
                                 n_pad = 10,
                                 isplot = false

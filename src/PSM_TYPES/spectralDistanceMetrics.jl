@@ -25,99 +25,60 @@ function getDistanceMetrics(H::SparseArray{Ti,T}, spectral_scores::Vector{Spectr
     for col in range(1, H.n)
         H_sqrt_sum = zero(T)
         X_sqrt_sum = zero(T)
-        H_sqrt_sum_iso = zero(T)
-        X_sqrt_sum_iso = zero(T)
-        X_sum = zero(T)
-        H2_norm = zero(T)
-        X2_norm = zero(T)
 
-        dot_product = zero(T)
+        H2_norm_m0 = zero(T)
+        X2_norm_m0 = zero(T)
+
+        dot_product_m0 = zero(T)
 
         scribe_score = zero(T)
-
         city_block_dist = zero(T)
 
         matched_sum = zero(T)
         unmatched_sum = zero(T)
 
-        N = 0
-        N_iso = 0
-        N_base = 0
+        N_M0 = 0
         #@turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-        for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            if H.isotope[i]>0
-                continue
-            end
-            #MASK is true for selected ions and false otherwise
-            #iso = one(UInt8) - H.isotope[i]
-            X_sum += H.x[i]
-            H_sqrt_sum_iso += sqrt(H.nzval[i])
-            #H_sqrt_sum_fitted += sqrt(w[col]*H.nzval[i])
-            X_sqrt_sum_iso += sqrt(H.x[i])#/Xsum
+        @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
+            M0 = one(UInt8) - H.isotope[i]
 
-            H_sqrt_sum += sqrt(H.nzval[i])
-            #H_sqrt_sum_fitted += sqrt(w[col]*H.nzval[i])
-            X_sqrt_sum += sqrt(H.x[i])#/Xsum
+            H_sqrt_sum += M0*sqrt(H.nzval[i])
+            X_sqrt_sum += M0*sqrt(H.x[i])#/Xsum
 
+            H2_norm_m0 += M0*((H.nzval[i])^2)
+            X2_norm_m0 += M0*((H.x[i])^2)
+            dot_product_m0 += M0*(H.nzval[i]*H.x[i])
 
-            H2_norm += (H.nzval[i])^2
-            #H2_norm_fitted += (w[col]*H.nzval[i])^2 + 1e-10
-            X2_norm += (H.x[i])^2
-            dot_product += H.nzval[i]*H.x[i]
-            matched_sum += H.nzval[i]*H.matched[i]
-            unmatched_sum += H.nzval[i]*(1 - H.matched[i])
+            matched_sum += M0*H.nzval[i]*H.matched[i]
+            unmatched_sum += M0*H.nzval[i]*(1 - H.matched[i])
 
-            N += 1
-            N_iso += 1#1#(1-H.isotope[i])
-            N_base += 1#(H.isotope[i])
+            N_M0 += M0
         end
           
         #Sqrt of sum of squares
-        H2_norm = sqrt(H2_norm)
-        #H2_norm_fitted = sqrt(H2_norm_fitted)
-        X2_norm = sqrt(X2_norm)
-        #=
+        H2_norm_m0 = sqrt(H2_norm_m0)
+        X2_norm_m0 = sqrt(X2_norm_m0)
+
+
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            scribe_score +=  (
+            M0 = one(UInt8) - H.isotope[i]
+
+            scribe_score +=  M0*((
                                 (sqrt(H.nzval[i])/H_sqrt_sum) - 
                                 (sqrt(H.x[i])/X_sqrt_sum)
-                                )^2  
-
-            city_block_dist += abs(
-                (H.nzval[i]/H2_norm) -
-                (H.x[i]/X2_norm)
-            )        
-
-        end
-        =#
-        for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            #iso = one(UInt8)# - H.isotope[i]
-            if H.isotope[i]>0
-                continue
-            end
-            scribe_score +=  ((
-                                (sqrt(H.nzval[i])/H_sqrt_sum_iso) - 
-                                (sqrt(H.x[i])/X_sqrt_sum_iso)
                                 )^2)
-            #=
-            city_block_dist += abs(
-                (H.nzval[i]/H2_norm) -
-                (H.x[i]/X2_norm)
-            )        
-            =#
-            city_block_dist +=  ((
-                (sqrt(H.nzval[i])/H_sqrt_sum) - 
-                (sqrt(H.x[i])/X_sqrt_sum)
-                )^2)
 
-
+            city_block_dist += M0*abs(
+                (H.nzval[i]/H2_norm_m0) -
+                (H.x[i]/X2_norm_m0)
+            )   
         end
         spectral_scores[col] = SpectralScoresSimple(
-            Float16(-log((scribe_score)/N_iso)), #scribe_score
-            Float16(Float16(-1.0)*getEntropy2(H, col)),#Float16(-log((city_block_dist)/N_base)), #city_block
-            Float16(dot_product/(H2_norm*X2_norm)), #dot_p
+            Float16(-log((scribe_score)/N_M0)), #scribe_score
+            Float16(-log((city_block_dist)/N_M0)), #city_block
+            Float16(dot_product_m0/(H2_norm_m0*X2_norm_m0)), #dot_p
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(Float16(-1.0)*getEntropy(H, col)) #entropy
+            Float16(Float16(-1.0)*getEntropy(H, col)), #entropy
         )
     end
 end
@@ -261,6 +222,7 @@ function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Abs
     #println("Xentropy $Xentropy, Hentropy $Hentropy, HXentropy $HXentropy")
     return Float32(1 - (2*HXentropy - Xentropy - Hentropy)/(log(4)))
 end
+
 function getEntropy2(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:AbstractFloat}
     #println("col $col")
     Hsum = zero(T)
@@ -275,7 +237,7 @@ function getEntropy2(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Ab
     @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
     #for i in range(H.colptr[col], H.colptr[col + 1]-1)
         #MASK is true for selected ions and false otherwise
-        iso = H.isotope[i]
+        iso = one(UInt8)#H.isotope[i]
         hp = H.nzval[i]
         xp = H.x[i]
         Xsum += iso*xp
@@ -293,7 +255,7 @@ function getEntropy2(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Ab
         Xentropy = zero(T)
         Xsum = zero(T)
         @turbo for i in range(H.colptr[col], H.colptr[col + 1]-1)
-            iso = H.isotope[i]
+            iso = one(UInt8)#H.isotope[i]
             xp = (H.x[i]^Xw)#/Xsum
             Xentropy += iso*xp*log(xp + Float32(1e-10))
             Xsum += iso*xp
@@ -316,7 +278,7 @@ function getEntropy2(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:Ab
         #for i in range(H.colptr[col], H.colptr[col + 1]-1)
             #MASK is true for selected ions and false otherwise
             #println("a H.nzval[i], ", H.nzval[i], "H.x[i], ",H.x[i])]        
-            iso = H.isotope[i]
+            iso = one(UInt8)#H.isotope[i]
             hp = (H.nzval[i]^Hw) #/Hsum
             xp = (H.x[i]^Xw)#/Xsum
             hxp = ((H.nzval[i] + H.x[i])^HXw)

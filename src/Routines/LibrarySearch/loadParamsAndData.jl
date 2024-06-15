@@ -58,9 +58,8 @@ julia --threads 15 ./src/Routines/LibrarySearch/MAIN.jl ./data/example_config/Li
 #params = JSON.parse(read("/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_exploris27_02_052724/OAT_103ISO/LibrarySearch.json", String));
 params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
 
-
 SPEC_LIB_DIR ="/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_exploris27_02_052724/spec_lib/pioneer_lib"
-
+#SPEC_LIB_DIR ="/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_huber5_052924/spec_lib/pioneer_lib"
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow"
 
 

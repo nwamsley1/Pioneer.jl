@@ -29,7 +29,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
         end
 
         #Manage isotope errors. NEUTRON is global constant. 
-        mz_low = - first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/prec_charge
+        mz_low = first(mz_bounds) - first(isotope_err_bounds)*NEUTRON/prec_charge
         mz_high = last(mz_bounds) + last(isotope_err_bounds)*NEUTRON/prec_charge
 
         if (prec_mz < mz_low) | (prec_mz > mz_high)
@@ -127,6 +127,7 @@ function selectRTIndexedTransitions!(
                             prec_sulfur_counts::AbstractArray{UInt8},
                             iso_splines::IsotopeSplineModel,
                             isotopes::Vector{Float32},
+                            n_frag_isotopes::Int64,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt_start_idx::Int64, 
                             rt_stop_idx::Int64,
@@ -163,6 +164,7 @@ function selectRTIndexedTransitions!(
                                             prec_sulfur_count,
                                             transition_idx,
                                             isotopes, 
+                                            n_frag_isotopes,
                                             iso_splines, 
                                             min_prec_mz,
                                             max_prec_mz,
@@ -179,7 +181,7 @@ function selectRTIndexedTransitions!(
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
-
+#=
 function selectRTIndexedTransitions!(
                             transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_subset::Set{UInt32},
@@ -247,7 +249,7 @@ function selectRTIndexedTransitions!(
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
-
+=#
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_fragment_range::UnitRange{UInt32},
                             fragment_ions::Vector{DetailedFrag{Float32}},
@@ -264,10 +266,13 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
 
     NEUTRON = Float64(1.00335)
-    prec_isotope_set = getPrecursorIsotopeSet(prec_mz, 
+    
+    prec_isotope_set = getPrecursorIsotopeSet(
+                                            prec_mz, 
                                             prec_charge, 
                                             min_prec_mz, 
-                                            max_prec_mz)
+                                            max_prec_mz
+                                            )
 
     for frag_idx in precursor_fragment_range
 

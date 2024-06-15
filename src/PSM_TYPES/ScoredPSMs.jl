@@ -13,6 +13,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     b_count::UInt8
     y_count::UInt8
     p_count::UInt8
+    i_count::UInt8
     #Basic Metrics 
     poisson::L
     error::H
@@ -106,7 +107,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         end
         log((lam^observed)*exp(-lam)) - logfac(observed)
     end
-    
+
     for i in range(1, n_vals)
 
         passing_filter = (
@@ -132,7 +133,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
 
         precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
         scores_idx = IDtoCOL[precursor_idx]
-        total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].p_count)
+        total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].p_count + unscored_PSMs[i].i_count)
         scored_psms[start_idx + i - skipped] = SimpleScoredPSM(
             unscored_PSMs[i].best_rank,
             unscored_PSMs[i].topn,
@@ -140,6 +141,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             unscored_PSMs[i].b_count,
             unscored_PSMs[i].y_count,
             unscored_PSMs[i].p_count,
+            unscored_PSMs[i].i_count,
 
             Float16(getPoisson(expected_matches, total_ions)),
             unscored_PSMs[i].error,
@@ -150,7 +152,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             spectral_scores[scores_idx].matched_ratio,
             Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
             spectral_scores[scores_idx].entropy_score,
-            
+
             UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(scan_idx)
         )
