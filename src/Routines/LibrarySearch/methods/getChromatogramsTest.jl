@@ -19,7 +19,7 @@ best_psms_passing = copy(best_psms[(best_psms[!,:target]).&(best_psms[!,:q_value
 subset_rt_index = buildRTIndex(best_psms_passing[!,:irt_obs], 
              best_psms_passing[!,:prec_mz],
              best_psms_passing[!,:precursor_idx],
-             0.25)
+             0.1)
 
 function getChromatograms(
                     #Mandatory Args
@@ -94,8 +94,8 @@ end
     rt_index = subset_rt_index,
     ms_file_idx = UInt32(ms_file_idx), 
     rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
-    mass_err_model = MassErrorModel{Float32}(3.195095f0, (15.593506f0*1.2f0, 7.698679f0*1.2f0)),#frag_err_dist_dict[ms_file_idx],
-    irt_err = irt_err,#irt_errs[ms_file_idx]/3,
+    mass_err_model = MassErrorModel{Float32}(3.195095f0, (15.593506f0*1.5f0, 7.698679f0*1.5f0)),#frag_err_dist_dict[ms_file_idx],
+    irt_err = 0.1,#irt_err,#irt_errs[ms_file_idx]/3,
     ion_matches = ionMatches,
     ion_misses = ionMisses,
     id_to_col = IDtoCOL,
@@ -144,7 +144,7 @@ end
 N += 1
 
 
-filter!(x->first(x.isotopes_captured)<2, chroms)
+#filter!(x->first(x.isotopes_captured)<2, chroms)
 filter!(x->first(x.isotopes_captured)>-1, chroms)
 correctPrecursorAbundances!(chroms[!,:intensity],
                             iso_splines,
