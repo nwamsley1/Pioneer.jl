@@ -296,8 +296,6 @@ function getMassErrors(
                     ) where {L<:LibraryIon{Float32}}
     ##########
     #Initialize 
-    min_max_ppm = (0.0f0, Float32(getRightTol(mass_err_model)))
-    frag_ppm_err = 0.0f0
     frag_err_idx = 0
     prec_idx, ion_idx = 0, 0
     #prec_id = 0

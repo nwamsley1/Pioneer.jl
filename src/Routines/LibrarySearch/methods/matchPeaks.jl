@@ -43,7 +43,7 @@ function setMatch!(matches::Vector{M},
     if i > length(matches)
         append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
     end
-    
+
     matches[i] = FragmentMatch(
                                 Float32(getIntensity(transition)), 
                                  intensity,
@@ -119,19 +119,24 @@ function setNearest!(matches::Vector{M},
     #Iterate through peaks in  `masses` until a peak is encountered that is 
     #greater in m/z than the upper bound of the theoretical ion mass tolerance 
     #or until there are no more masses to check. Keep track of the best peak/transition match. 
-    @inbounds @fastmath begin
-        corrected_empirical_mz = getCorrectedMz(mass_err_model, masses[peak_idx + i])
-        while (corrected_empirical_mz <= high_theoretical_mz)
-            if (corrected_empirical_mz >= low_theoretical_mz) #
-                mz_diff = abs(corrected_empirical_mz-theoretical_mz)
-                if mz_diff < smallest_diff
-                    smallest_diff = mz_diff
-                    best_peak = peak_idx + i
-                    best_mz = corrected_empirical_mz
+    #@inbounds @fastmath begin
+
+        if peak_idx + 1 <= length(masses)
+            @inbounds @fastmath begin
+                corrected_empirical_mz = getCorrectedMz(mass_err_model, masses[peak_idx + i])
+                while (corrected_empirical_mz <= high_theoretical_mz)
+                    if (corrected_empirical_mz >= low_theoretical_mz) #
+                        mz_diff = abs(corrected_empirical_mz-theoretical_mz)
+                        if mz_diff < smallest_diff
+                            smallest_diff = mz_diff
+                            best_peak = peak_idx + i
+                            best_mz = corrected_empirical_mz
+                        end
+                    end
+                    i+=1
+                    if (peak_idx + 1 + i > length(masses)) break end
                 end
             end
-            i+=1
-            if (peak_idx + 1 + i > length(masses)) break end
         end
 
         if best_peak > 0
@@ -154,7 +159,7 @@ function setNearest!(matches::Vector{M},
                         unmatched_idx
                         );
         end
-    end
+    #end
     return matched_idx, unmatched_idx
 end
 
