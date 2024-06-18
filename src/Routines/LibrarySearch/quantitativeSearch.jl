@@ -115,7 +115,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                         prosit_lib["precursors"][:mz],
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
-                                        precID_to_cv_fold);
+                                        pid_to_cv_fold);
         psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
         filter!(x->isnan(x.entropy_score)==false, psms)
         features = [:intercept, :charge2, :total_ions, :err_norm, 

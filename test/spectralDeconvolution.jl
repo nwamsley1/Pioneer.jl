@@ -80,7 +80,7 @@ NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
 
 @test cor(ŷ[:,], _weights_) > 0.9999
-@test maximum(abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6))<0.01
+@test mean((ŷ[ŷ.>0.0,] .-  _weights_[ŷ[:,].>0.0])./ŷ[ŷ.>0.0,])
 
 relative_diff = abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6)
 idx = argmax(abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6))

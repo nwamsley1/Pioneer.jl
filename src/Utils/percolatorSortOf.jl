@@ -45,7 +45,38 @@ function getProbQuantiles!(psms::DataFrame, prob_column::Symbol, features::Vecto
             grouped_psms[i][j,:q90_prob] = q90_prob
         end
     end
+    gpsms = groupby(psms, [:file_name, :accession_numbers])
+    for i in range(1, length(gpsms))
+        prec_count = sum(gpsms[i][!,prob_column].>0.9)
+        for j in range(1, size(gpsms[i], 1))
+            gpsms[i][j,:pg_count] = prec_count
+        end
+    end 
+    gpsms = groupby(psms, [:file_name, :sequence])
+    for i in range(1, length(gpsms))
+        prec_count = sum(gpsms[i][!,prob_column].>0.9)
+        for j in range(1, size(gpsms[i], 1))
+            gpsms[i][j,:pepgroup_count] = prec_count
+        end
+    end 
 end
+
+#=
+function getPgCount!(psms::DataFrame, prob_column::Symbol, features::Vector{Symbol}, bst::Booster)
+    psms[!,prob_column] = XGBoost.predict(bst, psms[!,features])
+    grouped_psms = groupby(psms, [:precursor_idx,:isotopes_captured]); #
+    for i in range(1, length(grouped_psms))
+        median_prob = median(grouped_psms[i][!,prob_column])
+        max_prob = minimum(grouped_psms[i][!,prob_column])
+        q90_prob = quantile(grouped_psms[i][!,prob_column], 0.9)
+        for j in range(1, size(grouped_psms[i], 1))
+            grouped_psms[i][j,:median_prob] = median_prob
+            grouped_psms[i][j,:max_prob] = max_prob
+            grouped_psms[i][j,:q90_prob] = q90_prob
+        end
+    end
+end
+=#
 
 function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; 
                     colsample_bytree::Float64 = 0.5, 
@@ -60,6 +91,8 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
                     print_importance::Bool = false)
     PSMs[!,:max_prob], PSMs[!,:median_prob], PSMs[!,:q90_prob] = zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1])
     PSMs[!,:prob_temp],PSMs[!,:prob] = zeros(Float32, size(PSMs)[1]),zeros(Float32, size(PSMs)[1])
+    PSMs[!,:pg_count] = zeros(UInt16, size(PSMs, 1))
+    PSMs[!,:pepgroup_count] = zeros(UInt16, size(PSMs, 1))
     folds = best_psms[!,:cv_fold]
     unique_cv_folds = unique(folds)
     bst = ""

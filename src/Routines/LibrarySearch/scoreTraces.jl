@@ -2,6 +2,8 @@ features = [
     #:max_prob,
     :median_prob,
     :q90_prob,
+    :pg_count,
+    :pepgroup_count,
     :missed_cleavage,
     :Mox,
     :prec_mz,
@@ -83,4 +85,4 @@ prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 
 #getBestTrace!(best_psms)
 value_counts(df, col) = combine(groupby(df, col), nrow);
-IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01).& (best_psms[:,:decoy].==false),:], [:file_name])
+IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:], [:file_name])
