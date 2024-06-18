@@ -1,4 +1,4 @@
-function quantitationSearch(
+function secondSearch(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     params::Any;
@@ -19,7 +19,7 @@ function quantitationSearch(
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
-            return quantPSMs(
+            return secondSearch(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
                                 precursors,
@@ -40,7 +40,6 @@ function quantitationSearch(
                                 kwargs[:id_to_col][thread_id],
                                 kwargs[:ion_templates][thread_id],
                                 kwargs[:iso_splines],
-                                kwargs[:chromatograms][thread_id],
                                 kwargs[:scored_psms][thread_id],
                                 kwargs[:unscored_psms][thread_id],
                                 kwargs[:spectral_scores][thread_id],
@@ -80,7 +79,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         params_[:deconvolution_params]["accuracy_newton"] = 10.0
        
 
-        @time RESULT = quantitationSearch(
+        psms = vcat(secondSearch(
             MS_TABLE, 
             params_;
             precursors = prosit_lib["precursors"],
@@ -100,16 +99,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            );
-
-        #Format Chromatograms 
-        chroms = vcat([last(x) for x in RESULT]...);
-        #sort!(chroms,:rt,alg=QuickSort)
-        getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-        gchroms = groupby(chroms,[:precursor_idx])
-
-        #Format spectral scores 
-        psms = vcat([first(x) for x in RESULT]...);
+            )...);
         addSecondSearchColumns!(psms, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],
@@ -118,46 +108,39 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                                         pid_to_cv_fold);
         psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
         filter!(x->isnan(x.entropy_score)==false, psms)
-        features = [:intercept, :charge2, :total_ions, :err_norm, 
-        :scribe, :city_block, :city_block_fitted, 
-        :spectral_contrast, :entropy_score, :weight]
-       # if sum(psms[!,:p_count])>0
-       #     push!(features, :p_count)
-       # end
         getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-        psms[!,:prob] = zeros(Float32, size(psms, 1));
-        scoreSecondSearchPSMs!(psms,features);
-        spectral_scores = groupby(psms, [:precursor_idx,:isotopes_captured]);
+        psms[!,:best_scan] .= false
+        filter!(x->first(x.isotopes_captured)<2, psms)
+        initSummaryColumns!(psms)
+        for (key, gpsms) in ProgressBar(pairs(groupby(psms, [:precursor_idx,:isotopes_captured])))
+            getSummaryScores!(
+                gpsms, 
+                gpsms[!,:weight],
+                gpsms[!,:scribe],
+                gpsms[!,:matched_ratio],
+                gpsms[!,:entropy_score],
+                gpsms[!,:city_block_fitted],
+                gpsms[!,:y_count]
+            )
+        end
+        filter!(x->x.best_scan, psms)
+        addPostIntegrationFeatures!(
+            psms, 
+            MS_TABLE,
+            precursors[:sequence],
+            precursors[:structural_mods],
+            precursors[:mz],
+            precursors[:irt],
+            precursors[:prec_charge],
+            precursors[:missed_cleavages],
+            ms_file_idx,
+            file_id_to_parsed_name,
+            RT_iRT,
+            precID_to_iRT
 
-        #Integrate Chromatograms and Combine with Spectral Simmilarity Scores
-        precs_to_integrate = keys(spectral_scores) ∩ keys(gchroms)
-        n_precs = length(precs_to_integrate)
-        psms_integrated = initQuantScans(precs_to_integrate)
-
-
-        integratePrecursors(spectral_scores,
-                            gchroms,
-                            precs_to_integrate,
-                            psms_integrated,
-                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]))
-        #Remove examples where maximum point on chromatogram doesn't have a psm
-        filter!(x->!ismissing(x.scan_idx), psms_integrated)
-        #Add additional features 
-        addPostIntegrationFeatures!(psms_integrated, 
-                                    MS_TABLE, 
-                                    prosit_lib["precursors"][:sequence],
-                                    prosit_lib["precursors"][:structural_mods],
-                                    prosit_lib["precursors"][:mz],
-                                    prosit_lib["precursors"][:irt],
-                                    prosit_lib["precursors"][:prec_charge],
-                                    prosit_lib["precursors"][:missed_cleavages],
-                                    ms_file_idx,
-                                    file_id_to_parsed_name,
-                                    RT_iRT,
-                                    precID_to_iRT
-                                    );
-        psms_integrated[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
-        BPSMS[ms_file_idx] = psms_integrated;
+        )
+        psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
+        BPSMS[ms_file_idx] = psms;
 end
 
 best_psms = vcat(values(BPSMS)...)

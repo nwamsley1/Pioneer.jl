@@ -345,7 +345,7 @@ function getMassErrors(
     end
     return @view(all_fmatches[1:frag_err_idx])
 end
-function quantPSMs(
+function secondSearch(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
                     precursors::Union{Arrow.Table, Missing},
@@ -366,7 +366,6 @@ function quantPSMs(
                     IDtoCOL::ArrayDict{UInt32, UInt16},
                     ionTemplates::Vector{L},
                     iso_splines::IsotopeSplineModel,
-                    chromatograms::Vector{ChromObject},
                     scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
@@ -501,33 +500,6 @@ function quantPSMs(
                             10.0,#Hs.n/10.0,
                             max_diff
                             );
-            #return Hs, IDtoCOL, _weights_
-                #for i in range(Hs.colptr[prec_col], Hs.colptr[prec_col + 1] - 1)
-                #    plot(p, H.x[i]
-                #end
-            for j in range(1, prec_temp_size)
-                if !iszero(IDtoCOL[precs_temp[j]])
-                    rt_idx += 1
-                    chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][scan_idx]),
-                        _weights_[IDtoCOL[precs_temp[j]]],
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                else
-                    rt_idx += 1
-                    chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][scan_idx]),
-                        zero(Float32),
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                end
-                if rt_idx + 1 > length(chromatograms)
-                    growChromObjects!(chromatograms, 500000)
-                end
-
-            end
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
@@ -561,19 +533,6 @@ function quantPSMs(
                 min_topn = first(min_topn_of_m),
                 block_size = 500000,
                 )
-        else
-            for j in range(1, prec_temp_size)
-                rt_idx += 1
-                chromatograms[rt_idx] = ChromObject(
-                    Float16(spectra[:retentionTime][scan_idx]),
-                    zero(Float32),
-                    scan_idx,
-                    precs_temp[j]
-                )
-                if rt_idx + 1 > length(chromatograms)
-                    growChromObjects!(chromatograms, 500000)
-                end
-            end
         end
         ##########
         #Reset pre-allocated arrays 
@@ -584,13 +543,14 @@ function quantPSMs(
         reset!(Hs);
     end
 
-    return DataFrame(@view(scored_PSMs[1:last_val])), DataFrame(@view(chromatograms[1:rt_idx]))
+    return DataFrame(@view(scored_PSMs[1:last_val]))
 end
 
 function getChromatograms(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
                     precursors::Union{Arrow.Table, Missing},
+                    precursors_passing::Set{UInt32},
                     library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
@@ -609,16 +569,10 @@ function getChromatograms(
                     ionTemplates::Vector{L},
                     iso_splines::IsotopeSplineModel,
                     chromatograms::Vector{ChromObject},
-                    scored_PSMs::Vector{S},
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
                     isotope_err_bounds::Tuple{Int64, Int64},
-                    min_frag_count::Int64,
-                    min_spectral_contrast::Float32,
-                    min_log2_matched_ratio::Float32,
-                    min_topn_of_m::Tuple{Int64, Int64},
-                    max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
@@ -630,7 +584,7 @@ function getChromatograms(
 
     ##########
     #Initialize 
-    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    prec_idx, ion_idx, cycle_idx = 0, 0, 0
     Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
@@ -678,6 +632,7 @@ function getChromatograms(
                 ionTemplates,
                 precs_temp,
                 precs_temp_size,
+                precursors_passing,
                 library_fragment_lookup,
                 precursors[:mz],
                 precursors[:prec_charge],

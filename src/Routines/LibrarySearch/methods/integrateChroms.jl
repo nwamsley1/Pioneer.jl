@@ -15,12 +15,10 @@ end
 
 
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
+                                best_scan::UInt32,
                                 linsolve::LinearSolve.LinearCache,
                                 u2::Vector{Float32},
-                                state::Chromatogram,
-                                gw::Vector{Float64},
-                                gx::Vector{Float64}; 
-                                height_at_integration_width::Float32 = 0.001f0,
+                                state::Chromatogram; 
                                 n_pad::Int64 = 0,
                                 isplot::Bool = false)
     
@@ -37,17 +35,16 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
             u2[i] = zero(Float32)
         end
         #Copy data to linsolve
-        best_scan, max_intensity = 0, typemin(Float32)
         @inbounds for i in range(1, size(chrom, 1))
-            if intensities[i]>max_intensity
-                max_intensity = intensities[i]
-                best_scan = i
-            end
+            #if 
+            #    max_intensity = intensities[i]
+            #    best_scan = i
+            #end
             linsolve.b[i+n_pad] = intensities[i]
         end
         #WH smoothing 
         solve!(linsolve)
-        return best_scan, linsolve.b[best_scan+n_pad]
+        return
     end
 
     function fillU2!(
@@ -210,7 +207,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         return (1//2)*retval
     end
     #Whittaker Henderson Smoothing
-    best_scan, max_intensity = WHSmooth!(
+    WHSmooth!(
         linsolve,
         chrom[!,:intensity],
         n_pad
@@ -260,108 +257,94 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])
         hline!([norm_factor*0.95])
     end
-
-    
-    peak_area = 0.0f0
-
-
     trapezoid_area = rt_norm*norm_factor*integrateTrapezoidal(state)
 
     #trapezoid_area = 0.0f0
-    FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = 0.0f0, 0.0f0, 0.0f0, 0.0f0#getPeakProperties(state)
-    best_scan_idx = chrom[best_scan,:scan_idx]
-    return best_scan_idx, peak_area, trapezoid_area, max_intensity,  FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 
+    return trapezoid_area, chrom[!,:scan_idx][best_scan]
 end
 
-    function getSummaryScores!(
-                                psms_integrated::DataFrame,
-                                best_scan::Int64,
-                                psms_idx::Int64,
-                                scribe::AbstractVector{Float16},
-                                matched_ratio::AbstractVector{Float16},
-                                entropy::AbstractVector{Float16},
-                                city_block_fitted::AbstractVector{Float16},
-                                combined_score::AbstractVector{Float32},
-                                y_count::AbstractVector{UInt8})
+function getSummaryScores!(
+                            psms::SubDataFrame,
+                            weight::AbstractVector{Float32},
+                            scribe::AbstractVector{Float16},
+                            matched_ratio::AbstractVector{Float16},
+                            entropy::AbstractVector{Float16},
+                            city_block_fitted::AbstractVector{Float16},
+                            y_count::AbstractVector{UInt8},
 
-        max_scribe_score = -100.0
-        max_matched_ratio = -100.0
-        max_entropy = -100.0
-        max_score = -100.0
-        mean_score = 0.0
-        max_city_fitted = -100.0
-        mean_city_fitted = 0.0
-        count = 0
-        y_ions_sum = 0
-        max_y_ions = 0
+                        )
 
-        start = max(1, best_scan - 2)
-        stop = min(length(scribe), best_scan + 2)
+    max_scribe_score = -100.0
+    max_matched_ratio = -100.0
+    max_entropy = -100.0
+    max_city_fitted = -100.0
+    mean_city_fitted = 0.0
+    count = 0
+    y_ions_sum = 0
+    max_y_ions = 0
 
-        for i in range(start, stop)
-            if scribe[i]>max_scribe_score
-                max_scribe_score =scribe[i]
-            end
+    best_scan = argmax(psms[!,:weight])
+    #Need to make sure there is not a big gap. 
+    start = max(1, best_scan - 2)
+    stop = min(length(weight), best_scan + 2)
 
-            if matched_ratio[i]>max_matched_ratio
-                max_matched_ratio = matched_ratio[i]
-            end
+    for i in range(start, stop)
+        if scribe[i]>max_scribe_score
+            max_scribe_score =scribe[i]
+        end
 
-            if entropy[i]>max_entropy
-                max_entropy=entropy[i]
-            end
+        if matched_ratio[i]>max_matched_ratio
+            max_matched_ratio = matched_ratio[i]
+        end
 
-            if city_block_fitted[i]>max_city_fitted
-                max_city_fitted = city_block_fitted[i]
-            end
+        if entropy[i]>max_entropy
+            max_entropy=entropy[i]
+        end
 
-            if combined_score[i]>max_score
-                max_score = combined_score[i]
-            end
+        if city_block_fitted[i]>max_city_fitted
+            max_city_fitted = city_block_fitted[i]
+        end
+    
+        y_ions_sum += y_count[i]
+        if y_count[i] > max_y_ions
+            max_y_ions = y_count[i]
+        end
 
-            
-            y_ions_sum += y_count[i]
-            if y_count[i] > max_y_ions
-                max_y_ions = y_count[i]
-            end
+        mean_city_fitted += city_block_fitted[i]
+        count += 1
+    end    
 
-            mean_score += combined_score[i]
-            mean_city_fitted += city_block_fitted[i]
-            count += 1
-        end    
+    psms.max_scribe_score[best_scan] = max_scribe_score
+    psms.max_matched_ratio[best_scan] = max_matched_ratio
+    psms.max_entropy[best_scan] = max_entropy
+    psms.max_city_fitted[best_scan] = max_city_fitted
+    psms.mean_city_fitted[best_scan] = mean_city_fitted/count
+    psms.y_ions_sum[best_scan] = y_ions_sum
+    psms.max_y_ions[best_scan] = max_y_ions
+    psms.best_scan[best_scan] = true
 
-        psms_integrated.max_scribe_score[psms_idx] = max_scribe_score
-        psms_integrated.max_matched_ratio[psms_idx] = max_matched_ratio
-        psms_integrated.max_entropy[psms_idx] = max_entropy
-        psms_integrated.max_city_fitted[psms_idx] = max_city_fitted
-        psms_integrated.mean_city_fitted[psms_idx] = mean_city_fitted/count
-        psms_integrated.max_score[psms_idx] = max_score
-        psms_integrated.mean_score[psms_idx] = mean_score/count
-        psms_integrated.y_ions_sum[psms_idx] = y_ions_sum
-        psms_integrated.max_y_ions[psms_idx] = max_y_ions
+end
 
-    end
-function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
-                             chromatograms::GroupedDataFrame{DataFrame},
-                             precs_to_integrate::Vector{DataFrames.GroupKey{GroupedDataFrame{DataFrame}}},
-                             psms_integrated::DataFrame; 
-                             λ::Float32 = 1.0f0,
-                             α::Float32 = 0.01f0,
-                             height_at_integration_width::Float32 = 0.001f0,
-                             n_quadrature_nodes::Int64 = 100)
+function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
+                             precursor_idx::AbstractVector{UInt32},
+                             isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
+                             apex_scan_idx::AbstractVector{UInt32},
+                             peak_area::AbstractVector{Float32},
+                             new_best_scan::AbstractVector{UInt32}; 
+                             λ::Float32 = 1.0f0)
 
-    gx, gw = gausslegendre(n_quadrature_nodes)
-    dtype = eltype(spectral_scores[1].weight)
-    thread_tasks = partitionThreadTasks(length(precs_to_integrate), 10, Threads.nthreads())
+    dtype = Float32
+    thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
 
+    #Maximal size of a chromatogram
     N = 0
-    for i in range(1, length(precs_to_integrate))
-        if size(chromatograms[i], 1) > N
-            N =  size(chromatograms[i], 1)
+    for (chrom_id, chrom) in pairs(chromatograms)
+        if size(chrom, 1) > N
+            N = size(chrom, 1)
         end
     end
     N += 20
-
+    group_keys = keys(chromatograms)
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
 
@@ -377,85 +360,27 @@ function integratePrecursors(spectral_scores::GroupedDataFrame{DataFrame},
                 N #max index
                 )
             for i in chunk
-                prec_key = precs_to_integrate[i]
-
+                prec_id = precursor_idx[i]
+                iso_set = isotopes_captured[i]
+                apex_scan = apex_scan_idx[i]
                 #Chromatograms must be sorted by retention time 
-                chroms = chromatograms[(precursor_idx = prec_key[:precursor_idx], isotopes_captured = prec_key[:isotopes_captured])]
-                sort!(chroms,:rt, alg = QuickSort)
-                best_scan_idx, peak_area, trapezoid_area, max_intensity, FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01 = integrateChrom(
-                                chroms,
+                (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
+                chrom = chromatograms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
+                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
+                if isnothing(apex_scan) ? continue : nothing
+                sort!(chrom,:rt, alg = QuickSort)
+                peak_area[i], new_best_scan[i] = integrateChrom(
+                                chrom,
+                                apex_scan,
                                 linsolve,
                                 u2,
                                 state,
-                                gw,gx,
-                                height_at_integration_width = height_at_integration_width,
                                 n_pad = 10,
                                 isplot = false
                                 );
+                                
                 #println("peak_area $peak_area i $i")
-                psms_integrated[i,:scan_idx] = best_scan_idx
-                psms_integrated[i,:peak_area] = peak_area
-                psms_integrated[i,:trapezoid_area] = trapezoid_area
-                psms_integrated[i,:weight] = max_intensity
-                psms_integrated[i,:FWHM] = FWHM
-                psms_integrated[i,:FWHM_01] = FWHM_01
-                psms_integrated[i,:points_above_FWHM] = points_above_FWHM
-                psms_integrated[i,:points_above_FWHM_01] = points_above_FWHM_01
-                psms_integrated[i,:precursor_idx] = prec_key[:precursor_idx]
-                psms_integrated[i,:isotopes_captured] = prec_key[:isotopes_captured]
                 reset!(state)
-
-
-                psms = spectral_scores[(precursor_idx = prec_key[:precursor_idx], isotopes_captured = prec_key[:isotopes_captured])]
-                sort!(psms, :RT, alg = QuickSort)
-                
-                best_scan = missing 
-                for i in range(1, size(psms, 1))
-                    if psms[i,:scan_idx] == best_scan_idx
-                        best_scan = i
-                        break
-                    end
-                end
-                if ismissing(best_scan)
-                    psms_integrated[i,:scan_idx] = missing
-                    continue
-                end
-
-                psms_integrated[i,:best_rank] = psms[best_scan,:best_rank]
-                psms_integrated[i,:topn] = psms[best_scan,:topn]
-                psms_integrated[i,:longest_y] = psms[best_scan,:longest_y]
-                psms_integrated[i,:b_count] = psms[best_scan,:b_count]
-                psms_integrated[i,:y_count] = psms[best_scan,:y_count]
-                psms_integrated[i,:p_count] = psms[best_scan,:p_count]
-                psms_integrated[i,:isotope_count] = psms[best_scan,:isotope_count]
-                psms_integrated[i,:total_ions] = psms[best_scan,:total_ions]
-                psms_integrated[i,:poisson] = psms[best_scan,:poisson]
-                psms_integrated[i,:hyperscore] = psms[best_scan,:hyperscore]
-                psms_integrated[i,:log2_intensity_explained] = psms[best_scan,:log2_intensity_explained]
-                psms_integrated[i,:error] = psms[best_scan,:error]
-                psms_integrated[i,:error_norm] = psms[best_scan,:err_norm]
-
-                psms_integrated[i,:scribe] = psms[best_scan,:scribe]
-                psms_integrated[i,:scribe_fitted] = psms[best_scan,:scribe_fitted]
-                psms_integrated[i,:city_block] = psms[best_scan,:city_block]
-                psms_integrated[i,:city_block_fitted] = psms[best_scan,:city_block_fitted]
-                psms_integrated[i,:spectral_contrast] = psms[best_scan,:spectral_contrast]
-                psms_integrated[i,:matched_ratio] = psms[best_scan,:matched_ratio]
-                psms_integrated[i,:entropy_score] = psms[best_scan,:entropy_score]
-                psms_integrated[i,:RT] = psms[best_scan,:RT]
-                psms_integrated[i,:target] = psms[best_scan,:target]
-                psms_integrated[i,:cv_fold] = psms[best_scan,:cv_fold]
-                getSummaryScores!(
-                    psms_integrated,
-                    best_scan,
-                    i,
-                    psms[!,:scribe],
-                    psms[!,:matched_ratio],
-                    psms[!,:entropy_score],
-                    psms[!,:city_block_fitted],
-                    psms[!,:score],
-                    psms[!,:y_count]
-                )
             end
         end
     end
