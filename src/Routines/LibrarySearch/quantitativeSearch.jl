@@ -22,7 +22,7 @@ function secondSearch(
             return secondSearch(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
-                                precursors,
+                                kwargs[:precursors],
                                 kwargs[:fragment_lookup_table], 
                                 kwargs[:ms_file_idx],
                                 kwargs[:rt_to_irt_spline],
@@ -111,8 +111,14 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         psms[!,:best_scan] .= false
         filter!(x->first(x.isotopes_captured)<2, psms)
+        filter!(x->x.topn>1, psms)
+        filter!(x->x.y_count>1, psms)
+        #filter!(x->!isinf(x.scribe_fitted), psms)
+        
+        
         initSummaryColumns!(psms)
         for (key, gpsms) in ProgressBar(pairs(groupby(psms, [:precursor_idx,:isotopes_captured])))
+            
             getSummaryScores!(
                 gpsms, 
                 gpsms[!,:weight],
@@ -123,6 +129,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                 gpsms[!,:y_count]
             )
         end
+        
         filter!(x->x.best_scan, psms)
         addPostIntegrationFeatures!(
             psms, 
@@ -144,3 +151,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 end
 
 best_psms = vcat(values(BPSMS)...)
+filter!(x->!isinf(x.scribe_fitted), best_psms)
+
+
+histogram(best_psms[best_psms[!,:target],:city_block_fitted], alpha = 0.5, normalize = :pdf)
+histogram!(best_psms[best_psms[!,:decoy],:city_block_fitted], alpha = 0.5, normalize = :pdf)
+histogram!(best_psms_passing[best_psms_passing[!,:target],:city_block_fitted], alpha = 0.5, normalize = :pdf)

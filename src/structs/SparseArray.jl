@@ -203,19 +203,16 @@ end
 
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}
     #resize if necessary
-    if length(r) < sa.n_vals
-        append!(r, zeros(T, sa.n_vals - length(r)))
+    if length(r) < sa.m
+        append!(r, zeros(T, sa.m - length(r)))
     end
 
+    @turbo for i in range(1, sa.m)
+        r[i] = zero(T)
+    end
 
-    for col in range(1, sa.n)
-        start = sa.colptr[col]
-        stop = sa.colptr[col+1] - 1
-        #@turbo for n in start:stop
-
-        for n in start:stop
-            #println("lemgth(sa.x) ", length(sa.x) ,  " n $n")
-            #println("length(sa.rowval) ", length(sa.rowval) ,  " sa.rowval[n] ", sa.rowval[n], " n $n stop $stop")
+    for n in range(1, sa.n_vals)
+        if iszero(r[sa.rowval[n]])
             r[sa.rowval[n]] = -sa.x[n]
         end
     end

@@ -15,10 +15,11 @@ end
 
 
 function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
-                                best_scan::UInt32,
+                                apex_scan::Int64,
                                 linsolve::LinearSolve.LinearCache,
                                 u2::Vector{Float32},
                                 state::Chromatogram; 
+                                max_apex_offset = 2,
                                 n_pad::Int64 = 0,
                                 isplot::Bool = false)
     
@@ -36,10 +37,6 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         end
         #Copy data to linsolve
         @inbounds for i in range(1, size(chrom, 1))
-            #if 
-            #    max_intensity = intensities[i]
-            #    best_scan = i
-            #end
             linsolve.b[i+n_pad] = intensities[i]
         end
         #WH smoothing 
@@ -57,13 +54,26 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         end
     end
 
+    function getApexScan(
+        apex_scan::Int64,
+        max_offset::Int64,
+        intensities::AbstractVector{<:AbstractFloat})
+        N = length(intensities)
+        for i in range(max(1, apex_scan - max_offset), min(N, apex_scan+max_offset))
+            if intensities[i] > intensities[apex_scan]
+                apex_scan = i
+            end
+        end
+        return apex_scan 
+    end
+
     function getIntegrationBounds!(u2::Vector{Float32},
                                    u::Vector{Float32},
                                    N::Int64,
-                                   best_scan::Int64,
+                                   apex_scan::Int64,
                                    n_pad::Int64)
         max_stop = N
-        start_search, stop_search = best_scan + n_pad - 1, best_scan + n_pad + 1
+        start_search, stop_search = apex_scan + n_pad - 1, apex_scan + n_pad + 1
         start, stop = start_search, stop_search
         N += n_pad
 
@@ -109,16 +119,16 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
                         rt::AbstractVector{Float16},
                         start::Int64, 
                         stop::Int64,
-                        best_scan::Int64,
+                        apex_scan::Int64,
                         n_pad::Int64
                         )
 
         start_rt = rt[start]
-        best_rt = rt[best_scan]
+        best_rt = rt[apex_scan]
         #start_rt, best_rt = rt[start], rt[best_scan]
         rt_width = rt[stop] - start_rt
 
-        norm_factor = u[best_scan+n_pad]
+        norm_factor = u[apex_scan+n_pad]
 
         #Write data to state
         #Normalize so that maximum intensity is 1 
@@ -155,15 +165,15 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
     #Baseline subtraction?
     function subtractBaseline!(
         u::Vector{Float32}, #smoothed data
-        best_scan::Int64, #peak apex
+        apex_scan::Int64, #peak apex
         scan_range::UnitRange{Int64},
         n_pad::Int64) #start and stop of integration bounds 
         
-        best_scan  = best_scan + n_pad
+        apex_scan  = apex_scan + n_pad
         scan_range = (first(scan_range) + n_pad, last(scan_range) + n_pad)
         #Fine LH baseline 
         lmin,li = typemax(Float32),first(scan_range)
-        @inbounds @fastmath for i in range(first(scan_range), best_scan)
+        @inbounds @fastmath for i in range(first(scan_range), apex_scan)
             if u[i] < lmin
                 lmin = u[i]
                 li = i
@@ -172,20 +182,13 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
 
         #Find RH baseline 
         rmin,ri = typemax(Float32),last(scan_range)
-        @inbounds @fastmath for i in range(best_scan, last(scan_range))
+        @inbounds @fastmath for i in range(apex_scan, last(scan_range))
             if u[i] < rmin
                 rmin = u[i]
                 ri = i
             end
         end
 
-
-        #= Another option is to just use the extrema of the integration boundary 
-        lmin = linsolve.u[first(scan_range)]
-        li = first(scan_range)
-        ri = last(scan_range)
-        rmin = linsolve.u[last(scan_range)]
-        =#
         #Subtract the baseline 
         
         h = (rmin - lmin)/(ri - li)
@@ -218,18 +221,23 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         linsolve.u,
     )
     
+    apex_scan = getApexScan(
+        apex_scan,
+        max_apex_offset,
+        chrom[!,:intensity]
+    )
     #Integration boundaries based on smoothed second derivative 
     scan_range = getIntegrationBounds!(
         u2,
         linsolve.u,
         size(chrom, 1),
-        best_scan,
+        apex_scan,
         n_pad
     )
 
     subtractBaseline!(
         linsolve.u,
-        best_scan,
+        apex_scan,
         scan_range,
         n_pad
     )
@@ -241,14 +249,14 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         chrom[!,:rt],
         first(scan_range),
         last(scan_range),
-        best_scan,
+        apex_scan,
         n_pad
     )
     
     if isplot
         mi = state.max_index
-        start = max(best_scan - 18, 1)
-        stop = min(best_scan + 18, length(chrom.rt))
+        start = max(apex_scan - 18, 1)
+        stop = min(apex_scan + 18, length(chrom.rt))
         plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
         vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]])
         plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true)
@@ -260,7 +268,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
     trapezoid_area = rt_norm*norm_factor*integrateTrapezoidal(state)
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, chrom[!,:scan_idx][best_scan]
+    return trapezoid_area, chrom[!,:scan_idx][apex_scan]
 end
 
 function getSummaryScores!(
@@ -283,10 +291,10 @@ function getSummaryScores!(
     y_ions_sum = 0
     max_y_ions = 0
 
-    best_scan = argmax(psms[!,:weight])
+    apex_scan = argmax(psms[!,:weight])
     #Need to make sure there is not a big gap. 
-    start = max(1, best_scan - 2)
-    stop = min(length(weight), best_scan + 2)
+    start = max(1, apex_scan - 2)
+    stop = min(length(weight), apex_scan + 2)
 
     for i in range(start, stop)
         if scribe[i]>max_scribe_score
@@ -314,16 +322,17 @@ function getSummaryScores!(
         count += 1
     end    
 
-    psms.max_scribe_score[best_scan] = max_scribe_score
-    psms.max_matched_ratio[best_scan] = max_matched_ratio
-    psms.max_entropy[best_scan] = max_entropy
-    psms.max_city_fitted[best_scan] = max_city_fitted
-    psms.mean_city_fitted[best_scan] = mean_city_fitted/count
-    psms.y_ions_sum[best_scan] = y_ions_sum
-    psms.max_y_ions[best_scan] = max_y_ions
-    psms.best_scan[best_scan] = true
+    psms.max_scribe_score[apex_scan] = max_scribe_score
+    psms.max_matched_ratio[apex_scan] = max_matched_ratio
+    psms.max_entropy[apex_scan] = max_entropy
+    psms.max_city_fitted[apex_scan] = max_city_fitted
+    psms.mean_city_fitted[apex_scan] = mean_city_fitted/count
+    psms.y_ions_sum[apex_scan] = y_ions_sum
+    psms.max_y_ions[apex_scan] = max_y_ions
+    psms.best_scan[apex_scan] = true
 
 end
+
 
 function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                              precursor_idx::AbstractVector{UInt32},
@@ -366,9 +375,10 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                 #Chromatograms must be sorted by retention time 
                 (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
                 chrom = chromatograms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
-                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
-                if isnothing(apex_scan) ? continue : nothing
                 sort!(chrom,:rt, alg = QuickSort)
+                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
+                isnothing(apex_scan) ? continue : nothing
+                
                 peak_area[i], new_best_scan[i] = integrateChrom(
                                 chrom,
                                 apex_scan,

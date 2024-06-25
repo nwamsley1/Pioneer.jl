@@ -37,7 +37,9 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
 
     #Ion Count Statistics
     best_rank::UInt8 #Highest ranking predicted framgent that was observed
+    best_rank_iso::UInt8
     topn::UInt8 #How many of the topN predicted fragments were observed. 
+    topn_iso::UInt8
     longest_y::UInt8
     longest_b::UInt8
     b_count::UInt8
@@ -57,6 +59,7 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     scribe::L
     scribe_corrected::L
     scribe_fitted::L
+    gof::L
     city_block::L
     city_block_fitted::L
     spectral_contrast::L
@@ -136,6 +139,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].p_count + unscored_PSMs[i].i_count)
         scored_psms[start_idx + i - skipped] = SimpleScoredPSM(
             unscored_PSMs[i].best_rank,
+
             unscored_PSMs[i].topn,
 
             unscored_PSMs[i].b_count,
@@ -219,7 +223,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             UInt8(unscored_PSMs[i].best_rank) == 1
         )
-    
+        passing_filter = true
         if !passing_filter #Skip this scan
             skipped += 1
             continue
@@ -235,7 +239,9 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         scores_idx = IDtoCOL[precursor_idx]
         scored_psms[start_idx + i - skipped] = ComplexScoredPSM(
             unscored_PSMs[i].best_rank,
+            unscored_PSMs[i].best_rank_iso,
             unscored_PSMs[i].topn,
+            unscored_PSMs[i].topn_iso,
             unscored_PSMs[i].longest_y,
             unscored_PSMs[i].longest_b,
             unscored_PSMs[i].b_count,
@@ -253,6 +259,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             spectral_scores[scores_idx].scribe,
             spectral_scores[scores_idx].scribe_corrected,
             spectral_scores[scores_idx].scribe_fitted,
+            spectral_scores[scores_idx].gof,
             spectral_scores[scores_idx].city_block,
             spectral_scores[scores_idx].city_block_fitted,
             spectral_scores[scores_idx].spectral_contrast,

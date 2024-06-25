@@ -140,9 +140,11 @@ function selectRTIndexedTransitions!(
     n = 0
     for rt_bin_idx in range(rt_start_idx, rt_stop_idx) #Add transitions
         precs = rt_index.rt_bins[rt_bin_idx].prec
+        #println("precs")
         start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
+            #println("entered loop")
             precs_temp_size += 1
             n += 1 #Keep track of number of precursors 
             prec_idx = first(precs[i])
@@ -150,10 +152,11 @@ function selectRTIndexedTransitions!(
             prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
             mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
             mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
-
+            #println("prec_idx $prec_idx prec_mz $prec_mz mz_low $mz_low")
+            #println("prec_mzs $prec_mzs")
             #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
             (prec_mz < mz_low) | (prec_mz > mz_high) ? continue : nothing
-
+            #println("passed ternary")
             #Which precursor isotopes where captured in the quadrupole isolation window? 
             #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
             transition_idx = @inline fillTransitionList!(transitions, 
@@ -341,7 +344,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                                             min_prec_mz, 
                                             max_prec_mz
                                             )
-
+    #prec_isotope_set = (0, 5)
     for frag_idx in precursor_fragment_range
 
         frag = fragment_ions[frag_idx]
@@ -353,8 +356,10 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         prec_sulfur_count,
                         frag, 
                         prec_isotope_set)
-
-        for iso_idx in range(0, n_frag_isotopes - 1)
+        #if last(prec_isotope_set) == 0
+        #    isotopes[1] = frag.intensity
+        #end
+        for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
 
             frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
             if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))

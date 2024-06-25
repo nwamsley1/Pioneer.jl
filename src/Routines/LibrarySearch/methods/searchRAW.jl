@@ -377,10 +377,10 @@ function secondSearch(
                     min_topn_of_m::Tuple{Int64, Int64},
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
-                    rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
+                    rt_index::retentionTimeIndex{Float32, Float32},
                     irt_tol::Float64,
                     spec_order::Set{Int64}
-                    ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
+                    ) where {T, L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
                     R<:SpectralScores{Float16}}
@@ -422,8 +422,11 @@ function secondSearch(
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
         prec_mz_string_new = string(spectra[:centerMass][scan_idx])
-        prec_mz_string_new = prec_mz_string_new[1:max(length(prec_mz_string_new), 6)]
-
+        prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
+        #if scan_idx == 3650
+        #    println("scan_idx $scan_idx")
+        #    println("ionTemplates[1:5]", ionTemplates[1:5])
+        #end
         if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
             irt_start = irt_start_new
             irt_stop = irt_stop_new
@@ -431,6 +434,9 @@ function secondSearch(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
+            ##if scan_idx == 3650
+           #     println("scan_idx $scan_idx")
+           # end
             precs_temp_size = 0
             ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
                 ionTemplates,
@@ -504,7 +510,7 @@ function secondSearch(
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
             end
-            getDistanceMetrics(_weights_, Hs, spectral_scores)
+            getDistanceMetrics(_weights_, _residuals_, Hs, spectral_scores)
             ##########
             #Scoring and recording data
             ScoreFragmentMatches!(unscored_PSMs,
@@ -542,7 +548,6 @@ function secondSearch(
         reset!(IDtoCOL);
         reset!(Hs);
     end
-
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end
 

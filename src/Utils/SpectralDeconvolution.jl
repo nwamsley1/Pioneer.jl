@@ -97,7 +97,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
             #First and second derivatives 
             L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
             update_rule = (L1)/L2
-
             #Switch to bisection method
             if isnan(update_rule)
                 n = max_iter_newton
@@ -218,7 +217,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                                         max_iter_bisection,
                                         accuracy_newton,
                                         accuracy_bisection))
-            if !iszero(X₁) 
+            if !iszero(X₁[col]) 
                 if δx/X₁[col] > max_diff
                     _diff =  δx/X₁[col]
                 end

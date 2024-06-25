@@ -1,7 +1,7 @@
 features = [ 
     #:max_prob,
-    :median_prob,
-    :q90_prob,
+    #:median_prob,
+    #:q90_prob,
     :pg_count,
     :pepgroup_count,
     :missed_cleavage,
@@ -26,6 +26,7 @@ features = [
     :topn,
     #:max_score,
     #:mean_score,
+    :gof,
     :max_city_fitted,
     :mean_city_fitted,
     :city_block,

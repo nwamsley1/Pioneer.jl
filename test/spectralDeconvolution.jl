@@ -22,6 +22,10 @@ end
 _residuals_ = zeros(Float32, Hs.m)
 _weights_ = zeros(Float32, Hs.n)
 initResiduals!(_residuals_, Hs, _weights_)
+
+
+Hs.x[sortperm(unique(Hs.rowval[1:Hs.n_vals]))]
+
 solveHuber!(Hs, _residuals_, _weights_, 
             Float32(1e9), #δ large so effectively squared error 
             Float32(0.0), #λ
@@ -46,8 +50,8 @@ test_alg = NMF.CoordinateDescent{Float32}(
                 regularization=:none)
 NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
-@test cor(ŷ[:,], _weights_) > 0.9999
-@test maximum(abs.(ŷ[:,] .- _weights_)./ŷ[:,])<0.01
+@test (cor(ŷ[:,], _weights_) - 1.0) < 1e-6
+@test maximum(abs.(ŷ[:,] .- _weights_)) < 10
 
 
 _residuals_ = zeros(Float32, Hs.m)
@@ -79,14 +83,8 @@ test_alg = NMF.CoordinateDescent{Float32}(
 NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
 
-@test cor(ŷ[:,], _weights_) > 0.9999
-@test mean((ŷ[ŷ.>0.0,] .-  _weights_[ŷ[:,].>0.0])./ŷ[ŷ.>0.0,])
-
-relative_diff = abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6)
-idx = argmax(abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6))
-ŷ[idx]
-_weights_[idx]
-
+@test (cor(ŷ[:,], _weights_) - 1.0) < 1e-6
+@test maximum(abs.(ŷ[:,] .- _weights_)) < 20
 
 
 maximum(abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6))

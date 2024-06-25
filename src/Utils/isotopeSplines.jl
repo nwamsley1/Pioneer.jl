@@ -219,6 +219,7 @@ function getFragIsotopes!(isotopes::Vector{Float32},
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     total_fragment_intensity /= sum(isotopes)
+    #isotopes /= isotopes[1]
     for i in reverse(range(1, length(isotopes)))
         isotopes[i] = total_fragment_intensity*isotopes[i]
     end
@@ -276,10 +277,10 @@ function correctPrecursorAbundance(
     precursor_mass::Float32,
     sulfur_count::UInt8,
     ) where {I<:Real}
-
+    #println("precursor_isotopes $precursor_isotopes")
     probability = 0.0f0
     for i in range(first(precursor_isotopes), last(precursor_isotopes))
-       # println(isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass))
+        #println(isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass))
         probability += isotope_splines(min(Int64(sulfur_count), 5), Int64(i), precursor_mass)
     end
     return abundance/probability

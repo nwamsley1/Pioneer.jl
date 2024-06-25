@@ -96,7 +96,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         #Format Chromatograms 
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         filter!(x->first(x.isotopes_captured)<2, chroms)
-        sort!(chroms, :rt)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
         sub_bpsms = best_psms_passing[(file_name = file_id_to_parsed_name[ms_file_idx],)]
         integratePrecursors(
