@@ -434,9 +434,9 @@ function initSummaryColumns!(
 
     new_cols = [
         (:max_entropy,              Float16)
-        (:max_scribe_score,         Float16)
-        (:max_city_fitted,          Float16)
-        (:mean_city_fitted,         Float16)
+        (:max_gof,         Float16)
+        (:max_fitted_manhattan_distance,          Float16)
+        (:max_fitted_spectral_contrast,         Float16)
         (:y_ions_sum,               UInt16)
         (:max_y_ions,               UInt16)
         (:max_matched_ratio,        Float16)

@@ -56,15 +56,13 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     error::H
 
     #Spectral Simmilarity
-    scribe::L
-    scribe_corrected::L
-    scribe_fitted::L
-    gof::L
-    city_block::L
-    city_block_fitted::L
     spectral_contrast::L
-    spectral_contrast_corrected::L
-    matched_ratio::L
+    fitted_spectral_contrast::L
+    gof::L
+    max_matched_residual::L
+    max_unmatched_residual::L 
+    fitted_manhattan_distance::L 
+    matched_ratio::L 
     entropy_score::L
     weight::H
 
@@ -120,7 +118,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
-            UInt8(unscored_PSMs[i].topn) >= min_topn
+            (unscored_PSMs[i].topn >= min_topn)
         )&(
             UInt8(unscored_PSMs[i].best_rank) == max_best_rank
         )
@@ -179,6 +177,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
                 scan_idx::Int64;
                 min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -1f0,
+                min_y_count::Int64,
                 min_frag_count::Int64 = 4,
                 max_best_rank::Int64 = 1,
                 min_topn::Int64 = 2,
@@ -210,20 +209,21 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
     for i in range(1, n_vals)
         
         passing_filter = (
-           # (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count) >= min_frag_count
-           (unscored_PSMs[i].y_count) >= min_frag_count
+           (unscored_PSMs[i].y_count) >= min_y_count
+        )&(
+            (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
         )&(
             (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
-            weight[i] >= -1.0
+            weight[i] >= 1e-6
         )&(
-            UInt8(unscored_PSMs[i].topn) >= min_topn
+            (unscored_PSMs[i].topn >= min_topn) |  (unscored_PSMs[i].topn_iso >= min_topn)
         )&(
-            UInt8(unscored_PSMs[i].best_rank) == 1
+            (UInt8(unscored_PSMs[i].best_rank) <= max_best_rank) | (UInt8(unscored_PSMs[i].best_rank_iso) <= max_best_rank) 
         )
-        passing_filter = true
+        #passing_filter = true
         if !passing_filter #Skip this scan
             skipped += 1
             continue
@@ -256,14 +256,12 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),
             unscored_PSMs[i].error,
             
-            spectral_scores[scores_idx].scribe,
-            spectral_scores[scores_idx].scribe_corrected,
-            spectral_scores[scores_idx].scribe_fitted,
-            spectral_scores[scores_idx].gof,
-            spectral_scores[scores_idx].city_block,
-            spectral_scores[scores_idx].city_block_fitted,
             spectral_scores[scores_idx].spectral_contrast,
-            spectral_scores[scores_idx].spectral_contrast_corrected,
+            spectral_scores[scores_idx].fitted_spectral_contrast,
+            spectral_scores[scores_idx].gof,
+            spectral_scores[scores_idx].max_matched_residual,
+            spectral_scores[scores_idx].max_unmatched_residual,
+            spectral_scores[scores_idx].fitted_manhattan_distance,
             spectral_scores[scores_idx].matched_ratio,
             spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],

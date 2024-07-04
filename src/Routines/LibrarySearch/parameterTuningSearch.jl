@@ -48,7 +48,8 @@ for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS
                                 prec_to_score = precs,
                                 mass_err_model = mass_err_model,
                                 sample_rate = params_[:presearch_params]["sample_rate"],
-                                params = params_[:presearch_params]
+                                params = params_[:presearch_params],
+                                quad_transmission_func = QuadTransmission(1.0f0, 10000.0f0)
                                                 );
 
         PSMs = vcat([result for result in RESULT]...)

@@ -1,9 +1,9 @@
 features = [ 
-    #:max_prob,
-    #:median_prob,
+    :max_prob,
+    :median_prob,
     #:q90_prob,
-    :pg_count,
-    :pepgroup_count,
+    #:pg_count,
+    #:pepgroup_count,
     :missed_cleavage,
     :Mox,
     :prec_mz,
@@ -23,21 +23,20 @@ features = [
     :isotope_count,
     :total_ions,
     :best_rank,
+    :best_rank_iso,
     :topn,
-    #:max_score,
-    #:mean_score,
+    :topn_iso,
     :gof,
-    :max_city_fitted,
-    :mean_city_fitted,
-    :city_block,
-    :city_block_fitted,
+    :max_fitted_manhattan_distance,
+    :max_fitted_spectral_contrast,
+    :max_matched_residual,
+    :max_unmatched_residual,
+    :max_gof,
     :entropy_score,
     :max_entropy,
-    :scribe,
-    :scribe_fitted,
+    :fitted_spectral_contrast,
     :spectral_contrast,
     :max_matched_ratio,
-    :max_scribe_score,
     :err_norm,
     :error,
     :matched_ratio,
@@ -77,7 +76,6 @@ best_psms[!,:prob] =Float32.(best_psms[!,:prob])
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
 #Get best isotope trace for each precursor
 #best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:]#List of top scoring precursors to requantify. 
-const precursors_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
 #getBestTrace!(best_psms, 0.01, :weight)
 ##Re-calculate q-values after removing inferior isotopic trace
 #getQvalues!(best_psms[!,:prob].*(best_psms[!,:best_trace]), best_psms[:,:target], best_psms[!,:q_value]);
@@ -91,12 +89,9 @@ prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 #getBestTrace!(best_psms)
 value_counts(df, col) = combine(groupby(df, col), nrow);
 IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:], [:file_name])
+precursors_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
 
-
-histogram(best_psms[best_psms[!,:target],:prob], alpha = 0.5, bins = LinRange(0.935, 0.97, 100))
-histogram!(best_psms[best_psms[!,:decoy],:prob], alpha = 0.5, bins = LinRange(0.935, 0.97, 100))
-vline!([0.94])
-best_psms_passing = copy(best_psms[(best_psms[!,:target]).&(best_psms[!,:q_value].<=0.01),:])
+best_psms_passing = copy(best_psms)#copy(best_psms[(best_psms[!,:target]).&(best_psms[!,:q_value].<=0.01),:])
 best_psms_passing[!,:peak_area] = zeros(Float32, size(best_psms_passing, 1))
 best_psms_passing[!,:new_best_scan] = zeros(UInt32, size(best_psms_passing, 1))
 best_psms_passing = groupby(best_psms_passing, :file_name)

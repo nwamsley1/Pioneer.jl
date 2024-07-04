@@ -6,6 +6,8 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             prec_irts::Arrow.Primitive{Float32, Vector{Float32}},
                             prec_sulfur_counts::Arrow.Primitive{UInt8, Vector{UInt8}},
                             iso_splines::IsotopeSplineModel,
+                            quad_transmission_func::QuadTransmission,
+                            precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
@@ -44,6 +46,8 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                                                     prec_charge,
                                                     prec_sulfur_count,
                                                     transition_idx,
+                                                    quad_transmission_func,
+                                                    precursor_transmission,
                                                     isotopes, 
                                                     n_frag_isotopes,
                                                     iso_splines, 
@@ -126,6 +130,8 @@ function selectRTIndexedTransitions!(
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
                             iso_splines::IsotopeSplineModel,
+                            quad_transmission_func::QuadTransmission,
+                            precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
@@ -166,6 +172,8 @@ function selectRTIndexedTransitions!(
                                             prec_charge,
                                             prec_sulfur_count,
                                             transition_idx,
+                                            quad_transmission_func,
+                                            precursor_transmission,
                                             isotopes, 
                                             n_frag_isotopes,
                                             iso_splines, 
@@ -180,7 +188,7 @@ function selectRTIndexedTransitions!(
     sort!(@view(transitions[1:transition_idx]), 
           by = x->getMZ(x),
           alg=PartialQuickSort(1:transition_idx))
-
+          #println("transition_idx $transition_idx, n $n precs_temp_size $precs_temp_size")
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
@@ -194,6 +202,8 @@ function selectRTIndexedTransitions!(
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
                             iso_splines::IsotopeSplineModel,
+                            quad_transmission_func::QuadTransmission,
+                            precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
@@ -234,6 +244,8 @@ function selectRTIndexedTransitions!(
                                             prec_charge,
                                             prec_sulfur_count,
                                             transition_idx,
+                                            quad_transmission_func,
+                                            precursor_transmission,
                                             isotopes, 
                                             n_frag_isotopes,
                                             iso_splines, 
@@ -248,7 +260,6 @@ function selectRTIndexedTransitions!(
     sort!(@view(transitions[1:transition_idx]), 
           by = x->getMZ(x),
           alg=PartialQuickSort(1:transition_idx))
-
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
@@ -328,6 +339,8 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
                             transition_idx::Int64, 
+                            quad_transmission_func::QuadTransmission,
+                            precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32}, 
                             n_frag_isotopes::Int64,
                             iso_splines::IsotopeSplineModel, 
@@ -337,34 +350,41 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
 
     NEUTRON = Float64(1.00335)
-    
+
+    #precursor_transmission = zeros(Float32, 5)
+    getPrecursorIsotopeTransmission!(
+        precursor_transmission,
+        prec_mz,
+        prec_charge,
+        Float32((min_prec_mz + max_prec_mz)/2),
+        quad_transmission_func
+    )
     prec_isotope_set = getPrecursorIsotopeSet(
-                                            prec_mz, 
-                                            prec_charge, 
-                                            min_prec_mz, 
-                                            max_prec_mz
-                                            )
-    #prec_isotope_set = (0, 5)
+        prec_mz,
+        prec_charge,
+        min_prec_mz,
+        max_prec_mz
+    )
     for frag_idx in precursor_fragment_range
 
         frag = fragment_ions[frag_idx]
         #Estimate isotope abundances 
         getFragIsotopes!(isotopes, 
+                        precursor_transmission,
                         iso_splines, 
                         prec_mz,
                         prec_charge, 
                         prec_sulfur_count,
-                        frag, 
-                        prec_isotope_set)
-        #if last(prec_isotope_set) == 0
-        #    isotopes[1] = frag.intensity
-        #end
+                        frag)
         for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
 
             frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
             if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                 continue
-            end           
+            end
+            if isotopes[iso_idx + 1] < 0.0001
+                continue
+            end
             transition_idx += 1
             transitions[transition_idx] = DetailedFrag(
                 frag.prec_id,

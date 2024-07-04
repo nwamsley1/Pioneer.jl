@@ -27,6 +27,7 @@ function secondSearch(
                                 kwargs[:ms_file_idx],
                                 kwargs[:rt_to_irt_spline],
                                 kwargs[:mass_err_model],
+                                kwargs[:quad_transmission_func],
                                 Float32(params[:deconvolution_params]["huber_delta"]),
                                 Float32(params[:deconvolution_params]["lambda"]),
                                 Int64(params[:deconvolution_params]["max_iter_newton"]),
@@ -45,6 +46,7 @@ function secondSearch(
                                 kwargs[:spectral_scores][thread_id],
                                 kwargs[:precursor_weights][thread_id],
                                 (3, 0),
+                                Int64(params[:quant_search_params]["min_y_count"]),
                                 Int64(params[:quant_search_params]["min_frag_count"]),
                                 Float32(params[:quant_search_params]["min_spectral_contrast"]),
                                 Float32(params[:quant_search_params]["min_log2_matched_ratio"]),
@@ -63,9 +65,6 @@ end
 BPSMS = Dict{Int64, DataFrame}()
 #PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
 #PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
-
-
-
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
@@ -74,12 +73,17 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
        
 
         #params_[:deconvolution_params]["huber_delta"] = 100.0f0
+        
         params_[:deconvolution_params]["lambda"] = 0.0f0
         params_[:deconvolution_params]["accuracy_bisection"] = 10.0
         params_[:deconvolution_params]["accuracy_newton"] = 10.0
-       
-
-        psms = vcat(secondSearch(
+        params_[:quant_search_params]["n_frag_isotopes"] = 3
+        params_[:quant_search_params]["min_frag_count"] = 3
+        params_[:quant_search_params]["min_y_count"] = 1
+        params_[:quant_search_params]["max_best_rank"] = 1
+        #include("src/PSM_TYPES/ScoredPSMs.jl")
+        
+        @time psms = vcat(secondSearch(
             MS_TABLE, 
             params_;
             precursors = prosit_lib["precursors"],
@@ -99,22 +103,18 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
+            quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
-        addSecondSearchColumns!(psms, 
+        @time addSecondSearchColumns!(psms, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
                                         pid_to_cv_fold);
         psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
-        filter!(x->isnan(x.entropy_score)==false, psms)
         getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         psms[!,:best_scan] .= false
         filter!(x->first(x.isotopes_captured)<2, psms)
-        filter!(x->x.topn>1, psms)
-        filter!(x->x.y_count>1, psms)
-        #filter!(x->!isinf(x.scribe_fitted), psms)
-        
         
         initSummaryColumns!(psms)
         for (key, gpsms) in ProgressBar(pairs(groupby(psms, [:precursor_idx,:isotopes_captured])))
@@ -122,10 +122,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             getSummaryScores!(
                 gpsms, 
                 gpsms[!,:weight],
-                gpsms[!,:scribe],
+                gpsms[!,:gof],
                 gpsms[!,:matched_ratio],
                 gpsms[!,:entropy_score],
-                gpsms[!,:city_block_fitted],
+                gpsms[!,:fitted_manhattan_distance],
+                gpsms[!,:fitted_spectral_contrast],
                 gpsms[!,:y_count]
             )
         end
@@ -151,9 +152,4 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 end
 
 best_psms = vcat(values(BPSMS)...)
-filter!(x->!isinf(x.scribe_fitted), best_psms)
 
-
-histogram(best_psms[best_psms[!,:target],:city_block_fitted], alpha = 0.5, normalize = :pdf)
-histogram!(best_psms[best_psms[!,:decoy],:city_block_fitted], alpha = 0.5, normalize = :pdf)
-histogram!(best_psms_passing[best_psms_passing[!,:target],:city_block_fitted], alpha = 0.5, normalize = :pdf)

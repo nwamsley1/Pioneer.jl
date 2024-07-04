@@ -136,6 +136,7 @@ function getPSMS(
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel,
+                    quad_transmission_func::QuadTransmission,
                     ionMatches::Vector{FragmentMatch{Float32}},
                     ionMisses::Vector{FragmentMatch{Float32}},
                     IDtoCOL::ArrayDict{UInt32, UInt16},
@@ -160,6 +161,7 @@ function getPSMS(
     prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
     Hs = SparseArray(UInt32(5000));
     isotopes = zeros(Float32, 5)#n_frag_isotopes);
+    precursor_transmission = zeros(Float32, 5)
     ##########
     #Iterate through spectra
     for i in thread_task
@@ -194,6 +196,8 @@ function getPSMS(
                                         precursors[:irt],
                                         precursors[:sulfur_count],
                                         iso_splines,
+                                        quad_transmission_func,
+                                        precursor_transmission,
                                         isotopes,
                                         n_frag_isotopes,
                                         ion_list,
@@ -299,7 +303,7 @@ function getMassErrors(
     frag_err_idx = 0
     prec_idx, ion_idx = 0, 0
     #prec_id = 0
-    #precursors_passed_scoring = Vector{UInt32}(undef, 250000)
+    #precursors_passed_scoring = Vector{UInt32}(undef, 250000)                                                                                                      
     ##########
     #Iterate through spectra
     for n in thread_task
@@ -353,6 +357,7 @@ function secondSearch(
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
+                    quad_transmission_func::QuadTransmission,
                     δ::Float32,
                     λ::Float32,
                     max_iter_newton::Int64,
@@ -371,6 +376,7 @@ function secondSearch(
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
                     isotope_err_bounds::Tuple{Int64, Int64},
+                    min_y_count::Int64,
                     min_frag_count::Int64,
                     min_spectral_contrast::Float32,
                     min_log2_matched_ratio::Float32,
@@ -392,6 +398,7 @@ function secondSearch(
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, 5)
+    precursor_transmission = zeros(Float32, 5)
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
 
@@ -447,6 +454,8 @@ function secondSearch(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
+                quad_transmission_func,
+                precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
                 rt_index,
@@ -472,6 +481,7 @@ function secondSearch(
                                         spectra[:highMass][scan_idx],
                                         UInt32(scan_idx), 
                                         ms_file_idx)
+
         sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         ##########
         #Spectral Deconvolution and Distance Metrics 
@@ -493,6 +503,8 @@ function secondSearch(
             for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
+            fill!(_residuals_, zero(Float32))
+            fill!(_weights_, zero(Float32))
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
@@ -506,6 +518,11 @@ function secondSearch(
                             10.0,#Hs.n/10.0,
                             max_diff
                             );
+            ###for i in range(1, IDtoCOL.size)
+            #    if isnan(_weights_[IDtoCOL[IDtoCOL.keys[i]]])# = precursor_weights[id]
+            #        return Hs, IDtoCOL, _residuals_, _weights_, i
+            #    end 
+            #nd 
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
@@ -534,6 +551,7 @@ function secondSearch(
                 scan_idx,
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
+                min_y_count = min_y_count,
                 min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
                 max_best_rank = max_best_rank,
                 min_topn = first(min_topn_of_m),
@@ -560,6 +578,7 @@ function getChromatograms(
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
+                    quad_transmission_func::QuadTransmission,
                     δ::Float32,
                     λ::Float32,
                     max_iter_newton::Int64,
@@ -594,6 +613,7 @@ function getChromatograms(
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
     isotopes = zeros(Float32, 5)
+    precursor_transmission = zeros(Float32, 5)
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
 
@@ -643,6 +663,8 @@ function getChromatograms(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
+                quad_transmission_func,
+                precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
                 rt_index,
@@ -880,6 +902,7 @@ function LibrarySearch(
                                 kwargs[:rt_to_irt_spline],
                                 kwargs[:ms_file_idx],
                                 kwargs[:mass_err_model],
+                                kwargs[:quad_transmission_func],
                                 ionMatches[thread_id],
                                 ionMisses[thread_id],
                                 IDtoCOL[thread_id],

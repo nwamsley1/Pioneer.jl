@@ -28,6 +28,7 @@ function getChromatograms(
                                 kwargs[:ms_file_idx],
                                 kwargs[:rt_to_irt_spline],
                                 kwargs[:mass_err_model],
+                                kwargs[:quad_transmission_func],
                                 Float32(params[:deconvolution_params]["huber_delta"]),
                                 Float32(params[:deconvolution_params]["lambda"]),
                                 Int64(params[:deconvolution_params]["max_iter_newton"]),
@@ -63,12 +64,14 @@ BPSMS = Dict{Int64, DataFrame}()
 features = [:intercept, :charge, :total_ions, :err_norm, 
 :scribe, :city_block, :city_block_fitted, 
 :spectral_contrast, :entropy_score, :weight]
-
+params_[:deconvolution_params]["huber_delta_prop"] = 5.0
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
+
+
         @time chroms = vcat(getChromatograms(
             MS_TABLE, 
             params_;
@@ -89,7 +92,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            precursors_passing = precursors_passing
+            precursors_passing = precursors_passing,
+            quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
 
 
@@ -108,9 +112,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]))
 end
 best_psms_passing = DataFrame(best_psms_passing)
-filter!(x->(!isnan(x.peak_area))&(!iszero(x.peak_area)), best_psms_passing)
-best_psms_passing[!,:q_value] .= zero(Float32)
+best_psms_passing_old = copy(best_psms_passing)
+getBestTrace!(best_psms_passing, 0.01, :peak_area)
+best_psms_passing[!,:prob] = best_psms_passing[!,:prob].*best_psms_passing[!,:best_trace]
+getQvalues!(best_psms_passing[!,:prob], best_psms_passing[:,:target], best_psms_passing[!,:q_value]);
+filter!(x->x.best_trace, best_psms_passing)
+filter!(x->(!isnan(x.peak_area))&(!iszero(x.peak_area))&(x.target)&(x.q_value<=0.01), best_psms_passing)
+IDs_PER_FILE = value_counts(best_psms_passing, [:file_name])
 
-describe(best_psms_passing[best_psms_passing[!,:new_best_scan] .!== best_psms_passing[!,:scan_idx],:peak_area])
-
-maximum(MS_TABLE[:retentionTime][best_psms_passing[!,:new_best_scan]] .-  MS_TABLE[:retentionTime][best_psms_passing[!,:scan_idx]])

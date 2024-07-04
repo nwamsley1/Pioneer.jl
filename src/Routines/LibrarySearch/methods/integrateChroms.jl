@@ -59,9 +59,11 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         max_offset::Int64,
         intensities::AbstractVector{<:AbstractFloat})
         N = length(intensities)
+        max_intensity = zero(Float32)
         for i in range(max(1, apex_scan - max_offset), min(N, apex_scan+max_offset))
-            if intensities[i] > intensities[apex_scan]
+            if intensities[i] > max_intensity#intensities[apex_scan]
                 apex_scan = i
+                max_intensity = intensities[i]
             end
         end
         return apex_scan 
@@ -274,19 +276,20 @@ end
 function getSummaryScores!(
                             psms::SubDataFrame,
                             weight::AbstractVector{Float32},
-                            scribe::AbstractVector{Float16},
+                            gof::AbstractVector{Float16},
                             matched_ratio::AbstractVector{Float16},
                             entropy::AbstractVector{Float16},
-                            city_block_fitted::AbstractVector{Float16},
+                            fitted_manhattan_distance::AbstractVector{Float16},
+                            fitted_spectral_contrast::AbstractVector{Float16},
                             y_count::AbstractVector{UInt8},
 
                         )
 
-    max_scribe_score = -100.0
+    max_gof = -100.0
     max_matched_ratio = -100.0
     max_entropy = -100.0
-    max_city_fitted = -100.0
-    mean_city_fitted = 0.0
+    max_fitted_manhattan_distance = -100.0
+    max_fitted_spectral_contrast= -100
     count = 0
     y_ions_sum = 0
     max_y_ions = 0
@@ -297,8 +300,8 @@ function getSummaryScores!(
     stop = min(length(weight), apex_scan + 2)
 
     for i in range(start, stop)
-        if scribe[i]>max_scribe_score
-            max_scribe_score =scribe[i]
+        if gof[i]>max_gof
+            max_gof =gof[i]
         end
 
         if matched_ratio[i]>max_matched_ratio
@@ -309,8 +312,12 @@ function getSummaryScores!(
             max_entropy=entropy[i]
         end
 
-        if city_block_fitted[i]>max_city_fitted
-            max_city_fitted = city_block_fitted[i]
+        if fitted_manhattan_distance[i]>max_fitted_manhattan_distance
+            max_fitted_manhattan_distance = fitted_manhattan_distance[i]
+        end
+
+        if fitted_spectral_contrast[i]>max_fitted_spectral_contrast
+            max_fitted_spectral_contrast = fitted_spectral_contrast[i]
         end
     
         y_ions_sum += y_count[i]
@@ -318,15 +325,14 @@ function getSummaryScores!(
             max_y_ions = y_count[i]
         end
 
-        mean_city_fitted += city_block_fitted[i]
         count += 1
     end    
 
-    psms.max_scribe_score[apex_scan] = max_scribe_score
+    psms.max_gof[apex_scan] = max_gof
     psms.max_matched_ratio[apex_scan] = max_matched_ratio
     psms.max_entropy[apex_scan] = max_entropy
-    psms.max_city_fitted[apex_scan] = max_city_fitted
-    psms.mean_city_fitted[apex_scan] = mean_city_fitted/count
+    psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
+    psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
     psms.y_ions_sum[apex_scan] = y_ions_sum
     psms.max_y_ions[apex_scan] = max_y_ions
     psms.best_scan[apex_scan] = true
@@ -386,6 +392,7 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                                 u2,
                                 state,
                                 n_pad = 10,
+                                max_apex_offset = 10,
                                 isplot = false
                                 );
                                 

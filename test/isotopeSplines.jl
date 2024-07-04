@@ -213,10 +213,23 @@ test_fragments = [
     )
     isotopes = isotopes./sum(isotopes)
     @test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
+    #Repeat with quad transmission function 
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[1, 0, 0, 0, 0]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
 
     isotopes = zeros(Float32, 5)
     test_frag = DetailedFrag{Float32}(0x0087b1fe, 1371.8392f0, Float16(1.0), 0x02, false, 0x01, 0x0c, 0x02, 0x01, 0x01)
-
     getFragIsotopes!(
         isotopes,
         iso_splines,
@@ -227,6 +240,20 @@ test_fragments = [
         (0, 5)
     )
     isotopes05 = isotopes./sum(isotopes)
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[1, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes05) .< 1e-2)
     #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
     isotopes = zeros(Float32, 5)
     getFragIsotopes!(
@@ -239,6 +266,21 @@ test_fragments = [
         (1, 5)
     )
     isotopes15 = isotopes./sum(isotopes)
+
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[0, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes15) .< 1e-2)
 
     @test isotopes05[1]>isotopes15[1]
     @test all(isotopes15[2:end].>isotopes05[2:end])
@@ -258,6 +300,22 @@ test_fragments = [
         (0, 5)
     )
     isotopes05 = isotopes./sum(isotopes)
+
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[1, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes05) .< 1e-2)
+
     #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
     isotopes = zeros(Float32, 5)
     getFragIsotopes!(
@@ -270,6 +328,21 @@ test_fragments = [
         (1, 5)
     )
     isotopes15 = isotopes./sum(isotopes)
+
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[0, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes15) .< 1e-2)
 
     @test isotopes05[1]>isotopes15[1]
     @test all(isotopes15[2:end].>isotopes05[2:end])
@@ -289,6 +362,22 @@ test_fragments = [
         (0, 5)
     )
     isotopes05 = isotopes./sum(isotopes)
+
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[1, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes05) .< 1e-2)
+
     #@test all((isotopes .- [1.0, 0.0, 0.0, 0.0, 0.0]).<1e-6)
     isotopes = zeros(Float32, 5)
     getFragIsotopes!(
@@ -301,6 +390,20 @@ test_fragments = [
         (1, 5)
     )
     isotopes15 = isotopes./sum(isotopes)
+
+    fill!(isotopes, zero(Float32))
+    precursor_transmission = Float32[0, 1, 1, 1, 1]
+    getFragIsotopes!(
+        isotopes,
+        precursor_transmission,
+        iso_splines,
+        test_precursor[:mz],
+        test_precursor[:prec_charge],
+        test_precursor[:sulfur_count],
+        test_frag
+    )
+    isotopes = isotopes./sum(isotopes)
+    @test all(abs.(isotopes .- isotopes15) .< 1e-2)
 
     @test isotopes05[1]>isotopes15[1]
     @test all(isotopes15[2:end].>isotopes05[2:end])

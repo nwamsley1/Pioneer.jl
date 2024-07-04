@@ -1,7 +1,8 @@
 PSMs_Dict = Dictionary{String, DataFrame}()
+
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    #params_[:first_search_params]["n_frag_isotopes"] = 2
+    params_[:first_search_params]["n_frag_isotopes"] = 1
     #params_[:first_search_params]["min_spectral_contrast"] = 0.5#acos(0.5)
     #params_[:first_search_params]["min_log2_matched_ratio"] = 0.0
     @time PSMs = vcat(LibrarySearch(
@@ -25,8 +26,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         prec_to_score = precs,
         mass_err_model = frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,
-        params = params_[:first_search_params]
+        params = params_[:first_search_params],
+        quad_transmission_func = QuadTransmission(1.25f0, 5.0f0)
                         )...)
+
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         prosit_lib["precursors"][:structural_mods],
                         prosit_lib["precursors"][:missed_cleavages],
@@ -44,11 +47,13 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     filter!(x->isnan(x.i_count)==false, PSMs)
     PSMs[!,:charge2] = UInt8.(PSMs[!,:charge].==2)
 
-    column_names = [:spectral_contrast,
-                    :charge2,
-                    :scribe,
+    column_names = [
+                    :spectral_contrast,
                     :city_block,
                     :entropy_score,
+                    :scribe,
+                    #:combined,
+                    :charge2,
                     :poisson,
                     :iRT_error,
                     :missed_cleavage,
@@ -56,11 +61,16 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     :charge,
                     :TIC,
                     :y_count,
-                    :i_count,
+                    #:i_count,
                     :err_norm,
                     :spectrum_peak_count,
                     :intercept]
-
+    #PSMs[!,:combined] .= zero(Float16)
+    #for i in range(1, size(PSMs, 1))
+    #    PSMs[i,:combined] = PSMs[i,:scribe] + PSMs[i,:city_block] + log(PSMs[i,:spectral_contrast]) - PSMs[i,:entropy_score]
+    #end
+    #PSMs[!,:combined] = exp.(PSMs[!,:combined])
+    #PSMs[!,:scribe2] = exp.(Float32.(PSMs[!,:scribe]))
     scoreMainSearchPSMs!(PSMs,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
@@ -68,6 +78,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
+
+
+    println("psms at 1% ", sum((PSMs[!,:q_value].<0.01).&(PSMs[!,:target])))
+    println("unique precursors at 1% ", length(unique(PSMs[(PSMs[!,:q_value].<0.01).&(PSMs[!,:target]),:precursor_idx])))
 
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
@@ -83,3 +97,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         PSMs
     );
 end
+
+#=
+plot(LinRange(-1.5, 1.5, 100),
+ [QuadTransmission(1.0f0, 3.0f0)(0.0, x) for x in LinRange(-1.5, 1.5, 100)])
+=#

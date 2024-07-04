@@ -38,7 +38,7 @@ function groupPSMS(
     quant_col::Symbol)
     psms = psms[(psms[:,:decoy].==false
                 ).&(psms[:,:Mox].==0
-                ).&(psms[:,:points_above_FWHM_01].>1
+                #).&(psms[:,:points_above_FWHM_01].>1
                 ),:]
     psms[!,quant_col] = max.(psms[!,quant_col], 0.0)
     gpsms = groupby(psms, 
@@ -165,7 +165,7 @@ end
 open(joinpath(benchmark_results_folder, "results.txt"), "a") do io
     original_stdout = stdout
     redirect_stdout(io) do 
-        println("total time $total_time")
+        #println("total time $total_time")
         for (key, value) in pairs(PSMs_Dict)
             hits_at_01 = sum(value[!,:q_value].<=0.01)
             hits_at_10 = sum(value[!,:q_value].<=0.1)
@@ -212,7 +212,7 @@ best_psms_passing = best_psms_passing[best_psms_passing[!,:Mox].==0,:]
 to_keep = occursin.(first(conditions), best_psms_passing[!,:condition]) .| occursin.(last(conditions), best_psms_passing[!,:condition])
 
 best_psms_passing = best_psms_passing[to_keep,:]
-for quant_name in [:trapezoid_area_normalized,:trapezoid_area]
+for quant_name in [:peak_area, :peak_area_normalized]
     #Get grouped psms 
     gpsms = groupPSMS(best_psms_passing, quant_name)
     #Filter out psms not common to all three replicates 
@@ -301,3 +301,13 @@ for quant_name in [:trapezoid_area_normalized,:trapezoid_area]
         #[println("Precursors w/ CV under $x ", sum(gpsms[!,:CV].<=x)) for x in [5.0, 10.0, 20.0, 30.0]]
     end
 end
+
+
+
+<configuration>
+    <startup> 
+        <supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.7"/>
+        <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    </startup>
+</configuration>
+

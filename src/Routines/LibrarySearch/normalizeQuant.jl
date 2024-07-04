@@ -7,7 +7,7 @@
         spline_n_knots = params_[:normalization_params]["spline_n_knots"],
         max_q_value = params_[:normalization_params]["max_q_value"],
         min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
-    ) for col_name in [:trapezoid_area,:peak_area,:weight]]
+    ) for col_name in [:peak_area]]
 end
 
 #=

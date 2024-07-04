@@ -21,6 +21,7 @@ function plotPSM(
                     iso_splines::IsotopeSplineModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
+                    quad_transmission_func::QuadTransmission,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float64,
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32}}
@@ -52,6 +53,7 @@ function plotPSM(
         precursors[:prec_charge],
         precursors[:sulfur_count],
         iso_splines,
+        quad_transmission_func,
         isotopes,
         n_frag_isotopes,
         rt_index,
@@ -168,6 +170,7 @@ function plotPSM(
         kwargs[:iso_splines],
         (3, 0),
         params[:quant_search_params]["n_frag_isotopes"],
+        kwargs[:quad_transmission_func],
         kwargs[:rt_index], 
         kwargs[:irt_err]
     )
@@ -456,3 +459,6 @@ N += 1
 
     frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz)for match in matched_fragments];
     histogram2d(frag_ppm_errs, [match.theoretical_mz for match in matched_fragments], xlim = (-20, 20), alpha = 1.0, normalize = :pdf)
+
+
+H = sparse(Hs.rowval[1:Hs.n_vals], Hs.colval[1:Hs.n_vals], Hs.nzval[1:Hs.n_vals])

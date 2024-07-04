@@ -6,7 +6,7 @@ function groupPSMS(
                     max_q_value::AbstractFloat = 0.01,
                     min_points_above_FWHM::Int = 2)
     return groupby(psms[
-        (psms[!,:q_value].<=max_q_value).&(psms[!,:target]).&(psms[!,:points_above_FWHM].>=min_points_above_FWHM),:],
+        (psms[!,:q_value].<=max_q_value).&(psms[!,:target]),:],
         :file_name)
 end
 
