@@ -16,7 +16,7 @@ function getLocation(mem::MassErrorModel)
     return mem.location
 end
 
-
+#Adjust a theoretical mass to be
 function (mem::MassErrorModel)(mass::Float32)
     ppm_norm = Float32(1e6)
     ppm = mass/ppm_norm
@@ -26,27 +26,41 @@ function (mem::MassErrorModel)(mass::Float32)
     return Float32(mass - l_tol), Float32(mass + r_tol)
 end
 
+#Correct an empeirical mass. 
 function getCorrectedMz(mem::MassErrorModel, mz::Float32)
-    return  Float32(mz + getMassOffset(mem)*(mz/1e6))
+    return  Float32(mz - getMassOffset(mem)*(mz/1e6))
 end
 
+"""
+   getMzBounds(mem::MassErrorModel, mass::Float32)
 
+Given a theoretical mass and a `MassErrorModel`, gets the minimum and maximum bounds for an expected empirical mass.
+Critically, assumes the empirical mass has already been corrected using mass offset. See `getCorrectedMz`. 
+
+### Input
+
+- `mem::MassErrorModel`: -- Model for the mass error of an ion 
+- `mass::Float32` -- A theoretical mass/mz to get boundaries for 
+### Output
+Tuple{Float32, Float32}
+A tuple with the lower and upper boundary respectively. 
+### Notes
+
+- Suppose the mass error was 3 ppm. And the tolerance was 10 ppm and 5ppm on the left and right hand sides respectively. 
+A theoretical mass of 1000000.0f0 m/z, would have a tolerance of (999990.0f0, 1000005.0f0). A theoretical mass falling 
+### Algorithm 
+
+### Examples 
+
+"""
 function getMzBounds(mem::MassErrorModel, mass::Float32)
     ppm = mass/(1e6)
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
     return Float32(mass - l_tol), Float32(mass + r_tol)
+    #return Float32(mass - r_tol), Float32(mass + l_tol)
 end
 
-
-#=
-function (mem::MassErrorModel)(mass::Float32)
-    ppm = mass/(1e6)
-    r_tol = getRightTol(mem)*ppm
-    l_tol = getLeftTol(mem)*ppm
-    return Float32(mass - r_tol), Float32(mass + l_tol)
-end
-=#
 function ModelMassErrs(ppm_errs::Vector{Float32};
                        frag_err_quantile::Float32 = 0.01f0,
                        out_fdir::String = "./",
@@ -54,12 +68,13 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
 
     bins = LinRange(minimum(ppm_errs), maximum(ppm_errs), 100)
     mass_err = median(ppm_errs)
+    ppm_errs = ppm_errs .- mass_err
     #ppm_errs = ppm_errs .- mass_err
     #l_bound = quantile(ppm_errs, 1 - frag_err_quantile) 
     #r_bound = quantile(ppm_errs, frag_err_quantile)
-    l_bound = mass_err - quantile(ppm_errs, frag_err_quantile)
-    r_bound = quantile(ppm_errs, 1 - frag_err_quantile) - mass_err
-    errs = ppm_errs .+ mass_err
+    l_bound = quantile(ppm_errs, frag_err_quantile)
+    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
+    errs = ppm_errs#ppm_errs .+ mass_err
     plot_title = ""
     n = 0
     for i in range(1, length(out_fname))

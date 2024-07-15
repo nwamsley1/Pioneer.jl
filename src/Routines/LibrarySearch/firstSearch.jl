@@ -97,7 +97,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         PSMs
     );
 end
-
+jldsave("/Users/n.t.wamsley/Desktop/psms_dict_new_070924.jld2"; PSMs_Dict)
+jldsave("/Users/n.t.wamsley/Desktop/precIdToIrt_new_070924.jld2"; precID_to_iRT)
 #=
 plot(LinRange(-1.5, 1.5, 100),
  [QuadTransmission(1.0f0, 3.0f0)(0.0, x) for x in LinRange(-1.5, 1.5, 100)])

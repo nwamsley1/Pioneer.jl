@@ -1,5 +1,6 @@
 #Group psms by file of origin
-grouped_precursors = groupby(best_psms_passing, :file_name)
+grouped_precursors = groupby(best_psms, :file_name)
+grouped_protein_groups = groupby(protein_quant, :file_name)
 #Number of files to parse
 n_files = length(grouped_precursors)
 n_files_per_plot = Int64(params_[:qc_plot_params]["n_files_per_plot"])
@@ -88,6 +89,49 @@ for n in 1:n_qc_plots
     )
 
 end
+
+###############
+#Plot precursor IDs
+function plotProteinIDBarPlot(
+    gpsms::GroupedDataFrame,
+    parsed_fnames::Vector{<:Any};
+    title::String = "precursor_abundance_qc",
+    f_out::String = "./test.pdf"
+    )
+
+    p = Plots.plot(title = title,
+                    legend=:none, layout = (1, 1), show = true)
+
+    ids = Vector{Int64}(undef, length(parsed_fnames))
+    for (i, parsed_fname) in enumerate(parsed_fnames)
+        ids[i] = size(gpsms[(file_name = parsed_fname,)], 1)
+    end
+
+    Plots.bar!(p, 
+    parsed_fnames,
+    ids,
+    subplot = 1,
+    texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+    xrotation = 45,
+    )
+
+    savefig(p, f_out)
+end
+
+
+for n in 1:n_qc_plots
+    start = (n - 1)*n_files_per_plot + 1
+    stop = min(n*n_files_per_plot, length(parsed_fnames))
+
+    plotProteinIDBarPlot(
+        grouped_protein_groups,
+        parsed_fnames[start:stop],
+        title = "Precursor ID's per File",
+        f_out = joinpath(qc_plot_folder, "protein_ids_barplot_"*string(n)*".pdf")
+    )
+
+end
+
 
 ###############
 #Plot missed cleavage rate
@@ -249,7 +293,7 @@ function plotMS2MassErrors(
     savefig(p, f_out)
 end
 
-
+#=
 for n in 1:n_qc_plots
     start = (n - 1)*n_files_per_plot + 1
     stop = min(n*n_files_per_plot, length(parsed_fnames))
@@ -262,7 +306,7 @@ for n in 1:n_qc_plots
     )
 
 end
-
+=#
 
 ###############
 #Plot precursor IDs
@@ -340,7 +384,7 @@ function plotFWHM(
     savefig(p, f_out)
 end
 
-
+#=
 for n in 1:n_qc_plots
     start = (n - 1)*n_files_per_plot + 1
     stop = min(n*n_files_per_plot, length(parsed_fnames))
@@ -353,7 +397,7 @@ for n in 1:n_qc_plots
     )
 
 end
-
+=#
 println("qc_plot_folder ", qc_plot_folder)
 plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
 println("plots_to_merge ", plots_to_merge)

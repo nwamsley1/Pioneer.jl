@@ -57,22 +57,12 @@ function getChromatograms(
     psms = fetch.(tasks)
     return psms
 end
-BPSMS = Dict{Int64, DataFrame}()
-#PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
-#PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
-
-features = [:intercept, :charge, :total_ions, :err_norm, 
-:scribe, :city_block, :city_block_fitted, 
-:spectral_contrast, :entropy_score, :weight]
-params_[:deconvolution_params]["huber_delta_prop"] = 5.0
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
-
-
-        @time chroms = vcat(getChromatograms(
+        chroms = vcat(getChromatograms(
             MS_TABLE, 
             params_;
             precursors = prosit_lib["precursors"],
@@ -92,7 +82,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            precursors_passing = precursors_passing,
+            precursors_passing = traces_passing,
             quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
 
@@ -101,7 +91,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         filter!(x->first(x.isotopes_captured)<2, chroms)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
-        sub_bpsms = best_psms_passing[(file_name = file_id_to_parsed_name[ms_file_idx],)]
+        sub_bpsms = grouped_best_psms[(file_name = file_id_to_parsed_name[ms_file_idx],)]
         integratePrecursors(
                             gchroms,
                             sub_bpsms[!,:precursor_idx],
@@ -109,14 +99,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             sub_bpsms[!,:scan_idx],
                             sub_bpsms[!,:peak_area],
                             sub_bpsms[!,:new_best_scan],
-                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]))
+                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"])
+                            )
+        #BPSMS[ms_file_idx] = psms_integrated;
 end
-best_psms_passing = DataFrame(best_psms_passing)
-best_psms_passing_old = copy(best_psms_passing)
-getBestTrace!(best_psms_passing, 0.01, :peak_area)
-best_psms_passing[!,:prob] = best_psms_passing[!,:prob].*best_psms_passing[!,:best_trace]
-getQvalues!(best_psms_passing[!,:prob], best_psms_passing[:,:target], best_psms_passing[!,:q_value]);
-filter!(x->x.best_trace, best_psms_passing)
-filter!(x->(!isnan(x.peak_area))&(!iszero(x.peak_area))&(x.target)&(x.q_value<=0.01), best_psms_passing)
-IDs_PER_FILE = value_counts(best_psms_passing, [:file_name])
-

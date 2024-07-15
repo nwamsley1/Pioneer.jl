@@ -503,8 +503,8 @@ function secondSearch(
             for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
-            fill!(_residuals_, zero(Float32))
-            fill!(_weights_, zero(Float32))
+            #fill!(_residuals_, zero(Float32))
+            #fill!(_weights_, zero(Float32))
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
@@ -691,6 +691,9 @@ function getChromatograms(
                                         UInt32(scan_idx), 
                                         ms_file_idx)
         sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        #if scan_idx == 152308
+        #   return ionMatches[1:nmatches], ionMisses[1:nmisses], ionTemplates[1:ion_idx]
+        #end
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 

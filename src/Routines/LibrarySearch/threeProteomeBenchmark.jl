@@ -42,7 +42,7 @@ function groupPSMS(
                 ),:]
     psms[!,quant_col] = max.(psms[!,quant_col], 0.0)
     gpsms = groupby(psms, 
-                            [:species,:accession_numbers,:modified_sequence,:charge,:isotopes_captured,:condition]
+                            [:species,:accession_numbers,:modified_sequence,:charge,:isotopes_captured,:condition,:precursor_idx]
                         );
 
     pioneer_groupmeans = combine(prec_group -> (log2_mean = log2(mean(prec_group[!,quant_col])), 
@@ -212,6 +212,7 @@ best_psms_passing = best_psms_passing[best_psms_passing[!,:Mox].==0,:]
 to_keep = occursin.(first(conditions), best_psms_passing[!,:condition]) .| occursin.(last(conditions), best_psms_passing[!,:condition])
 
 best_psms_passing = best_psms_passing[to_keep,:]
+filter!(x->x.target, best_psms_passing)
 for quant_name in [:peak_area, :peak_area_normalized]
     #Get grouped psms 
     gpsms = groupPSMS(best_psms_passing, quant_name)

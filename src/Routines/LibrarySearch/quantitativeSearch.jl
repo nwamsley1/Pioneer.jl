@@ -62,14 +62,11 @@ function secondSearch(
     psms = fetch.(tasks)
     return psms
 end
-BPSMS = Dict{Int64, DataFrame}()
-#PSMS_DIR = joinpath(MS_DATA_DIR,"Search","RESULTS")
-#PSM_PATHS = [joinpath(PSMS_DIR, file) for file in filter(file -> isfile(joinpath(PSMS_DIR, file)) && match(r".jld2$", file) != nothing, readdir(PSMS_DIR))];
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
-    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH);
     params_[:deconvolution_params]["huber_delta"] = median(
-        [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
+        [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
        
 
         #params_[:deconvolution_params]["huber_delta"] = 100.0f0
@@ -83,7 +80,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         params_[:quant_search_params]["max_best_rank"] = 1
         #include("src/PSM_TYPES/ScoredPSMs.jl")
         
-        @time psms = vcat(secondSearch(
+        psms = vcat(secondSearch(
             MS_TABLE, 
             params_;
             precursors = prosit_lib["precursors"],
@@ -105,18 +102,18 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             precursor_weights = precursor_weights,
             quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
-        @time addSecondSearchColumns!(psms, 
+        addSecondSearchColumns!(psms, 
                                         MS_TABLE, 
                                         prosit_lib["precursors"][:mz],
                                         prosit_lib["precursors"][:prec_charge], 
                                         prosit_lib["precursors"][:is_decoy],
                                         pid_to_cv_fold);
-        psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
-        getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-        psms[!,:best_scan] .= false
-        filter!(x->first(x.isotopes_captured)<2, psms)
+        psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
+        getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE);
+        psms[!,:best_scan] .= false;
+        filter!(x->first(x.isotopes_captured)<2, psms);
         
-        initSummaryColumns!(psms)
+        initSummaryColumns!(psms);
         for (key, gpsms) in ProgressBar(pairs(groupby(psms, [:precursor_idx,:isotopes_captured])))
             
             getSummaryScores!(
@@ -128,10 +125,10 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                 gpsms[!,:fitted_manhattan_distance],
                 gpsms[!,:fitted_spectral_contrast],
                 gpsms[!,:y_count]
-            )
+            );
         end
         
-        filter!(x->x.best_scan, psms)
+        filter!(x->x.best_scan, psms);
         addPostIntegrationFeatures!(
             psms, 
             MS_TABLE,
@@ -146,10 +143,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             RT_iRT,
             precID_to_iRT
 
-        )
-        psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx]
+        );
+        psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx];
         BPSMS[ms_file_idx] = psms;
 end
-
-best_psms = vcat(values(BPSMS)...)
-

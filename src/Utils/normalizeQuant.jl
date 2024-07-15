@@ -1,6 +1,3 @@
-
-
-
 function groupPSMS(
                     psms::DataFrame;
                     max_q_value::AbstractFloat = 0.01,
@@ -18,6 +15,7 @@ function getQuantSplines(
     quant_splines = Dictionary{String, UniformSpline}()
     for key in keys(gpsms)
         psms = gpsms[key]
+        #psms = psms[psms[!,:species].=="HUMAN",:]
         sort!(psms, :RT, alg = QuickSort)
         nprecs = size(psms, 1)
         bin_size = nprecs÷N

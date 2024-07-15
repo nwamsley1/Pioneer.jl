@@ -45,11 +45,13 @@ function getProbQuantiles!(psms::DataFrame, prob_column::Symbol, features::Vecto
             grouped_psms[i][j,:q90_prob] = q90_prob
         end
     end
-    gpsms = groupby(psms, [:file_name, :accession_numbers])
+    gpsms = groupby(psms, [:file_name, :target, :accession_numbers])
     for i in range(1, length(gpsms))
         prec_count = sum(gpsms[i][!,prob_column].>0.9)
+        max_pg_score = maximum(gpsms[i][!,prob_column])
         for j in range(1, size(gpsms[i], 1))
             gpsms[i][j,:pg_count] = prec_count
+            gpsms[i][j,:max_pg_score] = max_pg_score
         end
     end 
     gpsms = groupby(psms, [:file_name, :sequence])
@@ -91,6 +93,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
                     print_importance::Bool = false)
     PSMs[!,:max_prob], PSMs[!,:median_prob], PSMs[!,:q90_prob] = zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1])
     PSMs[!,:prob_temp],PSMs[!,:prob] = zeros(Float32, size(PSMs)[1]),zeros(Float32, size(PSMs)[1])
+    PSMs[!,:max_pg_score] = zeros(Float32, size(PSMs, 1))
     PSMs[!,:pg_count] = zeros(UInt16, size(PSMs, 1))
     PSMs[!,:pepgroup_count] = zeros(UInt16, size(PSMs, 1))
     folds = best_psms[!,:cv_fold]
@@ -134,8 +137,9 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
             bst.feature_names = [string(x) for x in features]
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
             ###################
-            #Apply to held-out data
+            #Apply to CV fold 
             getProbQuantiles!(psms_train_sub, :prob_temp, features, bst)
+            #Apply to held-out data
             getProbQuantiles!(psms_test_sub, :prob, features, bst)
             #update(pbar, num_round)
         end

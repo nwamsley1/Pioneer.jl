@@ -231,10 +231,15 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
     low, high = getMzBounds(mass_err_model, getMZ(ions[ion_idx]))
 
     @inbounds @fastmath while (peak_idx <= length(masses)) & (ion_idx <= max_ions_idx)
-       
+        #if (peak_idx == 180) & (ions[ion_idx].prec_id == 724316)& (abs(getMZ(ions[ion_idx]) - 231.0975f0) <1e-3)
+        #    println("hit $corrected_empirical_mz")
+        #end
         if (corrected_empirical_mz>=low) #Is the peak within the tolerance of the theoretical ion m/z?
             if (corrected_empirical_mz<=high) #Empirical peak is within mass tolerance
-
+                #if (ions[ion_idx].prec_id == 724316) & (scan_idx == 152308 ) & (abs(getMZ(ions[ion_idx]) - 231.0975f0) <1e-3)
+                #    println("TEST")
+                #    println("ions[ion_idx] ", ions[ion_idx])
+                #end
                 #Set nearest matching peak if there are any.
                 matched_idx, unmatched_idx = setNearest!(matches,
                                             unmatched,
@@ -256,6 +261,11 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                 #because multiple theoretical ions can match
                 #to a single empirical peak, but not vice-versa 
                 ion_idx += 1
+               # if (ions[ion_idx].prec_id == 724316) & (scan_idx == 152308 ) & (abs(getMZ(ions[ion_idx]) - 231.0975f0) <1e-3)
+               #     println("B")
+               #     println("ions[ion_idx] ", ions[ion_idx])
+               #     println("peak_idx $peak_idx, masses[peak_idx] ", masses[peak_idx])
+               # end
                 if ion_idx > max_ions_idx
                     return matched_idx, unmatched_idx
                 end
@@ -275,8 +285,15 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
                                         unmatched_idx
                                         );
             ion_idx += 1
-            #Mass tolerance of the new theoretical ion 
             low, high = getMzBounds(mass_err_model, getMZ(ions[ion_idx]))
+
+            #if (ions[ion_idx].prec_id == 724316) & (scan_idx == 152308 ) & (abs(getMZ(ions[ion_idx]) - 231.0975f0) <1e-3)
+            #    println("C")
+            #    println("ions[ion_idx] ", ions[ion_idx])
+            #    println("peak_idx $peak_idx, masses[peak_idx] ", masses[peak_idx])
+            #    println("low $low high $high")
+            #end
+            #Mass tolerance of the new theoretical ion 
 
             if ion_idx > max_ions_idx
                 return matched_idx, unmatched_idx

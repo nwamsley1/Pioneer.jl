@@ -13,15 +13,6 @@ println("Begining Presearch")
 presearch_time = @timed begin
     include(joinpath(methods_path, "parameterTuningSearch.jl"))
 end
-
-jldsave(joinpath(RESULTS_DIR, "Search", "RESULTS", "irt_errs.jld2"); irt_errs)
-jldsave(joinpath(RESULTS_DIR, "Search", "RESULTS", "RT_to_iRT_map_dict.jld2"); RT_to_iRT_map_dict)
-jldsave(joinpath(RESULTS_DIR, "Search", "RESULTS", "frag_err_dist_dict.jld2"); frag_err_dist_dict)
-#=
-irt_errs = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "irt_errs.jld2"))["irt_errs"]
-RT_to_iRT_map_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "RT_to_iRT_map_dict.jld2"))["RT_to_iRT_map_dict"]
-frag_err_dist_dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "frag_err_dist_dict.jld2"))["frag_err_dist_dict"]
-=#
 println("Finished presearch in ", presearch_time.time, " seconds")
 
 ###########
@@ -31,45 +22,26 @@ println("Begining Main Search...")
 main_search_time = @timed begin
     include(joinpath(methods_path,"firstSearch.jl"))
 end
-sum(first(PSMs_Dict)[!,:q_value].<=0.01)
-sum(first(PSMs_Dict)[!,:q_value].<=0.1)
-jldsave(joinpath(results_folder, "PSMs_Dict.jld2"); PSMs_Dict)
-#=
-PSMs_Dict = load(joinpath(results_folder, "PSMs_Dict.jld2"))["PSMs_Dict"]
-=#
-#println("Finished main search in ", main_search_time.time, " seconds")
-#PSMs_Dict = load(joinpath(MS_DATA_DIR, "Search", "RESULTS", "PSMs_Dict_020824_M0.jld2"))["PSMs_Dict"]
+
 ############
 #Build Retention Time Index
 println("Combining Main Search Results...")
 combine_results_time = @timed begin
     include(joinpath(methods_path,"combineFirstSearchResults.jl"))
 end
-jldsave(joinpath(results_folder, "iRT_RT_spline.jld2"); iRT_RT)
-jldsave(joinpath(results_folder,  "RT_iRT_spline.jld2"); RT_iRT)
-jldsave(joinpath(results_folder, "precID_to_iRT.jld2"); precID_to_iRT)
-jldsave(joinpath(results_folder, "RT_INDICES.jld2"); RT_INDICES)
-jldsave(joinpath(results_folder, "precID_to_cv_fold.jld2"); precID_to_cv_fold)
+#jldsave(joinpath(results_folder, "iRT_RT_spline.jld2"); iRT_RT)
 
-#=
-iRT_RT = load(joinpath(results_folder, "iRT_RT_spline.jld2"))["iRT_RT"]
-RT_iRT = load(joinpath(results_folder,  "RT_iRT_spline.jld2"))["RT_iRT"]
-precID_to_iRT = load(joinpath(results_folder, "precID_to_iRT.jld2"))["precID_to_iRT"]
-RT_INDICES = load(joinpath(results_folder, "RT_INDICES.jld2"))["RT_INDICES"]
-precID_to_cv_fold = load(joinpath(results_folder, "precID_to_cv_fold.jld2"))["precID_to_cv_fold"]
-=#
 println("Combined main search results in ", combine_results_time.time, " seconds")
 ############
 #New Inplace Arrays for Integration
 println("Begining Quantitative Search...")
+BPSMS = Dict{Int64, DataFrame}()
 quant_search_time = @timed begin
     include(joinpath(methods_path,"quantitativeSearch.jl"))
 end
+best_psms = vcat(values(BPSMS)...)
 println("Combined main search results in ", quant_search_time.time, " seconds")
-jldsave(joinpath(results_folder, "best_psms_unscored.jld2"); best_psms)
-#=
-best_psms = load(joinpath(results_folder, "best_psms_unscored.jld2"))["best_psms"]
-=#
+
 ###########
 #XGBoost
 ##########
@@ -77,40 +49,44 @@ println("Begining XGBoost...")
 score_traces_time = @timed begin
     include(joinpath(methods_path,"scoreTraces.jl"))
 end
-#best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:]#List of top scoring precursors to requantify. 
-#jldsave(joinpath(results_folder, "best_psms_passing_firstquant.jld2"); best_psms_passing)
+const traces_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
+println("Scored Traces In ", score_traces_time.time, " seconds")
 
-#=
-gbpsms = groupby(best_psms_passing, :file_name)
-RT_INDICES = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
-for (key, psms) in pairs(gbpsms)
-    sort!(psms, :RT)
-    insert!(
-        RT_INDICES,
-        key[:file_name],
-        buildRTIndex(psms, bin_rt_size = 0.5)
-    )
+###########
+#Score Protein Groups
+scored_proteins = scoreProteinGroups!(best_psms)
+protein_to_q_value = Dict{Tuple{UInt32, String}, Float32}()
+for i in ProgressBar(range(1, size(best_proteins, 1)))
+    protein_to_q_value[
+        (
+            UInt32(best_proteins[i,:ms_file_idx]),
+            best_proteins[i,:accession_numbers]
+        )
+    ] = best_proteins[i,:q_value]
 end
-=#
+
+###########
+#Re-quantify with 1% fdr precursors 
+best_psms[!,:peak_area] = zeros(Float32, size(best_psms, 1))
+best_psms[!,:new_best_scan] = zeros(UInt32, size(best_psms, 1))
+grouped_best_psms = groupby(best_psms, :file_name)
 println("Begining Quantitative Search...")
 quant_search_time = @timed begin
     include(joinpath(methods_path,"secondQuant.jl"))
 end
-println("Combined main search results in ", quant_search_time.time, " seconds")
 
-best_psms_passing[!,:accession_numbers] = [precursors[:accession_numbers][prec_id] for prec_id in best_psms_passing[!,:precursor_idx]]
-jldsave(joinpath(results_folder, "best_psms_passing_secondquant.jld2"); best_psms_passing)
-
-#jldsave(joinpath(results_folder, "best_psms_scored.jld2"); best_psms)
-#best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:]
-#jldsave(joinpath(results_folder, "best_psms_passing.jld2"); best_psms_passing)
-println("Scored Traces In ", score_traces_time.time, " seconds")
-#=
-value_counts(df, col) = combine(groupby(df, col), nrow);
-IDs_PER_FILE = sort(value_counts(best_psms_passing[!,:], [:file_name]))
-=#
-
-
+###########
+#Ungroup precursors and get the best trace for each 
+best_psms = DataFrame(grouped_best_psms)
+#Must be based on weight and not peak_area because peak_area was not calculated for decoys
+getBestTrace!(best_psms, 0.01, :weight)
+filter!(x->x.best_trace, best_psms)
+#precursor level q_value 
+getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
+#filter out decoys and low-scoring targets
+filter!(x->(x.q_value<=0.01)&(x.target)&(!isnan(x.peak_area)), best_psms)
+IDs_PER_FILE = value_counts(best_psms, [:file_name])
+best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
 ###########
 #Normalize Quant 
 ###########
@@ -119,8 +95,53 @@ score_traces_time = @timed begin
     include(joinpath(methods_path,"normalizeQuant.jl"))
 end
 
-traces = [(x[1], x[2]) for x in eachrow(best_psms_passing[!,[:precursor_idx,:isotopes_captured]])]
-best_psms_passing = best_psms_passing[[x ∈ traces_passing for x in traces],:]
+############
+#Prep for Protein Inference 
+best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
+best_psms[!,:ms_file_idx] =  UInt32.(best_psms[!,:ms_file_idx])
+best_psms[!,:peak_area] =  allowmissing(best_psms[!,:peak_area])
+best_psms[!,:peak_area_normalized] =  allowmissing(best_psms[!,:peak_area_normalized])
+gbpsms = groupby(best_psms_passing,:ms_file_idx)
+file_idx_dicts = [Dict{UInt32, @NamedTuple{prob::Float32, qvalue::Float32, peak_area::Float32}}() for _ in range(1, length(gbpsms))]
+for (file_idx, bpsms) in ProgressBar(pairs(gbpsms))
+    for i in range(1, size(bpsms, 1))
+            file_idx_dicts[file_idx[:ms_file_idx]][bpsms[i,:precursor_idx]] = (
+              prob = bpsms[i,:prob],
+             qvalue = bpsms[i,:q_value],
+             peak_area = bpsms[i,:peak_area])
+    end
+end
+best_psms[!,:structural_mods] = [precursors[:structural_mods][pid] for pid in best_psms[!,:precursor_idx]]
+best_psms[!,:isotopic_mods] = [precursors[:isotopic_mods][pid] for pid in best_psms[!,:precursor_idx]]
+
+features = [:species,:accession_numbers,:sequence,:structural_mods,
+             :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
+             :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
+             :y_count,:p_count,:non_cannonical_count,:isotope_count
+             ,:matched_ratio]
+sort!(best_psms,[:species,:accession_numbers,:sequence,:target])
+Arrow.write(joinpath(results_path,"best_psms.arrow"),best_psms[!,features])
+wide_psms_quant = unstack(best_psms,[:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],:file_name,:peak_area_normalized)
+sort!(wide_psms_quant,[:species,:accession_numbers,:sequence,:target])
+CSV.write(joinpath(results_path,"best_psms_wide.arrow"),wide_psms_quant)
+
+#Summarize Precursor ID's
+precursor_id_table = value_counts(best_psms,:file_name)
+#CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
+
+
+
+best_psms_old = copy(best_psms)
+score_traces_time = @timed begin
+    include(joinpath(methods_path,"proteinQuant.jl"))
+end
+protein_quant[!,:experiments] = UInt32.(protein_quant[!,:experiments])
+protein_quant[!,:file_name] = [file_id_to_parsed_name[ms_file_idx] for ms_file_idx in protein_quant[!,:experiments]]
+
+#Wide DataFormat 
+wide_protein_quant = unstack(protein_quant,[:species,:protein,:target],:experiments,:log2_abundance)
+sort!(wide_protein_quant,[:species,:protein,:target])
+CSV.write(joinpath(results_path,"proteins_wide.csv"),wide_protein_quant)
 ###########
 #QC Plots
 ###########
@@ -129,8 +150,3 @@ score_traces_time = @timed begin
     include(joinpath(methods_path,"qcPlots.jl"))
 end
 
-
-println("Benchmarking...")
-score_traces_time = @timed begin
-    include(joinpath(methods_path,"threeProteomeBenchmark.jl"))
-end

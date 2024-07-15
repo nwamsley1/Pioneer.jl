@@ -308,7 +308,7 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     #total_fragment_intensity /= sum(frag_isotopes)
     #isotopes /= isotopes[1]
-    total_fragment_intensity = total_fragment_intensity*sum(frag_isotopes)
+    total_fragment_intensity = total_fragment_intensity#/sum(frag_isotopes)
     for i in reverse(range(1, length(frag_isotopes)))
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end

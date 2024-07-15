@@ -1,7 +1,8 @@
 features = [ 
     :max_prob,
     :median_prob,
-    #:q90_prob,
+    :q90_prob,
+    #:max_pg_score,
     #:pg_count,
     #:pepgroup_count,
     :missed_cleavage,
@@ -71,27 +72,12 @@ xgboost_time = @timed bst = rankPSMs!(best_psms,
 
 best_psms = bst[2];
 best_psms[!,:prob] =Float32.(best_psms[!,:prob])
-
 #Calculate q-values
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-#Get best isotope trace for each precursor
-#best_psms_passing = best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:]#List of top scoring precursors to requantify. 
-#getBestTrace!(best_psms, 0.01, :weight)
-##Re-calculate q-values after removing inferior isotopic trace
-#getQvalues!(best_psms[!,:prob].*(best_psms[!,:best_trace]), best_psms[:,:target], best_psms[!,:q_value]);
-#const traces_passing = Set([(x[1], x[2]) for x in eachrow(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]).&(best_psms[!,:best_trace]),[:precursor_idx,:isotopes_captured]])])
+
 #Get protein names 
 transform!(best_psms, AsTable(:) => ByRow(psm -> 
 prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
 ) => :accession_numbers
 );
 
-#getBestTrace!(best_psms)
-value_counts(df, col) = combine(groupby(df, col), nrow);
-IDs_PER_FILE = value_counts(best_psms[(best_psms[:,:q_value].<=0.01).&(best_psms[:,:decoy].==false),:], [:file_name])
-precursors_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
-
-best_psms_passing = copy(best_psms)#copy(best_psms[(best_psms[!,:target]).&(best_psms[!,:q_value].<=0.01),:])
-best_psms_passing[!,:peak_area] = zeros(Float32, size(best_psms_passing, 1))
-best_psms_passing[!,:new_best_scan] = zeros(UInt32, size(best_psms_passing, 1))
-best_psms_passing = groupby(best_psms_passing, :file_name)

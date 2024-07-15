@@ -375,16 +375,16 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         prec_mz,
                         prec_charge, 
                         prec_sulfur_count,
-                        frag)
+                        frag,
+                        #prec_isotope_set
+                        )
         for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
 
             frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
             if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
                 continue
             end
-            if isotopes[iso_idx + 1] < 0.0001
-                continue
-            end
+
             transition_idx += 1
             transitions[transition_idx] = DetailedFrag(
                 frag.prec_id,
