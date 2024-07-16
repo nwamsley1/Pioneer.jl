@@ -99,6 +99,8 @@
     },
     "benchmark_params":
     {   
-        "results_folder": "/Users/n.t.wamsley/TEST_DATA/PXD046444/test_out/"
-    }
+        "results_folder": "/Users/n.t.wamsley/Desktop/testresults"
+    },
+    "library_folder": "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib",
+    "ms_data_dir":"/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
 }

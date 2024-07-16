@@ -1,7 +1,6 @@
 #Uniform Cubic Smoothing Spline
 #Given number of evenly spaced control points and data (time, value)
 #solve coefficients for B-spline basis. Then build a speedy implementation. 
-using Polynomials, StaticArrays, Plots
 
 struct UniformSpline{N, T<:AbstractFloat} 
     coeffs::SVector{N, T}

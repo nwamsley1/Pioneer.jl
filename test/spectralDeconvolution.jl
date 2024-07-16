@@ -1,4 +1,4 @@
-using GLM
+
 #Design matrix from an actual scan 
 Hs = load("data/Hs.jld2")["Hs"]
 N = Hs.n_vals

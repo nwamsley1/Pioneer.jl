@@ -1,6 +1,6 @@
+function pioneer_main()
 println("pwd ", pwd())
 #total_time = @timed begin
-const methods_path = joinpath(pwd(), "src","Routines","LibrarySearch")
 include(joinpath(methods_path,"loadParamsAndData.jl"))
 ###########
 #Pre-Search
@@ -49,20 +49,20 @@ println("Begining XGBoost...")
 score_traces_time = @timed begin
     include(joinpath(methods_path,"scoreTraces.jl"))
 end
-const traces_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
+traces_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
 println("Scored Traces In ", score_traces_time.time, " seconds")
 
 ###########
 #Score Protein Groups
 scored_proteins = scoreProteinGroups!(best_psms)
 protein_to_q_value = Dict{Tuple{UInt32, String}, Float32}()
-for i in ProgressBar(range(1, size(best_proteins, 1)))
+for i in ProgressBar(range(1, size(scored_proteins, 1)))
     protein_to_q_value[
         (
-            UInt32(best_proteins[i,:ms_file_idx]),
-            best_proteins[i,:accession_numbers]
+            UInt32(scored_proteins[i,:ms_file_idx]),
+            scored_proteins[i,:accession_numbers]
         )
-    ] = best_proteins[i,:q_value]
+    ] = scored_proteins[i,:q_value]
 end
 
 ###########
@@ -85,7 +85,7 @@ filter!(x->x.best_trace, best_psms)
 getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
 #filter out decoys and low-scoring targets
 filter!(x->(x.q_value<=0.01)&(x.target)&(!isnan(x.peak_area)), best_psms)
-IDs_PER_FILE = value_counts(best_psms, [:file_name])
+#IDs_PER_FILE = value_counts(best_psms, [:file_name])
 best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
 ###########
 #Normalize Quant 
@@ -101,7 +101,7 @@ best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_
 best_psms[!,:ms_file_idx] =  UInt32.(best_psms[!,:ms_file_idx])
 best_psms[!,:peak_area] =  allowmissing(best_psms[!,:peak_area])
 best_psms[!,:peak_area_normalized] =  allowmissing(best_psms[!,:peak_area_normalized])
-gbpsms = groupby(best_psms_passing,:ms_file_idx)
+gbpsms = groupby(best_psms,:ms_file_idx)
 file_idx_dicts = [Dict{UInt32, @NamedTuple{prob::Float32, qvalue::Float32, peak_area::Float32}}() for _ in range(1, length(gbpsms))]
 for (file_idx, bpsms) in ProgressBar(pairs(gbpsms))
     for i in range(1, size(bpsms, 1))
@@ -120,12 +120,14 @@ features = [:species,:accession_numbers,:sequence,:structural_mods,
              :y_count,:p_count,:non_cannonical_count,:isotope_count
              ,:matched_ratio]
 sort!(best_psms,[:species,:accession_numbers,:sequence,:target])
-Arrow.write(joinpath(results_path,"best_psms.arrow"),best_psms[!,features])
+Arrow.write(joinpath(results_folder,"best_psms.arrow"),best_psms[!,features])
 wide_psms_quant = unstack(best_psms,[:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],:file_name,:peak_area_normalized)
 sort!(wide_psms_quant,[:species,:accession_numbers,:sequence,:target])
-CSV.write(joinpath(results_path,"best_psms_wide.arrow"),wide_psms_quant)
+CSV.write(joinpath(results_folder,"best_psms_wide.arrow"),wide_psms_quant)
 
 #Summarize Precursor ID's
+value_counts(df, col) = combine(groupby(df, col), nrow)
+
 precursor_id_table = value_counts(best_psms,:file_name)
 #CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
 
@@ -141,7 +143,7 @@ protein_quant[!,:file_name] = [file_id_to_parsed_name[ms_file_idx] for ms_file_i
 #Wide DataFormat 
 wide_protein_quant = unstack(protein_quant,[:species,:protein,:target],:experiments,:log2_abundance)
 sort!(wide_protein_quant,[:species,:protein,:target])
-CSV.write(joinpath(results_path,"proteins_wide.csv"),wide_protein_quant)
+CSV.write(joinpath(results_folder,"proteins_wide.csv"),wide_protein_quant)
 ###########
 #QC Plots
 ###########
@@ -150,3 +152,4 @@ score_traces_time = @timed begin
     include(joinpath(methods_path,"qcPlots.jl"))
 end
 
+end

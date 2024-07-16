@@ -5,7 +5,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     params_[:first_search_params]["n_frag_isotopes"] = 1
     #params_[:first_search_params]["min_spectral_contrast"] = 0.5#acos(0.5)
     #params_[:first_search_params]["min_log2_matched_ratio"] = 0.0
-    @time PSMs = vcat(LibrarySearch(
+    PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
         frag_index = prosit_lib["f_index"],
@@ -78,28 +78,14 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
-
-
-    println("psms at 1% ", sum((PSMs[!,:q_value].<0.01).&(PSMs[!,:target])))
-    println("unique precursors at 1% ", length(unique(PSMs[(PSMs[!,:q_value].<0.01).&(PSMs[!,:target]),:precursor_idx])))
-
     getBestPSMs!(PSMs,
                     prosit_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
 
-    sum(PSMs[!,:q_value].<=0.01)
-    sum(PSMs[!,:q_value].<=0.1)
-
     insert!(PSMs_Dict, 
         file_id_to_parsed_name[ms_file_idx], 
         PSMs
     );
 end
-jldsave("/Users/n.t.wamsley/Desktop/psms_dict_new_070924.jld2"; PSMs_Dict)
-jldsave("/Users/n.t.wamsley/Desktop/precIdToIrt_new_070924.jld2"; precID_to_iRT)
-#=
-plot(LinRange(-1.5, 1.5, 100),
- [QuadTransmission(1.0f0, 3.0f0)(0.0, x) for x in LinRange(-1.5, 1.5, 100)])
-=#

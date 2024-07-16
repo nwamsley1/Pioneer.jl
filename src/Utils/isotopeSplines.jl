@@ -1,9 +1,8 @@
-using LightXML, Base64, Polynomials
+
 
 function DecodeCoefficients(encoded::String)
     return reinterpret(Float64, Base64.base64decode(encoded))
 end
-using Polynomials, StaticArrays, Plots
 
 struct CubicSpline{N, T<:AbstractFloat} 
     coeffs::SVector{N, T}

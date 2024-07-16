@@ -5,7 +5,9 @@ function scoreProteinGroups!(bpsms::DataFrame)
     gbpsms = groupby(
                         best_psms[!,
                         [:ms_file_idx,:target,:accession_numbers,:sequence,:prob,:max_pg_score,:peptide_count]], 
-                        [:ms_file_idx,:target,:accession_numbers])
+                        [:ms_file_idx,:target,:accession_numbers]
+                    )
+                    
     function setScore!(
         max_pg_scores::AbstractVector{Float32},
         peptide_counts::AbstractVector{UInt8},

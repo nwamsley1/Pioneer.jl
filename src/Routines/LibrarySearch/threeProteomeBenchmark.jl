@@ -108,7 +108,7 @@ function getModifiedSequence(
     return insert_at_indices(sequence, mods)
 end
 
-using FASTX, CodecZlib
+
 function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(x,"|")[2])
 
     function getReader(fasta_path::String)

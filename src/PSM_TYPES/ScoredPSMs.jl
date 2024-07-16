@@ -1,6 +1,5 @@
 abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 
-using SpecialFunctions
 
 struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     #H is "high precision"

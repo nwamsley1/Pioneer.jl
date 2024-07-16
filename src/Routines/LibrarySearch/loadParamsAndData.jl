@@ -3,24 +3,34 @@
 ##########
 #Data Parsing/Printing
 println("Importing Libraries...")
-
-using ArgParse
-using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
-using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
-#DataStructures 
-using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays, StaticArrays
-#Algorithms 
-using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, LinearSolve
+#=
+using Arrow, ArgParse
+using BSplineKit, Base64
 using Base.Order
 using Base.Iterators: partition
-using PDFmerger, Measures
+using CSV, CategoricalArrays, Combinatorics, CodecZlib
+using DataFrames, DataStructures, Ditionaries, Distributions 
+using ExpectationMaximization
+using FASTX
+using Interpolations
+using JSON, JLD2
+using LinearAlgebra, LoopVectorization, LsqFit, LinearSolve, LightXML
+using Measures
+using NumericalIntegration
+using Plots, PrettyPrinting, Polynomials
+using Tables, DataFrames, ProgressBars
+using StatsPlots
+using Plots, PrettyPrinting, PDFmerger 
+using Random
+using StaticArrays, StatsBase, SpecialFunctions, Statistics
+using XGBoost
+=#
 
 ##########
 #Parse Arguments 
 ##########
 #Example Usage 
-#julia --threads 24 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/Projects/PROSIT/TEST_DATA/MOUSE_TEST /Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423 -s true 
-#julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/ -s true
+#julia --threads 12 src/Routines/LibrarySearch/MAIN.jl data/example_config/LibrarySearch.json
 #julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_start2 -s true -e TEST_EXP
 function parse_commandline()
     s = ArgParseSettings()
@@ -28,12 +38,6 @@ function parse_commandline()
     @add_arg_table! s begin
         "params_json"
             help = "Path to a .json file with the parameters"
-            required = true
-        "data_dir"
-            help = "Path to a folder with .arrow MS data tables"
-            required = true
-        "spec_lib_dir"
-            help = "Path to a tab delimited table of transitions"
             required = true
         "--experiment_name", "-e"
             help = "Name of subdirectory for output"
@@ -47,9 +51,10 @@ function parse_commandline()
 end
 
 println("Parsing Arguments...")
-ARGS = parse_commandline();
-
-params = JSON.parse(read(ARGS["params_json"], String));
+ARGS = Dict(
+    "params_json"=>"data/example_config/LibrarySearch.json"
+)
+#ARGS = parse_commandline();
 #=
 library_fragment_lookup_table.prec_frag_ranges[end] = 0x29004baf:(0x29004be8 - 1)
 3-protome PC test March 4th 2024 for hupo
@@ -67,9 +72,11 @@ MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(
 EXPERIMENT_NAME = "EXPERIMENT"
 =#
 
-MS_DATA_DIR = ARGS["data_dir"];
-EXPERIMENT_NAME = ARGS["experiment_name"];
-SPEC_LIB_DIR = ARGS["spec_lib_dir"];
+params = JSON.parse(read(ARGS["params_json"], String));
+EXPERIMENT_NAME = "EXPERIMENT"
+params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
+MS_DATA_DIR = params["ms_data_dir"];
+SPEC_LIB_DIR = params["library_folder"];
 
 #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
@@ -137,7 +144,7 @@ end
 #Load Dependencies 
 ##########
 #Fragment Library Parsing
-
+#=
 [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
@@ -155,13 +162,17 @@ end
                                                                     "globalConstants.jl",
                                                                     "uniformBasisCubicSpline.jl",
                                                                     "isotopeSplines.jl",
-                                                                    "Normalization.jl",
+                                                                    "normalizeQuant.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",
                                                                     "plotRTAlignment.jl",
                                                                     "probitRegression.jl",
-                                                                    "partitionThreadTasks.jl"]];
+                                                                    "partitionThreadTasks.jl",
+                                                                    "LFQ.jl",
+                                                                    "scoreProteinGroups.jl",
+                                                                    "wittakerHendersonSmoothing.jl",
+                                                                    "getBestTrace.jl"]];
 
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
@@ -173,11 +184,11 @@ end
                                                                                     "buildRTIndex.jl",
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
-                                                                                    #"integrateChroms.jl",
+                                                                                    "integrateChroms.jl",
                                                                                     "queryFragmentIndex.jl"]];
                                              
 
-
+=#
 ###########
 #Load Spectral Libraries
 ###########

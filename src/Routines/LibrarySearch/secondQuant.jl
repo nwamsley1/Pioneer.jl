@@ -23,7 +23,7 @@ function getChromatograms(
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
                                 precursors,
-                                precursors_passing,
+                                kwargs[:traces_passing],
                                 kwargs[:fragment_lookup_table], 
                                 kwargs[:ms_file_idx],
                                 kwargs[:rt_to_irt_spline],
@@ -82,7 +82,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            precursors_passing = traces_passing,
+            traces_passing = traces_passing,
             quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
 
