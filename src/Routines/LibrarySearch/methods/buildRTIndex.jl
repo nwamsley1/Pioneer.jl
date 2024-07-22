@@ -29,7 +29,7 @@ function mapRTandiRT(psms_dict::Dictionary{String, DataFrame};
     #prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
     iRT_RT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
     RT_iRT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
-    for (key, psms) in ProgressBar(pairs(psms_dict)) #For each data frame 
+    for (key, psms) in pairs(psms_dict) #For each data frame 
         psms[!,:file_path] .= key #Add column for file name
 
         #insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
@@ -82,7 +82,7 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame},
     end
     sort!(prec_to_count, rev = true)
     best_precs = collect(keys(prec_to_count))[1:min(max_precursors, length(keys(prec_to_count)))]
-    for prec_idx in ProgressBar(best_precs) #For each precursor 
+    for prec_idx in best_precs #For each precursor 
         prec_psms = grouped_psms[(precursor_idx = prec_idx,)]
         #Best scan for the precursor accross the experiment
         best_scan = argmax(prec_psms.prob) 
@@ -157,7 +157,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
     #iRT dict
     #iRT_dict = Dictionary{String, UnorderedDictionary{UInt32, Float32}}()
-    for (file_path, psms) in ProgressBar(pairs(psms_dict)) #For each file in the experiment
+    for (file_path, psms) in pairs(psms_dict) #For each file in the experiment
         #Impute empirical iRT value for psms with probability lower than the threshold
         #filter!(x->x.prob>=min_prob, psms); 
         iRTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))

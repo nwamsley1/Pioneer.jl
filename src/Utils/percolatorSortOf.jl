@@ -1,21 +1,3 @@
-#=
-function getQvalues!(PSMs::DataFrame, probs::Vector{Union{Missing, Float64}}, labels::Vector{Union{Missing, Bool}})
-    #Could bootstratp to get more reliable values. 
-    q_values = zeros(Float64, (length(probs),))
-    order = reverse(sortperm(probs)) #Sort class probabilities
-    targets = 0
-    decoys = 0
-    for i in order
-        if labels[i] == true
-            decoys += 1
-        else
-            targets += 1
-        end
-        q_values[i] = decoys/(targets + decoys)
-    end
-    PSMs[:,:q_value] = q_values;
-end
-=#
 function getQvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}) where {T,U<:AbstractFloat}
 
     order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
@@ -63,23 +45,6 @@ function getProbQuantiles!(psms::DataFrame, prob_column::Symbol, features::Vecto
     end 
 end
 
-#=
-function getPgCount!(psms::DataFrame, prob_column::Symbol, features::Vector{Symbol}, bst::Booster)
-    psms[!,prob_column] = XGBoost.predict(bst, psms[!,features])
-    grouped_psms = groupby(psms, [:precursor_idx,:isotopes_captured]); #
-    for i in range(1, length(grouped_psms))
-        median_prob = median(grouped_psms[i][!,prob_column])
-        max_prob = minimum(grouped_psms[i][!,prob_column])
-        q90_prob = quantile(grouped_psms[i][!,prob_column], 0.9)
-        for j in range(1, size(grouped_psms[i], 1))
-            grouped_psms[i][j,:median_prob] = median_prob
-            grouped_psms[i][j,:max_prob] = max_prob
-            grouped_psms[i][j,:q90_prob] = q90_prob
-        end
-    end
-end
-=#
-
 function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; 
                     colsample_bytree::Float64 = 0.5, 
                     colsample_bynode::Float64 = 0.5,
@@ -96,7 +61,7 @@ function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol};
     PSMs[!,:max_pg_score] = zeros(Float32, size(PSMs, 1))
     PSMs[!,:pg_count] = zeros(UInt16, size(PSMs, 1))
     PSMs[!,:pepgroup_count] = zeros(UInt16, size(PSMs, 1))
-    folds = best_psms[!,:cv_fold]
+    folds = PSMs[!,:cv_fold]
     unique_cv_folds = unique(folds)
     bst = ""
     Random.seed!(128);

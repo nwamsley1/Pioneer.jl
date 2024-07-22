@@ -3,11 +3,11 @@ function scoreProteinGroups!(bpsms::DataFrame)
     bpsms[!,:peptide_count] = zeros(UInt8, size(bpsms, 1))
     bpsms[!,:max_pg_score] = zeros(Float32, size(bpsms, 1))
     gbpsms = groupby(
-                        best_psms[!,
+                        bpsms[!,
                         [:ms_file_idx,:target,:accession_numbers,:sequence,:prob,:max_pg_score,:peptide_count]], 
                         [:ms_file_idx,:target,:accession_numbers]
                     )
-                    
+
     function setScore!(
         max_pg_scores::AbstractVector{Float32},
         peptide_counts::AbstractVector{UInt8},

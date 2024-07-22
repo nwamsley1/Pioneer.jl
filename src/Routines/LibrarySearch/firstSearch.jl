@@ -1,10 +1,30 @@
+
+
+function firstSearch(
+                    RT_to_iRT_map_dict,
+                    frag_err_dist_dict,
+                    irt_errs,
+                    file_id_to_parsed_name,
+                    MS_TABLE_PATHS,
+                    params_,
+                    prosit_lib,
+                    library_fragment_lookup_table,
+                    ionMatches,
+                    ionMisses,
+                    all_fmatches,
+                    IDtoCOL,
+                    ionTemplates,
+                    iso_splines,
+                    scored_PSMs,
+                    unscored_PSMs,
+                    spectral_scores,
+                    precs)
 PSMs_Dict = Dictionary{String, DataFrame}()
 
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     params_[:first_search_params]["n_frag_isotopes"] = 1
-    #params_[:first_search_params]["min_spectral_contrast"] = 0.5#acos(0.5)
-    #params_[:first_search_params]["min_log2_matched_ratio"] = 0.0
+
     PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
@@ -89,3 +109,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         PSMs
     );
 end
+return PSMs_Dict
+end
+

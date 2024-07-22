@@ -395,7 +395,7 @@ function correctPrecursorAbundances!(
     precursor_mzs::AbstractVector{Float32},
     precursor_charges::AbstractVector{UInt8},
     sulfur_counts::AbstractVector{UInt8}) where {I<:Real}
-    for i in ProgressBar(range(1, length(abundances)))
+    for i in range(1, length(abundances))
         prec_isotopes = precursor_isotopes[i]
         prec_idx = precursor_idxs[i]
         sulfur_count = sulfur_counts[prec_idx]

@@ -56,7 +56,7 @@ println("Scored Traces In ", score_traces_time.time, " seconds")
 #Score Protein Groups
 scored_proteins = scoreProteinGroups!(best_psms)
 protein_to_q_value = Dict{Tuple{UInt32, String}, Float32}()
-for i in ProgressBar(range(1, size(scored_proteins, 1)))
+for i in range(1, size(scored_proteins, 1))
     protein_to_q_value[
         (
             UInt32(scored_proteins[i,:ms_file_idx]),
@@ -103,7 +103,7 @@ best_psms[!,:peak_area] =  allowmissing(best_psms[!,:peak_area])
 best_psms[!,:peak_area_normalized] =  allowmissing(best_psms[!,:peak_area_normalized])
 gbpsms = groupby(best_psms,:ms_file_idx)
 file_idx_dicts = [Dict{UInt32, @NamedTuple{prob::Float32, qvalue::Float32, peak_area::Float32}}() for _ in range(1, length(gbpsms))]
-for (file_idx, bpsms) in ProgressBar(pairs(gbpsms))
+for (file_idx, bpsms) in pairs(gbpsms)
     for i in range(1, size(bpsms, 1))
             file_idx_dicts[file_idx[:ms_file_idx]][bpsms[i,:precursor_idx]] = (
               prob = bpsms[i,:prob],

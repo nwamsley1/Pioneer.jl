@@ -1,4 +1,27 @@
-function getChromatograms(
+function secondQuant!( 
+    grouped_best_psms,   
+    frag_err_dist_dict,
+    traces_passing,
+    RT_INDICES,
+    RT_iRT,
+    irt_err,
+    chromatograms,
+    file_id_to_parsed_name,
+    MS_TABLE_PATHS,
+    params_,
+    precursors,
+    prosit_lib,
+    library_fragment_lookup_table,
+    ionMatches,
+    ionMisses,
+    IDtoCOL,
+    ionTemplates,
+    iso_splines,
+    complex_scored_PSMs,
+    complex_unscored_PSMs,
+    complex_spectral_scores,
+    precursor_weights)
+function secondQuant(
                     #Mandatory Args
                     spectra::Arrow.Table, 
                     params::Any;
@@ -57,12 +80,13 @@ function getChromatograms(
     psms = fetch.(tasks)
     return psms
 end
+
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
-        chroms = vcat(getChromatograms(
+        chroms = vcat(secondQuant(
             MS_TABLE, 
             params_;
             precursors = prosit_lib["precursors"],
@@ -102,4 +126,5 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"])
                             )
         #BPSMS[ms_file_idx] = psms_integrated;
+end
 end

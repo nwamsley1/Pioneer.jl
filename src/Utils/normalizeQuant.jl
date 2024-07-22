@@ -13,8 +13,7 @@ function getQuantSplines(
     N::Int = 100,
     spline_n_knots::Int = 7)
     quant_splines = Dictionary{String, UniformSpline}()
-    for key in keys(gpsms)
-        psms = gpsms[key]
+    for (key, psms) in pairs(gpsms)
         #psms = psms[psms[!,:species].=="HUMAN",:]
         sort!(psms, :RT, alg = QuickSort)
         nprecs = size(psms, 1)

@@ -386,7 +386,7 @@ function secondSearch(
                     rt_index::retentionTimeIndex{Float32, Float32},
                     irt_tol::Float64,
                     spec_order::Set{Int64}
-                    ) where {T, L<:LibraryIon{Float32},
+                    ) where {L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
                     R<:SpectralScores{Float16}}
@@ -602,7 +602,6 @@ function getChromatograms(
                     irt_tol::Float64,
                     spec_order::Set{Int64}
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
-                    S<:ScoredPSM{Float32, Float16},
                     Q<:UnscoredPSM{Float32},
                     R<:SpectralScores{Float16}}
 
@@ -906,14 +905,14 @@ function LibrarySearch(
                                 kwargs[:ms_file_idx],
                                 kwargs[:mass_err_model],
                                 kwargs[:quad_transmission_func],
-                                ionMatches[thread_id],
-                                ionMisses[thread_id],
-                                IDtoCOL[thread_id],
-                                ionTemplates[thread_id],
-                                iso_splines,
-                                scored_PSMs[thread_id],
-                                unscored_PSMs[thread_id],
-                                spectral_scores[thread_id],
+                                kwargs[:ion_matches][thread_id],
+                                kwargs[:ion_misses][thread_id],
+                                kwargs[:id_to_col][thread_id],
+                                kwargs[:ion_templates][thread_id],
+                                kwargs[:iso_splines],
+                                kwargs[:scored_psms][thread_id],
+                                kwargs[:unscored_psms][thread_id],
+                                kwargs[:spectral_scores][thread_id],
                                 Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
                                 kwargs[:params]["min_frag_count"],
                                 Float32(kwargs[:params]["min_spectral_contrast"]),

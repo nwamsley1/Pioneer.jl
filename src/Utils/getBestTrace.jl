@@ -28,7 +28,7 @@ function getBestTrace!(psms::DataFrame,
     grouped_psms = groupby(psms, :precursor_idx)
     #partition(1:length(grouped_psms), chunk_size)
     #For each precursor
-    for i in ProgressBar(range(1, length(grouped_psms)))
+    for i in range(1, length(grouped_psms))
 
         #For all psms for the given precursor
         #group by isotope subsets 

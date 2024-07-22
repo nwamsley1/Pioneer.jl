@@ -140,7 +140,7 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8), #rank
                 zero(UInt8)  #sulfur_count
  )
-
+export DetailedFrag
 struct LibraryFragmentLookup{T<:AbstractFloat}
     frags::Vector{DetailedFrag{T}}
     prec_frag_ranges::Vector{UnitRange{UInt32}}
