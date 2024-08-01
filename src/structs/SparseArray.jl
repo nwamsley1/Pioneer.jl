@@ -6,6 +6,7 @@ mutable struct SparseArray{Ti<:Integer,T<:AbstractFloat}
     colval::Vector{UInt16}
     nzval::Vector{T}
     matched::Vector{Bool}
+    isotope::Vector{UInt8}
     x::Vector{T}
     colptr::Vector{Ti}
 end
@@ -17,6 +18,7 @@ SparseArray(N::I) where {I<:Integer} = SparseArray(
                     zeros(UInt16, N), #colval 
                     zeros(Float32, N), #nzval
                     ones(Bool, N), #matched,
+                    zeros(UInt8, N), #isotope
                     zeros(Float32, N), #x
                     zeros(I, N), #colptr
 
@@ -32,6 +34,7 @@ SparseArray(N::I) where {I<:Integer} = SparseArray(
             v.nzval[mi], v.nzval[lo] = v.nzval[lo], v.nzval[mi]
             v.x[mi], v.x[lo] = v.x[lo], v.x[mi]
             v.matched[mi], v.matched[lo] = v.matched[lo], v.matched[mi]
+            v.isotope[mi], v.isotope[lo] = v.isotope[lo], v.isotope[mi]
         end
 
         if lt(o, v.colval[hi], v.colval[lo])
@@ -42,6 +45,7 @@ SparseArray(N::I) where {I<:Integer} = SparseArray(
                 v.nzval[hi], v.nzval[lo], v.nzval[mi] = v.nzval[lo], v.nzval[mi], v.nzval[hi]
                 v.x[hi], v.x[lo], v.x[mi] = v.x[lo], v.x[mi], v.x[hi]
                 v.matched[hi], v.matched[lo], v.matched[mi] = v.matched[lo], v.matched[mi], v.matched[hi]
+                v.isotope[hi], v.isotope[lo], v.isotope[mi] = v.isotope[lo], v.isotope[mi], v.isotope[hi]
 
             else
                 #v[hi], v[lo] = v[lo], v[hi]
@@ -50,11 +54,12 @@ SparseArray(N::I) where {I<:Integer} = SparseArray(
                 v.nzval[hi], v.nzval[lo] = v.nzval[lo], v.nzval[hi] 
                 v.x[hi], v.x[lo] = v.x[lo], v.x[hi] 
                 v.matched[hi], v.matched[lo] = v.matched[lo], v.matched[hi] 
+                v.isotope[hi], v.isotope[lo] = v.isotope[lo], v.isotope[hi] 
             end
         end
 
         # return the pivot
-        return v.colval[lo], v.rowval[lo], v.nzval[lo], v.x[lo], v.matched[lo]
+        return v.colval[lo], v.rowval[lo], v.nzval[lo], v.x[lo], v.matched[lo], v.isotope[lo]
     end
 end
 
@@ -72,13 +77,14 @@ function partition!(v::SparseArray{Ti, T}, lo::Integer, hi::Integer, o::Ordering
         v.nzval[i], v.nzval[j] = v.nzval[j], v.nzval[i]
         v.x[i], v.x[j] = v.x[j], v.x[i]
         v.matched[i], v.matched[j] = v.matched[j], v.matched[i]
+        v.isotope[i], v.isotope[j] = v.isotope[j], v.isotope[i]
     end
     v.colval[j], v.colval[lo] = pivot[1], v.colval[j]
     v.rowval[j], v.rowval[lo] = pivot[2], v.rowval[j]
     v.nzval[j], v.nzval[lo] = pivot[3], v.nzval[j]
     v.x[j], v.x[lo] = pivot[4], v.x[j]
     v.matched[j], v.matched[lo] = pivot[5], v.matched[j]
-
+    v.isotope[j], v.isotope[lo] = pivot[6], v.isotope[j]
     # v[j] == pivot
     # v[k] >= pivot for k > j
     # v[i] <= pivot for i < j
@@ -113,6 +119,7 @@ function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) wh
         nzval_x = v.nzval[i]
         x_x = v.x[i]
         matched_x = v.matched[i]
+        isotope_x = v.isotope[i]
         while j > lo
             #y = v[j-1]
             col_y = v.colval[j - 1]
@@ -120,6 +127,7 @@ function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) wh
             nzval_y = v.nzval[j - 1]
             x_y = v.x[j - 1]
             matched_y = v.matched[j - 1]
+            isotope_y = v.isotope[j - 1]
             if !(lt(o, col_x, col_y)::Bool)
                 break
             end
@@ -128,6 +136,7 @@ function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) wh
             v.nzval[j] = nzval_y
             v.x[j] = x_y
             v.matched[j] = matched_y
+            v.isotope[j] = isotope_y
             j -= 1
         end
         v.colval[j] = col_x
@@ -135,6 +144,7 @@ function smallsort!(v::SparseArray{Ti, T}, lo::Int64, hi::Int64, o::Ordering) wh
         v.nzval[j] = nzval_x
         v.x[j] = x_x
         v.matched[j] = matched_x
+        v.isotope[j] = isotope_x
     end
     #scratch
 end
@@ -143,12 +153,16 @@ end
 
 function reset!(sa::SparseArray{Ti,T}) where {Ti<:Integer,T<:AbstractFloat}
     @turbo for i in range(1, sa.n_vals)
+    #for i in range(1, sa.n_vals)
         sa.colval[i] = zero(UInt16)
         sa.rowval[i] = zero(Ti)
         sa.x[i] = zero(T)
         sa.nzval[i] = zero(T)
         sa.matched[i] = true
         sa.colptr[i] = zero(Ti)
+    end
+    @turbo for i in range(1, sa.n_vals)
+        sa.isotope[i] = zero(eltype(sa.isotope))
     end
     sa.n_vals = 0
     sa.m = 0
@@ -189,19 +203,16 @@ end
 
 function initResiduals!( r::Vector{T}, sa::SparseArray{Ti,T}, w::Vector{T}) where {Ti<:Integer,T<:AbstractFloat}
     #resize if necessary
-    if length(r) < sa.n_vals
-        append!(r, zeros(T, sa.n_vals - length(r)))
+    if length(r) < sa.m
+        append!(r, zeros(T, sa.m - length(r)))
     end
 
+    @turbo for i in range(1, sa.m)
+        r[i] = zero(T)
+    end
 
-    for col in range(1, sa.n)
-        start = sa.colptr[col]
-        stop = sa.colptr[col+1] - 1
-        #@turbo for n in start:stop
-
-        for n in start:stop
-            #println("lemgth(sa.x) ", length(sa.x) ,  " n $n")
-            #println("length(sa.rowval) ", length(sa.rowval) ,  " sa.rowval[n] ", sa.rowval[n], " n $n stop $stop")
+    for n in range(1, sa.n_vals)
+        if iszero(r[sa.rowval[n]])
             r[sa.rowval[n]] = -sa.x[n]
         end
     end

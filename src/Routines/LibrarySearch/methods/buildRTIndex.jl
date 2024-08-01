@@ -29,7 +29,7 @@ function mapRTandiRT(psms_dict::Dictionary{String, DataFrame};
     #prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
     iRT_RT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
     RT_iRT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
-    for (key, psms) in ProgressBar(pairs(psms_dict)) #For each data frame 
+    for (key, psms) in pairs(psms_dict) #For each data frame 
         psms[!,:file_path] .= key #Add column for file name
 
         #insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
@@ -82,7 +82,7 @@ function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame},
     end
     sort!(prec_to_count, rev = true)
     best_precs = collect(keys(prec_to_count))[1:min(max_precursors, length(keys(prec_to_count)))]
-    for prec_idx in ProgressBar(best_precs) #For each precursor 
+    for prec_idx in best_precs #For each precursor 
         prec_psms = grouped_psms[(precursor_idx = prec_idx,)]
         #Best scan for the precursor accross the experiment
         best_scan = argmax(prec_psms.prob) 
@@ -157,7 +157,7 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
     #iRT dict
     #iRT_dict = Dictionary{String, UnorderedDictionary{UInt32, Float32}}()
-    for (file_path, psms) in ProgressBar(pairs(psms_dict)) #For each file in the experiment
+    for (file_path, psms) in pairs(psms_dict) #For each file in the experiment
         #Impute empirical iRT value for psms with probability lower than the threshold
         #filter!(x->x.prob>=min_prob, psms); 
         iRTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
@@ -198,54 +198,29 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     return rt_indices
 end
 
-function getBestTrace!(psms::DataFrame,
-                       max_q_value::AbstractFloat,
-                       quant_col::Symbol)
-
-    psms[!,:best_trace] .= false
-    grouped_psms = groupby(psms, [:precursor_idx])
-
-    #For each precursor
-    for i in ProgressBar(range(1, length(grouped_psms)))
-
-        #For all psms for the given precursor
-        #group by isotope subsets 
-        iso_sets = groupby(grouped_psms[i],:isotopes_captured)
-        best_iso_set = nothing
-        best_score = typemin(Float32)
-        for (iso_set, psms) in pairs(iso_sets)
-            #Score is sum of peak areas where the q_value was 
-            #below the threshold 
-            score = zero(Float32)
-            for i in range(1, size(psms, 1))
-                score += psms[i,quant_col]*(psms[i,:q_value]<=max_q_value)
-            end
-
-            #If the score is the best encountered so far, 
-            #then this it he best isotope trace so far. 
-            if score > best_score
-                best_score = score
-                best_iso_set = iso_set
-            end
-        end
-
-        if best_iso_set !== nothing
-            iso_sets[best_iso_set][!,:best_trace] .= true
-        end
-
+function getCVFolds(
+                prec_ids::AbstractVector{UInt32},
+                protein_groups::AbstractVector{String}
+                )
+    uniq_pgs = unique(protein_groups) #Unique protein groups
+    pg_to_cv_fold = Dictionary{String, UInt8}() #Protein group to cross-validation fold
+    #Map protein groups to cv folds 
+    for pg in uniq_pgs
+        insert!(pg_to_cv_fold,
+        pg,
+        rand(UInt8[0, 1])
+        )
     end
-
-    #filter!(x->x.best_trace, psms);
-end
-
-function getCVFolds(precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}})
-    precID_to_cv_fold = Dictionary{UInt32, UInt8}()
-    for (prec_id, irt) in pairs(precID_to_iRT)
-        insert!(precID_to_cv_fold,
-        prec_id,
-        rand(UInt8[0, 1]))
+    #Now map pid's to cv folds 
+    pid_to_cv_fold = Dictionary{UInt32, UInt8}()
+    for pid in prec_ids
+        insert!(
+        pid_to_cv_fold,
+        pid,
+        pg_to_cv_fold[protein_groups[pid]]
+        )
     end
-    return precID_to_cv_fold
+    return pid_to_cv_fold
 end
 
 function getRTErr(psms_dict::Dictionary{String, DataFrame},

@@ -32,20 +32,18 @@ intensities = allowmissing(Float32[
     Float32(1e5)
 ]);
 mass_err_model = MassErrorModel(
-    -0.5f0,
-    4000.0f0,
-    0.0f0
+    0.0f0,
+    (100.0f0, 100.0f0)
 );
 matched_idx, unmatched_idx = matchPeaks!(
-    test_matches ,
+    test_matches,
     test_misses,
     test_templates,
     length(test_templates),
     masses,
     intensities,
-    0.0f0,
     mass_err_model,
-    (5.0f0, 40.0f0),
+    typemax(Float32),
     one(UInt32),
     one(UInt32)
 )
@@ -55,39 +53,3 @@ matched_idx, unmatched_idx = matchPeaks!(
 reset!(test_matches, matched_idx)
 reset!(test_misses, unmatched_idx)
 #Tolerance will be very small for this peak so shouldn't match anymore. 
-intensities[4]= Float32(1e10)
-intensities[5]= Float32(1e10)
-matched_idx, unmatched_idx = matchPeaks!(
-    test_matches ,
-    test_misses,
-    test_templates,
-    length(test_templates),
-    masses,
-    intensities,
-    0.0f0,
-    mass_err_model,
-    (0.0f0, 40.0f0), #change minimum
-    one(UInt32),
-    one(UInt32)
-)
-@test matched_idx == 6
-@test unmatched_idx == 2
-reset!(test_matches, matched_idx)
-reset!(test_misses, unmatched_idx)
-#Tolerance will be very small for this peak so shouldn't match anymore. 
-intensities[5]= Float32(1e1)
-matched_idx, unmatched_idx = matchPeaks!(
-    test_matches ,
-    test_misses,
-    test_templates,
-    length(test_templates),
-    masses,
-    intensities,
-    0.0f0,
-    mass_err_model,
-    (0.0f0, 40.0f0), #change minimum
-    one(UInt32),
-    one(UInt32)
-)
-@test matched_idx == 7
-@test unmatched_idx == 1

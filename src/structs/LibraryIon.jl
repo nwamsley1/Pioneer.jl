@@ -57,26 +57,6 @@ ArrowTypes.JuliaType(::Val{:SimpleFrag}) = SimpleFrag
 getScore(pbi::SimpleFrag)::UInt8 = pbi.score
 getIRT(pbi::SimpleFrag{T}) where {T<:AbstractFloat} = pbi.prec_irt
 
-struct PrositFrag
-    intensity::Float32
-    mass::Float32
-    type::Char
-    index::UInt8
-    charge::UInt8
-    sulfur_count::UInt8
-end
-
-getIntensity(pf::PrositFrag) = pf.intensity
-getMZ(pf::PrositFrag) = pf.mass
-getType(pf::PrositFrag) = pf.type
-getIndex(pf::PrositFrag) = pf.index
-getCharge(pf::PrositFrag) = pf.charge
-getSulfurCount(pf::PrositFrag) = pf.sulfur_count
-
-PrositFrag() = PrositFrag(zero(Float32), zero(Float32), 'y', zero(UInt8), zero(UInt8), zero(UInt8))
-ArrowTypes.arrowname(::Type{PrositFrag}) = :PrositFrag
-ArrowTypes.JuliaType(::Val{:PrositFrag}) = PrositFrag
-
 struct PioneerFrag
     mz::Float32
     intensity::Float16
@@ -90,7 +70,6 @@ struct PioneerFrag
     internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
     sulfur_count::UInt8
 end
-PrositFrag(pf::PioneerFrag) = PrositFrag(pf.intensity, pf.mz, pf.ion_type, pf.frag_index, pf.charge, pf.sulfur_count)
 getIntensity(pf::PioneerFrag) = pf.intensity
 getMZ(pf::PioneerFrag) = pf.mz
 getType(pf::PioneerFrag) = pf.ion_type
@@ -115,7 +94,6 @@ getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
 
 ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
 ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
-
 
 
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
@@ -162,29 +140,7 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8), #rank
                 zero(UInt8)  #sulfur_count
  )
-#=
-struct PrecFragRange
-    lb::UInt64
-    ub::UInt64
-end
-ArrowTypes.arrowname(::Type{PrecFragRange}) = :PrecFragRange
-ArrowTypes.JuliaType(::Val{:PrecFragRange}) = PrecFragRange
-
-
-struct LibraryFragmentLookup{T<:AbstractFloat}
-    frags::Arrow.Struct{DetailedFrag, Tuple{Arrow.Primitive{UInt32, Vector{UInt32}}, Arrow.Primitive{T, Vector{T}}, Arrow.Primitive{Float16, Vector{Float16}}, Arrow.BoolVector{Bool}, Arrow.BoolVector{Bool}, Vararg{Arrow.Primitive{UInt8, Vector{UInt8}}, 5}}, (:prec_id, :mz, :intensity, :is_y_ion, :is_isotope, :frag_charge, :ion_position, :prec_charge, :rank, :sulfur_count)}
-    prec_frag_ranges:: Arrow.Struct{PrecFragRange, Tuple{Arrow.Primitive{UInt64, Vector{UInt64}}, Arrow.Primitive{UInt64, Vector{UInt64}}}, (:lb, :ub)}
-end
-
-getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
-
-function getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} 
-    prec_frag_range = lfp.prec_frag_ranges[prec_idx]
-    return prec_frag_range.lb:prec_frag_range.ub
-end
-=#
-
-
+export DetailedFrag
 struct LibraryFragmentLookup{T<:AbstractFloat}
     frags::Vector{DetailedFrag{T}}
     prec_frag_ranges::Vector{UnitRange{UInt32}}

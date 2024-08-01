@@ -2,8 +2,8 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
                                         frag_bin_max_idx::UInt32,
                                         lower_bound_guess::UInt32,
                                         upper_bound_guess::UInt32,
+                                        frag_mz_min::Float32,
                                         frag_mz_max::Float32,
-                                        frag_mz_absolute_min::Float32,
                                         step_size::UInt32)
     
     initial_lower_bound_guess = lower_bound_guess
@@ -16,7 +16,7 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
         upper_bound_guess += step #Exponentially increasing guess 
         if upper_bound_guess > frag_bin_max_idx #If guess exceeds limits
             upper_bound_guess = frag_bin_max_idx #then set to maximum 
-            if (getHigh(frag_index_bins[lower_bound_guess]) < frag_mz_absolute_min)
+            if (getHigh(frag_index_bins[lower_bound_guess]) < frag_mz_min)
                 return upper_bound_guess, upper_bound_guess
             end
 
@@ -28,7 +28,7 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
     #fragment to match to fragment bins below `lower_bound_guess`
     #If this is the case, use the original lower bound. 
     n = one(UInt8)
-    while (getHigh(frag_index_bins[lower_bound_guess]) > frag_mz_absolute_min)
+    while (getHigh(frag_index_bins[lower_bound_guess]) > frag_mz_min)
         step = step >> one(UInt8)
         if (step > lower_bound_guess) | (step === zero(UInt32))
             return initial_lower_bound_guess, upper_bound_guess
@@ -128,7 +128,6 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
                         upper_bound_guess::UInt32,
                         frag_bins::AbstractArray{FragIndexBin},
                         fragments::AbstractArray{IndexFragment},
-                        frag_mz_absolute_min::Float32,
                         frag_mz_min::Float32, 
                         frag_mz_max::Float32, 
                         prec_mz_min::Float32,
@@ -139,8 +138,8 @@ function queryFragment!(prec_id_to_score::Counter{UInt32, UInt8},
         frag_bin_max_idx,
         lower_bound_guess,
         upper_bound_guess,
+        frag_mz_min,
         frag_mz_max,
-        frag_mz_absolute_min,
         UInt32(2048) #step size
     )
     #First frag_bin matching fragment tolerance
@@ -197,29 +196,12 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     intensities::AbstractArray{Union{Missing, U}}, 
                     rt_bin_idx::Int64,
                     irt_high::Float32, 
-                    ppm_err::Float32, 
                     mass_err_model::MassErrorModel,
-                    min_max_ppm::Tuple{Float32, Float32},
                     prec_mz::Float32, 
                     prec_tol::Float32, 
                     isotope_err_bounds::Tuple{Int64, Int64}
                     ) where {U<:AbstractFloat}
     
-    function getFragTol(mass::Float32, 
-                        ppm_err::Float32, 
-                        intensity::Float32, 
-                        mass_err_model::MassErrorModel,
-                        min_max_ppm::Tuple{Float32, Float32})
-        mass -= Float32(ppm_err*mass/1e6)
-        ppm = mass_err_model(intensity)
-        ppm = max(
-                    min(ppm, last(min_max_ppm)), 
-                    first(min_max_ppm)
-                    )
-        tol = ppm*mass/1e6
-        return Float32(mass - last(min_max_ppm)*mass/1e6), Float32(mass - tol), Float32(mass + tol)
-    end
-
     prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
     @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
@@ -229,10 +211,12 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
         min_frag_bin, max_frag_bin = first(sub_bin_range), last(sub_bin_range)
         lower_bound_guess, upper_bound_guess = min_frag_bin, min_frag_bin
 
-        for (mass, intensity) in zip(masses, intensities)
-
+        for mass in masses
             #Get intensity dependent fragment tolerance.
-            frag_absolute_min, frag_min, frag_max = mass_err_model(mass, log2(intensity), 0.995f0)#getFragTol(mass, ppm_err, intensity, mass_err_model, min_max_ppm)
+            #frag_absolute_min, frag_min, frag_max = mass_err_model(mass, log2(intensity), 0.995f0)
+            #corrected_mz, δ = getCorrectedMz(mass, intensity)
+
+            frag_min, frag_max = mass_err_model(mass)
             #For every precursor that could have produced the observed ion
             #award to it the corresponding score
             lower_bound_guess, upper_bound_guess = queryFragment!(prec_id_to_score, 
@@ -241,7 +225,6 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                                             upper_bound_guess,
                                             frag_bins,
                                             fragments,
-                                            frag_absolute_min,
                                             frag_min, 
                                             frag_max, 
                                             prec_min, 

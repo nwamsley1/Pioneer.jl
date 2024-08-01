@@ -6,16 +6,14 @@ precID_to_iRT = getPrecIDtoiRT(PSMs_Dict,
                                 RT_iRT, 
                                 max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
 const irt_err = getRTErr(PSMs_Dict, RT_iRT)
+#irt_err = 0.4
 RT_INDICES = makeRTIndices(PSMs_Dict,
                             precID_to_iRT,
                             RT_iRT,
-                            bin_rt_size = irt_err,
+                            bin_rt_size = 0.1,
                             min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
-precID_to_cv_fold = getCVFolds(precID_to_iRT)
-
-
     #const rt_err = 0.36
-    println("irt_err $irt_err")
+    #println("irt_err $irt_err")
 end
 
 #=

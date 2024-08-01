@@ -1,59 +1,23 @@
-using Titus
+using Pioneer
 using Documenter
-#using DemoCards
-DocMeta.setdocmeta!(Titus, :DocTestSetup, :(using Titus); recursive=true)
 
-#op_templates, op_theme = cardtheme("grid")
-#operations, operations_cb = makedemos("operations", op_templates)
-
-About = "Introduction" => "README.md"
-
-GettingStarted = "gettingstarted.md"
-
-UserGuide = "User's guide" => [
-        "interface.md"
-    ]
-
-DevGuide = "Developer's guide" => [
-        "wrappers.md"
-    ]
-
-Examples = "Examples" => [
-        "examples/test.md"
-    ]
-
-Index = "Index" => "index.md"
-
-License = "License" => "license.md"
-
-PAGES = [
-    About,
-    GettingStarted,
-    UserGuide,
-    DevGuide,
-    Examples,
-    Index,
-    License
-    ]
+DocMeta.setdocmeta!(Pioneer, :DocTestSetup, :(using Pioneer); recursive=true)
 
 makedocs(;
-    modules=[Titus],
-    authors="Nathan-Wamsley",
-    repo="https://github.com/nwamsley1/Titus.jl/blob/{commit}{path}#{line}",
-    sitename="Titus.jl",
+    modules=[Pioneer],
+    authors="Natahan Wamsley",
+    sitename="Pioneer.jl",
     format=Documenter.HTML(;
-        prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://nwamsley1.github.io/Titus.jl",
+        canonical="https://nwamsley1.github.io/Pioneer.jl",
         edit_link="main",
         assets=String[],
     ),
-    pages=
-        PAGES
-    ,
+    pages=[
+        "Home" => "index.md",
+    ],
 )
 
-deploydocs(
-        devbranch="main",
-    repo="github.com/nwamsley1/Titus.jl"
-    
+deploydocs(;
+    repo="github.com/nwamsley1/Pioneer.jl",
+    devbranch="main",
 )

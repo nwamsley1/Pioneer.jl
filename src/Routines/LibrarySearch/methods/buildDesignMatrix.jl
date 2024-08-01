@@ -1,4 +1,10 @@
-function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m},  misses::Vector{m}, nmatches::Int64, nmisses::Int64, precID_to_col::ArrayDict{UInt32, UInt16}; block_size = 10000) where {m<:MatchIon{Float32}}
+function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, 
+                            matches::Vector{m},  
+                            misses::Vector{m}, 
+                            nmatches::Int64, 
+                            nmisses::Int64, 
+                            precID_to_col::ArrayDict{UInt32, UInt16}; 
+                            block_size = 10000) where {m<:MatchIon{Float32}}
     T = Float32
     #Number of rows equals the number of unique matched peaks
     #Remember "getPeakInd(x)" is hte index of the matched peak in the MS2 spectrum.
@@ -18,6 +24,7 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         append!(H.nzval, zeros(eltype(H.nzval), block_size))
         append!(H.x, zeros(eltype(H.x), block_size))
         append!(H.matched, zeros(eltype(H.matched), block_size))
+        append!(H.isotope, zeros(eltype(H.isotope), block_size))
         append!(H.colptr, Vector{UInt32}(undef, block_size))
     end
     #Spectrum/empirical intensities for each peak. Zero by default (for unmatched/missed fragments)
@@ -44,7 +51,6 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         if getPeakInd(match) != last_peak_ind
             row += 1
             last_peak_ind = getPeakInd(match)
-            #X[row] = getIntensity(match)
         end
 
         col =  precID_to_col[getPrecID(match)]
@@ -54,10 +60,10 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
         end
         H.colval[j] = col
         H.rowval[j] = row
-        #+= is important
         H.nzval[j] += getPredictedIntenisty(match)
         H.x[j] = getIntensity(match)
         H.matched[j] = true
+        H.isotope[j] = UInt8(match.is_isotope)
 
         last_col = col
         last_row = row
@@ -77,6 +83,7 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32}, matches::Vector{m}, 
             H.nzval[i] += getPredictedIntenisty(miss)
             H.x[i] = zero(Float32)
             H.matched[i] = false
+            H.isotope[i] = UInt8(miss.is_isotope)
             i += 1
             H.n_vals += 1
         end

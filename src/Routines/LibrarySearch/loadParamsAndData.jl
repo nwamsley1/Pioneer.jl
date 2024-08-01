@@ -1,64 +1,18 @@
-##########
-#Import Libraries
-##########
-#Data Parsing/Printing
-println("Importing Libraries...")
-
-using ArgParse
-using CSV, Arrow, Tables, DataFrames, JSON, JLD2, ProgressBars
-using Plots, StatsPlots, PrettyPrinting, CategoricalArrays
-#DataStructures 
-using DataStructures, Dictionaries, Distributions, Combinatorics, StatsBase, LinearAlgebra, Random, LoopVectorization, SparseArrays, StaticArrays
-#Algorithms 
-using Interpolations, BSplineKit, Interpolations, XGBoost, SavitzkyGolay, NumericalIntegration, ExpectationMaximization, LsqFit, FastGaussQuadrature, GLM, LinearSolve
-using Base.Order
-using Base.Iterators: partition
-using PDFmerger, Measures
-
-##########
-#Parse Arguments 
-##########
-#Example Usage 
-#julia --threads 24 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/Projects/PROSIT/TEST_DATA/MOUSE_TEST /Users/n.t.wamsley/Projects/PROSIT/mouse_testing_082423 -s true 
-#julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HumanYeastEcoli/5ppm_15irt/ -s true
-#julia --threads 9 ./src/Routines/LibrarySearch/routine.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/mzXML/ /Users/n.t.wamsley/RIS_temp/BUILD_PROSIT_LIBS/nOf3_start2 -s true -e TEST_EXP
-function parse_commandline()
-    s = ArgParseSettings()
-
-    @add_arg_table! s begin
-        "params_json"
-            help = "Path to a .json file with the parameters"
-            required = true
-        "data_dir"
-            help = "Path to a folder with .arrow MS data tables"
-            required = true
-        "spec_lib_dir"
-            help = "Path to a tab delimited table of transitions"
-            required = true
-        "--experiment_name", "-e"
-            help = "Name of subdirectory for output"
-            default = "EXPERIMENT"
-        "--print_params", "-s"
-            help = "Whether to print the parameters from the json. Defaults to `false`"
-            default = false 
-    end
-
-    return parse_args(s)
-end
-
 println("Parsing Arguments...")
-ARGS = parse_commandline();
-
-params = JSON.parse(read(ARGS["params_json"], String));
+ARGS = Dict(
+    "params_json"=>"data/example_config/LibrarySearch.json"
+)
+#ARGS = parse_commandline();
 #=
 library_fragment_lookup_table.prec_frag_ranges[end] = 0x29004baf:(0x29004be8 - 1)
 3-protome PC test March 4th 2024 for hupo
 julia --threads 15 ./src/Routines/LibrarySearch/MAIN.jl ./data/example_config/LibrarySearch.json /Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test /Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/UP000005640_9606_Apr20_24/pioneer_lib -s true 
 
-params = JSON.parse(read("../OAT_103ISO/LibrarySearch.json", String));
+#params = JSON.parse(read("/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_exploris27_02_052724/OAT_103ISO/LibrarySearch.json", String));
+params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
 
-SPEC_LIB_DIR ="../spec_lib/pioneer_lib"
-
+#SPEC_LIB_DIR ="/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_exploris27_02_052724/spec_lib/pioneer_lib"
+SPEC_LIB_DIR ="/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib"
 MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
 
 
@@ -66,9 +20,11 @@ MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(
 EXPERIMENT_NAME = "EXPERIMENT"
 =#
 
-MS_DATA_DIR = ARGS["data_dir"];
-EXPERIMENT_NAME = ARGS["experiment_name"];
-SPEC_LIB_DIR = ARGS["spec_lib_dir"];
+params = JSON.parse(read(ARGS["params_json"], String));
+EXPERIMENT_NAME = "EXPERIMENT"
+params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
+MS_DATA_DIR = params["ms_data_dir"];
+SPEC_LIB_DIR = params["library_folder"];
 
 #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
 MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
@@ -136,7 +92,7 @@ end
 #Load Dependencies 
 ##########
 #Fragment Library Parsing
-
+#=
 [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
@@ -149,19 +105,22 @@ end
 
 #Utilities
 [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in [
-                                                                    "ExponentialGaussianHybrid.jl",
+
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
                                                                     "uniformBasisCubicSpline.jl",
                                                                     "isotopeSplines.jl",
-                                                                    "Normalization.jl",
-                                                                    "SavitskyGolay.jl",
+                                                                    "normalizeQuant.jl",
                                                                     "massErrorEstimation.jl",
                                                                     "SpectralDeconvolution.jl",
                                                                     "percolatorSortOf.jl",
                                                                     "plotRTAlignment.jl",
                                                                     "probitRegression.jl",
-                                                                    "partitionThreadTasks.jl"]];
+                                                                    "partitionThreadTasks.jl",
+                                                                    "LFQ.jl",
+                                                                    "scoreProteinGroups.jl",
+                                                                    "wittakerHendersonSmoothing.jl",
+                                                                    "getBestTrace.jl"]];
 
 [include(joinpath(pwd(), "src", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
@@ -174,22 +133,13 @@ end
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
                                                                                     "integrateChroms.jl",
-                                                                                    "queryFragmentIndex.jl",
-                                                                                    "integrateChroms.jl"]];
+                                                                                    "queryFragmentIndex.jl"]];
                                              
 
-#library_fragment_lookup_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"lib_frag_lookup_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-#f_index_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"f_index_top5_7ppm_1hi_rtmajor_031924", file) != nothing, readdir(SPEC_LIB_DIR))][1];
-#precursors_path = [joinpath(SPEC_LIB_DIR, file) for file in filter(file -> isfile(joinpath(SPEC_LIB_DIR, file)) && match(r"precursors_031424", file) != nothing, readdir(SPEC_LIB_DIR))][1]
-
-#println("Loading spectral libraries into main memory...")
-#prosit_lib = Dict{String, Any}()
-#@time detailed_frags = load("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_detailed_frags_032124.jld2")["detailed_frags"]
-#@time prec_frag_ranges = load("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_prec_frag_ranges_032124.jld2")["prec_frag_ranges"]
-#const library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
-#prosit_lib["f_det"] = library_fragment_lookup_table
-
-#@time begin
+=#
+###########
+#Load Spectral Libraries
+###########
 f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
 f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
 f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
@@ -210,20 +160,6 @@ last_range = range(first(last_range), last(last_range) - 1)
 library_fragment_lookup_table.prec_frag_ranges[end] = last_range
 prosit_lib["f_det"] = library_fragment_lookup_table
 
-#@time begin
-#f_index_fragments = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragments_032124.arrow")
-#f_index_rt_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_rtbins_032124.arrow")
-#f_index_frag_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragbins_032124.arrow")
-
-
-#precursor_bins = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_precursor_bins_031924.arrow");
-#frag_bin_mzs = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_frag_bin_mzs_031924.arrow");
-
-#detailed_frags = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_detailed_frags_031924.arrow")
-#prec_frag_ranges = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_prec_frag_ranges_031924.arrow")
-#Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/precursors_031924.arrow", DataFrame(precursors))
-#Arrow.write("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/f_index_top5_7ppm_1hi_rtmajor_fragbins_031924.arrow", f_index_frag_bins)
-#precursors = Arrow.Table("/Users/n.t.wamsley/TEST_DATA/SPEC_LIBS/HUMAN/STANDARD_NCE33_DefCharge2_DYNAMIC/PIONEER/LIBA/precursors_032124.arrow")#DataFrame(precursors)
 precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursor_table.arrow"))#DataFrame(precursors)
 f_index = FragmentIndex(
     f_index_frag_bins[:FragIndexBin],
@@ -238,6 +174,16 @@ presearch_f_index = FragmentIndex(
 prosit_lib["f_index"] = f_index;
 prosit_lib["presearch_f_index"] = presearch_f_index;
 prosit_lib["precursors"] = precursors;
+
+###########
+#Set CV Folds 
+###########
+
+const pid_to_cv_fold = getCVFolds(
+    collect(range(UInt32(1), UInt32(length(precursors[:sequence])))),#precursor id's, 
+    precursors[:accession_numbers]
+    )
+
 ###########
 #Load Pre-Allocated Data Structures. One of each for each thread. 
 ###########

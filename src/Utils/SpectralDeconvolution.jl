@@ -91,13 +91,13 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
 
     #Newton-Raphson Method Iterations until convergence or maximum iterations. 
     #If convergence fails in maximum iterations, switch to bisection method for guaranteed convergence
-    @inbounds @fastmath begin
+    #@inbounds @fastmath begin
+    @inbounds begin
         while (n < max_iter_newton)
 
             #First and second derivatives 
             L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
             update_rule = (L1)/L2
-
             #Switch to bisection method
             if isnan(update_rule)
                 n = max_iter_newton
@@ -124,7 +124,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
             ########
             abs(X₁[col] - X0) < accuracy_newton ? break : nothing
         end
-
         #If newtons method fails to converge, switch to bisection method
         if n == max_iter_newton
             #println("bisection")
@@ -141,8 +140,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
                             accuracy_bisection)#accuracy)
             end
-
-            return X₁[col] - X_init
+              X₁[col] - X_init
         else #Convergence reached. Return difference between current estimate and initial guess. 
             return X₁[col] - X_init
         end
@@ -218,7 +216,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                                         max_iter_bisection,
                                         accuracy_newton,
                                         accuracy_bisection))
-            if !iszero(X₁) 
+            if !iszero(X₁[col]) 
                 if δx/X₁[col] > max_diff
                     _diff =  δx/X₁[col]
                 end

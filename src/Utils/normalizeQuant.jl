@@ -1,12 +1,9 @@
-
-
-
 function groupPSMS(
                     psms::DataFrame;
                     max_q_value::AbstractFloat = 0.01,
                     min_points_above_FWHM::Int = 2)
     return groupby(psms[
-        (psms[!,:q_value].<=max_q_value).&(psms[!,:target]).&(psms[!,:points_above_FWHM].>=min_points_above_FWHM),:],
+        (psms[!,:q_value].<=max_q_value).&(psms[!,:target]),:],
         :file_name)
 end
 
@@ -16,8 +13,8 @@ function getQuantSplines(
     N::Int = 100,
     spline_n_knots::Int = 7)
     quant_splines = Dictionary{String, UniformSpline}()
-    for key in keys(gpsms)
-        psms = gpsms[key]
+    for (key, psms) in pairs(gpsms)
+        #psms = psms[psms[!,:species].=="HUMAN",:]
         sort!(psms, :RT, alg = QuickSort)
         nprecs = size(psms, 1)
         bin_size = nprecs÷N

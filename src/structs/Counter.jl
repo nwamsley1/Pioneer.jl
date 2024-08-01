@@ -22,7 +22,7 @@ function reset!(c::Counter{I,C}, id::I) where {I,C<:Unsigned}
     c.counts[id] = zero(T);
     return nothing
 end
-
+#=
 function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
     @inbounds @fastmath begin 
         if c.counts[id]===zero(C)
@@ -33,7 +33,7 @@ function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned}
     end
     return nothing
 end
-
+=#
 function inc!(c::Counter{I,C}, id::I, pred_intensity::C) where {I,C<:Unsigned} 
     @inbounds @fastmath begin 
         no_previous_encounter = c.counts[id]===zero(C)
