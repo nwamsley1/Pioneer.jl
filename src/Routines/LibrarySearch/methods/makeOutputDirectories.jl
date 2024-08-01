@@ -37,5 +37,5 @@ function makeOutputDirectories(
         JSON.print(f, params)
     end
 
-    return search_folder, qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, params_folder
+    return qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder
 end

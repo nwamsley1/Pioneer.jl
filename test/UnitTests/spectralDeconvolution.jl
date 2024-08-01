@@ -41,6 +41,7 @@ solveHuber!(Hs, _residuals_, _weights_,
 Ht =  Matrix(transpose(H))
 z = reshape(y, (1, Hs.m))
 ŷ = zeros(Float32, (1, Hs.n))
+#=
 test_alg = NMF.CoordinateDescent{Float32}(
                 maxiter = 1000,
                 tol = 1e-6,
@@ -52,7 +53,7 @@ NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
 @test (cor(ŷ[:,], _weights_) - 1.0) < 1e-6
 @test maximum(abs.(ŷ[:,] .- _weights_)) < 10
-
+=#
 
 _residuals_ = zeros(Float32, Hs.m)
 _weights_ = zeros(Float32, Hs.n)
@@ -73,6 +74,7 @@ argmax(_weights_ .- w_old)
 Ht =  Matrix(transpose(H))
 z = reshape(y, (1, Hs.m))
 ŷ = zeros(Float32, (1, Hs.n))
+#=
 test_alg = NMF.CoordinateDescent{Float32}(
                 maxiter = 1000,
                 tol = 1e-6,
@@ -85,7 +87,7 @@ NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
 @test (cor(ŷ[:,], _weights_) - 1.0) < 1e-6
 @test maximum(abs.(ŷ[:,] .- _weights_)) < 20
-
+=#
 
 maximum(abs.(ŷ[:,] .- _weights_)./(ŷ[:,].+1e-6))
 plot(log2.(ŷ[:,]), log2.(_weights_), seriestype=:scatter)

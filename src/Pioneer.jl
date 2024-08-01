@@ -39,7 +39,7 @@ module Pioneer
  
         params_ = parseParams(params)
 
-        search_folder, qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, params_folder = makeOutputDirectories(
+        qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder = makeOutputDirectories(
             joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
             params
         )
@@ -47,7 +47,7 @@ module Pioneer
         ###########
         #Load Spectral Libraries
         ###########
-        spec_lib = loadSpectralLibrary()
+        spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
         ###########
         #Set CV Folds 
         ###########
@@ -117,7 +117,6 @@ module Pioneer
             spectral_scores,
             precs
         )
-
         ##########
         #Combine First Search Results
         ##########
@@ -135,7 +134,6 @@ module Pioneer
             RT_iRT,
             bin_rt_size = 0.1,
             min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
-        
         ############
         #Quantitative Search
         println("Begining Quantitative Search...")
@@ -162,6 +160,7 @@ module Pioneer
             complex_spectral_scores,
             precursor_weights
             ))...)
+            
         println("Traning Target-Decoy Model...")
         best_psms = scoreTraces!(best_psms, precursors)
 
@@ -170,10 +169,7 @@ module Pioneer
         spec_liib["precursors"][:accession_numbers][psm[:precursor_idx]]
         ) => :accession_numbers
         );
-
-
         traces_passing = Set(best_psms[(best_psms[!,:q_value].<=0.01).&(best_psms[!,:target]),:precursor_idx])
-
         ###########
         #Score Protein Groups
         scored_proteins = scoreProteinGroups!(best_psms)
@@ -186,7 +182,6 @@ module Pioneer
                 )
             ] = scored_proteins[i,:q_value]
         end
-
         ###########
         #Re-quantify with 1% fdr precursors 
         best_psms[!,:peak_area] = zeros(Float32, size(best_psms, 1))
@@ -240,7 +235,7 @@ module Pioneer
                 max_q_value = params_[:normalization_params]["max_q_value"],
                 min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
             )
-
+        
         ############
         #Prep for Protein Inference 
         best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
@@ -266,11 +261,12 @@ module Pioneer
                     :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
                     :y_count,:p_count,:non_cannonical_count,:isotope_count
                     ,:matched_ratio]
+        println("Writting PSMs...")
         sort!(best_psms,[:species,:accession_numbers,:sequence,:target])
-        Arrow.write(joinpath(results_folder,"best_psms.arrow"),best_psms[!,features])
+        Arrow.write(joinpath(results_folder,"psms_long.arrow"),best_psms[!,features])
         wide_psms_quant = unstack(best_psms,[:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],:file_name,:peak_area_normalized)
         sort!(wide_psms_quant,[:species,:accession_numbers,:sequence,:target])
-        CSV.write(joinpath(results_folder,"best_psms_wide.arrow"),wide_psms_quant)
+        CSV.write(joinpath(results_folder,"psms_wide.csv"),wide_psms_quant)
 
         #Summarize Precursor ID's
         value_counts(df, col) = combine(groupby(df, col), nrow)
@@ -290,7 +286,7 @@ module Pioneer
         wide_protein_quant = unstack(protein_quant,[:species,:protein,:target],:experiments,:log2_abundance)
         sort!(wide_protein_quant,[:species,:protein,:target])
         CSV.write(joinpath(results_folder,"proteins_wide.csv"),wide_protein_quant)
-
+        println("QC Plots")
         qcPlots(
             best_psms,
             protein_quant,
