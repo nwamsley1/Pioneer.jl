@@ -1,6 +1,7 @@
 function importScripts()
-
-    [include(joinpath(@__DIR__, "../../../", "structs", jl_file)) for jl_file in [
+    package_root = dirname(dirname(dirname(dirname(@__DIR__))))
+    
+    [include(joinpath(package_root, "src", "structs", jl_file)) for jl_file in [
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
                                                                     "Counter.jl",
@@ -11,7 +12,7 @@ function importScripts()
                                                                     "SparseArray.jl"]];
 
     #Utilities
-    [include(joinpath(@__DIR__, "../../../", "utils", jl_file)) for jl_file in [
+    [include(joinpath(package_root, "src","utils", jl_file)) for jl_file in [
 
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
@@ -29,10 +30,10 @@ function importScripts()
                                                                     "wittakerHendersonSmoothing.jl",
                                                                     "getBestTrace.jl"]];
 
-    [include(joinpath(@__DIR__, "../../../", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
+    [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
     #Files needed for PRM routines
-    [include(joinpath(@__DIR__, "../../../","Routines","LibrarySearch","methods",jl_file)) for jl_file in [
+    [include(joinpath(package_root,"src","Routines","LibrarySearch","methods",jl_file)) for jl_file in [
                                                                                     "parseFileNames.jl",
                                                                                     "makeOutputDirectories.jl",
                                                                                     "parseParams.jl",
@@ -46,7 +47,7 @@ function importScripts()
                                                                                     "queryFragmentIndex.jl"]];
 
     #Files needed for PRM routines
-    [include(joinpath(@__DIR__, "../../../","Routines","LibrarySearch",jl_file)) for jl_file in [
+    [include(joinpath(package_root,"src","Routines","LibrarySearch",jl_file)) for jl_file in [
                                                                                     "parameterTuningSearch.jl",
                                                                                     "firstSearch.jl",
                                                                                     "quantitativeSearch.jl",

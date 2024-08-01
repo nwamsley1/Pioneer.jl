@@ -6,17 +6,17 @@ on:
     tags: ['*']
   pull_request:
   workflow_dispatch:
+
 concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
+    permissions:
       actions: write
       contents: read
     strategy:
@@ -30,44 +30,76 @@ jobs:
         arch:
           - x64
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+      
+      - name: List repository contents
+        run: |
+          echo "Repository contents:"
+          ls -R
+      
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+      
       - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v4
+      
+      - name: Build package
+        uses: julia-actions/julia-buildpkg@v1
+      
+      - name: Run tests
+        uses: julia-actions/julia-runtest@v1
+      
+      - name: Process coverage
+        uses: julia-actions/julia-processcoverage@v1
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     permissions:
-      actions: write # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      actions: write
       contents: write
       statuses: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+      
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
         with:
           version: '1'
+      
       - uses: julia-actions/cache@v2
+      
       - name: Configure doc environment
         shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
           Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-docdeploy@v1
+      
+      - name: Build package
+        uses: julia-actions/julia-buildpkg@v1
+      
+      - name: Deploy docs
+        uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+      
       - name: Run doctests
         shell: julia --project=docs --color=yes {0}
         run: |
