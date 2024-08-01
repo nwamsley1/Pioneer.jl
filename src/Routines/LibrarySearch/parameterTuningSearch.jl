@@ -3,7 +3,7 @@ function parameterTuningSearch(rt_alignment_folder,
                                 mass_err_estimation_folder,
                                 MS_TABLE_PATHS,
                                 params_,
-                                prosit_lib,
+                                spec_lib,
                                 library_fragment_lookup_table,
                                 ionMatches,
                                 ionMisses,
@@ -46,9 +46,9 @@ function parameterTuningSearch(rt_alignment_folder,
             RESULT =  LibrarySearch(
                                     MS_TABLE,
                                     params_;
-                                    frag_index = prosit_lib["presearch_f_index"],
-                                    precursors = prosit_lib["precursors"],
-                                    fragment_lookup_table = library_fragment_lookup_table,
+                                    frag_index = spec_lib["presearch_f_index"],
+                                    precursors = spec_lib["precursors"],
+                                    fragment_lookup_table = spec_lib["f_det"],
                                     rt_to_irt_spline =  x->x,
                                     ms_file_idx = UInt32(ms_file_idx),
                                     irt_tol = Inf,
@@ -72,9 +72,9 @@ function parameterTuningSearch(rt_alignment_folder,
             PSMs[!,:best_psms ] .= false
             addPreSearchColumns!(PSMs, 
                                         MS_TABLE, 
-                                        prosit_lib["precursors"][:is_decoy],
-                                        prosit_lib["precursors"][:irt],
-                                        prosit_lib["precursors"][:prec_charge]
+                                        spec_lib["precursors"][:is_decoy],
+                                        spec_lib["precursors"][:irt],
+                                        spec_lib["precursors"][:prec_charge]
                                     )
 
             if rtPSMs === nothing
@@ -153,7 +153,7 @@ function parameterTuningSearch(rt_alignment_folder,
             MS_TABLE,
             rtPSMs[!,:scan_idx],
             rtPSMs[!,:precursor_idx],
-            library_fragment_lookup_table,
+            spec_lib["f_det"],
             UInt32(ms_file_idx),
             mass_err_model,
             ionMatches,

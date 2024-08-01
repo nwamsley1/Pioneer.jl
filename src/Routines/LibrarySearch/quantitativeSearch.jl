@@ -11,8 +11,7 @@ function quantSearch(
     MS_TABLE_PATHS,
     params_,
     precursors,
-    prosit_lib,
-    library_fragment_lookup_table,
+    spec_lib,
     ionMatches,
     ionMisses,
     IDtoCOL,
@@ -111,8 +110,8 @@ function quantSearch(
             psms = vcat(quantSearch(
                 MS_TABLE, 
                 params_;
-                precursors = prosit_lib["precursors"],
-                fragment_lookup_table = library_fragment_lookup_table,
+                precursors = spec_lib["precursors"],
+                fragment_lookup_table = spec_lib["f_det"],
                 rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
                 ms_file_idx = UInt32(ms_file_idx), 
                 rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
@@ -132,9 +131,9 @@ function quantSearch(
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 
-                                            prosit_lib["precursors"][:mz],
-                                            prosit_lib["precursors"][:prec_charge], 
-                                            prosit_lib["precursors"][:is_decoy],
+                                            spec_lib["precursors"][:mz],
+                                            spec_lib["precursors"][:prec_charge], 
+                                            spec_lib["precursors"][:is_decoy],
                                             pid_to_cv_fold);
             psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
             getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE);

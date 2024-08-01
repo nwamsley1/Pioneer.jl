@@ -7,8 +7,7 @@ function firstSearch(
                     file_id_to_parsed_name,
                     MS_TABLE_PATHS,
                     params_,
-                    prosit_lib,
-                    library_fragment_lookup_table,
+                    spec_lib,
                     ionMatches,
                     ionMisses,
                     all_fmatches,
@@ -28,9 +27,9 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
-        frag_index = prosit_lib["f_index"],
-        precursors = prosit_lib["precursors"],
-        fragment_lookup_table = library_fragment_lookup_table,
+        frag_index = spec_lib["f_index"],
+        precursors = spec_lib["precursors"],
+        fragment_lookup_table = spec_lib["f_det"],
         rt_to_irt_spline =  RT_to_iRT_map_dict[ms_file_idx],
         ms_file_idx = UInt32(ms_file_idx),
         irt_tol = irt_errs[ms_file_idx],
@@ -51,11 +50,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                         )...)
 
     addMainSearchColumns!(PSMs, MS_TABLE, 
-                        prosit_lib["precursors"][:structural_mods],
-                        prosit_lib["precursors"][:missed_cleavages],
-                        prosit_lib["precursors"][:is_decoy],
-                        prosit_lib["precursors"][:irt],
-                        prosit_lib["precursors"][:prec_charge]);
+                        spec_lib["precursors"][:structural_mods],
+                        spec_lib["precursors"][:missed_cleavages],
+                        spec_lib["precursors"][:is_decoy],
+                        spec_lib["precursors"][:irt],
+                        spec_lib["precursors"][:prec_charge]);
     
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
@@ -99,7 +98,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 
     getProbs!(PSMs);
     getBestPSMs!(PSMs,
-                    prosit_lib["precursors"][:mz],
+                    spec_lib["precursors"][:mz],
                     max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )

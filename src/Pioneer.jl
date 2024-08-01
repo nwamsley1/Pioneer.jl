@@ -1,7 +1,8 @@
 module Pioneer
 
     using Arrow, ArgParse
-    using BSplineKit, Base64
+    #using BSplineKit Don't need this imports anymore?
+    #using Base64
     using Base.Order
     using Base.Iterators: partition
     using CSV, CategoricalArrays, Combinatorics, CodecZlib
@@ -20,65 +21,16 @@ module Pioneer
     using StaticArrays, StatsBase, SpecialFunctions, Statistics
     using XGBoost
     #create_app("../Pioneer","../Pioneer_Compiled", force = true)
+    #Inport Pioneer Files 
+    include(joinpath(pwd(), "src","Routines","LibrarySearch","methods","importScripts.jl"))
+    importScripts()
+    include(joinpath(pwd(), "src","Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))
+    const methods_path = joinpath(pwd(), "src","Routines","LibrarySearch")       
+    function SearchDIA(params_path::String)
+       #params_path = "data/example_config/LibrarySearch.json"
 
-
-    [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
-                                                                    "ChromObject.jl",
-                                                                    "ArrayDict.jl",
-                                                                    "Counter.jl",
-                                                                    "Ion.jl",
-                                                                    "LibraryIon.jl",
-                                                                    "MatchIon.jl",
-                                                                    "LibraryFragmentIndex.jl",
-                                                                    "SparseArray.jl"]];
-
-    #Utilities
-    [include(joinpath("Utils", jl_file)) for jl_file in [
-
-                                                                    "isotopes.jl",
-                                                                    "globalConstants.jl",
-                                                                    "uniformBasisCubicSpline.jl",
-                                                                    "isotopeSplines.jl",
-                                                                    "normalizeQuant.jl",
-                                                                    "massErrorEstimation.jl",
-                                                                    "SpectralDeconvolution.jl",
-                                                                    "percolatorSortOf.jl",
-                                                                    "plotRTAlignment.jl",
-                                                                    "probitRegression.jl",
-                                                                    "partitionThreadTasks.jl",
-                                                                    "LFQ.jl",
-                                                                    "scoreProteinGroups.jl",
-                                                                    "wittakerHendersonSmoothing.jl",
-                                                                    "getBestTrace.jl"]];
-
-    [include(joinpath("PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
-
-    #Files needed for PRM routines
-    [include(joinpath("Routines","LibrarySearch","methods",jl_file)) for jl_file in [
-                                                                                    "matchPeaks.jl",
-                                                                                    "buildDesignMatrix.jl",
-                                                                                    "manipulateDataFrames.jl",
-                                                                                    "buildRTIndex.jl",
-                                                                                    "searchRAW.jl",
-                                                                                    "selectTransitions.jl",
-                                                                                    "integrateChroms.jl",
-                                                                                    "queryFragmentIndex.jl"]];
-    include("Routines/LibrarySearch/MAIN.jl")     
-    include("Routines/LibrarySearch/parameterTuningSearch.jl")
-    include("Routines/LibrarySearch/firstSearch.jl")
-    include("Routines/LibrarySearch/quantitativeSearch.jl")
-    include("Routines/LibrarySearch/scoreTraces.jl")
-    include("Routines/LibrarySearch/secondQuant.jl")
-    include("Routines/LibrarySearch/proteinQuant.jl")
-    include("Routines/LibrarySearch/qcPlots.jl")
-    const methods_path = joinpath(pwd(), "src","Routines","LibrarySearch")                  
-    function julia_main()::Cint
-        ARGS = Dict(
-                "params_json"=>"data/example_config/LibrarySearch.json"
-                )
-
-        params = JSON.parse(read(ARGS["params_json"], String));
-        params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
+        params = JSON.parse(read(params_path, String));
+        #params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
         MS_DATA_DIR = params["ms_data_dir"];
         SPEC_LIB_DIR = params["library_folder"];
 
@@ -87,81 +39,15 @@ module Pioneer
  
         params_ = parseParams(params)
 
-
-        OUT_DIR = joinpath(params_[:benchmark_params]["results_folder"], "RESULTS");
-        if !isdir(out_folder)
-            mkpath(out_folder)
-        end
-
-        search_folder = joinpath(OUT_DIR, "Search")
-        if !isdir(search_folder)
-            mkpath(search_folder)
-        end
-        qc_plot_folder = joinpath(search_folder, "QC_PLOTS")
-        if !isdir(qc_plot_folder)
-            mkpath(qc_plot_folder)
-        else
-            [rm(joinpath(qc_plot_folder, x)) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
-        end
-        rt_alignment_folder = joinpath(search_folder, "QC_PLOTS","rt_alignment")
-        if !isdir(rt_alignment_folder)
-            mkpath(rt_alignment_folder)
-        end
-        mass_err_estimation_folder = joinpath(search_folder, "QC_PLOTS","mass_error_estimation")
-        if !isdir(mass_err_estimation_folder)
-            mkpath(mass_err_estimation_folder)
-        end
-        results_folder = joinpath(results_folder, "RESULTS")
-        if !isdir(results_folder)
-            mkpath(results_folder)
-        end
-        params_folder = joinpath(params_folder, "PARAMS")
-        if !isdir(params_folder )
-            mkpath(params_folder)
-        end
-        #Write params to folder 
-        open(joinpath(params_folder, "config.json"),"w") do f 
-            JSON.print(f, params)
-        end
+        search_folder, qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, params_folder = makeOutputDirectories(
+            joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
+            params
+        )
 
         ###########
         #Load Spectral Libraries
         ###########
-        f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
-        f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
-        f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
-
-
-        presearch_f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragments.arrow"))
-        presearch_f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_rt_bins.arrow"))
-        presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
-
-
-        println("Loading spectral libraries into main memory...")
-        prosit_lib = Dict{String, Any}()
-        detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
-        prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
-        library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
-        last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
-        last_range = range(first(last_range), last(last_range) - 1)
-        library_fragment_lookup_table.prec_frag_ranges[end] = last_range
-        prosit_lib["f_det"] = library_fragment_lookup_table
-
-        precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursor_table.arrow"))#DataFrame(precursors)
-        f_index = FragmentIndex(
-            f_index_frag_bins[:FragIndexBin],
-            f_index_rt_bins[:FragIndexBin],
-            f_index_fragments[:IndexFragment],
-        );
-        presearch_f_index = FragmentIndex(
-            presearch_f_index_frag_bins[:FragIndexBin],
-            presearch_f_index_rt_bins[:FragIndexBin],
-            presearch_f_index_fragments[:IndexFragment],
-        );
-        prosit_lib["f_index"] = f_index;
-        prosit_lib["presearch_f_index"] = presearch_f_index;
-        prosit_lib["precursors"] = precursors;
-
+        spec_lib = loadSpectralLibrary()
         ###########
         #Set CV Folds 
         ###########
@@ -169,7 +55,6 @@ module Pioneer
             collect(range(UInt32(1), UInt32(length(precursors[:sequence])))),#precursor id's, 
             precursors[:accession_numbers]
             )
-
         ###########
         #Load Pre-Allocated Data Structures. One of each for each thread. 
         ###########
@@ -191,11 +76,9 @@ module Pioneer
         complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
         complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
         complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-
         ###########
         #File Names Parsing 
         file_id_to_parsed_name, parsed_fnames = parseFileNames(MS_TABLE_PATHS)
-
         ###########
         #Tune Parameters
         println("Parameter Tuning Search...")
@@ -203,8 +86,7 @@ module Pioneer
                                                                                 mass_err_estimation_folder,
                                                                                 MS_TABLE_PATHS,
                                                                                 params_,
-                                                                                prosit_lib,
-                                                                                library_fragment_lookup_table,
+                                                                                spec_lib,
                                                                                 ionMatches,
                                                                                 ionMisses,
                                                                                 all_fmatches,
@@ -223,8 +105,7 @@ module Pioneer
             file_id_to_parsed_name,
             MS_TABLE_PATHS,
             params_,
-            prosit_lib,
-            library_fragment_lookup_table,
+            spec_lib,
             ionMatches,
             ionMisses,
             all_fmatches,
@@ -270,8 +151,7 @@ module Pioneer
             MS_TABLE_PATHS,
             params_,
             precursors,
-            prosit_lib,
-            library_fragment_lookup_table,
+            spec_lib,
             ionMatches,
             ionMisses,
             IDtoCOL,
@@ -287,7 +167,7 @@ module Pioneer
 
         #Get protein names 
         transform!(best_psms, AsTable(:) => ByRow(psm -> 
-        prosit_lib["precursors"][:accession_numbers][psm[:precursor_idx]]
+        spec_liib["precursors"][:accession_numbers][psm[:precursor_idx]]
         ) => :accession_numbers
         );
 
@@ -325,8 +205,7 @@ module Pioneer
                         MS_TABLE_PATHS,
                         params_,
                         precursors,
-                        prosit_lib,
-                        library_fragment_lookup_table,
+                        spec_lib,
                         ionMatches,
                         ionMisses,
                         IDtoCOL,
@@ -423,9 +302,8 @@ module Pioneer
             iRT_RT,
             frag_err_dist_dict
         )
-        return 0
     end
-
+    export SearchDIA
 end
 
 #=
@@ -434,7 +312,7 @@ using Pkg
 @timed begin
 Pkg.activate(".")
 using Pioneer
-Pioneer.julia_main()
+SearchDIA("data/example_config/LibrarySearch.json")
 end
 println("urmom")
 =#

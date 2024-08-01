@@ -10,8 +10,7 @@ function secondQuant!(
     MS_TABLE_PATHS,
     params_,
     precursors,
-    prosit_lib,
-    library_fragment_lookup_table,
+    spec_lib,
     ionMatches,
     ionMisses,
     IDtoCOL,
@@ -89,8 +88,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         chroms = vcat(secondQuant(
             MS_TABLE, 
             params_;
-            precursors = prosit_lib["precursors"],
-            fragment_lookup_table = library_fragment_lookup_table,
+            precursors = spec_lib["precursors"],
+            fragment_lookup_table = spec_lib["f_det"],
             rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
             ms_file_idx = UInt32(ms_file_idx), 
             rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
