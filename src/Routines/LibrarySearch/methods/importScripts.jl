@@ -1,6 +1,6 @@
 function importScripts()
 
-    [include(joinpath(pwd(), "src", "Structs", jl_file)) for jl_file in [
+    [include(joinpath(@__DIR__, "../../../", "structs", jl_file)) for jl_file in [
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
                                                                     "Counter.jl",
@@ -11,7 +11,7 @@ function importScripts()
                                                                     "SparseArray.jl"]];
 
     #Utilities
-    [include(joinpath(pwd(), "src", "Utils", jl_file)) for jl_file in [
+    [include(joinpath(@__DIR__, "../../../", "utils", jl_file)) for jl_file in [
 
                                                                     "isotopes.jl",
                                                                     "globalConstants.jl",
@@ -29,10 +29,10 @@ function importScripts()
                                                                     "wittakerHendersonSmoothing.jl",
                                                                     "getBestTrace.jl"]];
 
-    [include(joinpath(pwd(), "src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
+    [include(joinpath(@__DIR__, "../../../", "PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
 
     #Files needed for PRM routines
-    [include(joinpath(pwd(), "src", "Routines","LibrarySearch","methods",jl_file)) for jl_file in [
+    [include(joinpath(@__DIR__, "../../../","Routines","LibrarySearch","methods",jl_file)) for jl_file in [
                                                                                     "parseFileNames.jl",
                                                                                     "makeOutputDirectories.jl",
                                                                                     "parseParams.jl",
@@ -46,8 +46,7 @@ function importScripts()
                                                                                     "queryFragmentIndex.jl"]];
 
     #Files needed for PRM routines
-    [include(joinpath(pwd(), "src", "Routines","LibrarySearch",jl_file)) for jl_file in [
-                                                                                    "MAIN.jl",
+    [include(joinpath(@__DIR__, "../../../","Routines","LibrarySearch",jl_file)) for jl_file in [
                                                                                     "parameterTuningSearch.jl",
                                                                                     "firstSearch.jl",
                                                                                     "quantitativeSearch.jl",
