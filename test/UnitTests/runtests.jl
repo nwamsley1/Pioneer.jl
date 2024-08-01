@@ -1,6 +1,7 @@
 using CSV, Arrow, Tables, DataFrames, Dictionaries, Combinatorics, StatsBase, NMF, JLD2, LinearAlgebra, Random, LoopVectorization, ProgressBars, GLM, RobustModels, LoopVectorization, SparseArrays, Interpolations, MultiKDE, XGBoost, NumericalIntegration
 #include("../src/parseFASTA.jl")
 using Test
+#=
 include("../src/Routines/LibrarySearch/parsePrositLib.jl")
 include("../src/Routines/LibrarySearch/matchpeaksLib.jl")
 include("../src/Routines/LibrarySearch/buildDesignMatrix.jl")
@@ -16,7 +17,7 @@ include("Routines/LibrarySearch/buildRTIndex.jl")
 include("Routines/LibrarySearch/counter.jl")
 include("Routines/LibrarySearch/integratePrecursors.jl")
 include("Routines/LibrarySearch/NMF.jl")
-
+=#
 #=
 include("../src/precursor.jl")
 include("../src/matchpeaks.jl")
