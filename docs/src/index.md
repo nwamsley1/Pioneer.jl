@@ -1,13 +1,14 @@
 ```@meta
-CurrentModule = Titus
+CurrentModule = Pioneer
 ```
 
-# Index
+# Pioneer
+
+Documentation for [Pioneer](https://github.com/nwamsley1/Pioneer.jl).
 
 ```@index
 ```
 
 ```@autodocs
-Modules = [Titus]
+Modules = [Pioneer]
 ```
-
