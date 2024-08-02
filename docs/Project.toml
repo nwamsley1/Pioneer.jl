@@ -2,6 +2,7 @@
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Pioneer = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"

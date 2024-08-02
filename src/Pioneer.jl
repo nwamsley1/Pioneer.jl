@@ -1,6 +1,6 @@
 module Pioneer
 
-using Arrow, ArgParse
+using Arrow, ArrowTypes, ArgParse
 #using BSplineKit Don't need this imports anymore?
 using Base64
 using Base.Order
