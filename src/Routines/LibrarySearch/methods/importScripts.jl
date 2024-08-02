@@ -31,7 +31,6 @@ function importScripts()
                                                                     "getBestTrace.jl"]];
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
-
     #Files needed for PRM routines
     [include(joinpath(package_root,"src","Routines","LibrarySearch","methods",jl_file)) for jl_file in [
                                                                                     "parseFileNames.jl",

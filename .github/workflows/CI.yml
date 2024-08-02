@@ -34,7 +34,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetch all history for all branches and tags
-      
+      - name: Debug file structure
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Directory contents:"
+          ls -R
+          echo "Looking for isotopes.jl:"
+          find . -name "isotopes.jl"
+      - name: Debug Julia environment
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.status()'
+          julia --project=. -e 'println(LOAD_PATH)'
       - name: List repository contents
         run: |
           echo "Repository contents:"
