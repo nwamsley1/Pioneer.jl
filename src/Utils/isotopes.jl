@@ -65,7 +65,7 @@ struct Isotope{T<:AbstractFloat} <: Ion{T}
     intensity::T
     prec_idx::UInt32
 end
-
+#test 
 getMZ(i::Isotope{T}) where {T<:AbstractFloat} = i.mass
 getIntensity(i::Isotope{T}) where {T<:AbstractFloat} = i.intensity
 getPrecID(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
