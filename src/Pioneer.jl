@@ -2,7 +2,7 @@ module Pioneer
 
 using Arrow, ArgParse
 #using BSplineKit Don't need this imports anymore?
-#using Base64
+using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib

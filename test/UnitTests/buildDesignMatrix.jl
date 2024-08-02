@@ -38,7 +38,7 @@ Should look something like this
         test_misses,
         length(test_matches),
         length(test_misses),
-        id_to_col
+        test_id_to_col 
     )
     @test H.n_vals == 10
     @test H.n == 3

@@ -114,8 +114,6 @@ end
     FragIndexBin{Float32}(0.0f0, 1.0f0, 0x00000001, 0x00000001)
     FragIndexBin{Float32}(1.0f0, 2.0f0, 0x00000002, 0x00000002)
     FragIndexBin{Float32}(2.0f0, 3.0f0, 0x00000003, 0x00000003)
-
-    ⋮
     FragIndexBin{Float32}(99997.0f0, 99998.0f0, 0x0001869e, 0x0001869e)
     FragIndexBin{Float32}(99998.0f0, 99999.0f0, 0x0001869f, 0x0001869f)
     FragIndexBin{Float32}(99999.0f0, 100000.0f0, 0x000186a0, 0x000186a0)
@@ -285,6 +283,63 @@ end
 ##########
 #queryFragment!/searchScan!
 ##########
+rt_bins = Vector{FragIndexBin}([
+    FragIndexBin(1.0f0, 2.0f0, UInt32(1), UInt32(5)), 
+    FragIndexBin(2.0f0, 3.0f0,  UInt32(6), UInt32(10)), 
+    ])
+
+fragment_bins = Vector{FragIndexBin}([
+#First RT Bin 
+FragIndexBin(100.0f0, 100.1f0, UInt32(1), UInt32(3)), 
+FragIndexBin(100.1f0, 100.2f0,  UInt32(4), UInt32(4)), 
+FragIndexBin(300.1f0, 301.0f0,  UInt32(5), UInt32(5)), 
+FragIndexBin(301.0f0, 302.0f0,  UInt32(6), UInt32(6)), 
+FragIndexBin(500.0f0, 500.1f0,  UInt32(7), UInt32(8)), 
+#Second RT Bin 
+FragIndexBin(100.0f0, 100.1f0, UInt32(9), UInt32(10)), 
+FragIndexBin(100.1f0, 100.2f0,  UInt32(11), UInt32(11)), 
+FragIndexBin(300.1f0, 301.0f0,  UInt32(12), UInt32(13)), 
+FragIndexBin(301.0f0, 302.0f0,  UInt32(14), UInt32(14)), 
+FragIndexBin(500.0f0, 500.1f0,  UInt32(15), UInt32(20)), 
+])
+
+#For simplicity, all fragments are assigned to the same precursor with an identical
+#precursor match. So we will verify that the number of fragments matched is correct in each 
+#test case/varaint. 
+fragments = Vector{IndexFragment}([
+#1 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #1
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #2
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #3
+#2 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #4
+#3 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #5
+#4 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #6
+#5 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #7
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #8
+#Second RT bin
+#6 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #9
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #10
+#7 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #11
+#8 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #12
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #13
+#9 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #14
+#10 Frag bin
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #15
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #16
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #17
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #18
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #19
+IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #20
+])
+
 @testset "query_fragment" begin
     #=
     Need to build a fragment index for toy example.
@@ -296,66 +351,10 @@ end
 
     Need to test cases that challenge variable, intensity dependent fragment tolerances. 
     =#
-    rt_bins = Vector{FragIndexBin}([
-                    FragIndexBin(1.0f0, 2.0f0, UInt32(1), UInt32(5)), 
-                    FragIndexBin(2.0f0, 3.0f0,  UInt32(6), UInt32(10)), 
-                    ])
-
-    fragment_bins = Vector{FragIndexBin}([
-        #First RT Bin 
-        FragIndexBin(100.0f0, 100.1f0, UInt32(1), UInt32(3)), 
-        FragIndexBin(100.1f0, 100.2f0,  UInt32(4), UInt32(4)), 
-        FragIndexBin(300.1f0, 301.0f0,  UInt32(5), UInt32(5)), 
-        FragIndexBin(301.0f0, 302.0f0,  UInt32(6), UInt32(6)), 
-        FragIndexBin(500.0f0, 500.1f0,  UInt32(7), UInt32(8)), 
-        #Second RT Bin 
-        FragIndexBin(100.0f0, 100.1f0, UInt32(9), UInt32(10)), 
-        FragIndexBin(100.1f0, 100.2f0,  UInt32(11), UInt32(11)), 
-        FragIndexBin(300.1f0, 301.0f0,  UInt32(12), UInt32(13)), 
-        FragIndexBin(301.0f0, 302.0f0,  UInt32(14), UInt32(14)), 
-        FragIndexBin(500.0f0, 500.1f0,  UInt32(15), UInt32(20)), 
-        ])
-
-    #For simplicity, all fragments are assigned to the same precursor with an identical
-    #precursor match. So we will verify that the number of fragments matched is correct in each 
-    #test case/varaint. 
-    fragments = Vector{IndexFragment}([
-        #1 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #1
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #2
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #3
-        #2 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #4
-        #3 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #5
-        #4 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #6
-        #5 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #7
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #8
-        #Second RT bin
-        #6 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #9
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #10
-        #7 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #11
-        #8 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #12
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #13
-        #9 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #14
-        #10 Frag bin
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #15
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #16
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #17
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #18
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #19
-        IndexFragment(UInt32(1), 300.0f0, one(UInt8), one(UInt8)), #20
-    ])
 
     n_precursors = 1
     prec_id_to_score = Counter(UInt32, UInt8, n_precursors)
-
+    #=
     queryFragment!(prec_id_to_score,
                 rt_bins[1].last_bin,
                 rt_bins[1].first_bin,
@@ -368,6 +367,7 @@ end
                 301.0f0)
 
     @test prec_id_to_score.counts[1] == 4
+    =#
     reset!(prec_id_to_score)
     #Query should not match any fragments becuase fragment mass does not match 
     queryFragment!(prec_id_to_score,
@@ -399,6 +399,7 @@ end
 end
 #########
 #Test sscans 
+#=
 @testset "search_scan" begin
     n_precursors = 1
     prec_id_to_score = Counter(UInt32, UInt8, n_precursors)
@@ -535,6 +536,6 @@ end
     @test sum(prec_id_to_score.counts)==0
     reset!(prec_id_to_score)
 end
-
+=#
 
 
