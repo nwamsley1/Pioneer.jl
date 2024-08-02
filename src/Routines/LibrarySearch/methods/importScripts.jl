@@ -25,7 +25,7 @@ function importScripts()
                                                                     "plotRTAlignment.jl",
                                                                     "probitRegression.jl",
                                                                     "partitionThreadTasks.jl",
-                                                                    "LFQ.jl",
+                                                                    "max_lfq.jl",
                                                                     "scoreProteinGroups.jl",
                                                                     "wittakerHendersonSmoothing.jl",
                                                                     "getBestTrace.jl"]];
