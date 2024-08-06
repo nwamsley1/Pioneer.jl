@@ -231,13 +231,7 @@ end
 
 function getBestPSMs!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                        max_q_value::Float64 = 0.10,
                         max_psms::Int64 = 250000) where {T<:AbstractFloat}
-
-    #Remove psms below q_value threshold
-    #psms = psms[!,[:precursor_idx,:RT,:iRT_predicted,:q_value,:score]]
-    #could this be optimized to make type stable?
-    filter!(x->x.q_value<=max_q_value, psms);
 
     psms[!,:best_psm] = zeros(Bool, size(psms, 1))
     gpsms = groupby(psms,:precursor_idx)

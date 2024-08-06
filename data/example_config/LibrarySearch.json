@@ -1,14 +1,9 @@
 {
-    "expected_matches": 1000000,
     "isotope_err_bounds":[1, 0],
-    "irt_err_sigma": 4,
     "choose_most_intense": false,
-    "quadrupole_isolation_width": 8.0036, 
     "presearch_params":
     {
         "min_index_search_score": 22,
-        "filter_on_frag_count": false,
-        "filter_by_rank": false,
         "n_frag_isotopes": 1,
         "min_frag_count": 7,
         "min_log2_matched_ratio": 1.5,
@@ -19,16 +14,13 @@
         "frag_tol_ppm": 30.0,
         "max_qval": 0.01,
         "min_samples": 3500,
-        "max_frag_rank": 5,
         "frag_err_quantile": 0.01,
         "max_presearch_iters": 10
     },
     "first_search_params":
     {
         "min_index_search_score": 15,
-        "filter_on_frag_count": false,
         "min_frag_count": 4,
-        "filter_by_rank": false,
         "min_topn_of_m": [2, 3], 
         "n_frag_isotopes": 2,      
         "min_log2_matched_ratio": 0.0,
@@ -37,7 +29,6 @@
         "n_train_rounds_probit": 2,
         "max_iter_probit":20,
         "max_q_value_probit_rescore": 0.01,
-        "max_q_value_filter": 1.0,
         "max_precursors_passing": 500000
     },
     "summarize_first_search_params":
@@ -47,8 +38,6 @@
     },
     "quant_search_params":
     {
-        "filter_by_rank": false,
-        "filter_on_frag_count": false,
         "WH_smoothing_strength": 1.0,
         "min_frag_count": 1,
         "min_log2_matched_ratio": -1.7,
@@ -57,22 +46,12 @@
         "n_frag_isotopes": 2,
         "max_best_rank": 3
     },
-    "frag_tol_params":
-    {
-        "frag_tol_quantile": 0.99,
-        "frag_tol_bounds":[10.0, 40.0]
-    },
     "irt_mapping_params": 
     {
         "n_bins": 200,
         "bandwidth": 0.25,
         "n_sigma_tol":4,
         "min_prob": 0.95
-    },
-    "integration_params":
-    {
-        "n_quadrature_nodes": 100,
-        "intensity_filter_threshold": 0.01
     },
     "deconvolution_params":         
     {

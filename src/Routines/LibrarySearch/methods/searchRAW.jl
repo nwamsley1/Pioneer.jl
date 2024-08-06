@@ -918,7 +918,7 @@ function LibrarySearch(
                                 Float32(kwargs[:params]["min_spectral_contrast"]),
                                 Float32(kwargs[:params]["min_log2_matched_ratio"]),
                                 Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
-                                1,
+                                kwargs[:params]["max_best_rank"],
                                 Int64(kwargs[:params]["n_frag_isotopes"]),
                                 Float32(kwargs[:irt_tol]),
                                 Set(2)

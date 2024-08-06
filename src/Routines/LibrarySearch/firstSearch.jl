@@ -22,8 +22,6 @@ PSMs_Dict = Dictionary{String, DataFrame}()
 
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    params_[:first_search_params]["n_frag_isotopes"] = 1
-
     PSMs = vcat(LibrarySearch(
         MS_TABLE,
         params_;
@@ -99,7 +97,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     getProbs!(PSMs);
     getBestPSMs!(PSMs,
                     spec_lib["precursors"][:mz],
-                    max_q_value = Float64(params_[:first_search_params]["max_q_value_filter"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
 

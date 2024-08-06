@@ -97,7 +97,7 @@ function quantSearch(
         
 
             #params_[:deconvolution_params]["huber_delta"] = 100.0f0
-            
+            #=
             params_[:deconvolution_params]["lambda"] = 0.0f0
             params_[:deconvolution_params]["accuracy_bisection"] = 10.0
             params_[:deconvolution_params]["accuracy_newton"] = 10.0
@@ -105,6 +105,7 @@ function quantSearch(
             params_[:quant_search_params]["min_frag_count"] = 3
             params_[:quant_search_params]["min_y_count"] = 1
             params_[:quant_search_params]["max_best_rank"] = 1
+            =#
             #include("src/PSM_TYPES/ScoredPSMs.jl")
             
             psms = vcat(quantSearch(

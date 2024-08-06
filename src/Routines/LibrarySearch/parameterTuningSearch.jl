@@ -86,7 +86,6 @@ function parameterTuningSearch(rt_alignment_folder,
             scorePresearch!(rtPSMs)
             getQvalues!(rtPSMs[!,:prob], rtPSMs[!,:target], rtPSMs[!,:q_value])
             
-            #println("TEST ",  sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]))
             if sum(rtPSMs[!,:q_value].<=params_[:presearch_params]["max_qval"]) >= params_[:presearch_params]["min_samples"]
                 filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtPSMs)
                 rtPSMs[!,:best_psms] .= false
@@ -139,7 +138,7 @@ function parameterTuningSearch(rt_alignment_folder,
         irt_MAD = mad(rtPSMs[!,:iRT_observed] .- rtPSMs[!,:iRT_predicted])
         irt_σ = irt_MAD #Robust estimate of standard deviation
 
-        irt_errs[ms_file_idx] = params_[:irt_err_sigma]*irt_σ
+        irt_errs[ms_file_idx] = params_[:irt_mapping_params]["n_sigma_tol"]*irt_σ
         RT_to_iRT_map_dict[ms_file_idx] = RT_to_iRT_map
 
         plotRTAlign(rtPSMs[:,:RT], 
