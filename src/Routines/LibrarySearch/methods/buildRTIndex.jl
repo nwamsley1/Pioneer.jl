@@ -21,86 +21,6 @@ function retentionTimeIndex(T::DataType, U::DataType)
     return retentionTimeIndex(Vector{rtIndexBin{T, U}}())
 end
 
-function mapRTandiRT(psms_dict::Dictionary{String, DataFrame}; 
-                        min_prob::AbstractFloat = 0.9
-                    )
-
-    #Dictionaries mapping fild_id names to data
-    #prec_ids = Dictionary{String, Set{UInt32}}() #File name => precursor id
-    iRT_RT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
-    RT_iRT = Dictionary{String, Any}() #File name => KDEmapping from iRT to RT 
-    for (key, psms) in pairs(psms_dict) #For each data frame 
-        psms[!,:file_path] .= key #Add column for file name
-
-        #insert!(prec_ids,key,Set(psms[!,:precursor_idx])) #Set of precursors ids in the dataframe
-
-        best_hits = psms[!,:prob].>min_prob#Map RTs using only the best psms
-        irt_to_rt_spline = UniformSpline(
-                                    psms[best_hits,:RT],
-                                    psms[best_hits,:iRT_predicted],
-                                    
-                                    3, 
-                                    5
-        )
-        rt_to_irt_spline = UniformSpline(
-            psms[best_hits,:iRT_predicted],
-            psms[best_hits,:RT],
-            3, 
-            5
-        )
-        #Build RT=>iRT and iRT=> RT mappings for the file and add to the dictionaries 
-        insert!(iRT_RT, key, irt_to_rt_spline)
-        insert!(RT_iRT, key, rt_to_irt_spline)
-
-        #Update iRT error and iRT observed based on first search results
-        psms[!,:iRT_observed] = Float16.(rt_to_irt_spline.(psms[!,:RT]))
-        psms[!,:iRT_error] = Float16.(abs.(psms[!,:iRT_observed] .- psms[!,:iRT_predicted]))
-
-    end
-    return iRT_RT, RT_iRT
-end
-
-function getPrecIDtoiRT(psms_dict::Dictionary{String, DataFrame}, 
-                        RT_iRT::Any; 
-                        max_precursors::Int = 250000)
-
-    psms = vcat(values(psms_dict)...); #Combine data from all files in the experiment
-    #Only consider precursors with a q_value passing the threshold
-    # at least once accross the entire experiment
-
-    #filter!(x->x.q_value<=max_q_value,psms); TRYING THIS 03/04/24
-
-    #For each precursor, what was the best scan, maximum q-value, and observed iRT for the best scan
-    psms[!,:best_scan] .= false #Best scan for a given precursor_idx accross the experiment
-    psms[!,:iRT_observed] .= zero(Float64) #Observed iRT for each psm
-    grouped_psms = groupby(psms, :precursor_idx); #Groupby precursor id
-    prec_to_count = Dictionary{UInt32, Float32}()
-    for (prec_idx, psms) in pairs(grouped_psms)
-        insert!(prec_to_count, 
-                prec_idx.precursor_idx,
-                maximum(psms.prob))
-    end
-    sort!(prec_to_count, rev = true)
-    best_precs = collect(keys(prec_to_count))[1:min(max_precursors, length(keys(prec_to_count)))]
-    for prec_idx in best_precs #For each precursor 
-        prec_psms = grouped_psms[(precursor_idx = prec_idx,)]
-        #Best scan for the precursor accross the experiment
-        best_scan = argmax(prec_psms.prob) 
-        prec_psms.best_scan[best_scan] = true #Makr columsn containing the best psm for a precursor
-        #Could alternatively estimate the iRT using the best-n scans 
-        for j in range(1, size(prec_psms)[1])
-            #Get empirical iRT for the psm given the empirical RT
-            irt = RT_iRT[prec_psms.file_path[j]](prec_psms.RT[j])
-            prec_psms.iRT_observed[j] = irt
-        end
-        prec_psms.iRT_observed[best_scan] = median(prec_psms.iRT_observed)
-    end
-
-    filter!(x->x.best_scan, psms); #Filter out non-best scans 
-    #Map the precursor idx to the best empirical iRT extimate and the precursor m/z
-    return Dictionary(psms[!,:precursor_idx], zip(psms[!,:iRT_observed], psms[!,:prec_mz]))
-end
-
 function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, bin_rt_size::AbstractFloat) where {T,U<:AbstractFloat,I<:Integer}
     
     start_idx = 1
@@ -198,33 +118,14 @@ function makeRTIndices(psms_dict::Dictionary{String, DataFrame},
     return rt_indices
 end
 
-function getCVFolds(
-                prec_ids::AbstractVector{UInt32},
-                protein_groups::AbstractVector{String}
-                )
-    uniq_pgs = unique(protein_groups) #Unique protein groups
-    pg_to_cv_fold = Dictionary{String, UInt8}() #Protein group to cross-validation fold
-    #Map protein groups to cv folds 
-    for pg in uniq_pgs
-        insert!(pg_to_cv_fold,
-        pg,
-        rand(UInt8[0, 1])
-        )
-    end
-    #Now map pid's to cv folds 
-    pid_to_cv_fold = Dictionary{UInt32, UInt8}()
-    for pid in prec_ids
-        insert!(
-        pid_to_cv_fold,
-        pid,
-        pg_to_cv_fold[protein_groups[pid]]
-        )
-    end
-    return pid_to_cv_fold
-end
-
-function getRTErr(psms_dict::Dictionary{String, DataFrame},
-                  RT_iRT::Dictionary{String, Any})
+#=
+function getRTErr(Dictionary{UInt32, 
+                            @NamedTuple{
+                            best_prob::Float32, 
+                            best_irt::Float32, 
+                            min_irt::Union{Missing, Float32}, 
+                            max_irt::Union{Missing, Float32}, 
+                            mz::Float32}})
         
     for (key, psms) in pairs(psms_dict)
         psms[!,:iRT_observed] = RT_iRT[key].(psms[!,:RT])
@@ -245,16 +146,63 @@ function getRTErr(psms_dict::Dictionary{String, DataFrame},
     end
     return quantile(skipmissing(irt_mads), 0.99)#median(skipmissing(rt_mads))*4
 end
-#=
-N = 100000
-
-good_precs = unique(PSMS[PSMS[!,:prob].>0.75,:precursor_idx])
-
-N = 10000
-test = MS2_CHROMS[(precursor_idx = good_precs[N], iso_rank = 1)][!,[:precursor_idx,:topn,:best_rank,:y_count,:b_count,:target,:scribe,
-:city_block_fitted,:entropy_score,:matched_ratio,:RT,:weight,:prob]]
-size(PSMS[PSMS[!,:precursor_idx].== good_precs[N],:])
-plot(test[!,:RT],
-    test[!,:weight], seriestype=:scatter)
-N += 1
 =#
+#=
+precs_passing = collect(keys(precID_to_iRT))
+precs_irtest = Dictionary(
+    precs_passing,
+    [(mean_irt = zero(Float32), std_irt = zero(Float32), n = zero(UInt16)) for _ in range(1, length(precs_passing))]
+    
+)
+
+for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    psms = Arrow.Table(psms_path)
+    for i in ProgressBar(eachindex(psms[:precursor_idx]))
+        precursor_idx = psms[:precursor_idx][i]
+        if psms[:q_value][i]>0.01
+            continue
+        end
+        if haskey(precs_irtest, precursor_idx)
+            mean_irt, std_irt, n = precs_irtest[precursor_idx]
+            n += one(UInt16)
+            mean_irt += RT_iRT[key](psms[:RT][i])
+            precs_irtest[precursor_idx]=(mean_irt = mean_irt, std_irt = std_irt, n = n)
+        else
+            insert!(
+                precs_irtest,
+                precursor_idx,
+                (mean_irt = RT_iRT[key](psms[:RT][i]), std_irt = zero(Float32), n = one(UInt16))
+            )
+        end
+    end
+end
+for (key, val) in pairs(precs_irtest)
+    mean_irt, std_irt, n  = precs_irtest[key]
+    mean_irt = mean_irt/n
+    precs_irtest[key]= (mean_irt = mean_irt, std_irt = std_irt, n = n)
+end
+for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    psms = Arrow.Table(psms_path)
+    for i in ProgressBar(eachindex(psms[:precursor_idx]))
+        precursor_idx = psms[:precursor_idx][i]
+        if haskey(precs_irtest, precursor_idx)
+            mean_irt, std_irt, n = precs_irtest[precursor_idx]
+            std_irt += (RT_iRT[key](psms[:RT][i]) - mean_irt)^2
+            precs_irtest[precursor_idx]=(mean_irt = mean_irt, std_irt = std_irt, n = n)
+        end
+    end
+end
+for (key, val) in pairs(precs_irtest)
+    mean_irt, std_irt, n  = precs_irtest[key]
+    std_irt = sqrt(std_irt/(n-1))
+    #std_irt = n/std_irt
+    precs_irtest[key]= (mean_irt = mean_irt, std_irt = std_irt, n = n)
+end
+filter!(x->x[:n]>2, precs_irtest)
+stds = [x[:std_irt] for x in values(precs_irtest)]
+
+    zerso(@NamedTuple{
+        best_prob::Float32, 
+        best_irt::Float32, 
+        min_irt::Union{Missing, Float32}, 
+        =#

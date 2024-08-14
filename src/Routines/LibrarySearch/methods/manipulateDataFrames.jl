@@ -90,6 +90,7 @@ end
 
 function addMainSearchColumns!(PSMs::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
+                                RT_iRT::UniformSpline,
                                 structural_mods::Arrow.List{String, Int32, Vector{UInt8}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
@@ -104,6 +105,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
     Mox = zeros(UInt8, N);
     iRT_pred = zeros(Float32, N);
     RT = zeros(Float32, N);
+    iRT = zeros(Float32, N);
     TIC = zeros(Float16, N);
     charge = zeros(UInt8, N);
     err_norm = zeros(Float16, N);
@@ -135,6 +137,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
                 Mox[i] = countMOX(structural_mods[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 iRT_pred[i] = Float32(prec_irt[prec_idx]);
                 RT[i] = Float32(scan_retention_time[scan_idx[i]]);
+                iRT[i] = RT_iRT(RT[i])
                 TIC[i] = Float16(log2(tic[scan_idx[i]]));
                 charge[i] = UInt8(prec_charge[prec_idx]);
                 err_norm[i] = min(Float16.(abs(error[i]/total_ions[i])), Float16(6e4))#Float16(min(abs((error[i])/(total_ions[i])), 6e4))
@@ -145,6 +148,7 @@ function addMainSearchColumns!(PSMs::DataFrame,
     fetch.(tasks)
     PSMs[!,:iRT_predicted] = iRT_pred
     PSMs[!,:RT] = RT
+    PSMs[!,:iRT] = iRT
     PSMs[!,:TIC] = TIC
     PSMs[!,:total_ions] = total_ions
     PSMs[!,:err_norm] = err_norm
@@ -229,32 +233,6 @@ function getProbs!(psms::DataFrame)
     return nothing
 end
 
-function getBestPSMs!(psms::DataFrame,
-                        prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                        max_psms::Int64 = 250000) where {T<:AbstractFloat}
-
-    psms[!,:best_psm] = zeros(Bool, size(psms, 1))
-    gpsms = groupby(psms,:precursor_idx)
-    for (precursor_idx, prec_psms) in pairs(gpsms)
-        best_psm_idx = argmax(prec_psms[!,:score])
-        prec_psms[best_psm_idx,:best_psm] = true
-    end
-
-    filter!(x->x.best_psm, psms);
-    sort!(psms,:score, rev = true)
-    n = size(psms, 1)
-    delete!(psms, min(n, max_psms + 1):n)
-    select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob])
-
-    mz = zeros(T, size(psms, 1));
-    precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
-    Threads.@threads for i in range(1, size(psms, 1))
-        mz[i] = prec_mz[precursor_idx[i]];
-    end
-    psms[!,:prec_mz] = mz
-
-    return
-end
 
 function addSecondSearchColumns!(psms::DataFrame, 
                         MS_TABLE::Arrow.Table, 

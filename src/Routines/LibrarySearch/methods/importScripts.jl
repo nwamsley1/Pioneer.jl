@@ -28,7 +28,8 @@ function importScripts()
                                                                     "max_lfq.jl",
                                                                     "scoreProteinGroups.jl",
                                                                     "wittakerHendersonSmoothing.jl",
-                                                                    "getBestTrace.jl"]];
+                                                                    "getBestTrace.jl",
+                                                                    "getBestPSMs.jl"]];
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
     #Files needed for PRM routines

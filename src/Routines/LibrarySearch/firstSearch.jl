@@ -1,6 +1,7 @@
 
 
 function firstSearch(
+                    temp_folder,
                     RT_to_iRT_map_dict,
                     frag_err_dist_dict,
                     irt_errs,
@@ -18,8 +19,9 @@ function firstSearch(
                     unscored_PSMs,
                     spectral_scores,
                     precs)
-PSMs_Dict = Dictionary{String, DataFrame}()
 
+peak_fwhms = Dictionary{String, Float32}()
+psms_paths = Dictionary{String, String}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     PSMs = vcat(LibrarySearch(
@@ -48,16 +50,17 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                         )...)
 
     addMainSearchColumns!(PSMs, MS_TABLE, 
+                        RT_to_iRT_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
                         spec_lib["precursors"][:missed_cleavages],
                         spec_lib["precursors"][:is_decoy],
                         spec_lib["precursors"][:irt],
                         spec_lib["precursors"][:prec_charge]);
-    
+    sort!(PSMs, :iRT);
     #Observed iRT estimates based on pre-search
     PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
     PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-    psms = copy(PSMs)
+   #psms = copy(PSMs)
 
     PSMs[!,:i_count] = Float16.(PSMs[!,:i_count]./(PSMs[!,:y_count].+PSMs[!,:b_count].+PSMs[!,:p_count]))
     filter!(x->isinf(x.i_count)==false, PSMs)
@@ -95,16 +98,52 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
     getProbs!(PSMs);
+    #include("Routines/LibrarySearch/methods/manipulateDataFrames.jl")
+    #PSMs = copy(old_psms)
+    #old_psms = copy(PSMs)
     getBestPSMs!(PSMs,
                     spec_lib["precursors"][:mz],
+                    max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
+    
+    #irt_diffs is the difference between the first and last psm for a precursor
+    #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
 
-    insert!(PSMs_Dict, 
+    fwhms = skipmissing(PSMs[!,:fwhm])
+    fwhm_points = 0
+    for fwhm in fwhms
+        if !ismissing(fwhm)
+            fwhm_points += 1
+        end
+    end
+
+    if fwhm_points < params_[:summarize_first_search_params]["min_inference_points"]
+        @warn "Not enough datapoints to infer peak width. n: "*string(length(irt_diffs))*"\n 
+        using default "*string(params_[:summarize_first_search_params]["default_irt_width"])
+    end
+
+    #Integration width is double the fwhm + n times the fwhm standard deviation
+    #as estimated from mad (median absolute deviation normalized to a robust 
+    #estimate of standard deviation )
+    insert!(
+        peak_fwhms,
         file_id_to_parsed_name[ms_file_idx], 
-        PSMs
-    );
+        2*median(fwhms) +  params_[:summarize_first_search_params]["fwhm_nstd"]*mad(fwhms, normalize = true)
+    )
+
+    temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
+    Arrow.write(
+        temp_path,
+        select!(PSMs, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob,:scan_count])
+        )
+
+    insert!(
+        psms_paths,
+        file_id_to_parsed_name[ms_file_idx],
+        temp_path
+    )
 end
-return PSMs_Dict
+return peak_fwhms, psms_paths
 end
 

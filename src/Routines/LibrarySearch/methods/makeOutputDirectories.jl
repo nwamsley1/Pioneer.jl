@@ -37,5 +37,10 @@ function makeOutputDirectories(
         JSON.print(f, params)
     end
 
-    return qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder
+    temp_folder = joinpath(search_folder, "temp")
+    if !isdir(temp_folder)
+        mkpath(temp_folder)
+    end
+
+    return qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder
 end

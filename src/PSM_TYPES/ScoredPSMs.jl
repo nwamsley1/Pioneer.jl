@@ -22,7 +22,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     city_block::L
     spectral_contrast::L
     matched_ratio::L
-    log2_intensity_explained::L
+    log2_summed_intensity::L
     entropy_score::L
 
     #Non-scores/Labels
@@ -151,7 +151,8 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             spectral_scores[scores_idx].city_block,
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].matched_ratio,
-            Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
+            #Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
+            Float16(log2(unscored_PSMs[i].intensity)),
             spectral_scores[scores_idx].entropy_score,
 
             UInt32(unscored_PSMs[i].precursor_idx),
