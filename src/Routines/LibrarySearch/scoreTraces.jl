@@ -1,11 +1,10 @@
 function scoreTraces!(
     best_psms::DataFrame,
+    file_paths::Vector{String},
     precursors
 )
     features = [ 
         :max_prob,
-        :median_prob,
-        :q90_prob,
         #:max_pg_score,
         #:pg_count,
         #:pepgroup_count,
@@ -55,6 +54,7 @@ function scoreTraces!(
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
     best_psms[!,:decoy] = best_psms[!,:target].==false;
     xgboost_time = @timed bst = rankPSMs!(best_psms, 
+                            file_paths,
                             features,
                             colsample_bytree = 0.5, 
                             colsample_bynode = 0.5,
@@ -74,9 +74,9 @@ function scoreTraces!(
 
 
 
-    best_psms = bst[2];
-    best_psms[!,:prob] =Float32.(best_psms[!,:prob])
-    #Calculate q-values
-    getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-    return best_psms
+    #best_psms = bst[2];
+    #best_psms[!,:prob] =Float32.(best_psms[!,:prob])
+    ##Calculate q-values
+    #getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
+    return bst;#best_psms
 end

@@ -181,6 +181,8 @@ function quantSearch(
             psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx];
 
             temp_path = joinpath(quant_psms_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
+            psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+
             Arrow.write(
                 temp_path,
                 psms,

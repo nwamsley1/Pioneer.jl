@@ -159,7 +159,7 @@ function SearchDIA(params_path::String)
          quant_psms_folder,
          rt_index_paths,
          bin_rt_size,
-         RT_iRT,
+         rt_irt,
          irt_err,
          chromatograms,
          file_id_to_parsed_name,
@@ -180,7 +180,7 @@ function SearchDIA(params_path::String)
      println("Traning Target-Decoy Model...")
 
      best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
-     best_psms = scoreTraces!(best_psms, precursors)
+     scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
  
      #Get protein names 
      transform!(best_psms, AsTable(:) => ByRow(psm -> 

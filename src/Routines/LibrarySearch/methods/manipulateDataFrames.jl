@@ -307,7 +307,7 @@ function addSecondSearchColumns!(psms::DataFrame,
     psms[!,:cv_fold] = cv_fold
 
     #psms[!,:best_scan] = zeros(Bool, N)
-    psms[!,:score] = zeros(Float32, size(psms, 1))
+    #psms[!,:score] = zeros(Float32, size(psms, 1))
     psms[!,:intercept] = ones(Float16, size(psms, 1))
     #######
     sort!(psms,:RT); #Sorting before grouping is critical. 

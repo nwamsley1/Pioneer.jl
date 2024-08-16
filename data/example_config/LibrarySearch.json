@@ -1,6 +1,7 @@
 {
     "isotope_err_bounds":[1, 0],
     "choose_most_intense": false,
+    "q_value": 0.01,
     "presearch_params":
     {
         "min_index_search_score": 22,
@@ -34,12 +35,21 @@
     "summarize_first_search_params":
     {
         "max_precursors": 500000,
-        "max_prob_to_impute": 0.5
+        "scan_count_range": [4, 10],
+        "max_q_val_for_irt": 0.01,
+        "max_prob_to_impute": 0.5,
+        "min_inference_points": 1000,
+        "fwhm_nstd":4,
+        "irt_nstd": 4,
+        "default_irt_width": 1.0,
+        "peak_width_quantile": 0.95,
+        "max_irt_bin_size": 0.1
     },
     "quant_search_params":
     {
         "WH_smoothing_strength": 1.0,
         "min_frag_count": 1,
+        "min_y_count": 1,
         "min_log2_matched_ratio": -1.7,
         "min_spectral_contrast": 0.0,
         "min_topn_of_m": [1, 3],
@@ -75,6 +85,16 @@
         "spline_n_knots": 7,
         "max_q_value": 0.01,
         "min_points_above_FWHM": 2
+    },
+    "xgboost_params":
+    {
+        "max_n_samples": 10000000
+    },
+    "quad_transmision":
+    {
+        "fit_from_data": false,
+        "overhang": 0.25,
+        "smoothness":5.0
     },
     "benchmark_params":
     {   
