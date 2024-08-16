@@ -458,7 +458,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                                     ms_file_idx::Integer,
                                     ms_id_to_file_path::Dict{Int64, String},
                                     rt_to_irt_interp::Any,
-                                    prec_id_to_irt::Dictionary{UInt32, Tuple{Float64,Float32}}) where {T<:AbstractFloat}
+                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}) where {T<:AbstractFloat}
 
     #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);

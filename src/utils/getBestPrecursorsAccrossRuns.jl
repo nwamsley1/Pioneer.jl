@@ -6,8 +6,9 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
 
     prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
                                                         best_irt::Float32, 
-                                                        min_irt::Union{Missing, Float32}, 
-                                                        max_irt::Union{Missing, Float32}, 
+                                                        mean_irt::Union{Missing, Float32}, 
+                                                        var_irt::Union{Missing, Float32}, 
+                                                        n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
     #prec_to_best_prob = zeros(Float32, n_precursors)
     for (key, psms_path) in pairs(psms_paths) #For each data frame 
@@ -15,46 +16,45 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
         #One row for each precursor 
         for row in eachindex(psms[:precursor_idx])
 
-            #Precursor data 
+            #precursor data 
+            q_value = psms[:q_value][row]
             precursor_idx = psms[:precursor_idx][row]
             prob = psms[:prob][row]
-            mz = prec_mzs[precursor_idx]
-            max_irt, min_irt = missing, missing
             irt =  RT_iRT[key](psms[:RT][row])
 
-            
+            #initial values
+            #only count towards mean_irt if below the q_value threshold 
+            passed_q_val = (q_value <= max_q_val)
+            n = passed_q_val ? one(UInt16) : zero(UInt16)
+            mean_irt = passed_q_val ? irt : zero(Float32)
+            var_irt = zero(Float32)
+            mz = prec_mzs[precursor_idx]
+
+            #Has the precursor been encountered in a previous raw file?
+            #Keep a running mean irt for instances below q-val threshold
             if haskey(prec_to_best_prob, precursor_idx)
-                prec_prob = prec_to_best_prob[precursor_idx] 
-                best_prob = prec_prob[:best_prob]
-                best_irt = prec_prob[:best_irt]
-                if psms[:q_value][row] <= max_q_val
-                    if irt < coalesce(prec_prob[:min_irt], typemax(Float32))
-                        min_irt = irt
-                    else
-                        min_irt = prec_prob[:min_irt]
-                    end
-                    if irt > coalesce(prec_prob[:max_irt], typemin(Float32))
-                        max_irt = irt
-                    else
-                        max_irt = prec_prob[:max_irt]
-                    end
-                end
+                best_prob, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx] 
                 if (best_prob < prob)
                     best_prob = prob
                     best_irt = irt
                 end
+                mean_irt += old_mean_irt
+                n += old_n 
                 prec_to_best_prob[precursor_idx] = (
-                    best_prob = best_prob,
-                    best_irt = best_irt,
-                    min_irt = min_irt,
-                    max_irt = max_irt,
-                    mz = mz)
+                                                best_prob = prob, 
+                                                best_irt = irt,
+                                                mean_irt = mean_irt, 
+                                                var_irt = var_irt,
+                                                n = n,
+                                                mz = mz)
             else
-                min_irt, max_irt = missing, missing
-                if psms[:q_value][row] <= max_q_val
-                    min_irt, max_irt = irt, irt
-                end
-                val = (best_prob = prob, best_irt = irt, min_irt = min_irt, max_irt = max_irt, mz = mz)
+                #Fist encounter use default values 
+                val = (best_prob = prob, 
+                        best_irt = irt,
+                        mean_irt = mean_irt, 
+                        var_irt = var_irt,
+                        n = n,
+                        mz = mz)
                 insert!(prec_to_best_prob, precursor_idx, val)
             end
         end
@@ -70,7 +70,33 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
         end
     end
 
+    #get variance 
+    for (key, psms_path) in pairs(psms_paths) #For each data frame 
+        psms = Arrow.Table(psms_path)
+        #One row for each precursor 
+        for row in eachindex(psms[:precursor_idx])
+            #precursor data 
+            q_value = psms[:q_value][row]
+            precursor_idx = psms[:precursor_idx][row]
+            irt =  RT_iRT[key](psms[:RT][row])
 
+            if q_value > max_q_val
+                continue
+            end
+            if haskey(prec_to_best_prob, precursor_idx)
+                best_prob, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
+                var_irt += (irt - mean_irt/n)^2
+                prec_to_best_prob[precursor_idx] = (
+                    best_prob = best_prob, 
+                    best_irt = best_irt,
+                    mean_irt = mean_irt, 
+                    var_irt = var_irt,
+                    n = n,
+                    mz = mz)
+
+            end
+        end
+    end 
 
     return prec_to_best_prob #[(prob, idx) for (idx, prob) in sort(collect(top_probs), rev=true)]
 end

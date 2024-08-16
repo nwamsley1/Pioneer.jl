@@ -63,59 +63,70 @@ function buildRTIndex(RTs::Vector{T}, prec_mzs::Vector{U}, prec_ids::Vector{I}, 
     return rt_index
 end
 
-buildRTIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
+buildRTIndex(PSMs::DataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
-buildRTIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:RT], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
+buildRTIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTIndex(PSMs[:,:irt], PSMs[:,:prec_mz], PSMs[:,:precursor_idx], bin_rt_size)
 
 
-function makeRTIndices(psms_dict::Dictionary{String, DataFrame}, 
-                       precID_to_iRT::Dictionary{UInt32, Tuple{Float64, Float32}},
-                       RT_to_iRT::Any;
-                       bin_rt_size = 0.1,
+function makeRTIndices(temp_folder::String,
+
+                       psms_paths::Dictionary{String, String}, 
+                       prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
+                       rt_to_irt_splines::Any;
                        min_prob::AbstractFloat = 0.5)
-    #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
-    rt_indices = Dictionary{String, retentionTimeIndex{Float32, Float32}}()
-    #iRT dict
-    #iRT_dict = Dictionary{String, UnorderedDictionary{UInt32, Float32}}()
-    for (file_path, psms) in pairs(psms_dict) #For each file in the experiment
-        #Impute empirical iRT value for psms with probability lower than the threshold
-        #filter!(x->x.prob>=min_prob, psms); 
-        iRTs, mzs, prec_ids = zeros(Float32, length(precID_to_iRT)), zeros(Float32, length(precID_to_iRT)), zeros(UInt32, length(precID_to_iRT))
 
-        prec_set = Dictionary(psms[!,:precursor_idx]::Vector{UInt32},
-                            zip(psms[!,:RT]::Vector{Float32}, 
-                                psms[!,:prec_mz]::Vector{Float32},
-                                psms[!,:prob]::Vector{Float32})
-                            )
-        #Set of precursors where empirical iRTs can be used and do not need to be imputed 
-        #pset = Set(psms[!,:precursor_idx]::Vector{UInt32})
-        #Loop through all precursors in the seed 
-        Threads.@threads for (i, (prec_id, irt_mz_imputed)) in collect(enumerate(pairs(precID_to_iRT)))
+    #Maps filepath to a retentionTimeIndex (see buildRTIndex.jl)
+    rt_index_paths = Dictionary{String, String}()
+    #Fill retention time index for each file. 
+    for (key, psms_path) in pairs(psms_paths)
+        psms = Arrow.Table(psms_path)
+        rt_to_irt = rt_to_irt_splines[key]
+        #Impute empirical iRT value for psms with probability lower than the threshold
+        irts = zeros(Float32, length(prec_to_irt))
+        mzs = zeros(Float32, length(prec_to_irt))
+        prec_ids = zeros(UInt32, length(prec_to_irt))
+        #map observec precursors to irt and probability score
+        prec_set = Dict(zip(
+            psms[:precursor_idx],
+            map(x->(irt=first(x),prob=last(x)), zip(rt_to_irt.(psms[:RT]), psms[:prob]))
+        ))
+
+        Threads.@threads for (i, (prec_id, irt_mz)) in collect(enumerate(pairs(prec_to_irt)))
             prec_ids[i] = prec_id
-            if haskey(prec_set, prec_id) #prec_id ∈ pset::Set{UInt32} 
-                if last(prec_set[prec_id]) >= min_prob #Use empirical iRT/RT
-                    rt, mz, _ = prec_set[prec_id]::Tuple{Float32, Float32, Float32}
-                    iRTs[i] = RT_to_iRT[file_path](rt)
+            irt, mz = irt_mz::@NamedTuple{irt::Float32, mz::Float32}
+            #Don't impute irt, use empirical
+            if haskey(prec_set, prec_id)
+                irt, prob = prec_set[prec_id]
+                if prob >= min_prob #Use empirical iRT/RT
+                    irts[i] = irt
                     mzs[i] = mz
                     continue
                 end
             end
-            #Impute empirical iRT from the best observed psm for the precursor accross the experiment 
-            irt, mz = irt_mz_imputed::Tuple{Float64, Float32}
-            #rt = iRT_RT[file_path](irt)::Float64 #Convert iRT to RT 
-            iRTs[i] = irt
+            #Impute irt from the best observed psm for the precursor accross the experiment 
+            irts[i] = irt
             mzs[i] = mz
         end
-        
+
         #Build RT index 
-        rt_df = DataFrame(Dict(:RT => iRTs,
+        rt_df = DataFrame(Dict(:irt => irts,
                                 :prec_mz => mzs,
                                 :precursor_idx => prec_ids))
-        sort!(rt_df, :RT)
-        rt_index = buildRTIndex(rt_df, bin_rt_size=bin_rt_size);
-        insert!(rt_indices, file_path, rt_index)
+        sort!(rt_df, :irt)
+        temp_path =joinpath(temp_folder, key*"rt_indices.arrow")
+        Arrow.write(
+            temp_path,
+            rt_df,
+            )
+        insert!(
+            rt_index_paths,
+            key,
+            temp_path
+        )
+        #rt_index = buildRTIndex(rt_df, bin_rt_size=bin_rt_size);
+        #insert!(rt_indices, key, rt_index)
     end
-    return rt_indices
+    return rt_index_paths
 end
 
 #=

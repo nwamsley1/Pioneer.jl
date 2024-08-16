@@ -3,6 +3,7 @@ function parseParams(
 )
 
 return (
+    q_value = params["q_value"],
     isotope_err_bounds = Tuple([Int64(bound) for bound in params["isotope_err_bounds"]]),
     choose_most_intense = Bool(params["choose_most_intense"]),
     presearch_params = Dict{String, Any}(k => v for (k, v) in params["presearch_params"]),
@@ -13,6 +14,8 @@ return (
     summarize_first_search_params = Dict{String, Any}(k => v for (k, v) in params["summarize_first_search_params"]),
     qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"]),
     normalization_params = Dict{String, Any}(k => v for (k, v) in params["normalization_params"]),
-    benchmark_params = Dict{String, Any}(k => v for (k, v) in params["benchmark_params"])
+    benchmark_params = Dict{String, Any}(k => v for (k, v) in params["benchmark_params"]),
+    xgboost_params = Dict{String, Any}(k => v for (k, v) in params["xgboost_params"])
+
     );
 end

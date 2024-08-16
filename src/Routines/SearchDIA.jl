@@ -16,10 +16,27 @@ function SearchDIA(params_path::String)
          params
      )
  
+     first_search_psms_folder = joinpath(temp_folder, "first_search_psms")
+     if !isdir(first_search_psms_folder)
+         mkpath(first_search_psms_folder)
+     end
+
+     irt_indices_folder = joinpath(temp_folder, "irt_indices_folder")
+     if !isdir(irt_indices_folder)
+         mkpath(irt_indices_folder)
+     end
+
+     quant_psms_folder = joinpath(temp_folder, "quant_psms_folder")
+     if !isdir(quant_psms_folder )
+         mkpath(quant_psms_folder )
+     end
+
+
      ###########
      #Load Spectral Libraries
      ###########
      spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
+     precursors = spec_lib["precursors"]
      ###########
      #Set CV Folds 
      ###########
@@ -70,8 +87,8 @@ function SearchDIA(params_path::String)
                                                                              spectral_scores,
                                                                              precs)
      println("Parameter Tuning Search...")
-     peak_widths, psms_paths = firstSearch(
-         temp_folder,
+     peak_fwhms, psms_paths = firstSearch(
+         first_search_psms_folder,
          RT_to_iRT_map_dict,
          frag_err_dist_dict,
          irt_errs,
@@ -99,40 +116,55 @@ function SearchDIA(params_path::String)
      #Use high scoring psms to map library retention times (irt)
      #onto the empirical retention times and vise-versa.
      #uniform B-spline
-     iRT_RT, RT_iRT = mapLibraryToEmpiricalRT(
+     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
         psms_paths,#Need to change this to a list of temporrary file paths
         min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
      )
      #Summarize list of best N precursors accross all runs. 
-     precID_to_iRT = getBestPrecursorsAccrossRuns(
+     prec_to_irt = getBestPrecursorsAccrossRuns(
              psms_paths, 
              spec_lib["precursors"][:mz],
-             RT_iRT, 
+             rt_irt, 
              max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
-    
-    
-    irt_err = getRTErr(PSMs_Dict, RT_iRT)
-     #irt_err = 0.4
-     RT_INDICES = makeRTIndices(PSMs_Dict,
-         precID_to_iRT,
-         RT_iRT,
-         bin_rt_size = 0.1,
+             map(x->(var_irt = x[:var_irt], n = x[:n]), prec_to_irt)
+
+    irt_errs = getIrtErrs(
+        peak_fwhms,
+        prec_to_irt,
+        params_
+    )
+
+    ms_table = Arrow.Table(first(MS_TABLE_PATHS))
+    bin_rt_size = min(
+    median(diff(ms_table[:retentionTime][ms_table[:msOrder].==1]))*5.5,
+    params_[:summarize_first_search_params]["max_irt_bin_size"]
+    )
+    ms_table = nothing
+
+    prec_to_irt = map(x->(irt = x[:best_irt], mz = x[:mz]), prec_to_irt)
+    rt_index_paths = makeRTIndices(
+         irt_indices_folder,
+         psms_paths,
+         prec_to_irt,
+         rt_irt,
          min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
+     
      ############
      #Quantitative Search
      println("Begining Quantitative Search...")
-     best_psms = vcat(values(quantSearch(
+     quantSearch(
          frag_err_dist_dict,
          pid_to_cv_fold,
-         precID_to_iRT,
-         RT_INDICES,
+         prec_to_irt,
+         quant_psms_folder,
+         rt_index_paths,
+         bin_rt_size,
          RT_iRT,
          irt_err,
          chromatograms,
          file_id_to_parsed_name,
          MS_TABLE_PATHS,
          params_,
-         precursors,
          spec_lib,
          ionMatches,
          ionMisses,
@@ -143,17 +175,19 @@ function SearchDIA(params_path::String)
          complex_unscored_PSMs,
          complex_spectral_scores,
          precursor_weights
-         ))...)
- 
+         )
+
      println("Traning Target-Decoy Model...")
+
+     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
      best_psms = scoreTraces!(best_psms, precursors)
  
      #Get protein names 
      transform!(best_psms, AsTable(:) => ByRow(psm -> 
-     spec_liib["precursors"][:accession_numbers][psm[:precursor_idx]]
+     precursors[:accession_numbers][psm[:precursor_idx]]
      ) => :accession_numbers
      );
-     traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params[:q_value]).&(best_psms[!,:target]),:precursor_idx])
+     traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params_[:q_value]).&(best_psms[!,:target]),:precursor_idx])
      ###########
      #Score Protein Groups
      scored_proteins = scoreProteinGroups!(best_psms)
@@ -176,14 +210,14 @@ function SearchDIA(params_path::String)
                      grouped_best_psms,   
                      frag_err_dist_dict,
                      traces_passing,
-                     RT_INDICES,
+                     rt_index_paths,
                      RT_iRT,
                      irt_err,
                      chromatograms,
                      file_id_to_parsed_name,
                      MS_TABLE_PATHS,
                      params_,
-                     precursors,
+                     spec_lib["precursors"],
                      spec_lib,
                      ionMatches,
                      ionMisses,
@@ -199,12 +233,12 @@ function SearchDIA(params_path::String)
      #Ungroup precursors and get the best trace for each 
      best_psms = DataFrame(grouped_best_psms)
      #Must be based on weight and not peak_area because peak_area was not calculated for decoys
-     getBestTrace!(best_psms, params[:q_value], :weight)
+     getBestTrace!(best_psms, params_[:q_value], :weight)
      filter!(x->x.best_trace, best_psms)
      #precursor level q_value 
      getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
      #filter out decoys and low-scoring targets
-     filter!(x->(x.q_value<=params[:q_value])&(x.target)&(!isnan(x.peak_area)), best_psms)
+     filter!(x->(x.q_value<=params_[:q_value])&(x.target)&(!isnan(x.peak_area)), best_psms)
      #IDs_PER_FILE = value_counts(best_psms, [:file_name])
      best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
      ###########

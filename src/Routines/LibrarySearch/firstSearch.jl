@@ -20,7 +20,7 @@ function firstSearch(
                     spectral_scores,
                     precs)
 
-peak_fwhms = Dictionary{String, Float32}()
+peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
 psms_paths = Dictionary{String, String}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
@@ -129,7 +129,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     insert!(
         peak_fwhms,
         file_id_to_parsed_name[ms_file_idx], 
-        2*median(fwhms) +  params_[:summarize_first_search_params]["fwhm_nstd"]*mad(fwhms, normalize = true)
+        (median_fwhm = median(fwhms), mad_fwhm = mad(fwhms, normalize = true))
     )
 
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")

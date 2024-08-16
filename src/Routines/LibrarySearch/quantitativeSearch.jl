@@ -3,14 +3,15 @@ function quantSearch(
     frag_err_dist_dict,
     pid_to_cv_fold,
     precID_to_iRT,
-    RT_INDICES,
+    quant_psms_folder,
+    rt_index_paths,
+    bin_rt_size,
     RT_iRT,
     irt_err,
     chromatograms,
     file_id_to_parsed_name,
     MS_TABLE_PATHS,
     params_,
-    precursors,
     spec_lib,
     ionMatches,
     ionMisses,
@@ -48,7 +49,7 @@ function quantSearch(
                 return secondSearch(
                                     spectra,
                                     last(thread_task), #getRange(thread_task),
-                                    kwargs[:precursors],
+                                    spec_lib["precursors"],
                                     kwargs[:fragment_lookup_table], 
                                     kwargs[:ms_file_idx],
                                     kwargs[:rt_to_irt_spline],
@@ -91,6 +92,10 @@ function quantSearch(
 
     quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         
+        rt_df = DataFrame(Arrow.Table(rt_index_paths[file_id_to_parsed_name[ms_file_idx]]))
+        rt_index = buildRTIndex(rt_df,
+                                bin_rt_size = bin_rt_size)
+
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
         params_[:deconvolution_params]["huber_delta"] = median(
             [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
@@ -106,14 +111,15 @@ function quantSearch(
             params_[:quant_search_params]["min_y_count"] = 1
             params_[:quant_search_params]["max_best_rank"] = 1
             =#
+            params_[:quant_search_params]["min_y_count"] = 1
             #include("src/PSM_TYPES/ScoredPSMs.jl")
-            
+            precursors = spec_lib["precursors"]
             psms = vcat(quantSearch(
                 MS_TABLE, 
                 params_;
                 precursors = spec_lib["precursors"],
                 fragment_lookup_table = spec_lib["f_det"],
-                rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+                rt_index = rt_index,
                 ms_file_idx = UInt32(ms_file_idx), 
                 rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
                 mass_err_model = frag_err_dist_dict[ms_file_idx],
@@ -137,7 +143,7 @@ function quantSearch(
                                             spec_lib["precursors"][:is_decoy],
                                             pid_to_cv_fold);
             psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
-            getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE);
+            getIsotopesCaptured!(psms,  spec_lib["precursors"][:prec_charge], spec_lib["precursors"][:mz], MS_TABLE);
             psms[!,:best_scan] .= false;
             filter!(x->first(x.isotopes_captured)<2, psms);
             
@@ -173,7 +179,13 @@ function quantSearch(
 
             );
             psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx];
-            BPSMS[ms_file_idx] = psms;
+
+            temp_path = joinpath(quant_psms_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
+            Arrow.write(
+                temp_path,
+                psms,
+                )
+            #BPSMS[ms_file_idx] = psms;
     end
-    return BPSMS
+    return #BPSMS
 end

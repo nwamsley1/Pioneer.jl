@@ -2,7 +2,7 @@ function secondQuant!(
     grouped_best_psms,   
     frag_err_dist_dict,
     traces_passing,
-    RT_INDICES,
+    rt_index_paths,
     RT_iRT,
     irt_err,
     chromatograms,
@@ -82,6 +82,11 @@ end
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
+    rt_df = DataFrame(Arrow.Table(rt_index_paths[file_id_to_parsed_name[ms_file_idx]]))
+    rt_index = buildRTIndex(rt_df,
+                            bin_rt_size = bin_rt_size)
+
+
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
@@ -90,7 +95,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             params_;
             precursors = spec_lib["precursors"],
             fragment_lookup_table = spec_lib["f_det"],
-            rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+            rt_index = rt_index,#RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
             ms_file_idx = UInt32(ms_file_idx), 
             rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
             mass_err_model = frag_err_dist_dict[ms_file_idx],
