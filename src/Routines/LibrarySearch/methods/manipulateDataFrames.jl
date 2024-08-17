@@ -475,8 +475,8 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     #PSMs[!,:missed_cleavage] .= zero(UInt8);
     #PSMs[!,:sequence] .= "";
     missed_cleavage = zeros(UInt8, N);
-    sequence = Vector{String}(undef, N);
-    stripped_sequence = Vector{String}(undef, N);
+    #sequence = Vector{String}(undef, N);
+    #stripped_sequence = Vector{String}(undef, N);
     adjusted_intensity_explained = zeros(Float16, N);
     #log2_base_peak_intensity = zeros(Float16, N);
     prec_charges = zeros(UInt8, N)
@@ -517,10 +517,10 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 
                 missed_cleavage[i] = precursor_missed_cleavage[prec_idx]
-                sequence[i] = precursor_sequence[prec_idx]
-                stripped_sequence[i] = replace(sequence[i], r"\(.*?\)" => "")#replace.(sequence[i], "M(ox)" => "M");
+                #sequence[i] = precursor_sequence[prec_idx]
+                sequence_length[i] = length(replace(precursor_sequence[prec_idx], r"\(.*?\)" => ""))#replace.(sequence[i], "M(ox)" => "M");
                 Mox[i] = countMOX(structural_mods[prec_idx])::UInt8
-                sequence_length[i] = length(stripped_sequence[i])
+                #sequence_length[i] = length(stripped_sequence[i])
 
 
                 TIC[i] = Float16(log2(tic[scan_idx[i]]))
@@ -541,8 +541,8 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     psms[!,:irt_error] = irt_error
 
     psms[!,:missed_cleavage] = missed_cleavage
-    psms[!,:sequence] = sequence
-    psms[!,:stripped_sequence] = stripped_sequence
+    #psms[!,:sequence] = sequence
+    #psms[!,:stripped_sequence] = stripped_sequence
     psms[!,:Mox] = Mox
     psms[!,:sequence_length] = sequence_length
 

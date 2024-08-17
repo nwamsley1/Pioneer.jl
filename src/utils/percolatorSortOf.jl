@@ -221,7 +221,7 @@ function rankPSMs!(psms::DataFrame,
                                 precs_to_score,
                                 zeros(Float32, length(precs_to_score))
                             )
-        prec_to_best_score_old = copy(prec_to_best_score)
+        prec_to_best_score_old = copy(prec_to_best_score_new)
 
         for (train_iter, num_round) in enumerate(iter_scheme)
             #println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))

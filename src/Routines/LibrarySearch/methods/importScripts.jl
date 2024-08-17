@@ -30,7 +30,10 @@ function importScripts()
                                                                     "wittakerHendersonSmoothing.jl",
                                                                     "getBestTrace.jl",
                                                                     "getCVFolds.jl",
-                                                                    "getBestPSMs.jl"]];
+                                                                    "getBestPSMs.jl",
+                                                                    "mapLibraryToEmpiricalRT.jl",
+                                                                    "getBestPrecursorsAccrossRuns.jl",
+                                                                    "getIrtErrs.jl"]];
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
     #Files needed for PRM routines

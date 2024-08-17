@@ -31,6 +31,16 @@ function SearchDIA(params_path::String)
          mkpath(quant_psms_folder )
      end
 
+     passing_psms_folder = joinpath(temp_folder, "passing_psms")
+     if !isdir( passing_psms_folder )
+        mkpath( passing_psms_folder )
+    end
+
+    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
+    if !isdir( passing_proteins_folder )
+       mkpath( passing_proteins_folder )
+   end
+
 
      ###########
      #Load Spectral Libraries
@@ -55,7 +65,7 @@ function SearchDIA(params_path::String)
      all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
      IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
      ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-     iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
+     iso_splines = parseIsoXML("../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
      scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
      unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
      spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -181,13 +191,23 @@ function SearchDIA(params_path::String)
 
      best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
      scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
- 
+     #Wipe memory
+     best_psms = nothing
+     GC.gc()
+
+
+     @time test_psms = getPSMsPassingQVal(
+                                    quant_psms_folder, 
+                                    passing_psms_folder,
+                                    0.01f0)
      #Get protein names 
-     transform!(best_psms, AsTable(:) => ByRow(psm -> 
+     transform!(test_psms, AsTable(:) => ByRow(psm -> 
      precursors[:accession_numbers][psm[:precursor_idx]]
      ) => :accession_numbers
      );
      traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params_[:q_value]).&(best_psms[!,:target]),:precursor_idx])
+
+
      ###########
      #Score Protein Groups
      scored_proteins = scoreProteinGroups!(best_psms)
