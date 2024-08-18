@@ -5,7 +5,8 @@
 function getProteinGroups(
     passing_psms_folder::String,
     protein_groups_folder::String;
-    min_peptides = 2
+    min_peptides = 2,
+    protein_q_val_threshold::Float32 = 0.01f0
 )
 
     function getProteinGroupsDict(
@@ -68,20 +69,46 @@ function getProteinGroups(
 
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
-        return nothing
+        return size(df, 1)
     end
 
+
+    pg_count = 0
     for file_path in readdir(passing_psms_folder, join=true)
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         protein_groups =  getProteinGroupsDict(
             file_path;
             min_peptides = min_peptides
         )
-        writeProteinGroups(
+        pg_count += writeProteinGroups(
             protein_groups,
             protein_groups_path
         )
     end
+
+    max_pg_scores = Vector{@NamedTuple{score::Float32, target::Bool}}(undef, pg_count)
+    n = 1
+    protein_groups_paths = readdir(protein_groups_folder, join=true)
+    for file_path in protein_groups_paths
+        pg_table = Arrow.Table(file_path)
+        for i in range(1, length(pg_table[:max_pg_score]))
+            max_pg_scores[n] = (score = pg_table[:max_pg_score][i], target = pg_table[:target][i])
+            n += 1
+        end
+    end
+    sort!(max_pg_scores, alg=QuickSort, by=x->x[:score],rev = true)
+    #return max_pg_scores
+    # Second pass: Find the probability threshold
+
+
+    pg_score_threshold = find_score_threshold(max_pg_scores, protein_q_val_threshold)
+    for file_path in protein_groups_paths
+        pg_table = Arrow.Table(file_path)
+        pg_df = DataFrame(pg_table)[(pg_table[:max_pg_score].>=pg_score_threshold),:]
+        Arrow.write(joinpath(protein_groups_folder, basename(file_path)),
+        pg_df)
+    end
+
 end
 
 #test_table = Arrow.Table("/Users/n.t.wamsley/Desktop/testresults/RESULTS/Search/temp/passing_psms/E10H50Y40_02.arrow")

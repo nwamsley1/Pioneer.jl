@@ -1,3 +1,33 @@
+
+function find_score_threshold(
+    scores::Vector{@NamedTuple{score::Float32, target::Bool}},
+    q_value_threshold::Float32
+)
+    # Second pass: Find the probability threshold
+    targets_above = 0
+    decoys_above = 0
+    targets = 0
+    decoys = 0
+    for (prob, target) in scores
+        targets += target
+        decoys += (1 - target)
+    end
+
+    for (score, target) in reverse(scores)
+
+        targets_above -= target
+        decoys_above -= (1 - target)
+        
+        current_q_value = decoys_above / (targets_above + decoys_above)
+        
+        if current_q_value <= q_value_threshold
+           return score#return prob  # This is the probability threshold we're looking for
+        end
+    end
+
+    return scores[end][:score]
+end
+
 function find_prob_threshold(
                             file_paths::Vector{String},
                             q_value_threshold::Float32
@@ -27,7 +57,7 @@ function find_prob_threshold(
     prob_for_q_value_threshold = 0.0f0
     for (prob, target) in all_probs
 
-        targets_above += 1
+        targets_above += target
         decoys_above += (1 - target)
         
         current_q_value = decoys_above / (targets_above + decoys_above)
@@ -40,6 +70,7 @@ function find_prob_threshold(
     # If we get here, all q-values are below the threshold
     return prob_for_q_value_threshold
 end
+
 
 
 function getPSMsPassingQVal(
