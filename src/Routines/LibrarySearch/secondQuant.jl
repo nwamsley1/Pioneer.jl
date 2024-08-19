@@ -1,12 +1,12 @@
-function secondQuant!( 
-    grouped_best_psms,   
+function secondQuantSearch!( 
+    file_path_to_parsed_name,
+    passing_psms_folder,
+    second_quant_folder,
     frag_err_dist_dict,
-    traces_passing,
     rt_index_paths,
-    RT_iRT,
+    rt_irt,
     irt_err,
     chromatograms,
-    file_id_to_parsed_name,
     MS_TABLE_PATHS,
     params_,
     precursors,
@@ -20,6 +20,7 @@ function secondQuant!(
     complex_unscored_PSMs,
     complex_spectral_scores,
     precursor_weights)
+
 function secondQuant(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -82,12 +83,24 @@ end
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
-    rt_df = DataFrame(Arrow.Table(rt_index_paths[file_id_to_parsed_name[ms_file_idx]]))
+    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
+    rt_df = DataFrame(Arrow.Table(rt_index_paths[file_path_to_parsed_name[MS_TABLE_PATH]]))
     rt_index = buildRTIndex(rt_df,
                             bin_rt_size = bin_rt_size)
+                            DataFrame(Tables.columntable(arrow_table))
 
+    #Map raw file name to psms table 
+    sub_bpsms_path = joinpath(passing_psms_folder, file_path_to_parsed_name[MS_TABLE_PATH].*".arrow")
+    #Get psms table for this raw file. 
+    sub_bpsms = DataFrame(
+                    Tables.columntable(#Need a modifiable deep copy
+                            Arrow.Table(
+                                sub_bpsms_path
+                                )))
+    filter!(x->x.target, sub_bpsms) #remove decoys IMPORTANT
+    sub_bpsms[!,:peak_area] = zeros(Float32, size(sub_bpsms, 1))
+    sub_bpsms[!,:new_best_scan] = zeros(UInt32, size(sub_bpsms, 1))
 
-    MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     params_[:deconvolution_params]["huber_delta"] = median(
         [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
         chroms = vcat(secondQuant(
@@ -95,9 +108,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             params_;
             precursors = spec_lib["precursors"],
             fragment_lookup_table = spec_lib["f_det"],
-            rt_index = rt_index,#RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+            rt_index = rt_index,
             ms_file_idx = UInt32(ms_file_idx), 
-            rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
+            rt_to_irt_spline = rt_irt[file_path_to_parsed_name[MS_TABLE_PATH]],
             mass_err_model = frag_err_dist_dict[ms_file_idx],
             irt_err = irt_err,#irt_errs[ms_file_idx]/3,
             ion_matches = ionMatches,
@@ -110,7 +123,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            traces_passing = traces_passing,
+            traces_passing = Set(sub_bpsms[!,:precursor_idx]),
             quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
             )...);
 
@@ -119,7 +132,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         filter!(x->first(x.isotopes_captured)<2, chroms)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
-        sub_bpsms = grouped_best_psms[(file_name = file_id_to_parsed_name[ms_file_idx],)]
         integratePrecursors(
                             gchroms,
                             sub_bpsms[!,:precursor_idx],
@@ -129,6 +141,15 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             sub_bpsms[!,:new_best_scan],
                             λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"])
                             )
+
+        temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
+        #psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+
+        Arrow.write(
+            temp_path,
+            sub_bpsms,
+            )
+
         #BPSMS[ms_file_idx] = psms_integrated;
 end
 end

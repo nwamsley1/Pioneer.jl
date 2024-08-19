@@ -9,7 +9,7 @@ function quantSearch(
     RT_iRT,
     irt_err,
     chromatograms,
-    file_id_to_parsed_name,
+    file_path_to_parsed_name,
     MS_TABLE_PATHS,
     params_,
     spec_lib,
@@ -89,13 +89,14 @@ function quantSearch(
         psms = fetch.(tasks)
         return psms
     end
-
+    ms_table_path_to_psms_path = Dict{String, String}()
     quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         
-        rt_df = DataFrame(Arrow.Table(rt_index_paths[file_id_to_parsed_name[ms_file_idx]]))
+        parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
+        rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
         rt_index = buildRTIndex(rt_df,
                                 bin_rt_size = bin_rt_size)
-
+        rt_irt = RT_iRT[parsed_fname]
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
         params_[:deconvolution_params]["huber_delta"] = median(
             [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
@@ -121,7 +122,7 @@ function quantSearch(
                 fragment_lookup_table = spec_lib["f_det"],
                 rt_index = rt_index,
                 ms_file_idx = UInt32(ms_file_idx), 
-                rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
+                rt_to_irt_spline = rt_irt,
                 mass_err_model = frag_err_dist_dict[ms_file_idx],
                 irt_err = irt_err,#irt_errs[ms_file_idx]/3,
                 ion_matches = ionMatches,
@@ -173,14 +174,13 @@ function quantSearch(
                 precursors[:prec_charge],
                 precursors[:missed_cleavages],
                 ms_file_idx,
-                file_id_to_parsed_name,
-                RT_iRT,
+                rt_irt,
                 precID_to_iRT
 
             );
-            psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx];
+            #psms[!,:file_name].=file_path_to_parsed_name[MS_TABLE_PATH];
 
-            temp_path = joinpath(quant_psms_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
+            temp_path = joinpath(quant_psms_folder, RT_iRT[parsed_fname]*".arrow")
             psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
 
             Arrow.write(
@@ -189,5 +189,5 @@ function quantSearch(
                 )
             #BPSMS[ms_file_idx] = psms;
     end
-    return #BPSMS
+    return
 end

@@ -41,7 +41,10 @@ function SearchDIA(params_path::String)
        mkpath( passing_proteins_folder )
    end
 
-
+   second_quant_folder = joinpath(temp_folder, "second_quant")
+   if !isdir( second_quant_folder)
+      mkpath( second_quant_folder)
+  end
      ###########
      #Load Spectral Libraries
      ###########
@@ -77,7 +80,8 @@ function SearchDIA(params_path::String)
      complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
      ###########
      #File Names Parsing 
-     file_id_to_parsed_name, parsed_fnames = parseFileNames(MS_TABLE_PATHS)
+     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
+
      ###########
      #Tune Parameters
      println("Parameter Tuning Search...")
@@ -162,7 +166,7 @@ function SearchDIA(params_path::String)
      ############
      #Quantitative Search
      println("Begining Quantitative Search...")
-     quantSearch(
+     ms_table_path_to_psms_path = quantSearch(
          frag_err_dist_dict,
          pid_to_cv_fold,
          prec_to_irt,
@@ -172,7 +176,7 @@ function SearchDIA(params_path::String)
          rt_irt,
          irt_err,
          chromatograms,
-         file_id_to_parsed_name,
+         file_path_to_parsed_name,
          MS_TABLE_PATHS,
          params_,
          spec_lib,
@@ -195,10 +199,11 @@ function SearchDIA(params_path::String)
      best_psms = nothing
      GC.gc()
 
-
-     @time test_psms = getPSMsPassingQVal(
+    traces_passing = getBestTraces(quant_psms_folder)
+    getPSMsPassingQVal(
                                     quant_psms_folder, 
                                     passing_psms_folder,
+                                    traces_passing,
                                     0.01f0)
      #Get protein names 
      transform!(test_psms, AsTable(:) => ByRow(psm -> 
@@ -210,6 +215,7 @@ function SearchDIA(params_path::String)
 
      ###########
      #Score Protein Groups
+     #=
      scored_proteins = scoreProteinGroups!(best_psms)
      protein_to_q_value = Dict{Tuple{UInt32, String}, Float32}()
      for i in range(1, size(scored_proteins, 1))
@@ -220,21 +226,23 @@ function SearchDIA(params_path::String)
              )
          ] = scored_proteins[i,:q_value]
      end
+     =#
+     getProteinGroups(passing_psms_folder, passing_proteins_folder)
      ###########
      #Re-quantify with 1% fdr precursors 
      best_psms[!,:peak_area] = zeros(Float32, size(best_psms, 1))
      best_psms[!,:new_best_scan] = zeros(UInt32, size(best_psms, 1))
-     grouped_best_psms = groupby(best_psms, :file_name)
+     #grouped_best_psms = groupby(best_psms, :file_name)
      println("Re-Quantifying Precursors at FDR Threshold...")
-     secondQuant!( 
-                     grouped_best_psms,   
+     secondQuantSearch!( 
+                     file_path_to_parsed_name,
+                     passing_psms_folder,
+                     second_quant_folder,
                      frag_err_dist_dict,
-                     traces_passing,
                      rt_index_paths,
-                     RT_iRT,
+                     rt_irt,
                      irt_err,
                      chromatograms,
-                     file_id_to_parsed_name,
                      MS_TABLE_PATHS,
                      params_,
                      spec_lib["precursors"],

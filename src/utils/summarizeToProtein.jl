@@ -75,6 +75,10 @@ function getProteinGroups(
 
     pg_count = 0
     for file_path in readdir(passing_psms_folder, join=true)
+        _, extention = splitext(file_path)
+        if extention != ".arrow"
+            continue
+        end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         protein_groups =  getProteinGroupsDict(
             file_path;
@@ -99,8 +103,6 @@ function getProteinGroups(
     sort!(max_pg_scores, alg=QuickSort, by=x->x[:score],rev = true)
     #return max_pg_scores
     # Second pass: Find the probability threshold
-
-
     pg_score_threshold = find_score_threshold(max_pg_scores, protein_q_val_threshold)
     for file_path in protein_groups_paths
         pg_table = Arrow.Table(file_path)

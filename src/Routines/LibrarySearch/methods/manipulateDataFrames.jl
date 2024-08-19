@@ -456,8 +456,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                                     prec_charge::AbstractArray{UInt8},
                                     precursor_missed_cleavage::AbstractArray{UInt8},
                                     ms_file_idx::Integer,
-                                    ms_id_to_file_path::Dict{Int64, String},
-                                    rt_to_irt_interp::Any,
+                                    rt_to_irt_interp::UniformSpline,
                                     prec_id_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}) where {T<:AbstractFloat}
 
     #filter!(x -> x.best_scan, psms);
@@ -511,7 +510,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
             for i in chunk
                 prec_idx = precursor_idx[i]
 
-                irt_obs[i] = rt_to_irt_interp[ms_id_to_file_path[ms_file_idx]](rt[i])
+                irt_obs[i] = rt_to_irt_interp(rt[i])
                 irt_pred[i] = prec_irt[prec_idx]
                 irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
