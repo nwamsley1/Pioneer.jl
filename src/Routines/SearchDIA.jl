@@ -210,7 +210,8 @@ function SearchDIA(params_path::String)
      precursors[:accession_numbers][psm[:precursor_idx]]
      ) => :accession_numbers
      );
-     traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params_[:q_value]).&(best_psms[!,:target]),:precursor_idx])
+
+     #traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params_[:q_value]).&(best_psms[!,:target]),:precursor_idx])
 
 
      ###########
@@ -261,12 +262,6 @@ function SearchDIA(params_path::String)
      #Ungroup precursors and get the best trace for each 
      best_psms = DataFrame(grouped_best_psms)
      #Must be based on weight and not peak_area because peak_area was not calculated for decoys
-     getBestTrace!(best_psms, params_[:q_value], :weight)
-     filter!(x->x.best_trace, best_psms)
-     #precursor level q_value 
-     getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-     #filter out decoys and low-scoring targets
-     filter!(x->(x.q_value<=params_[:q_value])&(x.target)&(!isnan(x.peak_area)), best_psms)
      #IDs_PER_FILE = value_counts(best_psms, [:file_name])
      best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
      ###########
