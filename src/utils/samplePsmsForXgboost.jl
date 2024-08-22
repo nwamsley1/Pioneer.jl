@@ -21,7 +21,8 @@ function samplePSMsForXgboost(quant_psms_folder, max_psms)
         
         # Calculate the number of rows to sample (1/N'th of the total)
         sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
-        
+        println("num_rows $num_rows")
+        println("sample_size $sample_size")
         # Generate sorted random indices for sampling
         sampled_indices = sort!(sample(1:num_rows, sample_size, replace=false))
         

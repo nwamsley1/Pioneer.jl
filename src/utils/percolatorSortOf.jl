@@ -100,12 +100,12 @@ function getBestScorePerPrec!(
     bst::Booster,
     features::Vector{Symbol}
 )
-    for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-        if haskey(prec_to_best_score_old, prec_idx)
-            #max_depthprobs[i] = prec_to_best_score_old[prec_idx]
-            psms[i,:max_prob] = prec_to_best_score_old[prec_idx]
-        end
-    end
+    #for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
+    #    if haskey(prec_to_best_score_old, prec_idx)
+    #        #max_depthprobs[i] = prec_to_best_score_old[prec_idx]
+    #        psms[i,:max_prob] = prec_to_best_score_old[prec_idx]
+    #    end
+    #end
     #Predict probabilites 
     probs = XGBoost.predict(bst, psms[!,features])
     #Update maximum probabilities for tracked precursors 
@@ -114,6 +114,13 @@ function getBestScorePerPrec!(
             if prec_to_best_score_new[prec_idx] < probs[i]
                 prec_to_best_score_new[prec_idx] = probs[i]
             end
+        end
+    end
+
+    for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
+        if haskey(prec_to_best_score_new, prec_idx)
+            #max_depthprobs[i] = prec_to_best_score_old[prec_idx]
+            psms[i,:max_prob] = prec_to_best_score_new[prec_idx]
         end
     end
 end
@@ -212,7 +219,6 @@ function rankPSMs!(psms::DataFrame,
     Random.seed!(128);
     #pbar = ProgressBar(total = sum(iter_scheme)*length(unique_cv_folds))
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    psms_test_folds = []
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
         cv_psms = psms[train_fold_idxs_all,:]
@@ -245,7 +251,7 @@ function rankPSMs!(psms::DataFrame,
                             )
             bst.feature_names = [string(x) for x in features]
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
-
+            println(collect(zip(importance(bst)))[1:30])
             ###################
             #Apply to held out data on disc. Get best/mean/min score accross
             #all runs for each precursor in this CV fold. 

@@ -10,6 +10,7 @@ function secondQuantSearch!(
     MS_TABLE_PATHS,
     params_,
     precursors,
+    accession_number_to_id,
     spec_lib,
     ionMatches,
     ionMisses,
@@ -87,8 +88,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     rt_df = DataFrame(Arrow.Table(rt_index_paths[file_path_to_parsed_name[MS_TABLE_PATH]]))
     rt_index = buildRTIndex(rt_df,
                             bin_rt_size = bin_rt_size)
-                            DataFrame(Tables.columntable(arrow_table))
-
     #Map raw file name to psms table 
     sub_bpsms_path = joinpath(passing_psms_folder, file_path_to_parsed_name[MS_TABLE_PATH].*".arrow")
     #Get psms table for this raw file. 
@@ -144,7 +143,17 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 
         temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
         #psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
-        sort!(sub_bpsms, :precursor_idx)
+        filter!(x->!(isnan(x.peak_area)), sub_bpsms)
+        sub_bpsms[!,:accession_numbers] = [precursors[:accession_numbers][prec_idx] for prec_idx in sub_bpsms[!,:precursor_idx]]
+        sub_bpsms[!,:protein_idx] = [accession_number_to_id[accession_numbers] for accession_numbers in sub_bpsms[!,:accession_numbers]]
+        sub_bpsms[!,:ms_file_idx] =  UInt32.(sub_bpsms[!,:ms_file_idx])
+        sort!(sub_bpsms, [:protein_idx,:precursor_idx,:ms_file_idx])
+        sub_bpsms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in sub_bpsms[!,:precursor_idx]]
+        sub_bpsms[!,:peak_area] =  allowmissing(sub_bpsms[!,:peak_area])
+        sub_bpsms[!,:peak_area_normalized] =  allowmissing(zeros(Float32, size(sub_bpsms, 1)))
+        sub_bpsms[!,:structural_mods] = allowmissing([precursors[:structural_mods][pid] for pid in sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:isotopic_mods] = allowmissing([precursors[:isotopic_mods][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+    
         Arrow.write(
             temp_path,
             sub_bpsms,

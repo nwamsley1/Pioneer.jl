@@ -4,25 +4,36 @@
 
 function getProteinGroups(
     passing_psms_folder::String,
-    protein_groups_folder::String;
+    protein_groups_folder::String,
+    accession_numbers::AbstractVector{String},
+    accession_number_to_id::Dict{Sring, UInt32},
+    precursor_sequence::AbstractVector{String};
     min_peptides = 2,
     protein_q_val_threshold::Float32 = 0.01f0
 )
 
     function getProteinGroupsDict(
-        psms_path::String;
+        psms_path::String,
+        accession_numbers::AbstractVector{String},
+        accession_number_to_id::Dict{Sring, UInt32},
+        precursor_sequence::AbstractVector{String};
         min_peptides::Int64 = 2)
+
+
         psms_table = Arrow.Table(psms_path)
-        protein_groups = Dictionary{@NamedTuple{accession_numbers::String, target::Bool},
+
+        protein_groups = Dictionary{@NamedTuple{protein_idx::UInt32, target::Bool},
         @NamedTuple{
             max_pg_score::Float32, 
-            peptides::Set{String}}}()
+            peptides::Set{String}}
+        }()
+
         for i in range(1, length(psms_table[1]))
             precursor_idx = psms_table[:precursor_idx][i]
-            sequence = precursors[:sequence][precursor_idx]
+            sequence = precursor_sequence[precursor_idx]
             score = psms_table[:prob][i]
-            accession_numbers = precursors[:accession_numbers][precursor_idx]
-            keyname = (accession_numbers = accession_numbers, target = psms_table[:target][i])
+            protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
+            keyname = (protein_idx, protein_idx, target = psms_table[:target][i])
             if haskey(protein_groups, keyname)
                 max_pg_score, peptides = protein_groups[keyname]
                 if score > max_pg_score
@@ -45,7 +56,7 @@ function getProteinGroups(
 
     function writeProteinGroups(
                                     protein_groups::Dictionary{
-                                    @NamedTuple{accession_numbers::String, target::Bool},
+                                    @NamedTuple{protein_idx::UInt32, target::Bool},
                                     @NamedTuple{max_pg_score::Float32,  peptides::Set{String}}
                                     },
                                     protein_groups_path::String)
@@ -54,14 +65,14 @@ function getProteinGroups(
         values_array = values(protein_groups)
 
         # Create vectors for each column
-        accession_numbers = [k[:accession_numbers] for k in keys_array]
+        protein_idx = [k[:protein_idx] for k in keys_array]
         target = [k[:target] for k in keys_array]
         max_pg_score = [v[:max_pg_score] for v in values_array]
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
 
         # Create DataFrame
         df = DataFrame((
-            accession_numbers = accession_numbers,
+            protein_idx = protein_idx,
             target = target,
             max_pg_score = max_pg_score,
         )
@@ -81,7 +92,10 @@ function getProteinGroups(
         end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         protein_groups =  getProteinGroupsDict(
-            file_path;
+            file_path,
+            accession_numbers,
+            accession_number_to_id,
+            precursor_sequence;
             min_peptides = min_peptides
         )
         pg_count += writeProteinGroups(

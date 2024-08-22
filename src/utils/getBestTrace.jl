@@ -9,14 +9,12 @@ function getBestTraces(
         psms_table = Arrow.Table(file_path)
         for i in range(1, length(psms_table[1]))
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
-            row_score = log2(psms_table[:prob][i])
+            row_score = psms_table[:weight][i]*(psms_table[:prob][i]>0.75)
             if isnan(row_score)
                 row_score = zero(Float32)
             end
             if haskey(psms_trace_scores, psms_key)
-                score = psms_trace_scores[psms_key]
-                score += row_score
-                psms_trace_scores[psms_key] = score
+                psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else
                 insert!(
                     psms_trace_scores,

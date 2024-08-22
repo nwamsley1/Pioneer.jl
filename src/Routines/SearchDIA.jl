@@ -50,6 +50,8 @@ function SearchDIA(params_path::String)
      ###########
      spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
      precursors = spec_lib["precursors"]
+     unique_proteins = unique(precursors[:accession_numbers])
+     accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))))
      ###########
      #Set CV Folds 
      ###########
@@ -199,11 +201,11 @@ function SearchDIA(params_path::String)
      best_psms = nothing
      GC.gc()
 
-    traces_passing = getBestTraces(quant_psms_folder)
+    best_traces = getBestTraces(quant_psms_folder)
     getPSMsPassingQVal(
                                     quant_psms_folder, 
                                     passing_psms_folder,
-                                    traces_passing,
+                                    best_traces,
                                     0.01f0)
      #Get protein names 
      transform!(test_psms, AsTable(:) => ByRow(psm -> 
@@ -231,9 +233,6 @@ function SearchDIA(params_path::String)
      getProteinGroups(passing_psms_folder, passing_proteins_folder)
      ###########
      #Re-quantify with 1% fdr precursors 
-     best_psms[!,:peak_area] = zeros(Float32, size(best_psms, 1))
-     best_psms[!,:new_best_scan] = zeros(UInt32, size(best_psms, 1))
-     #grouped_best_psms = groupby(best_psms, :file_name)
      println("Re-Quantifying Precursors at FDR Threshold...")
      secondQuantSearch!( 
                      file_path_to_parsed_name,
@@ -247,6 +246,7 @@ function SearchDIA(params_path::String)
                      MS_TABLE_PATHS,
                      params_,
                      spec_lib["precursors"],
+                     accession_number_to_id,
                      spec_lib,
                      ionMatches,
                      ionMisses,
@@ -257,19 +257,12 @@ function SearchDIA(params_path::String)
                      complex_unscored_PSMs,
                      complex_spectral_scores,
                      precursor_weights)
- 
-     ###########
-     #Ungroup precursors and get the best trace for each 
-     best_psms = DataFrame(grouped_best_psms)
-     #Must be based on weight and not peak_area because peak_area was not calculated for decoys
-     #IDs_PER_FILE = value_counts(best_psms, [:file_name])
-     best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
      ###########
      #Normalize Quant 
      ###########
      println("Normalization...")
      normalizeQuant(
-             best_psms,
+             second_quant_folder,
              :peak_area,
              N = params_[:normalization_params]["n_rt_bins"],
              spline_n_knots = params_[:normalization_params]["spline_n_knots"],
@@ -279,11 +272,13 @@ function SearchDIA(params_path::String)
      
      ############
      #Prep for Protein Inference 
-     best_psms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in best_psms[!,:precursor_idx]]
-     best_psms[!,:ms_file_idx] =  UInt32.(best_psms[!,:ms_file_idx])
-     best_psms[!,:peak_area] =  allowmissing(best_psms[!,:peak_area])
-     best_psms[!,:peak_area_normalized] =  allowmissing(best_psms[!,:peak_area_normalized])
- 
+     @time mergeSortedArrowTables(
+        second_quant_folder,
+        "/Users/n.t.wamsley/Desktop/test.arrow",
+        (:protein_idx,:precursor_idx),
+        N = 1000000
+    )
+
      gbpsms = groupby(best_psms,:ms_file_idx)
      file_idx_dicts = [Dict{UInt32, @NamedTuple{prob::Float32, qvalue::Float32, peak_area::Float32}}() for _ in range(1, length(gbpsms))]
      for (file_idx, bpsms) in pairs(gbpsms)
@@ -294,8 +289,8 @@ function SearchDIA(params_path::String)
                  peak_area = bpsms[i,:peak_area])
          end
      end
-     best_psms[!,:structural_mods] = [precursors[:structural_mods][pid] for pid in best_psms[!,:precursor_idx]]
-     best_psms[!,:isotopic_mods] = [precursors[:isotopic_mods][pid] for pid in best_psms[!,:precursor_idx]]
+     best_psms[!,:structural_mods] = allowmissing([precursors[:structural_mods][pid] for pid in best_psms[!,:precursor_idx]])
+     best_psms[!,:isotopic_mods] = allowmissing([precursors[:isotopic_mods][pid] for pid in best_psms[!,:precursor_idx]])
  
      features = [:species,:accession_numbers,:sequence,:structural_mods,
                  :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
