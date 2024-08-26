@@ -5,6 +5,8 @@ function scoreTraces!(
 )
     features = [ 
         :max_prob,
+        :mean_prob,
+        :min_prob,
         #:max_pg_score,
         #:pg_count,
         #:pepgroup_count,
@@ -15,8 +17,8 @@ function scoreTraces!(
         :charge,
         :irt_pred,
         :irt_error,
-        :irt_obs,
-        :RT,
+        #:irt_obs,
+        #:RT,
         :irt_diff,
         :max_y_ions,
         :y_ions_sum,
@@ -36,24 +38,25 @@ function scoreTraces!(
         :max_matched_residual,
         :max_unmatched_residual,
         :max_gof,
-        :entropy_score,
-        :max_entropy,
+        #:entropy_score,
+        #:max_entropy,
         :fitted_spectral_contrast,
         :spectral_contrast,
         :max_matched_ratio,
         :err_norm,
-        :error,
+        #:error,
         :matched_ratio,
         :poisson,
         :weight,
         :log2_intensity_explained,
         :tic,
-        :adjusted_intensity_explained
+        #:adjusted_intensity_explained
     ];
     best_psms[!,:accession_numbers] = [precursors[:accession_numbers][pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
     best_psms[!,:decoy] = best_psms[!,:target].==false;
-    xgboost_time = @timed bst = rankPSMs!(best_psms, 
+    xgboost_time = @timed bst = rankPSMs!(
+                            best_psms, 
                             file_paths,
                             features,
                             colsample_bytree = 0.5, 

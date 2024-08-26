@@ -48,153 +48,104 @@ end
 =#
 
 function getBestScorePerPrec!(
-    prec_to_best_score_old::Dictionary{UInt32, Float32},
-    prec_to_best_score_new::Dictionary{UInt32, Float32},
+    #prec_to_best_score_old::Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
+    prec_to_best_score_new::Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
     cv_fold::UInt8,
     file_paths::Vector{String},
     bst::Booster,
-    features::Vector{Symbol}
-)
+    features::Vector{Symbol})
+
+    println("A")
+    #Reset counts for new scores
+
+    for (prec_idx, value) in pairs(prec_to_best_score_new)
+        max_prob, mean_prob, min_prob, n = value
+        prec_to_best_score_new[prec_idx] = (max_prob = zero(Float32), mean_prob = zero(Float32), min_prob = one(Float32), n = zero(UInt16))
+    end
+     
     for file_path in file_paths
-        arrow_table = Arrow.Table(file_path)
-        #max_probs = zeros(Float32, length(arrow_table[1]))
-        psms = DataFrame(Tables.columntable(arrow_table))
-        for (i, prec_idx) in enumerate(arrow_table[:precursor_idx])
-            if psms[i,:cv_fold] != cv_fold
-                continue
-            end
-            if haskey(prec_to_best_score_old, prec_idx)
-                psms[i,:max_prob] = prec_to_best_score_old[prec_idx]
-            else
-                psms[i,:max_prob] = zero(Float32)
-                insert!(prec_to_best_score_old, prec_idx, zero(Float32))
-            end
-        end
+        psms = DataFrame(Arrow.Table(file_path))
+        #Apply old scores to each row 
         #Predict probabilites 
-        #don't overwrite psms because that will affect other cv folds. 
+        #based on old scores 
         probs = XGBoost.predict(bst, psms[!,features])
         #Update maximum probabilities for tracked precursors 
-        for (i, prec_idx) in enumerate(arrow_table[:precursor_idx])
-            if psms[i,:cv_fold] != cv_fold
+        test_idx = 1
+        m0,m1 = 0,0
+        for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
+            if psms[i,:cv_fold] == cv_fold
                 continue
             end
             prob = probs[i]
             if haskey(prec_to_best_score_new, prec_idx)
-                if prec_to_best_score_new[prec_idx] < prob
-                     prec_to_best_score_new[prec_idx] = prob
+                m0 += 1
+                max_prob, mean_prob, min_prob, n = prec_to_best_score_new[prec_idx]
+                if max_prob < prob
+                    max_prob = prob
                 end
+                if min_prob > prob
+                    min_prob = prob
+                end
+                mean_prob += prob
+                n += one(UInt16)
+                test_idx = prec_idx
+                prec_to_best_score_new[prec_idx] = (max_prob = max_prob, mean_prob = mean_prob, min_prob = min_prob, n = n)
             else
-                insert!(prec_to_best_score_new, prec_idx, prob)
+                m1 += 1
+                insert!(prec_to_best_score_new, prec_idx, 
+                (max_prob = prob, mean_prob = prob, min_prob = prob, n = one(UInt16)))
+            end
+        end
+    end
+
+    for file_path in file_paths
+        psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+        probs = XGBoost.predict(bst, psms[!,features])
+        for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
+            if psms[i,:cv_fold] == cv_fold
+                continue
             end
             psms[i,:prob] = probs[i]
+            if haskey(prec_to_best_score_new, prec_idx)
+                max_prob, mean_prob, min_prob, n = prec_to_best_score_new[prec_idx]
+                psms[i,:max_prob] = max_prob
+                psms[i,:min_prob] = min_prob
+                if n > 0
+                    psms[i,:mean_prob] = mean_prob/n
+                else
+                    psms[i,:mean_prob] = zero(Float32)
+                end
+            end
         end
-        #Update table with new max_prob column
         Arrow.write(file_path, psms)
     end
+    return prec_to_best_score_new
 end
 
 function getBestScorePerPrec!(
-    prec_to_best_score_old::Dictionary{UInt32, Float32},
-    prec_to_best_score_new::Dictionary{UInt32, Float32},
+    prec_to_best_score_new::Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
     psms::DataFrame,
     bst::Booster,
     features::Vector{Symbol}
 )
-    #for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-    #    if haskey(prec_to_best_score_old, prec_idx)
-    #        #max_depthprobs[i] = prec_to_best_score_old[prec_idx]
-    #        psms[i,:max_prob] = prec_to_best_score_old[prec_idx]
-    #    end
-    #end
-    #Predict probabilites 
-    probs = XGBoost.predict(bst, psms[!,features])
-    #Update maximum probabilities for tracked precursors 
+    println("C")
+    #println("is it working?")
+    m = 0
     for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
         if haskey(prec_to_best_score_new, prec_idx)
-            if prec_to_best_score_new[prec_idx] < probs[i]
-                prec_to_best_score_new[prec_idx] = probs[i]
-            end
+            max_prob, mean_prob, min_prob, n = prec_to_best_score_new[prec_idx]
+            psms[i,:max_prob] = max_prob
+            psms[i,:min_prob] = min_prob
+            psms[i,:mean_prob] = mean_prob/n
+            m += 1
         end
     end
-
-    for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-        if haskey(prec_to_best_score_new, prec_idx)
-            #max_depthprobs[i] = prec_to_best_score_old[prec_idx]
-            psms[i,:max_prob] = prec_to_best_score_new[prec_idx]
-        end
-    end
-end
-
-
-
-function rankPSMs!(PSMs::DataFrame, features::Vector{Symbol}; 
-                    colsample_bytree::Float64 = 0.5, 
-                    colsample_bynode::Float64 = 0.5,
-                    eta::Float64 = 0.15, 
-                    min_child_weight::Int = 1, 
-                    subsample::Float64 = 0.5, 
-                    gamma::Int = 0, 
-                    max_depth::Int = 10,
-                    train_fraction::Float64 = 1.0,
-                    iter_scheme::Vector{Int} = [100, 100, 200], 
-                    print_importance::Bool = false)
-    PSMs[!,:max_prob], PSMs[!,:median_prob], PSMs[!,:q90_prob] = zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1]), zeros(Float32, size(PSMs)[1])
-    PSMs[!,:prob_temp],PSMs[!,:prob] = zeros(Float32, size(PSMs)[1]),zeros(Float32, size(PSMs)[1])
-    PSMs[!,:max_pg_score] = zeros(Float32, size(PSMs, 1))
-    PSMs[!,:pg_count] = zeros(UInt16, size(PSMs, 1))
-    PSMs[!,:pepgroup_count] = zeros(UInt16, size(PSMs, 1))
-    folds = PSMs[!,:cv_fold]
-    unique_cv_folds = unique(folds)
-    bst = ""
-    Random.seed!(128);
-    #pbar = ProgressBar(total = sum(iter_scheme)*length(unique_cv_folds))
-    #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    psms_test_folds = []
-    for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
-        PSMs[!,:max_prob] .= zero(Float64)
-        PSMs[!,:median_prob] .= zero(Float64)
-        #row idxs for a
-        test_fold_idxs = findall(x->x==test_fold_idx, folds)
-        train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
-        train_fold_idxs_sub = Random.randsubseq(train_fold_idxs_all[:], train_fraction)
-        #psms_train = PSMs[train_fold_idxs_all,:]
-        psms_train_sub = PSMs[train_fold_idxs_sub,:]
-        psms_test_sub = PSMs[test_fold_idxs,:]
-
-        for (train_iter, num_round) in enumerate(iter_scheme)
-            #println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))
-            ###################
-            #Train
-            #Train a model on the n-1 training folds. Then apply it to get class probabilities for the test-fold. 
-            bst = xgboost((psms_train_sub[!,features], psms_train_sub[!,:target]), 
-                            num_round=num_round, 
-                            #monotone_constraints = monotone_constraints,
-                            colsample_bytree = colsample_bytree, 
-                            colsample_bynode = colsample_bynode,
-                            gamma = gamma, 
-                            max_depth=max_depth, 
-                            eta = eta, 
-                            min_child_weight = min_child_weight, 
-                            subsample = subsample, 
-                            objective="binary:logistic",
-                            seed = rand(UInt32),
-                            #max_bin = 128,
-                            watchlist=(;)
-                            )
-            bst.feature_names = [string(x) for x in features]
-            print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
-            ###################
-            #Apply to CV fold 
-            getProbQuantiles!(psms_train_sub, :prob_temp, features, bst)
-            #Apply to held-out data
-            getProbQuantiles!(psms_test_sub, :prob, features, bst)
-            #update(pbar, num_round)
-        end
-        push!(psms_test_folds, psms_test_sub)
-  
-    end
-    bst.feature_names = [string(x) for x in features]
-    return bst, vcat(psms_test_folds...)
+    #println("mean(psms[!,:max_prob]) ", mean(psms[!,:max_prob]))
+    #println("m $m")
+    psms[!,:prob] = XGBoost.predict(bst, psms[!,features])
+    println("m $m")
+    display(describe(psms[!,[:max_prob,:min_prob,:mean_prob,:prob]]))
+    #println("test describe ", describe(psms[!,:max_prob]))
 end
 
 function rankPSMs!(psms::DataFrame, 
@@ -210,7 +161,7 @@ function rankPSMs!(psms::DataFrame,
                     train_fraction::Float64 = 1.0,
                     iter_scheme::Vector{Int} = [100, 100, 200], 
                     print_importance::Bool = true)
-
+    #println("TEST")
     psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
     psms[!,:prob] = zeros(Float32, size(psms, 1))
     folds = psms[!,:cv_fold]
@@ -219,15 +170,16 @@ function rankPSMs!(psms::DataFrame,
     Random.seed!(128);
     #pbar = ProgressBar(total = sum(iter_scheme)*length(unique_cv_folds))
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
+    #println("features $features")
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
         cv_psms = psms[train_fold_idxs_all,:]
         precs_to_score = unique(cv_psms[!,:precursor_idx])
-        prec_to_best_score_new = Dictionary(
-                                precs_to_score,
-                                zeros(Float32, length(precs_to_score))
-                            )
-        prec_to_best_score_old = copy(prec_to_best_score_new)
+        prec_to_best_score_new = Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
+        #for (key, value) in pairs(prec_to_best_score_new)
+        #    prec_to_best_score_new[key] = (max_prob = zero(Float32), mean_prob = zero(Float32), min_prob = one(Float32), n = zero(UInt16))
+        #end
+        prec_to_best_score_old = Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
 
         for (train_iter, num_round) in enumerate(iter_scheme)
             #println("Size of train_fold_idxs for $train_iter iteration for $test_fold_idx fold ,", length(train_fold_idxs))
@@ -249,32 +201,29 @@ function rankPSMs!(psms::DataFrame,
                             #max_bin = 128,
                             watchlist=(;)
                             )
+            println("describe(cv_psms[!,:max_prob]): ", describe(cv_psms[!,:max_prob]))
             bst.feature_names = [string(x) for x in features]
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
-            println(collect(zip(importance(bst)))[1:30])
+            println(collect(zip(importance(bst)))[1:5])
             ###################
             #Apply to held out data on disc. Get best/mean/min score accross
             #all runs for each precursor in this CV fold. 
-            @time begin
-            getBestScorePerPrec!(
-                prec_to_best_score_old,
-                prec_to_best_score_new,
-                cv_psms,
-                bst,
-                features
-            )
-
-            getBestScorePerPrec!(
-                prec_to_best_score_old,
+            prec_to_best_score_new = getBestScorePerPrec!(
                 prec_to_best_score_new,
                 test_fold_idx,
                 file_paths,
                 bst,
                 features
             )
-            
-            prec_to_best_score_old = copy(prec_to_best_score_new)
-            end
+            println(first(sort(prec_to_best_score_new, by=x->x[:max_prob], rev = true)))
+            println("length(keys(prec_to_best_score_new): ", length(keys(prec_to_best_score_new)))
+            getBestScorePerPrec!(
+                prec_to_best_score_new,
+                cv_psms,
+                bst,
+                features
+            )
+            prec_to_best_score_old = deepcopy(prec_to_best_score_new)
         end
         #push!(psms_test_folds, psms_test_sub)
   

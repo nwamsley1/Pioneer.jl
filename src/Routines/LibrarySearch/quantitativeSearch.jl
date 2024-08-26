@@ -156,7 +156,7 @@ function quantSearch(
                     gpsms[!,:weight],
                     gpsms[!,:gof],
                     gpsms[!,:matched_ratio],
-                    gpsms[!,:entropy_score],
+                    #gpsms[!,:entropy_score],
                     gpsms[!,:fitted_manhattan_distance],
                     gpsms[!,:fitted_spectral_contrast],
                     gpsms[!,:y_count]

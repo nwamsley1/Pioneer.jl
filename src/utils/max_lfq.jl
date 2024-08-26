@@ -281,48 +281,89 @@ function getProtAbundance(protein::String,
 end
 
 function LFQ(prot::DataFrame,
-                quant_col::Symbol)
+             protein_quant_path::String,
+                quant_col::Symbol,
+                file_id_to_parsed_name::Dict{Int64, String},
+                pg_score_threshold::Float32;
+                batch_size = 100000)
 
-    gpsms = groupby(prot, [:target, :species, :accession_numbers])
-    ngroups = size(gpsms, 1)
-    nfiles = length(unique(prot[!,:ms_file_idx]))
-    nrows = nfiles*ngroups
-    out = Dict(
-        :target => Vector{Union{Missing, Bool}}(undef, nrows),
-        :species => Vector{Union{Missing, String}}(undef, nrows),
-        :protein => Vector{Union{Missing, String}}(undef, nrows),
-        :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(undef, nrows),
-        :log2_abundance => zeros(Union{Missing, Float32}, nrows),
-        :experiments => zeros(Union{Missing, UInt32}, nrows),
+    #gpsms = groupby(prot, [:target, :species, :accession_numbers])
+    #ngroups = size(gpsms, 1)
+    last_row_idx = 0
+    while last_row_idx <= size(prot, 1)
+        subdf = prot[range(last_row_idx + 1, min(last_row_idx + batch_size, size(prot, 1))),:]
+        #Get rid of low scoring proteins 
+        filter!(x->coalesce(x.max_pg_score, 0.0f0)>pg_score_threshold, subdf);
+        #Exclude precursors with mods that impact quantitation
+        filter!(x->!occursin("M,Unimod:35", x.structural_mods), subdf)
+        gpsms = groupby(
+            subdf,
+            [:target, :species, :accession_numbers]
+        )
+        println("length(gpsms), ", length(gpsms))
+        ngroups = length(gpsms)
+        nfiles = length(unique(prot[!,:ms_file_idx]))
+        nrows = nfiles*ngroups
+        nrows = nfiles*ngroups
+        #pre allocate the batch
+        out = Dict(
+            :target => Vector{Union{Missing, Bool}}(undef, nrows),
+            :species => Vector{Union{Missing, String}}(undef, nrows),
+            :protein => Vector{Union{Missing, String}}(undef, nrows),
+            :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(undef, nrows),
+            :log2_abundance => zeros(Union{Missing, Float32}, nrows),
+            :experiments => zeros(Union{Missing, UInt32}, nrows),
+    
+        )
+        for i in range(1, nrows)
+            out[:target][i] = missing
+            out[:species][i] = missing
+            out[:protein][i] = missing
+            out[:peptides][i] = missing
+            out[:experiments][i] = missing
+            out[:log2_abundance][i] = missing
+        end
 
-    )
-
-    for i in range(1, nrows)
-        out[:target][i] = missing
-        out[:species][i] = missing
-        out[:protein][i] = missing
-        out[:peptides][i] = missing
-        out[:experiments][i] = missing
-        out[:log2_abundance][i] = missing
+        for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
+            getProtAbundance(protein[:accession_numbers], 
+                                (group_idx*nfiles) - nfiles + 1,
+                                protein[:target],
+                                protein[:species],
+                                data[!,:precursor_idx], 
+                                data[!,:ms_file_idx], 
+                                data[!,quant_col],
+                                out[:target],
+                                out[:species],
+                                out[:protein],
+                                out[:peptides],
+                                out[:experiments],
+                                out[:log2_abundance]
+                            )
+        end
+        out = DataFrame(out)
+        out[!,:n_peptides] = countPeptides(out[!,:peptides]);
+        out[!,:file_name] = Vector{Union{Missing, String}}(undef, size(out, 1))
+        for i in range(1, size(out, 1))
+            if ismissing(out[i,:experiments])
+                out[i,:file_name] = missing
+            else
+                out[i,:file_name] = file_id_to_parsed_name[out[i,:experiments]]
+            end
+        end
+        filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
+        
+        Arrow.append(
+            protein_quant_path,
+            select!(
+                out,
+                [:file_name,
+                 :target,
+                 :species,:protein,:peptides,:n_peptides,:log2_abundance])
+        )
+        last_row_idx = last_row_idx + batch_size
     end
 
-    for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-        getProtAbundance(protein[:accession_numbers], 
-                            (group_idx*nfiles) - nfiles + 1,
-                            protein[:target],
-                            protein[:species],
-                            data[!,:precursor_idx], 
-                            data[!,:ms_file_idx], 
-                            data[!,quant_col],
-                            out[:target],
-                            out[:species],
-                            out[:protein],
-                            out[:peptides],
-                            out[:experiments],
-                            out[:log2_abundance]
-                        )
-    end
-    out
+    return nothing
 end
 
 function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})

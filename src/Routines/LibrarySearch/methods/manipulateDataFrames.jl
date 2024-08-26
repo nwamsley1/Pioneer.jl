@@ -286,7 +286,7 @@ function addSecondSearchColumns!(psms::DataFrame,
                 #prec_mzs[i] = prec_mz[prec_idx];
                 #TIC[i] = Float16(log2(tic[scan_idx]));
                 total_ions[i] = UInt16(y_count[i] + b_count[i] + isotope_count[i]);
-                err_norm[i] = min(Float16((error[i])/(total_ions[i])), 6e4)
+                err_norm[i] = min(Float16((2^error[i])/(total_ions[i])), 6e4)
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
                 end
@@ -305,10 +305,6 @@ function addSecondSearchColumns!(psms::DataFrame,
     psms[!,:charge] = prec_charges
     #psms[!,:prec_mz] = prec_mzs
     psms[!,:cv_fold] = cv_fold
-
-    #psms[!,:best_scan] = zeros(Bool, N)
-    #psms[!,:score] = zeros(Float32, size(psms, 1))
-    psms[!,:intercept] = ones(Float16, size(psms, 1))
     #######
     sort!(psms,:RT); #Sorting before grouping is critical. 
     return nothing

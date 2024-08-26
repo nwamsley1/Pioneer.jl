@@ -167,39 +167,45 @@ function SearchDIA(params_path::String)
      
      ############
      #Quantitative Search
-     println("Begining Quantitative Search...")
-     ms_table_path_to_psms_path = quantSearch(
-         frag_err_dist_dict,
-         pid_to_cv_fold,
-         prec_to_irt,
-         quant_psms_folder,
-         rt_index_paths,
-         bin_rt_size,
-         rt_irt,
-         irt_err,
-         chromatograms,
-         file_path_to_parsed_name,
-         MS_TABLE_PATHS,
-         params_,
-         spec_lib,
-         ionMatches,
-         ionMisses,
-         IDtoCOL,
-         ionTemplates,
-         iso_splines,
-         complex_scored_PSMs,
-         complex_unscored_PSMs,
-         complex_spectral_scores,
-         precursor_weights
-         )
+    println("Begining Quantitative Search...")
+    ms_table_path_to_psms_path = quantSearch(
+        frag_err_dist_dict,
+        pid_to_cv_fold,
+        prec_to_irt,
+        quant_psms_folder,
+        rt_index_paths,
+        bin_rt_size,
+        rt_irt,
+        irt_err,
+        chromatograms,
+        file_path_to_parsed_name,
+        MS_TABLE_PATHS,
+        params_,
+        spec_lib,
+        ionMatches,
+        ionMisses,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        complex_scored_PSMs,
+        complex_unscored_PSMs,
+        complex_spectral_scores,
+        precursor_weights
+        )
 
-     println("Traning Target-Decoy Model...")
-
-     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
-     scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
-     #Wipe memory
-     best_psms = nothing
-     GC.gc()
+    println("Traning Target-Decoy Model...")
+    for fpath in readdir(quant_psms_folder, join=true)
+        
+        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+        Arrow.write(fpath,psms)
+    end
+    best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
+    scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
+    #Wipe memory
+    best_psms = nothing
+    GC.gc()
+    DataFrame(Arrow.Table(readdir(quant_psms_folder,join=true)))[!,[:max_prob,:min_prob,:mean_prob,:prob]]
 
     best_traces = getBestTraces(quant_psms_folder)
     getPSMsPassingQVal(
@@ -207,30 +213,36 @@ function SearchDIA(params_path::String)
                                     passing_psms_folder,
                                     best_traces,
                                     0.01f0)
-     #Get protein names 
-     transform!(test_psms, AsTable(:) => ByRow(psm -> 
-     precursors[:accession_numbers][psm[:precursor_idx]]
-     ) => :accession_numbers
-     );
-
-     #traces_passing = Set(best_psms[(best_psms[!,:q_value].<=params_[:q_value]).&(best_psms[!,:target]),:precursor_idx])
-
-
-     ###########
-     #Score Protein Groups
-     #=
-     scored_proteins = scoreProteinGroups!(best_psms)
-     protein_to_q_value = Dict{Tuple{UInt32, String}, Float32}()
-     for i in range(1, size(scored_proteins, 1))
-         protein_to_q_value[
-             (
-                 UInt32(scored_proteins[i,:ms_file_idx]),
-                 scored_proteins[i,:accession_numbers]
-             )
-         ] = scored_proteins[i,:q_value]
-     end
-     =#
-     getProteinGroups(passing_psms_folder, passing_proteins_folder)
+  #=
+  julia> getPSMsPassingQVal(
+                                       quant_psms_folder, 
+                                       passing_psms_folder,
+                                       best_traces,
+                                       0.01f0)
+prob_threshold 0.87230146
+sum(passing_psms) 192867
+sum(passing_psms) 192524
+sum(passing_psms) 192360
+sum(passing_psms) 192953
+sum(passing_psms) 192689
+sum(passing_psms) 192816
+  =#
+    test_df = DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true)))
+    @time mergeSortedArrowTables(
+           passing_proteins_folder,
+           "/Users/n.t.wamsley/Desktop/sorted_pg_groups.arrow",
+           :max_pg_score,
+           N = 1000000
+       )
+    ###########
+    #Score Protein Groups
+    pg_score_threshold = getProteinGroups(
+            passing_psms_folder, 
+            passing_proteins_folder,
+            temp_folder,
+            precursors[:accession_numbers],
+            accession_number_to_id,
+            precursors[:sequence])
      ###########
      #Re-quantify with 1% fdr precursors 
      println("Re-Quantifying Precursors at FDR Threshold...")
@@ -269,29 +281,14 @@ function SearchDIA(params_path::String)
              max_q_value = params_[:normalization_params]["max_q_value"],
              min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
          )
-     
-     ############
-     #Prep for Protein Inference 
-     @time mergeSortedArrowTables(
-        second_quant_folder,
-        "/Users/n.t.wamsley/Desktop/test.arrow",
-        (:protein_idx,:precursor_idx),
-        N = 1000000
-    )
 
-     gbpsms = groupby(best_psms,:ms_file_idx)
-     file_idx_dicts = [Dict{UInt32, @NamedTuple{prob::Float32, qvalue::Float32, peak_area::Float32}}() for _ in range(1, length(gbpsms))]
-     for (file_idx, bpsms) in pairs(gbpsms)
-         for i in range(1, size(bpsms, 1))
-                 file_idx_dicts[file_idx[:ms_file_idx]][bpsms[i,:precursor_idx]] = (
-                 prob = bpsms[i,:prob],
-                 qvalue = bpsms[i,:q_value],
-                 peak_area = bpsms[i,:peak_area])
-         end
-     end
-     best_psms[!,:structural_mods] = allowmissing([precursors[:structural_mods][pid] for pid in best_psms[!,:precursor_idx]])
-     best_psms[!,:isotopic_mods] = allowmissing([precursors[:isotopic_mods][pid] for pid in best_psms[!,:precursor_idx]])
- 
+         @time mergeSortedArrowTables(
+            second_quant_folder,
+            joinpath(temp_folder, "joined_second_quant.arrow"),
+            (:protein_idx,:precursor_idx),
+            N = 1000000
+        )
+
      features = [:species,:accession_numbers,:sequence,:structural_mods,
                  :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
                  :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
@@ -310,16 +307,15 @@ function SearchDIA(params_path::String)
      precursor_id_table = value_counts(best_psms,:file_name)
      #CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
      println("Max LFQ...")
-     protein_quant = proteinQuant(
-         best_psms,
-         protein_to_q_value
-     )
- 
-     protein_quant[!,:experiments] = UInt32.(protein_quant[!,:experiments])
-     protein_quant[!,:file_name] = [file_id_to_parsed_name[ms_file_idx] for ms_file_idx in protein_quant[!,:experiments]]
- 
-     #Wide DataFormat 
-     wide_protein_quant = unstack(protein_quant,[:species,:protein,:target],:experiments,:log2_abundance)
+     LFQ(
+        DataFrame(Arrow.Table(joinpath(temp_folder, "joined_second_quant.arrow"))),
+        joinpath(temp_folder, "prot_quant_test.arrow"),
+        :peak_area_normalized,
+        file_id_to_parsed_name,
+        pg_score_threshold,
+        batch_size = 100000
+    )
+
      sort!(wide_protein_quant,[:species,:protein,:target])
      CSV.write(joinpath(results_folder,"proteins_wide.csv"),wide_protein_quant)
      println("QC Plots")

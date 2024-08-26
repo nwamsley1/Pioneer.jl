@@ -278,7 +278,7 @@ function getSummaryScores!(
                             weight::AbstractVector{Float32},
                             gof::AbstractVector{Float16},
                             matched_ratio::AbstractVector{Float16},
-                            entropy::AbstractVector{Float16},
+                            #entropy::AbstractVector{Float16},
                             fitted_manhattan_distance::AbstractVector{Float16},
                             fitted_spectral_contrast::AbstractVector{Float16},
                             y_count::AbstractVector{UInt8},
@@ -287,7 +287,7 @@ function getSummaryScores!(
 
     max_gof = -100.0
     max_matched_ratio = -100.0
-    max_entropy = -100.0
+   # max_entropy = -100.0
     max_fitted_manhattan_distance = -100.0
     max_fitted_spectral_contrast= -100
     count = 0
@@ -308,9 +308,9 @@ function getSummaryScores!(
             max_matched_ratio = matched_ratio[i]
         end
 
-        if entropy[i]>max_entropy
-            max_entropy=entropy[i]
-        end
+        #if entropy[i]>max_entropy
+        #    max_entropy=entropy[i]
+        #end
 
         if fitted_manhattan_distance[i]>max_fitted_manhattan_distance
             max_fitted_manhattan_distance = fitted_manhattan_distance[i]
@@ -330,7 +330,7 @@ function getSummaryScores!(
 
     psms.max_gof[apex_scan] = max_gof
     psms.max_matched_ratio[apex_scan] = max_matched_ratio
-    psms.max_entropy[apex_scan] = max_entropy
+   # psms.max_entropy[apex_scan] = max_entropy
     psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
     psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
     psms.y_ions_sum[apex_scan] = y_ions_sum

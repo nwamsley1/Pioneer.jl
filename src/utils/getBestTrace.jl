@@ -2,17 +2,22 @@ function getBestTraces(
     quant_psms_folder::String
 )
     psms_trace_scores = Dictionary{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
+
     for file_path in readdir(quant_psms_folder, join = true)
         if splitext(file_path)[end] != ".arrow"
             continue
         end
+        row_score = zero(Float32)
         psms_table = Arrow.Table(file_path)
         for i in range(1, length(psms_table[1]))
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
-            row_score = psms_table[:weight][i]*(psms_table[:prob][i]>0.75)
-            if isnan(row_score)
+
+            if psms_table[:prob][i]>0.75
+                row_score = psms_table[:weight][i]
+            else
                 row_score = zero(Float32)
             end
+
             if haskey(psms_trace_scores, psms_key)
                 psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else

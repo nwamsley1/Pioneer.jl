@@ -6,17 +6,11 @@ function find_score_threshold(
     # Second pass: Find the probability threshold
     targets_above = 0
     decoys_above = 0
-    targets = 0
-    decoys = 0
-    for (prob, target) in scores
-        targets += target
-        decoys += (1 - target)
-    end
 
     for (score, target) in reverse(scores)
 
-        targets_above -= target
-        decoys_above -= (1 - target)
+        targets_above += target
+        decoys_above += (1 - target)
         
         current_q_value = decoys_above / (targets_above + decoys_above)
         
@@ -26,6 +20,7 @@ function find_score_threshold(
     end
 
     return scores[end][:score]
+
 end
 
 function find_prob_threshold(
@@ -40,6 +35,7 @@ function find_prob_threshold(
     end
 
     all_probs = Vector{@NamedTuple{score::Float32, target::Bool}}(undef, n_psms)
+
     n = 1
     for file_path in file_paths
         df = Arrow.Table(file_path)
@@ -51,6 +47,7 @@ function find_prob_threshold(
             end
         end
     end
+
     all_probs = all_probs[1:n]
     # Sort probabilities in descending order
     sort!(all_probs, by=x->x[:score], alg = QuickSort)
@@ -73,6 +70,7 @@ function getPSMsPassingQVal(
                                             file_paths, 
                                             best_traces,
                                             q_val_threshold)
+
     println("prob_threshold $prob_threshold")
     # Initialize an empty DataFrame to store the results
     result_df = DataFrame()
@@ -82,14 +80,18 @@ function getPSMsPassingQVal(
         arrow_table = Arrow.Table(file_path)
         
         passing_psms = zeros(Bool, length(arrow_table[:prob]))
-        for i in range(1, length(best_traces))
+        for i in range(1, length(arrow_table[1]))
+
             if arrow_table[:prob][i].<prob_threshold
                 continue
             end
+
             key = (precursor_idx = arrow_table[:precursor_idx][i], isotopes_captured = arrow_table[:isotopes_captured][i])
+            
             if key ∈ best_traces
                 passing_psms[i] = true
             end
+
         end
         # Sample the rows and convert to DataFrame
         sampled_df = select!(DataFrame(arrow_table),
@@ -103,7 +105,7 @@ function getPSMsPassingQVal(
             :isotopes_captured,
             :scan_idx,
             :ms_file_idx])[passing_psms, :]
-        
+        println("sum(passing_psms) ", sum(passing_psms))
         # Append to the result DataFrame
         Arrow.write(
             joinpath(passing_psms_folder, basename(file_path)),
