@@ -35,7 +35,9 @@ function importScripts()
                                                                     "getBestPrecursorsAccrossRuns.jl",
                                                                     "getIrtErrs.jl",
                                                                     "getPSMsPassingQVal.jl",
-                                                                    "samplePSMsForXgboost.jl"]];
+                                                                    "samplePSMsForXgboost.jl",
+                                                                    "mergePsmTables.jl",
+                                                                    "summarizeToProtein.jl"]];
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
     #Files needed for PRM routines

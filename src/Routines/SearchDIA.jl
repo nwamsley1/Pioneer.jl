@@ -87,7 +87,7 @@ function SearchDIA(params_path::String)
      ###########
      #Tune Parameters
      println("Parameter Tuning Search...")
-     RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder,
+     RT_to_iRT_map_dict, frag_err_dist_dict, median_matched_intensity, irt_errs = parameterTuningSearch(rt_alignment_folder,
                                                                              mass_err_estimation_folder,
                                                                              MS_TABLE_PATHS,
                                                                              params_,
@@ -102,6 +102,11 @@ function SearchDIA(params_path::String)
                                                                              unscored_PSMs,
                                                                              spectral_scores,
                                                                              precs)
+
+     median_matched_intensity = median(values(median_matched_intensity))
+
+    params_[:deconvolution_params]["huber_delta"] = median_matched_intensity*params_[:deconvolution_params]["huber_delta_prop"];
+
      println("Parameter Tuning Search...")
      peak_fwhms, psms_paths = firstSearch(
          first_search_psms_folder,
@@ -167,6 +172,9 @@ function SearchDIA(params_path::String)
      
      ############
      #Quantitative Search
+    params_[:deconvolution_params]["accuracy_bisection"] = 10.0
+    params_[:deconvolution_params]["accuracy_newton"] = 10.0
+    params_[:deconvolution_params]["huber_delta"] = 1150.0
     println("Begining Quantitative Search...")
     ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
@@ -176,7 +184,7 @@ function SearchDIA(params_path::String)
         rt_index_paths,
         bin_rt_size,
         rt_irt,
-        irt_err,
+        irt_errs,
         chromatograms,
         file_path_to_parsed_name,
         MS_TABLE_PATHS,
@@ -205,35 +213,13 @@ function SearchDIA(params_path::String)
     #Wipe memory
     best_psms = nothing
     GC.gc()
-    DataFrame(Arrow.Table(readdir(quant_psms_folder,join=true)))[!,[:max_prob,:min_prob,:mean_prob,:prob]]
-
-    best_traces = getBestTraces(quant_psms_folder)
+    best_traces = getBestTraces(quant_psms_folder);
     getPSMsPassingQVal(
                                     quant_psms_folder, 
                                     passing_psms_folder,
                                     best_traces,
                                     0.01f0)
-  #=
-  julia> getPSMsPassingQVal(
-                                       quant_psms_folder, 
-                                       passing_psms_folder,
-                                       best_traces,
-                                       0.01f0)
-prob_threshold 0.87230146
-sum(passing_psms) 192867
-sum(passing_psms) 192524
-sum(passing_psms) 192360
-sum(passing_psms) 192953
-sum(passing_psms) 192689
-sum(passing_psms) 192816
-  =#
-    test_df = DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true)))
-    @time mergeSortedArrowTables(
-           passing_proteins_folder,
-           "/Users/n.t.wamsley/Desktop/sorted_pg_groups.arrow",
-           :max_pg_score,
-           N = 1000000
-       )
+
     ###########
     #Score Protein Groups
     pg_score_threshold = getProteinGroups(
@@ -253,7 +239,7 @@ sum(passing_psms) 192816
                      frag_err_dist_dict,
                      rt_index_paths,
                      rt_irt,
-                     irt_err,
+                     irt_errs,
                      chromatograms,
                      MS_TABLE_PATHS,
                      params_,
@@ -281,14 +267,24 @@ sum(passing_psms) 192816
              max_q_value = params_[:normalization_params]["max_q_value"],
              min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
          )
+         merged_second_quant_path = joinpath(temp_folder, "joined_second_quant.arrow")
+        if isfile(merged_second_quant_path)
+            rm(merged_second_quant_path, force = true)
+        end
 
-         @time mergeSortedArrowTables(
+        @time mergeSortedArrowTables(
             second_quant_folder,
             joinpath(temp_folder, "joined_second_quant.arrow"),
             (:protein_idx,:precursor_idx),
             N = 1000000
         )
 
+        threeProteomPeptideTest(
+            joinpath(temp_folder, "joined_second_quant.arrow"),
+            "/Users/n.t.wamsley/Desktop/",
+            params
+        )
+    #=
      features = [:species,:accession_numbers,:sequence,:structural_mods,
                  :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
                  :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
@@ -300,11 +296,11 @@ sum(passing_psms) 192816
      wide_psms_quant = unstack(best_psms,[:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],:file_name,:peak_area_normalized)
      sort!(wide_psms_quant,[:species,:accession_numbers,:sequence,:target])
      CSV.write(joinpath(results_folder,"psms_wide.csv"),wide_psms_quant)
- 
+=#
      #Summarize Precursor ID's
      value_counts(df, col) = combine(groupby(df, col), nrow)
  
-     precursor_id_table = value_counts(best_psms,:file_name)
+     #precursor_id_table = value_counts(best_psms,:file_name)
      #CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
      println("Max LFQ...")
      LFQ(

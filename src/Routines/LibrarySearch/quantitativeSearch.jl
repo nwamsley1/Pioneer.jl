@@ -7,7 +7,7 @@ function quantSearch(
     rt_index_paths,
     bin_rt_size,
     RT_iRT,
-    irt_err,
+    irt_errs,
     chromatograms,
     file_path_to_parsed_name,
     MS_TABLE_PATHS,
@@ -98,8 +98,8 @@ function quantSearch(
                                 bin_rt_size = bin_rt_size)
         rt_irt = RT_iRT[parsed_fname]
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
-        params_[:deconvolution_params]["huber_delta"] = median(
-            [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
+        #params_[:deconvolution_params]["huber_delta"] = median(
+        #   [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
         
 
             #params_[:deconvolution_params]["huber_delta"] = 100.0f0
@@ -124,7 +124,7 @@ function quantSearch(
                 ms_file_idx = UInt32(ms_file_idx), 
                 rt_to_irt_spline = rt_irt,
                 mass_err_model = frag_err_dist_dict[ms_file_idx],
-                irt_err = irt_err,#irt_errs[ms_file_idx]/3,
+                irt_err = irt_errs[parsed_fname],#irt_errs[ms_file_idx]/3,
                 ion_matches = ionMatches,
                 ion_misses = ionMisses,
                 id_to_col = IDtoCOL,

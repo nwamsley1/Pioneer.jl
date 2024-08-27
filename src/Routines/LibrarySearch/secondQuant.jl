@@ -5,7 +5,7 @@ function secondQuantSearch!(
     frag_err_dist_dict,
     rt_index_paths,
     rt_irt,
-    irt_err,
+    irt_errs,
     chromatograms,
     MS_TABLE_PATHS,
     params_,
@@ -85,11 +85,12 @@ end
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    rt_df = DataFrame(Arrow.Table(rt_index_paths[file_path_to_parsed_name[MS_TABLE_PATH]]))
+    parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
+    rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
     rt_index = buildRTIndex(rt_df,
                             bin_rt_size = bin_rt_size)
     #Map raw file name to psms table 
-    sub_bpsms_path = joinpath(passing_psms_folder, file_path_to_parsed_name[MS_TABLE_PATH].*".arrow")
+    sub_bpsms_path = joinpath(passing_psms_folder, parsed_fname.*".arrow")
     #Get psms table for this raw file. 
     sub_bpsms = DataFrame(
                     Tables.columntable(#Need a modifiable deep copy
@@ -100,8 +101,10 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     sub_bpsms[!,:peak_area] = zeros(Float32, size(sub_bpsms, 1))
     sub_bpsms[!,:new_best_scan] = zeros(UInt32, size(sub_bpsms, 1))
 
-    params_[:deconvolution_params]["huber_delta"] = median(
-        [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
+    #params_[:deconvolution_params]["huber_delta"] = median(
+    #    [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
+    
+
         chroms = vcat(secondQuant(
             MS_TABLE, 
             params_;
@@ -109,9 +112,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             fragment_lookup_table = spec_lib["f_det"],
             rt_index = rt_index,
             ms_file_idx = UInt32(ms_file_idx), 
-            rt_to_irt_spline = rt_irt[file_path_to_parsed_name[MS_TABLE_PATH]],
+            rt_to_irt_spline = rt_irt[parsed_fname],
             mass_err_model = frag_err_dist_dict[ms_file_idx],
-            irt_err = irt_err,#irt_errs[ms_file_idx]/3,
+            irt_err = irt_errs[parsed_fname],#irt_errs[ms_file_idx]/3,
             ion_matches = ionMatches,
             ion_misses = ionMisses,
             id_to_col = IDtoCOL,
@@ -153,7 +156,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         sub_bpsms[!,:peak_area_normalized] =  allowmissing(zeros(Float32, size(sub_bpsms, 1)))
         sub_bpsms[!,:structural_mods] = allowmissing([precursors[:structural_mods][pid] for pid in sub_bpsms[!,:precursor_idx]])
         sub_bpsms[!,:isotopic_mods] = allowmissing([precursors[:isotopic_mods][pid] for pid in  sub_bpsms[!,:precursor_idx]])
-    
+        sub_bpsms[!,:charge] = allowmissing([precursors[:prec_charge][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:sequence] = allowmissing([precursors[:sequence][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:file_name] .= file_path_to_parsed_name[MS_TABLE_PATH]
         Arrow.write(
             temp_path,
             sub_bpsms,

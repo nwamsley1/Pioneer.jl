@@ -19,6 +19,7 @@ function parameterTuningSearch(rt_alignment_folder,
 
     RT_to_iRT_map_dict = Dict{Int64, Any}()
     frag_err_dist_dict = Dict{Int64,MassErrorModel}()
+    median_matched_intensity = Dict{Int64,Float32}()
     irt_errs = Dict{Int64, Float64}()
     #MS_TABLE_PATH = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/20220909_EXPL8_Evo5_ZY_MixedSpecies_500ng_E30H50Y20_30SPD_DIA_4.arrow"
     #=
@@ -170,6 +171,9 @@ function parameterTuningSearch(rt_alignment_folder,
         #2) mass error (ppm) distribution 
 
         frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in matched_fragments];
+        #println(describe([match.intensity for match in matched_fragments]))
+        #println(describe([match.predicted_intensity/match.intensity for match in matched_fragments]))
+        median_matched_intensity[ms_file_idx] = median([match.intensity for match in matched_fragments])
         mass_err_model = ModelMassErrs(
             frag_ppm_errs,
             frag_err_quantile = Float32(params_[:presearch_params]["frag_err_quantile"]),
@@ -186,6 +190,6 @@ function parameterTuningSearch(rt_alignment_folder,
                     joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), cleanup=true)
     merge_pdfs([joinpath(mass_err_estimation_folder, x) for x in readdir(mass_err_estimation_folder) if endswith(x, ".pdf")], 
         joinpath(mass_err_estimation_folder, "mass_err_estimation_folder.pdf"), cleanup=true)
-        return RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs
+        return RT_to_iRT_map_dict, frag_err_dist_dict, median_matched_intensity, irt_errs
 end
 export parameterTuningSearch

@@ -384,7 +384,7 @@ function secondSearch(
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     rt_index::retentionTimeIndex{Float32, Float32},
-                    irt_tol::Float64,
+                    irt_tol::Float32,
                     spec_order::Set{Int64}
                     ) where {L<:LibraryIon{Float32},
                     S<:ScoredPSM{Float32, Float16},
@@ -599,7 +599,7 @@ function getChromatograms(
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
-                    irt_tol::Float64,
+                    irt_tol::Float32,
                     spec_order::Set{Int64}
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
                     Q<:UnscoredPSM{Float32},
