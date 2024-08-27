@@ -55,7 +55,7 @@ function scoreTraces!(
     best_psms[!,:accession_numbers] = [precursors[:accession_numbers][pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
     best_psms[!,:decoy] = best_psms[!,:target].==false;
-    xgboost_time = @timed bst = rankPSMs!(
+    models = rankPSMs!(
                             best_psms, 
                             file_paths,
                             features,
@@ -81,5 +81,5 @@ function scoreTraces!(
     #best_psms[!,:prob] =Float32.(best_psms[!,:prob])
     ##Calculate q-values
     #getQvalues!(best_psms[!,:prob], best_psms[:,:target], best_psms[!,:q_value]);
-    return bst;#best_psms
+    return models;#best_psms
 end

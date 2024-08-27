@@ -197,11 +197,11 @@ function SearchDIA(params_path::String)
     for fpath in readdir(quant_psms_folder, join=true)
         
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+        psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob], psms[!,:train_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
         Arrow.write(fpath,psms)
     end
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
-    scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
+    models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
     #Wipe memory
     best_psms = nothing
     GC.gc()
