@@ -1,5 +1,5 @@
 function addRowToHeap!(
-    precursor_heap::BinaryMinHeap{Tuple{Float32, Int64}},
+    precursor_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
     first_sort_key::AbstractVector{Float32},
     table_idx::Int64,
     row_idx::Int64)
@@ -42,7 +42,7 @@ function mergeSortedProteinGroups(
     #Names of columns for merge table 
     pg_batch_names = Symbol.(names(pg_batch))
     #Keeps track of the talbe with the highest ranked row
-    pg_heap = BinaryMinHeap{Tuple{Float32, Int64}}()
+    pg_heap = BinaryMaxHeap{Tuple{Float32, Int64}}()
     for (i, table) in enumerate(tables)
         addRowToHeap!(
             pg_heap,
@@ -244,21 +244,7 @@ function getProteinGroups(
             protein_groups_path
         )
     end
-    #=
-    max_pg_scores = Vector{@NamedTuple{score::Float32, target::Bool}}(undef, pg_count)
-    n = 1
-    protein_groups_paths = readdir(protein_groups_folder, join=true)
-    for file_path in protein_groups_paths
-        pg_table = Arrow.Table(file_path)
-        for i in range(1, length(pg_table[:max_pg_score]))
-            max_pg_scores[n] = (score = pg_table[:max_pg_score][i], target = pg_table[:target][i])
-            n += 1
-        end
-    end
-    sort!(max_pg_scores, alg=QuickSort, by=x->x[:score],rev = true)
-    # Second pass: Find the probability threshold
-    pg_score_threshold = find_score_threshold(max_pg_scores, protein_q_val_threshold)
-    =#
+
     sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
     mergeSortedProteinGroups(
         protein_groups_folder,

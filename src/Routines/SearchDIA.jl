@@ -174,7 +174,6 @@ function SearchDIA(params_path::String)
      #Quantitative Search
     params_[:deconvolution_params]["accuracy_bisection"] = 10.0
     params_[:deconvolution_params]["accuracy_newton"] = 10.0
-    params_[:deconvolution_params]["huber_delta"] = 1150.0
     println("Begining Quantitative Search...")
     ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
@@ -202,22 +201,36 @@ function SearchDIA(params_path::String)
         )
 
     println("Traning Target-Decoy Model...")
-    for fpath in readdir(quant_psms_folder, join=true)
-        
-        psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob], psms[!,:train_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
-        Arrow.write(fpath,psms)
-    end
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
     #Wipe memory
     best_psms = nothing
     GC.gc()
     best_traces = getBestTraces(quant_psms_folder);
+    #Path for merged quant psms scores 
+    merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
+    #Sort quant tables in descenging order of probability and remove 
+    #sub-optimal isotope traces 
+    sortAndFilterQuantTables(
+        quant_psms_folder,
+        merged_quant_path,
+        best_traces
+    )
+    #Merge sorted tables into a single list with two columns
+    #for "prob" and "target"
+    mergeSortedPSMScores(
+                    quant_psms_folder, 
+                    merged_quant_path
+                    )
+    #functions to convert "prob" to q-value and posterior-error-probability "pep" 
+    precursor_pep_spline = getPosteriorErrorProbabilitySpline(merged_quant_path, :prob, min_pep_points_per_bin = 5000)
+    precursor_qval_interp = getPosteriorQValueSpline(merged_quant_path, :prob, min_pep_points_per_bin = 1000)
+
     getPSMsPassingQVal(
                                     quant_psms_folder, 
                                     passing_psms_folder,
-                                    best_traces,
+                                    precursor_pep_spline,
+                                    precursor_qval_interp,
                                     0.01f0)
 
     ###########
@@ -229,6 +242,8 @@ function SearchDIA(params_path::String)
             precursors[:accession_numbers],
             accession_number_to_id,
             precursors[:sequence])
+
+     qval_interp = getPosteriorQValueSpline(joinpath(temp_folder, "sorted_pg_scores.arrow"), :max_pg_score, min_pep_points_per_bin = 100)
      ###########
      #Re-quantify with 1% fdr precursors 
      println("Re-Quantifying Precursors at FDR Threshold...")
