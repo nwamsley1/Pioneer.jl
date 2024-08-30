@@ -5,6 +5,8 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
                          max_precursors::Int = 250000)
 
     prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+                                                        best_ms_file_idx::UInt32,
+                                                        best_scan_idx::UInt32,
                                                         best_irt::Float32, 
                                                         mean_irt::Union{Missing, Float32}, 
                                                         var_irt::Union{Missing, Float32}, 
@@ -21,7 +23,8 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             precursor_idx = psms[:precursor_idx][row]
             prob = psms[:prob][row]
             irt =  RT_iRT[key](psms[:RT][row])
-
+            scan_idx = UInt32(psms[:scan_idx][row])
+            ms_file_idx = UInt32(psms[:ms_file_idx][row])
             #initial values
             #only count towards mean_irt if below the q_value threshold 
             passed_q_val = (q_value <= max_q_val)
@@ -33,15 +36,19 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             #Has the precursor been encountered in a previous raw file?
             #Keep a running mean irt for instances below q-val threshold
             if haskey(prec_to_best_prob, precursor_idx)
-                best_prob, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx] 
+                best_prob, best_ms_file_idx, best_scan_idx, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx] 
                 if (best_prob < prob)
                     best_prob = prob
                     best_irt = irt
+                    best_scan_idx = scan_idx
+                    best_ms_file_idx = ms_file_idx
                 end
                 mean_irt += old_mean_irt
                 n += old_n 
                 prec_to_best_prob[precursor_idx] = (
                                                 best_prob = prob, 
+                                                best_ms_file_idx = best_ms_file_idx,
+                                                best_scan_idx = best_scan_idx,
                                                 best_irt = irt,
                                                 mean_irt = mean_irt, 
                                                 var_irt = var_irt,
@@ -49,7 +56,9 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
                                                 mz = mz)
             else
                 #Fist encounter use default values 
-                val = (best_prob = prob, 
+                val = (best_prob = prob,
+                        best_ms_file_idx = ms_file_idx,
+                        best_scan_idx = scan_idx, 
                         best_irt = irt,
                         mean_irt = mean_irt, 
                         var_irt = var_irt,
@@ -84,10 +93,12 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
                 continue
             end
             if haskey(prec_to_best_prob, precursor_idx)
-                best_prob, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
+                best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
                 var_irt += (irt - mean_irt/n)^2
                 prec_to_best_prob[precursor_idx] = (
                     best_prob = best_prob, 
+                    best_ms_file_idx= best_ms_file_idx,
+                    best_scan_idx = best_scan_idx,
                     best_irt = best_irt,
                     mean_irt = mean_irt, 
                     var_irt = var_irt,

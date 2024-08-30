@@ -5,12 +5,15 @@ function getIrtErrs(
                             mad_fwhm::Float32
                         }},
     prec_to_irt::Dictionary{UInt32, 
-                            @NamedTuple{best_prob::Float32, 
-                                        best_irt::Float32, 
-                                        mean_irt::Union{Missing, Float32}, 
-                                        var_irt::Union{Missing, Float32},
-                                        n::Union{Missing, UInt16}, 
-                                        mz::Float32}},
+    @NamedTuple{best_prob::Float32, 
+                best_ms_file_idx::UInt32, 
+                best_scan_idx::UInt32, 
+                best_irt::Float32, 
+                mean_irt::Union{Missing, Float32}, 
+                var_irt::Union{Missing, Float32}, 
+                n::Union{Missing, UInt16}, 
+                mz::Float32}}
+    ,
     params::Any
 )
     #Get upper bound on peak fwhm. Use median + n*standard_deviation

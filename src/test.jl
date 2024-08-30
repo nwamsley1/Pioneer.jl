@@ -138,7 +138,7 @@ function parseFasta(fasta_path::String, parse_identifier::Function = x -> split(
     return fasta
 end
 
-function threeProteomPeptideTest(
+function threeProteomePeptideTest(
     joined_psms_path::String,
     out_folder::String,
     params::Dict{String, Any})
@@ -198,6 +198,8 @@ function threeProteomPeptideTest(
         ), 
         groupby(gpsms, [:species, :accession_numbers, :modified_sequence, :charge, :isotopes_captured]));
         three_proteome_results = filterResults(three_proteome_results, 3, 20.0)
+        gdf = groupby(three_proteome_results, [:species])
+        nt = NamedTuple.(keys(gdf))
         prec_counts = size(three_proteome_results, 1)
         println("prec_counts $prec_counts")
         p = plot(legenZd=:outertopright, show = true, title = "Olsen Astral Benchmark Pioneer \n 3of3, CV<20%, 1% FDR \n $prec_counts Precursors",
@@ -320,3 +322,95 @@ for quant_name in [:peak_area]
         #[println("Precursors w/ CV under $x ", sum(gpsms[!,:CV].<=x)) for x in [5.0, 10.0, 20.0, 30.0]]
     end
 end
+
+
+
+###### Run same file at several different CV values?
+
+huber_δs = Float32[200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200, 102400]
+for δ in ProgressBar(huber_δs)
+params_[:deconvolution_params]["huber_delta"] = δ
+
+gbpsms =  groupby(best_psms,:ms_file_idx)
+
+huber_δs = Float32[300*(2^i) for i in range(1, 10)]#Float32[200, 400, 800, 1600, 3200, 6400, 12800, 25600, 51200, 102400]
+psms = []
+@time for (key, sub_bpsms) in pairs(gbpsms)
+    ms_file_idx = key[:ms_file_idx]
+    MS_TABLE_PATH = MS_TABLE_PATHS[ms_file_idx]
+    prec_set = Set(zip(sub_bpsms[!,:precursor_idx], sub_bpsms[!,:scan_idx]))
+    scan_idxs = Set(sub_bpsms[!,:scan_idx])
+    println("ms_file_idx $ms_file_idx")
+    push!(psms, huberLossSearch(
+        frag_err_dist_dict,
+        rt_index_paths,
+        prec_set,
+        scan_idxs,
+        huber_δs,
+        bin_rt_size,
+        rt_irt,
+        irt_errs,
+        chromatograms,
+        file_path_to_parsed_name,
+        ms_file_idx,
+        MS_TABLE_PATH,
+        params_,
+        spec_lib,
+        ionMatches,
+        ionMisses,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        complex_scored_PSMs,
+        complex_unscored_PSMs,
+        complex_spectral_scores,
+        precursor_weights
+        ));
+end
+psms = vcat(psms...);
+gpsms = groupby(psms, [:precursor_idx,:ms_file_idx,:scan_idx])
+
+
+N = 100
+plot(
+    log2.(gpsms[N][!,:huber_δ]),
+    gpsms[N][!,:weight],
+    seriestype=:scatter
+    )
+gpsms[N][!,[:precursor_idx,:weight,:scan_idx]]
+N += 1
+
+function processHuberLossCurve(
+    weights::AbstractVector{Float32},
+    huber_δ::AbstractVector{Float32}
+    )
+    min_w,max_w = minimum(weights),maximum(weights)
+    huber50 = missing 
+    w50 = min_w + (max_w - min_w)/2
+    #=
+    idxs = sortperm(weights)
+    if length(weights)>1
+        interp_linear = linear_interpolation(weights[idxs], huber_δ[idxs])
+        huber50 = interp_linear(w50)
+    end
+    =#
+    if length(weights)>1
+        for i in range(1, length(weights)-1)
+            if (w50 >= weights[i]) & (w50 <= weights[i + 1])
+                huber50 =  huber_δs[i] + (huber_δs[i + 1] - huber_δs[i])/2 
+            end
+        end
+    end
+
+    return (min = minimum(weights), max = maximum(weights), n = length(weights), huber50 = huber50, w50 = w50, wdiff = (max_w - min_w)/min_w)
+end
+combdf = combine(gpsms) do sdf
+    processHuberLossCurve(sdf[!,:weight],sdf[!,:huber_δ])
+end
+filter!(x->x.n==10, combdf)
+filter!(x->x.wdiff>0.1, combdf)
+filter!(x->!ismissing(x.huber50), combdf)
+
+data = log2.(combdf[!,:huber50])
+histogram(log2.(combdf[!,:huber50]))
+vline!([mode(data), median(data), mean(data)])

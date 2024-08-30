@@ -28,14 +28,14 @@ function proteinQuant(
     return protein_quant
 end
 #gprotein_quant= groupby(protein_quant,[:target,:species,:protein])
-LFQ(
-DataFrame(Arrow.Table(joinpath(temp_folder, "joined_second_quant.arrow"))),
-joinpath(temp_folder, "prot_quant_test.arrow"),
-:peak_area_normalized,
-pg_score_threshold,
-batch_size = 100000
-)
-DataFrame(Arrow.Table( joinpath(temp_folder, "prot_quant_test.arrow")))
+#LFQ(
+#DataFrame(Arrow.Table(joinpath(temp_folder, "joined_second_quant.arrow"))),
+#joinpath(temp_folder, "prot_quant_test.arrow"),
+#:peak_area_normalized,
+#pg_score_threshold,
+#batch_size = 100000
+#)
+#DataFrame(Arrow.Table( joinpath(temp_folder, "prot_quant_test.arrow")))
 function proteinQuant(
     best_psms,
     protein_to_q_value

@@ -46,9 +46,9 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         mass_err_model = frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,
         params = params_[:first_search_params],
-        quad_transmission_func = QuadTransmission(1.25f0, 5.0f0)
+        quad_transmission_func = QuadTransmission(1.00f0, 1000.0f0)
                         )...)
-
+    println("names(PSMs) ", names(PSMs))
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         RT_to_iRT_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
@@ -133,9 +133,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     )
 
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
+    PSMs[!,:ms_file_idx] .= UInt32(ms_file_idx)
     Arrow.write(
         temp_path,
-        select!(PSMs, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob,:scan_count])
+        select!(PSMs, [:ms_file_idx,:scan_idx,:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob,:scan_count])
         )
 
     insert!(

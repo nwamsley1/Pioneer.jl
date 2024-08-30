@@ -349,6 +349,192 @@ function getMassErrors(
     end
     return @view(all_fmatches[1:frag_err_idx])
 end
+
+function huberTuningSearch(
+                    spectra::Arrow.Table,
+                    thread_task::Vector{Int64},#UnitRange{Int64},
+                    prec_set::Set{Tuple{UInt32,UInt32}},
+                    scan_idxs::Set{UInt32},
+                    precursors::Union{Arrow.Table, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
+                    ms_file_idx::UInt32,
+                    rt_to_irt::UniformSpline,
+                    mass_err_model::MassErrorModel,
+                    quad_transmission_func::QuadTransmission,
+                    δs::Vector{Float32},
+                    λ::Float32,
+                    max_iter_newton::Int64,
+                    max_iter_bisection::Int64,
+                    max_iter_outer::Int64,
+                    accuracy_newton::Float32,
+                    accuracy_bisection::Float32,
+                    max_diff::Float32,
+                    ionMatches::Vector{FragmentMatch{Float32}},
+                    ionMisses::Vector{FragmentMatch{Float32}},
+                    IDtoCOL::ArrayDict{UInt32, UInt16},
+                    ionTemplates::Vector{L},
+                    iso_splines::IsotopeSplineModel,
+                    unscored_PSMs::Vector{Q},
+                    spectral_scores::Vector{R},
+                    precursor_weights::Vector{Float32},
+                    isotope_err_bounds::Tuple{Int64, Int64},
+                    n_frag_isotopes::Int64,
+                    rt_index::retentionTimeIndex{Float32, Float32},
+                    irt_tol::Float32,
+                    spec_order::Set{Int64}
+                    ) where {L<:LibraryIon{Float32},
+                    Q<:UnscoredPSM{Float32},
+                    R<:SpectralScores{Float16}}
+
+    ##########
+    #Initialize 
+    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    Hs = SparseArray(UInt32(5000));
+    _weights_ = zeros(Float32, 5000);
+    _residuals_ = zeros(Float32, 5000);
+
+    tuning_results = Dict(
+        :precursor_idx => UInt32[],
+        :scan_idx => UInt32[],
+        :weight => Float32[],
+        :huber_δ => Float32[]
+    )
+
+    isotopes = zeros(Float32, 5)
+    precursor_transmission = zeros(Float32, 5)
+    irt_start, irt_stop = 1, 1
+    prec_mz_string = ""
+
+    rt_idx = 0
+    prec_temp_size = 0
+    precs_temp = Vector{UInt32}(undef, 50000)
+
+    
+    ##########
+    #Iterate through spectra
+    for scan_idx in thread_task
+        if scan_idx ∉ scan_idxs
+            continue
+        end
+        ###########
+        #Scan Filtering
+        msn = spectra[:msOrder][scan_idx] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
+        if (msn < 2)
+            cycle_idx += 1
+        end
+
+        #cycle_idx += (msn == 1)
+        msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
+        irt = rt_to_irt(spectra[:retentionTime][scan_idx])
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
+        prec_mz_string_new = string(spectra[:centerMass][scan_idx])
+        prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
+        if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
+            irt_start = irt_start_new
+            irt_stop = irt_stop_new
+            prec_mz_string = prec_mz_string_new
+            #Candidate precursors and their retention time estimates have already been determined from
+            #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
+            #the retention time and m/z tolerance constraints
+            precs_temp_size = 0
+            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
+                ionTemplates,
+                precs_temp,
+                precs_temp_size,
+                library_fragment_lookup,
+                precursors[:mz],
+                precursors[:prec_charge],
+                precursors[:sulfur_count],
+                iso_splines,
+                quad_transmission_func,
+                precursor_transmission,
+                isotopes,
+                n_frag_isotopes,
+                rt_index,
+                irt_start,
+                irt_stop,
+                spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
+                spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                (
+                    spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                ),
+                isotope_err_bounds,
+                10000)
+        end
+        ##########
+        #Match sorted list of plausible ions to the observed spectra
+        nmatches, nmisses = matchPeaks!(ionMatches, 
+                                        ionMisses, 
+                                        ionTemplates, 
+                                        ion_idx, 
+                                        spectra[:masses][scan_idx], 
+                                        spectra[:intensities][scan_idx], 
+                                        mass_err_model,
+                                        spectra[:highMass][scan_idx],
+                                        UInt32(scan_idx), 
+                                        ms_file_idx)
+
+        sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        ##########
+        #Spectral Deconvolution and Distance Metrics 
+        if nmatches > 2 #Few matches to do not perform de-convolution 
+            #Spectral deconvolution. Build sparse design/template matrix for regression 
+            #Sparse matrix representation of templates written to Hs. 
+            #IDtoCOL maps precursor ids to their corresponding columns. 
+            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
+
+            for δ in δs
+                #Adjuste size of pre-allocated arrays if needed 
+                if IDtoCOL.size > length(_weights_)
+                    new_entries = IDtoCOL.size - length(_weights_) + 1000 
+                    append!(_weights_, zeros(eltype(_weights_), new_entries))
+                    append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, new_entries))
+                    append!(unscored_PSMs, [eltype(unscored_PSMs)() for _ in 1:new_entries]);
+                end
+                #Get most recently determined weights for each precursors
+                #"Hot" start
+                for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
+                    _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
+                end
+                #fill!(_residuals_, zero(Float32))
+                #fill!(_weights_, zero(Float32))
+                #Get initial residuals
+                initResiduals!(_residuals_, Hs, _weights_);
+                #Spectral deconvolution. Hybrid bisection/newtowns method
+                solveHuber!(Hs, _residuals_, _weights_, 
+                                δ, λ, 
+                                max_iter_newton, 
+                                max_iter_bisection,
+                                max_iter_outer,
+                                accuracy_newton,
+                                accuracy_bisection,
+                                10.0,#Hs.n/10.0,
+                                max_diff
+                                );
+                #Record weights for each precursor
+                for i in range(1, IDtoCOL.size)
+                    precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
+                    pid = IDtoCOL.keys[i]
+                    if (pid,UInt32(scan_idx)) ∈ prec_set
+                        weight = _weights_[IDtoCOL[IDtoCOL.keys[i]]]
+                        push!(tuning_results[:precursor_idx],pid)
+                        push!(tuning_results[:weight],weight)
+                        push!(tuning_results[:huber_δ], δ)
+                        push!(tuning_results[:scan_idx], scan_idx)
+                    end
+                end
+            end
+            reset!(IDtoCOL);
+        end
+        ##########
+        #Reset pre-allocated arrays 
+        reset!(IDtoCOL);
+        reset!(Hs);
+    end
+    return DataFrame(tuning_results)
+end
+
 function secondSearch(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},

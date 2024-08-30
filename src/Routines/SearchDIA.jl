@@ -107,6 +107,7 @@ function SearchDIA(params_path::String)
 
     params_[:deconvolution_params]["huber_delta"] = median_matched_intensity*params_[:deconvolution_params]["huber_delta_prop"];
 
+    
      println("Parameter Tuning Search...")
      peak_fwhms, psms_paths = firstSearch(
          first_search_psms_folder,
@@ -149,6 +150,8 @@ function SearchDIA(params_path::String)
              max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
              map(x->(var_irt = x[:var_irt], n = x[:n]), prec_to_irt)
 
+    prec_to_prob = map(x->(prob = x[:best_prob],), prec_to_irt)
+         
     irt_errs = getIrtErrs(
         peak_fwhms,
         prec_to_irt,
@@ -223,8 +226,8 @@ function SearchDIA(params_path::String)
                     merged_quant_path
                     )
     #functions to convert "prob" to q-value and posterior-error-probability "pep" 
-    precursor_pep_spline = getPosteriorErrorProbabilitySpline(merged_quant_path, :prob, min_pep_points_per_bin = 5000)
-    precursor_qval_interp = getPosteriorQValueSpline(merged_quant_path, :prob, min_pep_points_per_bin = 1000)
+    precursor_pep_spline = getPEPSpline(merged_quant_path, :prob, min_pep_points_per_bin = 500, n_spline_bins = 5)
+    precursor_qval_interp = getQValueSpline(merged_quant_path, :prob, min_pep_points_per_bin = 1000)
 
     getPSMsPassingQVal(
                                     quant_psms_folder, 
@@ -235,7 +238,7 @@ function SearchDIA(params_path::String)
 
     ###########
     #Score Protein Groups
-    pg_score_threshold = getProteinGroups(
+    sorted_pg_score_path = getProteinGroups(
             passing_psms_folder, 
             passing_proteins_folder,
             temp_folder,
@@ -243,62 +246,65 @@ function SearchDIA(params_path::String)
             accession_number_to_id,
             precursors[:sequence])
 
-     qval_interp = getPosteriorQValueSpline(joinpath(temp_folder, "sorted_pg_scores.arrow"), :max_pg_score, min_pep_points_per_bin = 100)
-     ###########
-     #Re-quantify with 1% fdr precursors 
-     println("Re-Quantifying Precursors at FDR Threshold...")
-     secondQuantSearch!( 
-                     file_path_to_parsed_name,
-                     passing_psms_folder,
-                     second_quant_folder,
-                     frag_err_dist_dict,
-                     rt_index_paths,
-                     rt_irt,
-                     irt_errs,
-                     chromatograms,
-                     MS_TABLE_PATHS,
-                     params_,
-                     spec_lib["precursors"],
-                     accession_number_to_id,
-                     spec_lib,
-                     ionMatches,
-                     ionMisses,
-                     IDtoCOL,
-                     ionTemplates,
-                     iso_splines,
-                     complex_scored_PSMs,
-                     complex_unscored_PSMs,
-                     complex_spectral_scores,
-                     precursor_weights)
-     ###########
-     #Normalize Quant 
-     ###########
-     println("Normalization...")
-     normalizeQuant(
-             second_quant_folder,
-             :peak_area,
-             N = params_[:normalization_params]["n_rt_bins"],
-             spline_n_knots = params_[:normalization_params]["spline_n_knots"],
-             max_q_value = params_[:normalization_params]["max_q_value"],
-             min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
-         )
-         merged_second_quant_path = joinpath(temp_folder, "joined_second_quant.arrow")
-        if isfile(merged_second_quant_path)
-            rm(merged_second_quant_path, force = true)
-        end
+    pg_pep_spline = getPEPSpline(sorted_pg_score_path, :max_pg_score, min_pep_points_per_bin = 500, n_spline_bins = 5)
+    pg_qval_interp = getQValueSpline(sorted_pg_score_path, :max_pg_score, min_pep_points_per_bin = 100)
 
-        @time mergeSortedArrowTables(
+    ###########
+    #Re-quantify with 1% fdr precursors 
+    println("Re-Quantifying Precursors at FDR Threshold...")
+    secondQuantSearch!( 
+                    file_path_to_parsed_name,
+                    passing_psms_folder,
+                    second_quant_folder,
+                    frag_err_dist_dict,
+                    rt_index_paths,
+                    rt_irt,
+                    irt_errs,
+                    chromatograms,
+                    MS_TABLE_PATHS,
+                    params_,
+                    spec_lib["precursors"],
+                    accession_number_to_id,
+                    spec_lib,
+                    ionMatches,
+                    ionMisses,
+                    IDtoCOL,
+                    ionTemplates,
+                    iso_splines,
+                    complex_scored_PSMs,
+                    complex_unscored_PSMs,
+                    complex_spectral_scores,
+                    precursor_weights)
+    ###########
+    #Normalize Quant 
+    ###########
+    println("Normalization...")
+    normalizeQuant(
             second_quant_folder,
-            joinpath(temp_folder, "joined_second_quant.arrow"),
-            (:protein_idx,:precursor_idx),
-            N = 1000000
+            :peak_area,
+            N = params_[:normalization_params]["n_rt_bins"],
+            spline_n_knots = params_[:normalization_params]["spline_n_knots"],
+            max_q_value = params_[:normalization_params]["max_q_value"],
+            min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
         )
+    merged_second_quant_path = joinpath(temp_folder, "joined_second_quant.arrow")
+    if isfile(merged_second_quant_path)
+        rm(merged_second_quant_path, force = true)
+    end
 
-        threeProteomPeptideTest(
-            joinpath(temp_folder, "joined_second_quant.arrow"),
-            "/Users/n.t.wamsley/Desktop/",
-            params
-        )
+    @time mergeSortedArrowTables(
+        second_quant_folder,
+        joinpath(temp_folder, "joined_second_quant.arrow"),
+        (:protein_idx,:precursor_idx),
+        N = 1000000
+    )
+
+    threeProteomePeptideTest(
+        joinpath(temp_folder, "joined_second_quant.arrow"),
+        "/Users/n.t.wamsley/Desktop/",
+        params
+    )
+    
     #=
      features = [:species,:accession_numbers,:sequence,:structural_mods,
                  :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,

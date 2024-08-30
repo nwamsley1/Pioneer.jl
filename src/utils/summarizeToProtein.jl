@@ -105,8 +105,7 @@ end
 function getPgScoreThreshold(
     scores::AbstractVector{Float32},
     targets::AbstractVector{Bool},
-    q_value_threshold::Float32
-)
+    q_value_threshold::Float32)
     # Second pass: Find the probability threshold
     targets_above = 0
     decoys_above = 0
@@ -127,6 +126,11 @@ function getPgScoreThreshold(
 
 end
 
+
+function addPSM(
+    precursor_idx::UInt32,
+)
+end
 function getProteinGroups(
     passing_psms_folder::String,
     protein_groups_folder::String,
@@ -138,13 +142,14 @@ function getProteinGroups(
     protein_q_val_threshold::Float32 = 0.01f0)
 
     function getProteinGroupsDict(
-        psms_path::String,
+        psm_precursor_idx::AbstractVector{UInt32},
+        psm_score::AbstractVector{Float32},
+        psm_is_target::AbstractVector{Bool},
         accession_numbers::AbstractVector{String},
         accession_number_to_id::Dict{String, UInt32},
         precursor_sequence::AbstractVector{String};
         min_peptides::Int64 = 2)
 
-        psms_table = Arrow.Table(psms_path)
 
         protein_groups = Dictionary{@NamedTuple{protein_idx::UInt32, target::Bool},
         @NamedTuple{
@@ -152,12 +157,12 @@ function getProteinGroups(
             peptides::Set{String}}
         }()
 
-        for i in range(1, length(psms_table[1]))
-            precursor_idx = psms_table[:precursor_idx][i]
+        for i in range(1, length(psm_precursor_idx))
+            precursor_idx = psm_precursor_idx[i]
             sequence = precursor_sequence[precursor_idx]
-            score = psms_table[:prob][i]
+            score = psm_score[i]
             protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
-            keyname = (protein_idx = protein_idx, target = psms_table[:target][i])
+            keyname = (protein_idx = protein_idx, target = psm_is_target[i])
             if haskey(protein_groups, keyname)
                 max_pg_score, peptides = protein_groups[keyname]
                 if score > max_pg_score
@@ -176,23 +181,23 @@ function getProteinGroups(
         end
         filter!(x->length(x[:peptides])>=min_peptides, protein_groups)
         #modify the table
-        psms_table = DataFrame(Tables.columntable(psms_table))
-        psms_table[!,:max_pg_score] = Vector{Union{Missing, Float32}}(undef, size(psms_table, 1))
-        for i in range(1, size(psms_table, 1))
-            precursor_idx = psms_table[i,:precursor_idx]
+        #psms_table = DataFrame(Tables.columntable(psms_table))
+        max_pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
+        for i in range(1, length(psm_precursor_idx))
+            precursor_idx = psm_precursor_idx[i]
             protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
-            key = (protein_idx = protein_idx, target = psms_table[i,:target])
+            key = (protein_idx = protein_idx, target = psm_is_target[i])
             if haskey(protein_groups, key)
-                psms_table[i,:max_pg_score] = protein_groups[key][:max_pg_score]
+                max_pg_score[i] = protein_groups[key][:max_pg_score]
             else
-                psms_table[i,:max_pg_score] = missing
+                max_pg_score[i] = missing
             end
         end
-        Arrow.write(
-            psms_path,
-            psms_table
-        )
-        return protein_groups
+        #Arrow.write(
+        #    psms_path,
+        #    psms_table
+        #)
+        return max_pg_score, protein_groups
     end
 
     function writeProteinGroups(
@@ -232,12 +237,20 @@ function getProteinGroups(
             continue
         end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
-        protein_groups =  getProteinGroupsDict(
-            file_path,
+        psms_table = Arrow.Table(file_path)
+        max_pg_score, protein_groups = getProteinGroupsDict(
+            psms_table[:precursor_idx],
+            psms_table[:prob],
+            psms_table[:target],
             accession_numbers,
             accession_number_to_id,
             precursor_sequence;
             min_peptides = min_peptides
+        )
+        psms_table = DataFrame(Tables.columntable(psms_table))
+        psms_table[!,:max_pg_score] = max_pg_score
+        Arrow.write(
+            file_path,psms_table
         )
         pg_count += writeProteinGroups(
             protein_groups,
@@ -246,18 +259,16 @@ function getProteinGroups(
     end
 
     sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+    if isfile(sorted_pg_scores_path)
+        rm(sorted_pg_scores_path, force = true)
+    end
     mergeSortedProteinGroups(
         protein_groups_folder,
         sorted_pg_scores_path,
         :max_pg_score,
         N = 1000000
     )
-    sorted_pg_scores = Arrow.Table(sorted_pg_scores_path)
-    return getPgScoreThreshold(
-            sorted_pg_scores[:max_pg_score],
-            sorted_pg_scores[:target],
-            protein_q_val_threshold
-        )
+    return sorted_pg_scores_path
 end
 #test_table = Arrow.Table("/Users/n.t.wamsley/Desktop/testresults/RESULTS/Search/temp/passing_psms/E10H50Y40_02.arrow")
 

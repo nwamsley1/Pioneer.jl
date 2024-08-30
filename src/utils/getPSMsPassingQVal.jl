@@ -26,7 +26,6 @@ end
 function mergeSortedPSMScores(
                     input_dir::String, 
                     output_path::String,
-                    best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}},
                     ; N = 10000000)
     
     function fillColumn!(
@@ -125,7 +124,7 @@ function mergeSortedPSMScores(
     return nothing
 end
 
-function getPosteriorErrorProbabilitySpline(
+function getPEPSpline(
                             merged_psms_path::String,
                             score_col::Symbol;
                             min_pep_points_per_bin = 5000,
@@ -153,11 +152,12 @@ function getPosteriorErrorProbabilitySpline(
     end
     bin_target_fraction[end] = targets/bin_size
     bin_mean_prob[end] = mean_prob/bin_size
+    #n_spline_bins = ceil(Int, length(bin_mean_prob)/15)
     #UniformSpline(bin_target_fraction, bin_mean_prob, 3, 20)
     return UniformSpline(bin_target_fraction, bin_mean_prob, 3, n_spline_bins)
 end
 
-function getPosteriorQValueSpline(
+function getQValueSpline(
                             merged_psms_path::String,
                             score_col::Symbol;
                             min_pep_points_per_bin = 1000
