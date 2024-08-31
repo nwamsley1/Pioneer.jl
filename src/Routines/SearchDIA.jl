@@ -39,132 +39,128 @@ function SearchDIA(params_path::String)
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
     if !isdir( passing_proteins_folder )
        mkpath( passing_proteins_folder )
-   end
+    end
 
-   second_quant_folder = joinpath(temp_folder, "second_quant")
-   if !isdir( second_quant_folder)
-      mkpath( second_quant_folder)
-  end
-     ###########
-     #Load Spectral Libraries
-     ###########
-     spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
-     precursors = spec_lib["precursors"]
-     unique_proteins = unique(precursors[:accession_numbers])
-     accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))))
-     ###########
-     #Set CV Folds 
-     ###########
-     pid_to_cv_fold = getCVFolds(
-         collect(range(UInt32(1), UInt32(length(spec_lib["precursors"][:sequence])))),#precursor id's, 
-         spec_lib["precursors"][:accession_numbers]
-         )
-     ###########
-     #Load Pre-Allocated Data Structures. One of each for each thread. 
-     ###########
-     N = Threads.nthreads()
-     M = 250000
-     n_precursors = length(spec_lib["precursors"][:mz])
-     ionMatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-     ionMisses = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
-     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-     iso_splines = parseIsoXML("../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
-     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
-     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
-     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
-     precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
-     precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
-     chromatograms = [Vector{ChromObject}(undef, 5000) for _ in range(1, N)];
-     complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
-     complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
-     complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-     ###########
-     #File Names Parsing 
-     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
+    second_quant_folder = joinpath(temp_folder, "second_quant")
+    if !isdir( second_quant_folder)
+        mkpath( second_quant_folder)
+    end
+    ###########
+    #Load Spectral Libraries
+    ###########
+    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
+    precursors = spec_lib["precursors"]
+    unique_proteins = unique(precursors[:accession_numbers])
+    accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))))
+    ###########
+    #Set CV Folds 
+    ###########
+    pid_to_cv_fold = getCVFolds(
+        collect(range(UInt32(1), UInt32(length(spec_lib["precursors"][:sequence])))),#precursor id's, 
+        spec_lib["precursors"][:accession_numbers]
+        )
+    ###########
+    #Load Pre-Allocated Data Structures. One of each for each thread. 
+    ###########
+    N = Threads.nthreads()
+    M = 250000
+    n_precursors = length(spec_lib["precursors"][:mz])
+    ionMatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
+    ionMisses = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
+    all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
+    IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
+    ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
+    iso_splines = parseIsoXML("../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
+    scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
+    unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
+    spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
+    precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
+    precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
+    chromatograms = [Vector{ChromObject}(undef, 5000) for _ in range(1, N)];
+    complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
+    complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
+    complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
+    ###########
+    #File Names Parsing 
+    file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
 
-     ###########
-     #Tune Parameters
-     println("Parameter Tuning Search...")
-     RT_to_iRT_map_dict, frag_err_dist_dict, median_matched_intensity, irt_errs = parameterTuningSearch(rt_alignment_folder,
-                                                                             mass_err_estimation_folder,
-                                                                             MS_TABLE_PATHS,
-                                                                             params_,
-                                                                             spec_lib,
-                                                                             ionMatches,
-                                                                             ionMisses,
-                                                                             all_fmatches,
-                                                                             IDtoCOL,
-                                                                             ionTemplates,
-                                                                             iso_splines,
-                                                                             scored_PSMs,
-                                                                             unscored_PSMs,
-                                                                             spectral_scores,
-                                                                             precs)
+    ###########
+    #Tune Parameters
+    println("Parameter Tuning Search...")
+    RT_to_iRT_map_dict, frag_err_dist_dict, median_matched_intensity, irt_errs = parameterTuningSearch(rt_alignment_folder,
+                                                                            mass_err_estimation_folder,
+                                                                            MS_TABLE_PATHS,
+                                                                            params_,
+                                                                            spec_lib,
+                                                                            ionMatches,
+                                                                            ionMisses,
+                                                                            all_fmatches,
+                                                                            IDtoCOL,
+                                                                            ionTemplates,
+                                                                            iso_splines,
+                                                                            scored_PSMs,
+                                                                            unscored_PSMs,
+                                                                            spectral_scores,
+                                                                            precs)
+    println("Parameter Tuning Search...")
+    peak_fwhms, psms_paths = firstSearch(
+        first_search_psms_folder,
+        RT_to_iRT_map_dict,
+        frag_err_dist_dict,
+        irt_errs,
+        file_id_to_parsed_name,
+        MS_TABLE_PATHS,
+        params_,
+        spec_lib,
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precs
+    )
 
-     median_matched_intensity = median(values(median_matched_intensity))
+    #old_dict = copy(PSMs_Dict)
+    ##########
+    #Combine First Search Results
+    ##########
+    println("Combining First Search Results...")
+    #Use high scoring psms to map library retention times (irt)
+    #onto the empirical retention times and vise-versa.
+    #uniform B-spline
+    irt_rt, rt_irt = mapLibraryToEmpiricalRT(
+    psms_paths,#Need to change this to a list of temporrary file paths
+    min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
+    )
+    #Summarize list of best N precursors accross all runs. 
+    @time prec_to_irt = getBestPrecursorsAccrossRuns(
+            psms_paths, 
+            spec_lib["precursors"][:mz],
+            rt_irt, 
+            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
 
-    params_[:deconvolution_params]["huber_delta"] = median_matched_intensity*params_[:deconvolution_params]["huber_delta_prop"];
-
-    
-     println("Parameter Tuning Search...")
-     peak_fwhms, psms_paths = firstSearch(
-         first_search_psms_folder,
-         RT_to_iRT_map_dict,
-         frag_err_dist_dict,
-         irt_errs,
-         file_id_to_parsed_name,
-         MS_TABLE_PATHS,
-         params_,
-         spec_lib,
-         ionMatches,
-         ionMisses,
-         all_fmatches,
-         IDtoCOL,
-         ionTemplates,
-         iso_splines,
-         scored_PSMs,
-         unscored_PSMs,
-         spectral_scores,
-         precs
-     )
-
-     #old_dict = copy(PSMs_Dict)
-     ##########
-     #Combine First Search Results
-     ##########
-     println("Combining First Search Results...")
-     #Use high scoring psms to map library retention times (irt)
-     #onto the empirical retention times and vise-versa.
-     #uniform B-spline
-     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
-        psms_paths,#Need to change this to a list of temporrary file paths
-        min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
-     )
-     #Summarize list of best N precursors accross all runs. 
-     prec_to_irt = getBestPrecursorsAccrossRuns(
-             psms_paths, 
-             spec_lib["precursors"][:mz],
-             rt_irt, 
-             max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
-             map(x->(var_irt = x[:var_irt], n = x[:n]), prec_to_irt)
-
-    prec_to_prob = map(x->(prob = x[:best_prob],), prec_to_irt)
+            
+    huber_δs = Float32[300*(1.5^i) for i in range(1, 15)];
+    params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
+        huber_δs,prec_to_irt,precursors[:is_decoy])
+    #prec_to_prob = map(x->(prob = x[:best_prob],), prec_to_irt)
          
     irt_errs = getIrtErrs(
         peak_fwhms,
         prec_to_irt,
         params_
     )
-
-    ms_table = Arrow.Table(first(MS_TABLE_PATHS))
-    bin_rt_size = min(
-    median(diff(ms_table[:retentionTime][ms_table[:msOrder].==1]))*5.5,
-    params_[:summarize_first_search_params]["max_irt_bin_size"]
-    )
-    ms_table = nothing
-
+    #ms_table = Arrow.Table(first(MS_TABLE_PATHS))
+    bin_rt_size =  params_[:summarize_first_search_params]["irt_bin_size"]
+    #min(
+    #median(diff(ms_table[:retentionTime][ms_table[:msOrder].==1]))*5.5,
+    #params_[:summarize_first_search_params]["max_irt_bin_size"]
+    #)
+    #ms_table = nothing
     prec_to_irt = map(x->(irt = x[:best_irt], mz = x[:mz]), prec_to_irt)
     rt_index_paths = makeRTIndices(
          irt_indices_folder,
