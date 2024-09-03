@@ -241,38 +241,3 @@ function getPSMsPassingQVal(
 
     return
 end
-
-
-#=
-function find_prob_threshold(
-                            file_paths::Vector{String},
-                            best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}},
-                            q_value_threshold::Float32
-                            )
-
-    n_psms = 0
-    for file_path in file_paths
-        n_psms += length(Arrow.Table(file_path)[1])
-    end
-
-    all_probs = Vector{@NamedTuple{score::Float32, target::Bool}}(undef, n_psms)
-
-    n = 1
-    for file_path in file_paths
-        df = Arrow.Table(file_path)
-        for i in range(1, length(df[1]))
-            key = (precursor_idx = df[:precursor_idx][i], isotopes_captured = df[:isotopes_captured][i])
-            if key ∈ best_traces
-                all_probs[n] = (score = df[:prob][i], target = df[:target][i])
-                n += 1
-            end
-        end
-    end
-
-    all_probs = all_probs[1:n]
-    # Sort probabilities in descending order
-    sort!(all_probs, by=x->x[:score], alg = QuickSort)
-
-    return find_score_threshold(all_probs, q_value_threshold)
-end
-=#

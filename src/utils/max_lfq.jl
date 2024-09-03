@@ -288,11 +288,18 @@ function LFQ(prot::DataFrame,
                 score_to_qval::Interpolations.Extrapolation;
                 batch_size = 100000)
 
-    #gpsms = groupby(prot, [:target, :species, :accession_numbers])
-    #ngroups = size(gpsms, 1)
-    last_row_idx = 0
-    while last_row_idx <= size(prot, 1)
-        subdf = prot[range(last_row_idx + 1, min(last_row_idx + batch_size, size(prot, 1))),:]
+    batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
+    while batch_start_idx <= size(prot, 1)
+        last_prot_idx = prot[batch_end_idx,:protein_idx]
+        while batch_end_idx < size(prot, 1)
+            if prot[batch_end_idx+1,:protein_idx]!=last_prot_idx
+                break
+            end
+            batch_end_idx += 1
+        end
+        subdf = prot[range(batch_start_idx, batch_end_idx),:]
+        batch_start_idx = batch_end_idx + 1
+        batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         #Get rid of low scoring proteins 
         filter!(x->
         score_to_qval(coalesce(x.max_pg_score, 0.0f0))::Float32<q_value_threshold, 
@@ -362,7 +369,6 @@ function LFQ(prot::DataFrame,
                  :target,
                  :species,:protein,:peptides,:n_peptides,:log2_abundance])
         )
-        last_row_idx = last_row_idx + batch_size
     end
 
     return nothing

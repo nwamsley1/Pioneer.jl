@@ -308,7 +308,9 @@ function SearchDIA(params_path::String)
 
     
 
-
+    if isfile(joinpath(results_folder, "precursors_long.arrow"))
+        rm(joinpath(results_folder, "precursors_long.arrow"), force=true)
+    end
     @time mergeSortedArrowTables(
         second_quant_folder,
         joinpath(results_folder, "precursors_long.arrow"),
@@ -316,38 +318,18 @@ function SearchDIA(params_path::String)
         N = 1000000
     )
 
-    writePrecursorCSV(
+    precursors_wide_arrow = writePrecursorCSV(
         joinpath(results_folder, "precursors_long.arrow"),
         sort(collect(values(file_id_to_parsed_name)))
         )
-
-    #=
-    new_results = threeProteomePeptideTest(
-        joinpath(temp_folder, "joined_second_quant.arrow"),
-        "/Users/n.t.wamsley/Desktop/",
-        params
-    )
-    =#
-       #=
-     features = [:species,:accession_numbers,:sequence,:structural_mods,
-                 :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
-                 :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
-                 :y_count,:p_count,:non_cannonical_count,:isotope_count
-                 ,:matched_ratio]
-     println("Writting PSMs...")
-     sort!(best_psms,[:species,:accession_numbers,:sequence,:target])
-     Arrow.write(joinpath(results_folder,"psms_long.arrow"),best_psms[!,features])
-     wide_psms_quant = unstack(best_psms,[:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],:file_name,:peak_area_normalized)
-     sort!(wide_psms_quant,[:species,:accession_numbers,:sequence,:target])
-     CSV.write(joinpath(results_folder,"psms_wide.csv"),wide_psms_quant)
-=#
      #Summarize Precursor ID's
-     value_counts(df, col) = combine(groupby(df, col), nrow)
+     #value_counts(df, col) = combine(groupby(df, col), nrow)
  
-     #precursor_id_table = value_counts(best_psms,:file_name)
-     #CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
      println("Max LFQ...")
-     LFQ(
+    if isfile( joinpath(results_folder, "protein_groups_long.arrow"))
+        rm( joinpath(results_folder, "protein_groups_long.arrow"), force=true)
+    end
+    LFQ(
         DataFrame(Arrow.Table(joinpath(results_folder, "precursors_long.arrow"))),
         joinpath(results_folder, "protein_groups_long.arrow"),
         :peak_area_normalized,
@@ -356,19 +338,30 @@ function SearchDIA(params_path::String)
         pg_qval_interp,
         batch_size = 100000
     )
-
-     sort!(wide_protein_quant,[:species,:protein,:target])
-     CSV.write(joinpath(results_folder,"proteins_wide.csv"),wide_protein_quant)
-     println("QC Plots")
-     qcPlots(
-         best_psms,
-         protein_quant,
-         params_,
-         parsed_fnames,
-         qc_plot_folder,
-         file_id_to_parsed_name,
-         MS_TABLE_PATHS,
-         iRT_RT,
-         frag_err_dist_dict
-     )
+    protein_groups_wide_arrow = writeProteinGroupsCSV(
+        joinpath(results_folder, "protein_groups_long.arrow"),
+        precursors[:sequence],
+        precursors[:isotopic_mods],
+        precursors[:structural_mods],
+        precursors[:prec_charge],
+        sort(collect(values(file_id_to_parsed_name)))
+        )
+    println("QC Plots")
+    if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
+        rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
+    end
+    qcPlots(
+        precursors_wide_path,
+        protein_groups_wide_path,
+        params_,
+        parsed_fnames,
+        qc_plot_folder,
+        file_id_to_parsed_name,
+        MS_TABLE_PATHS,
+        irt_rt,
+        frag_err_dist_dict
+    )
 end
+
+protein_groups_wide_path = "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS/protein_groups_wide.arrow"
+precursors_wide_path = "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS/precursors_wide.arrow"
