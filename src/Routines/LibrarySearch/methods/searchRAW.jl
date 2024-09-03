@@ -616,10 +616,7 @@ function secondSearch(
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
         prec_mz_string_new = string(spectra[:centerMass][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
-        #if scan_idx == 3650
-        #    println("scan_idx $scan_idx")
-        #    println("ionTemplates[1:5]", ionTemplates[1:5])
-        #end
+
         if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
             irt_start = irt_start_new
             irt_stop = irt_stop_new
@@ -627,9 +624,6 @@ function secondSearch(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
-            ##if scan_idx == 3650
-           #     println("scan_idx $scan_idx")
-           # end
             precs_temp_size = 0
             ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
                 ionTemplates,
@@ -689,8 +683,6 @@ function secondSearch(
             for i in range(1, IDtoCOL.size)#pairs(IDtoCOL)
                 _weights_[IDtoCOL[IDtoCOL.keys[i]]] = precursor_weights[IDtoCOL.keys[i]]
             end
-            #fill!(_residuals_, zero(Float32))
-            #fill!(_weights_, zero(Float32))
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
             #Spectral deconvolution. Hybrid bisection/newtowns method
@@ -704,11 +696,6 @@ function secondSearch(
                             10.0,#Hs.n/10.0,
                             max_diff
                             );
-            ###for i in range(1, IDtoCOL.size)
-            #    if isnan(_weights_[IDtoCOL[IDtoCOL.keys[i]]])# = precursor_weights[id]
-            #        return Hs, IDtoCOL, _residuals_, _weights_, i
-            #    end 
-            #nd 
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]

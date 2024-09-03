@@ -356,7 +356,8 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         precursor_transmission,
         prec_mz,
         prec_charge,
-        Float32((min_prec_mz + max_prec_mz)/2),
+        Float32((min_prec_mz + max_prec_mz)/2), #midpoint
+        Float32(max_prec_mz - min_prec_mz)/2, #half of width
         quad_transmission_func
     )
     prec_isotope_set = getPrecursorIsotopeSet(

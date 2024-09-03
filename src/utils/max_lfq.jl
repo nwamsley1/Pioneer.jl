@@ -284,7 +284,8 @@ function LFQ(prot::DataFrame,
              protein_quant_path::String,
                 quant_col::Symbol,
                 file_id_to_parsed_name::Dict{Int64, String},
-                pg_score_threshold::Float32;
+                q_value_threshold::Float32,
+                score_to_qval::Interpolations.Extrapolation;
                 batch_size = 100000)
 
     #gpsms = groupby(prot, [:target, :species, :accession_numbers])
@@ -293,14 +294,15 @@ function LFQ(prot::DataFrame,
     while last_row_idx <= size(prot, 1)
         subdf = prot[range(last_row_idx + 1, min(last_row_idx + batch_size, size(prot, 1))),:]
         #Get rid of low scoring proteins 
-        filter!(x->coalesce(x.max_pg_score, 0.0f0)>pg_score_threshold, subdf);
+        filter!(x->
+        score_to_qval(coalesce(x.max_pg_score, 0.0f0))::Float32<q_value_threshold, 
+        subdf);
         #Exclude precursors with mods that impact quantitation
         filter!(x->!occursin("M,Unimod:35", x.structural_mods), subdf)
         gpsms = groupby(
             subdf,
             [:target, :species, :accession_numbers]
         )
-        println("length(gpsms), ", length(gpsms))
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups

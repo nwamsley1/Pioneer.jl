@@ -15,7 +15,7 @@ return (
     qc_plot_params = Dict{String, Any}(k => v for (k, v) in params["qc_plot_params"]),
     normalization_params = Dict{String, Any}(k => v for (k, v) in params["normalization_params"]),
     benchmark_params = Dict{String, Any}(k => v for (k, v) in params["benchmark_params"]),
-    xgboost_params = Dict{String, Any}(k => v for (k, v) in params["xgboost_params"])
-
+    xgboost_params = Dict{String, Any}(k => v for (k, v) in params["xgboost_params"]),
+    quad_transmission = Dict{String, Any}(k => v for (k, v) in params["quad_transmission"])
     );
 end

@@ -1,12 +1,11 @@
 function samplePSMsForXgboost(quant_psms_folder, max_psms)
 
-    file_paths = readdir(quant_psms_folder, join=true)
+    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
     psms_count = 0
 
-    for file_path in readdir(quant_psms_folder)
-        file_path = joinpath(quant_psms_folder, file_path)
-        psms_count += length(Arrow.Table(file_path)[:precursor_idx])
+    for file_path in file_paths
+        psms_count += length(Arrow.Table(file_path)[1])
     end
 
     # Initialize an empty DataFrame to store the results
@@ -21,8 +20,7 @@ function samplePSMsForXgboost(quant_psms_folder, max_psms)
         
         # Calculate the number of rows to sample (1/N'th of the total)
         sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
-        println("num_rows $num_rows")
-        println("sample_size $sample_size")
+
         # Generate sorted random indices for sampling
         sampled_indices = sort!(sample(1:num_rows, sample_size, replace=false))
         

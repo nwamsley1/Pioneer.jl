@@ -216,8 +216,9 @@ function sortAndFilterQuantTables(
     if isfile(merged_quant_path)
         rm(merged_quant_path, force = true)
     end
+    file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
-    for fpath in readdir(quant_psms_folder, join=true)
+    for fpath in file_paths
         psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
 
         #Indicator variable of whether each psm is from the best trace 

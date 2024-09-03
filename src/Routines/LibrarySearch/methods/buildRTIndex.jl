@@ -69,7 +69,6 @@ buildRTIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRTInde
 
 
 function makeRTIndices(temp_folder::String,
-
                        psms_paths::Dictionary{String, String}, 
                        prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
                        rt_to_irt_splines::Any;
@@ -96,18 +95,15 @@ function makeRTIndices(temp_folder::String,
             irt, mz = irt_mz::@NamedTuple{irt::Float32, mz::Float32}
             #Don't impute irt, use empirical
             if haskey(prec_set, prec_id)
-                irt, prob = prec_set[prec_id]
-                if prob >= min_prob #Use empirical iRT/RT
-                    irts[i] = irt
-                    mzs[i] = mz
+                _irt_, prob = prec_set[prec_id]
+                if (prob >= min_prob)
+                    irts[i], mzs[i]  = _irt_, mz
                     continue
                 end
             end
             #Impute irt from the best observed psm for the precursor accross the experiment 
-            irts[i] = irt
-            mzs[i] = mz
+            irts[i], mzs[i] = irt,mz
         end
-
         #Build RT index 
         rt_df = DataFrame(Dict(:irt => irts,
                                 :prec_mz => mzs,
@@ -123,97 +119,6 @@ function makeRTIndices(temp_folder::String,
             key,
             temp_path
         )
-        #rt_index = buildRTIndex(rt_df, bin_rt_size=bin_rt_size);
-        #insert!(rt_indices, key, rt_index)
     end
     return rt_index_paths
 end
-
-#=
-function getRTErr(Dictionary{UInt32, 
-                            @NamedTuple{
-                            best_prob::Float32, 
-                            best_irt::Float32, 
-                            min_irt::Union{Missing, Float32}, 
-                            max_irt::Union{Missing, Float32}, 
-                            mz::Float32}})
-        
-    for (key, psms) in pairs(psms_dict)
-        psms[!,:iRT_observed] = RT_iRT[key].(psms[!,:RT])
-    end
-
-    combined_psms = vcat(values(psms_dict)...);
-    filter!(x->x.q_value<=0.01, combined_psms)
-    psms_by_prec = groupby(combined_psms, :precursor_idx)
-    irt_mads = Vector{Union{Missing, Float32}}(undef, length(psms_by_prec))
-    j = 1
-    for (prec, psms) in pairs(psms_by_prec)
-        if size(psms, 1) > 1
-            irt_mads[j] = maximum(psms[!,:iRT_observed]) -  minimum(psms[!,:iRT_observed])
-        else
-            irt_mads[j] = missing
-        end
-        j += 1
-    end
-    return quantile(skipmissing(irt_mads), 0.99)#median(skipmissing(rt_mads))*4
-end
-=#
-#=
-precs_passing = collect(keys(precID_to_iRT))
-precs_irtest = Dictionary(
-    precs_passing,
-    [(mean_irt = zero(Float32), std_irt = zero(Float32), n = zero(UInt16)) for _ in range(1, length(precs_passing))]
-    
-)
-
-for (key, psms_path) in pairs(psms_paths) #For each data frame 
-    psms = Arrow.Table(psms_path)
-    for i in ProgressBar(eachindex(psms[:precursor_idx]))
-        precursor_idx = psms[:precursor_idx][i]
-        if psms[:q_value][i]>0.01
-            continue
-        end
-        if haskey(precs_irtest, precursor_idx)
-            mean_irt, std_irt, n = precs_irtest[precursor_idx]
-            n += one(UInt16)
-            mean_irt += RT_iRT[key](psms[:RT][i])
-            precs_irtest[precursor_idx]=(mean_irt = mean_irt, std_irt = std_irt, n = n)
-        else
-            insert!(
-                precs_irtest,
-                precursor_idx,
-                (mean_irt = RT_iRT[key](psms[:RT][i]), std_irt = zero(Float32), n = one(UInt16))
-            )
-        end
-    end
-end
-for (key, val) in pairs(precs_irtest)
-    mean_irt, std_irt, n  = precs_irtest[key]
-    mean_irt = mean_irt/n
-    precs_irtest[key]= (mean_irt = mean_irt, std_irt = std_irt, n = n)
-end
-for (key, psms_path) in pairs(psms_paths) #For each data frame 
-    psms = Arrow.Table(psms_path)
-    for i in ProgressBar(eachindex(psms[:precursor_idx]))
-        precursor_idx = psms[:precursor_idx][i]
-        if haskey(precs_irtest, precursor_idx)
-            mean_irt, std_irt, n = precs_irtest[precursor_idx]
-            std_irt += (RT_iRT[key](psms[:RT][i]) - mean_irt)^2
-            precs_irtest[precursor_idx]=(mean_irt = mean_irt, std_irt = std_irt, n = n)
-        end
-    end
-end
-for (key, val) in pairs(precs_irtest)
-    mean_irt, std_irt, n  = precs_irtest[key]
-    std_irt = sqrt(std_irt/(n-1))
-    #std_irt = n/std_irt
-    precs_irtest[key]= (mean_irt = mean_irt, std_irt = std_irt, n = n)
-end
-filter!(x->x[:n]>2, precs_irtest)
-stds = [x[:std_irt] for x in values(precs_irtest)]
-
-    zerso(@NamedTuple{
-        best_prob::Float32, 
-        best_irt::Float32, 
-        min_irt::Union{Missing, Float32}, 
-        =#

@@ -126,7 +126,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
             traces_passing = Set(sub_bpsms[!,:precursor_idx]),
-            quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
+            quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
             )...);
 
 
@@ -141,7 +141,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             sub_bpsms[!,:scan_idx],
                             sub_bpsms[!,:peak_area],
                             sub_bpsms[!,:new_best_scan],
-                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"])
+                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]),
+                            n_pad = params_[:quant_search_params]["n_pad"],
+                            max_apex_offset = params_[:quant_search_params]["max_apex_offset"]
                             )
 
         temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
@@ -163,7 +165,5 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             temp_path,
             sub_bpsms,
             )
-
-        #BPSMS[ms_file_idx] = psms_integrated;
 end
 end

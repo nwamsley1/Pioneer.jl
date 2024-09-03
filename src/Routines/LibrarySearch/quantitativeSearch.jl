@@ -98,22 +98,6 @@ function quantSearch(
                                 bin_rt_size = bin_rt_size)
         rt_irt = RT_iRT[parsed_fname]
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
-        #params_[:deconvolution_params]["huber_delta"] = median(
-        #   [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
-        
-
-            #params_[:deconvolution_params]["huber_delta"] = 100.0f0
-            #=
-            params_[:deconvolution_params]["lambda"] = 0.0f0
-            params_[:deconvolution_params]["accuracy_bisection"] = 10.0
-            params_[:deconvolution_params]["accuracy_newton"] = 10.0
-            params_[:quant_search_params]["n_frag_isotopes"] = 3
-            params_[:quant_search_params]["min_frag_count"] = 3
-            params_[:quant_search_params]["min_y_count"] = 1
-            params_[:quant_search_params]["max_best_rank"] = 1
-            =#
-            params_[:quant_search_params]["min_y_count"] = 1
-            #include("src/PSM_TYPES/ScoredPSMs.jl")
             precursors = spec_lib["precursors"]
             psms = vcat(quantSearch(
                 MS_TABLE, 
@@ -135,7 +119,7 @@ function quantSearch(
                 unscored_psms = complex_unscored_PSMs,
                 spectral_scores = complex_spectral_scores,
                 precursor_weights = precursor_weights,
-                quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
+                quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 
@@ -147,10 +131,8 @@ function quantSearch(
             getIsotopesCaptured!(psms,  spec_lib["precursors"][:prec_charge], spec_lib["precursors"][:mz], MS_TABLE);
             psms[!,:best_scan] .= false;
             filter!(x->first(x.isotopes_captured)<2, psms);
-            
             initSummaryColumns!(psms);
             for (key, gpsms) in pairs(groupby(psms, [:precursor_idx,:isotopes_captured]))
-                
                 getSummaryScores!(
                     gpsms, 
                     gpsms[!,:weight],
@@ -178,8 +160,6 @@ function quantSearch(
                 precID_to_iRT
 
             );
-            #psms[!,:file_name].=file_path_to_parsed_name[MS_TABLE_PATH];
-
             temp_path = joinpath(quant_psms_folder, parsed_fname*".arrow")
             psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
 
@@ -187,7 +167,6 @@ function quantSearch(
                 temp_path,
                 psms,
                 )
-            #BPSMS[ms_file_idx] = psms;
     end
     return
 end

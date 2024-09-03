@@ -4,13 +4,21 @@ function SearchDIA(params_path::String)
      params = JSON.parse(read(params_path, String));
      #params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
      MS_DATA_DIR = params["ms_data_dir"];
+     #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test"
      SPEC_LIB_DIR = params["library_folder"];
  
      #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
      MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
  
      params_ = parseParams(params)
- 
+     #=
+     params_[:summarize_first_search_params]["max_precursors"] = 125000
+     params_[:presearch_params]["sample_rate"] = 0.05
+      params_[:quant_search_params]["min_y_count"] = 1
+     params_[:first_search_params]["min_log2_matched_ratio"] = -1.0
+     params_[:first_search_params]["max_precursors_passing"] = 125000
+     params_[:first_search_params]["n_frag_isotopes"] = 2
+     =#
      qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
          joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
          params
@@ -124,7 +132,6 @@ function SearchDIA(params_path::String)
         precs
     )
 
-    #old_dict = copy(PSMs_Dict)
     ##########
     #Combine First Search Results
     ##########
@@ -137,31 +144,20 @@ function SearchDIA(params_path::String)
     min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
     )
     #Summarize list of best N precursors accross all runs. 
-    @time prec_to_irt = getBestPrecursorsAccrossRuns(
+    @time precursor_dict = getBestPrecursorsAccrossRuns(
             psms_paths, 
             spec_lib["precursors"][:mz],
             rt_irt, 
-            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]))
-
-            
-    huber_δs = Float32[300*(1.5^i) for i in range(1, 15)];
-    params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
-        huber_δs,prec_to_irt,precursors[:is_decoy])
-    #prec_to_prob = map(x->(prob = x[:best_prob],), prec_to_irt)
-         
+            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
+                   
     irt_errs = getIrtErrs(
         peak_fwhms,
-        prec_to_irt,
+        precursor_dict,
         params_
     )
-    #ms_table = Arrow.Table(first(MS_TABLE_PATHS))
-    bin_rt_size =  params_[:summarize_first_search_params]["irt_bin_size"]
-    #min(
-    #median(diff(ms_table[:retentionTime][ms_table[:msOrder].==1]))*5.5,
-    #params_[:summarize_first_search_params]["max_irt_bin_size"]
-    #)
-    #ms_table = nothing
-    prec_to_irt = map(x->(irt = x[:best_irt], mz = x[:mz]), prec_to_irt)
+
+    bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
+    prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
     rt_index_paths = makeRTIndices(
          irt_indices_folder,
          psms_paths,
@@ -169,10 +165,18 @@ function SearchDIA(params_path::String)
          rt_irt,
          min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
      
-     ############
-     #Quantitative Search
-    params_[:deconvolution_params]["accuracy_bisection"] = 10.0
-    params_[:deconvolution_params]["accuracy_newton"] = 10.0
+    ############
+    #Estimate Optimal Huber Loss Smoothing Parameter
+    delta0 = params_[:deconvolution_params]["huber_delta0"];
+    delta_exp = params_[:deconvolution_params]["huber_delta_exp"];
+    delta_iters = params_[:deconvolution_params]["huber_delta_iters"];
+    huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
+    params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
+        huber_δs,precursor_dict ,precursors[:is_decoy]);
+    #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
+    #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
+    ############
+    #Quantitative Search
     println("Begining Quantitative Search...")
     ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
@@ -197,15 +201,19 @@ function SearchDIA(params_path::String)
         complex_unscored_PSMs,
         complex_spectral_scores,
         precursor_weights
-        )
+        );
 
     println("Traning Target-Decoy Model...")
-    best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"])
-    models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors)
+    best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
+    models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
+
     #Wipe memory
     best_psms = nothing
     GC.gc()
-    best_traces = getBestTraces(quant_psms_folder);
+
+    best_traces = getBestTraces(
+        quant_psms_folder,
+        params_[:xgboost_params]["min_best_trace_prob"]);
     #Path for merged quant psms scores 
     merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
     #Sort quant tables in descenging order of probability and remove 
@@ -222,8 +230,13 @@ function SearchDIA(params_path::String)
                     merged_quant_path
                     )
     #functions to convert "prob" to q-value and posterior-error-probability "pep" 
-    precursor_pep_spline = getPEPSpline(merged_quant_path, :prob, min_pep_points_per_bin = 500, n_spline_bins = 5)
-    precursor_qval_interp = getQValueSpline(merged_quant_path, :prob, min_pep_points_per_bin = 1000)
+    precursor_pep_spline = getPEPSpline(merged_quant_path, 
+                                        :prob, 
+                                        min_pep_points_per_bin = params_[:xgboost_params]["precursor_prob_spline_points_per_bin"], 
+                                        n_spline_bins = 5)
+    precursor_qval_interp = getQValueSpline(merged_quant_path, 
+                                            :prob, 
+                                            min_pep_points_per_bin = max(params_[:xgboost_params]["precursor_q_value_interpolation_points_per_bin"], 3))
 
     getPSMsPassingQVal(
                                     quant_psms_folder, 
@@ -242,8 +255,14 @@ function SearchDIA(params_path::String)
             accession_number_to_id,
             precursors[:sequence])
 
-    pg_pep_spline = getPEPSpline(sorted_pg_score_path, :max_pg_score, min_pep_points_per_bin = 500, n_spline_bins = 5)
-    pg_qval_interp = getQValueSpline(sorted_pg_score_path, :max_pg_score, min_pep_points_per_bin = 100)
+    pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
+                                :max_pg_score, 
+                                min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
+                                n_spline_bins = 5)
+
+    pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
+                                    :max_pg_score, 
+                                    min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3))
 
     ###########
     #Re-quantify with 1% fdr precursors 
@@ -279,29 +298,37 @@ function SearchDIA(params_path::String)
             second_quant_folder,
             :peak_area,
             N = params_[:normalization_params]["n_rt_bins"],
-            spline_n_knots = params_[:normalization_params]["spline_n_knots"],
-            max_q_value = params_[:normalization_params]["max_q_value"],
-            min_points_above_FWHM = params_[:normalization_params]["min_points_above_FWHM"]
+            spline_n_knots = params_[:normalization_params]["spline_n_knots"]
         )
+
     merged_second_quant_path = joinpath(temp_folder, "joined_second_quant.arrow")
     if isfile(merged_second_quant_path)
         rm(merged_second_quant_path, force = true)
     end
 
+    
+
+
     @time mergeSortedArrowTables(
         second_quant_folder,
-        joinpath(temp_folder, "joined_second_quant.arrow"),
+        joinpath(results_folder, "precursors_long.arrow"),
         (:protein_idx,:precursor_idx),
         N = 1000000
     )
 
-    threeProteomePeptideTest(
+    writePrecursorCSV(
+        joinpath(results_folder, "precursors_long.arrow"),
+        sort(collect(values(file_id_to_parsed_name)))
+        )
+
+    #=
+    new_results = threeProteomePeptideTest(
         joinpath(temp_folder, "joined_second_quant.arrow"),
         "/Users/n.t.wamsley/Desktop/",
         params
     )
-    
-    #=
+    =#
+       #=
      features = [:species,:accession_numbers,:sequence,:structural_mods,
                  :isotopic_mods,:charge,:precursor_idx,:target,:weight,:peak_area,:peak_area_normalized,
                  :scan_idx,:prob,:q_value,:prec_mz,:RT,:irt_obs,:irt_pred,:best_rank,:best_rank_iso,:topn,:topn_iso,:longest_y,:longest_b,:b_count,
@@ -321,11 +348,12 @@ function SearchDIA(params_path::String)
      #CSV.write("/Users/n.t.wamsley/Desktop/precursor_ids_table.csv")
      println("Max LFQ...")
      LFQ(
-        DataFrame(Arrow.Table(joinpath(temp_folder, "joined_second_quant.arrow"))),
-        joinpath(temp_folder, "prot_quant_test.arrow"),
+        DataFrame(Arrow.Table(joinpath(results_folder, "precursors_long.arrow"))),
+        joinpath(results_folder, "protein_groups_long.arrow"),
         :peak_area_normalized,
         file_id_to_parsed_name,
-        pg_score_threshold,
+        0.01f0,
+        pg_qval_interp,
         batch_size = 100000
     )
 

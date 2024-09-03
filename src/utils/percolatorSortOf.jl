@@ -21,7 +21,7 @@ function getBestScorePerPrec!(
     file_paths::Vector{String},
     bst::Booster,
     features::Vector{Symbol})
-    
+
     #Reset counts for new scores
     for (key, value) in pairs(prec_to_best_score_new)
         max_prob, mean_prob, min_prob, n = value
@@ -79,8 +79,7 @@ end
 
 function getBestScorePerPrec!(
     prec_to_best_score_new::Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
-    psms::DataFrame
-)
+    psms::DataFrame)
     m = 0
     for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
         key = (prec_idx = prec_idx, isotopes = psms[i,:isotopes_captured])
@@ -105,7 +104,6 @@ function rankPSMs!(psms::DataFrame,
                     subsample::Float64 = 0.5, 
                     gamma::Int = 0, 
                     max_depth::Int = 10,
-                    train_fraction::Float64 = 1.0,
                     iter_scheme::Vector{Int} = [100, 100, 200], 
                     print_importance::Bool = true)
 
@@ -190,8 +188,6 @@ function rankPSMs!(psms::DataFrame,
             update(pbar)
         end
     end
-
-
-    #bst.feature_names = [string(x) for x in features]
+    
     return models#bst, vcat(psms_test_folds...)
 end

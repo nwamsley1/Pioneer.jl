@@ -71,6 +71,44 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             end
         end
     end
+    function getVariance!(
+        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
+                                                    best_ms_file_idx::UInt32,
+                                                    best_scan_idx::UInt32,
+                                                    best_irt::Float32, 
+                                                    mean_irt::Union{Missing, Float32}, 
+                                                    var_irt::Union{Missing, Float32}, 
+                                                    n::Union{Missing, UInt16}, 
+                                                    mz::Float32}},
+        precursor_idxs::AbstractVector{UInt32},
+        q_values::AbstractVector{Float16},
+        rts::AbstractVector{Float32},
+        rt_irt::UniformSpline)
+        for row in eachindex(precursor_idxs)
+            #precursor data 
+            q_value = q_values[row]
+            precursor_idx = precursor_idxs[row]
+            irt =  rt_irt(rts[row])
+
+            if q_value > max_q_val
+                continue
+            end
+            if haskey(prec_to_best_prob, precursor_idx)
+                best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
+                var_irt += (irt - mean_irt/n)^2
+                prec_to_best_prob[precursor_idx] = (
+                    best_prob = best_prob, 
+                    best_ms_file_idx= best_ms_file_idx,
+                    best_scan_idx = best_scan_idx,
+                    best_irt = best_irt,
+                    mean_irt = mean_irt, 
+                    var_irt = var_irt,
+                    n = n,
+                    mz = mz)
+
+            end
+        end
+    end
 
     prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
                                                         best_ms_file_idx::UInt32,
@@ -97,7 +135,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
     end
     # Get the top N peptide_idx's with their corresponding maximum probabilities
     #Currently this is slow
-    sort!(prec_to_best_prob, alg=PartialQuickSort(1:max_precursors), rev = true);
+    @time sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
     N = 0
     for key in collect(keys(prec_to_best_prob))
         N += 1
@@ -105,54 +143,18 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             delete!(prec_to_best_prob, key)
         end
     end
-    function getVariance!(
-        prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
-                                                    best_ms_file_idx::UInt32,
-                                                    best_scan_idx::UInt32,
-                                                    best_irt::Float32, 
-                                                    mean_irt::Union{Missing, Float32}, 
-                                                    var_irt::Union{Missing, Float32}, 
-                                                    n::Union{Missing, UInt16}, 
-                                                    mz::Float32}},
-        precursor_idxs::AbstractVector{UInt32},
-        q_values::AbstractVector{Float16},
-        probs::AbstractVector{Float32},
-        rts::AbstractVector{Float32},
-        scan_idxs::AbstractVector{UInt32},
-        ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::UniformSpline)
 
-    end
     #get variance 
-    for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    @time for (key, psms_path) in pairs(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
-
-        
-        for row in eachindex(psms[:precursor_idx])
-            #precursor data 
-            q_value = psms[:q_value][row]
-            precursor_idx = psms[:precursor_idx][row]
-            irt =  RT_iRT[key](psms[:RT][row])
-
-            if q_value > max_q_val
-                continue
-            end
-            if haskey(prec_to_best_prob, precursor_idx)
-                best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
-                var_irt += (irt - mean_irt/n)^2
-                prec_to_best_prob[precursor_idx] = (
-                    best_prob = best_prob, 
-                    best_ms_file_idx= best_ms_file_idx,
-                    best_scan_idx = best_scan_idx,
-                    best_irt = best_irt,
-                    mean_irt = mean_irt, 
-                    var_irt = var_irt,
-                    n = n,
-                    mz = mz)
-
-            end
-        end
+        getVariance!(
+            prec_to_best_prob,
+            psms[:precursor_idx],
+            psms[:q_value],
+            psms[:RT],
+            RT_iRT[key]
+        )
     end 
 
     return prec_to_best_prob #[(prob, idx) for (idx, prob) in sort(collect(top_probs), rev=true)]

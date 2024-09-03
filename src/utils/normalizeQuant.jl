@@ -1,12 +1,3 @@
-function groupPSMS(
-                    psms::DataFrame;
-                    max_q_value::AbstractFloat = 0.01,
-                    min_points_above_FWHM::Int = 2)
-    return groupby(psms[
-        (psms[!,:q_value].<=max_q_value).&(psms[!,:target]),:],
-        :file_name)
-end
-
 function getQuantSplines(psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
@@ -99,9 +90,7 @@ function normalizeQuant(
     second_quant_folder::String,
     quant_col_name::Symbol;
     N::Int = 100,
-    spline_n_knots::Int = 7,
-    max_q_value::AbstractFloat = 0.01,
-    min_points_above_FWHM::Int = 2)
+    spline_n_knots::Int = 7)
 
 
     psms_paths = [fpath for fpath in readdir(second_quant_folder, join=true) if endswith(fpath, ".arrow")]
@@ -111,7 +100,7 @@ function normalizeQuant(
         quant_col_name, 
         N = N,
         spline_n_knots = spline_n_knots)
-    println("rt_range $rt_range")
+
     quant_corrections_dict = getQuantCorrections(
         quant_splines_dict,
         rt_range,

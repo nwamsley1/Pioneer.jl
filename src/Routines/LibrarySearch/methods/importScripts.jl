@@ -52,7 +52,8 @@ function importScripts()
                                                                                     "searchRAW.jl",
                                                                                     "selectTransitions.jl",
                                                                                     "integrateChroms.jl",
-                                                                                    "queryFragmentIndex.jl"]];
+                                                                                    "queryFragmentIndex.jl",
+                                                                                    "huberLossSearch.jl"]];
 
     #Files needed for PRM routines
     [include(joinpath(package_root,"src","Routines","LibrarySearch",jl_file)) for jl_file in [

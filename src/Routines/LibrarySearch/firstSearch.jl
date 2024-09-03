@@ -46,9 +46,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         mass_err_model = frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,
         params = params_[:first_search_params],
-        quad_transmission_func = QuadTransmission(1.00f0, 1000.0f0)
+        quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                         )...)
-    println("names(PSMs) ", names(PSMs))
     addMainSearchColumns!(PSMs, MS_TABLE, 
                         RT_to_iRT_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
@@ -85,12 +84,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     :err_norm,
                     :spectrum_peak_count,
                     :intercept]
-    #PSMs[!,:combined] .= zero(Float16)
-    #for i in range(1, size(PSMs, 1))
-    #    PSMs[i,:combined] = PSMs[i,:scribe] + PSMs[i,:city_block] + log(PSMs[i,:spectral_contrast]) - PSMs[i,:entropy_score]
-    #end
-    #PSMs[!,:combined] = exp.(PSMs[!,:combined])
-    #PSMs[!,:scribe2] = exp.(Float32.(PSMs[!,:scribe]))
+
     scoreMainSearchPSMs!(PSMs,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],

@@ -86,6 +86,7 @@ function huberLossSearch(
         psms = fetch.(tasks)
         return psms
     end
+
     ms_table_path_to_psms_path = Dict{String, String}()
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
     rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
@@ -118,14 +119,15 @@ function huberLossSearch(
             unscored_psms = complex_unscored_PSMs,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
+            quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
             )...);
     psms[!,:ms_file_idx] .= UInt32(ms_file_idx)
     return psms
 end
 
 function getHuberLossParam(
-    huber_δs::Vector{Float32};
+    huber_δs::Vector{Float32},
+    gbpsms;
     minimum_percent_diff::Float32 = 10.0f0)
     psms = []
     @time for (key, sub_bpsms) in pairs(gbpsms)
@@ -210,6 +212,8 @@ function getHuberLossParam(
     #Round to integer values 
     combdf[!,:huber50] = ceil.(Int, combdf[!,:huber50])
     #Count examples in each huber_δ bin 
+    value_counts(df, col) = combine(groupby(df, col), nrow)
+ 
     huber_hist = sort(value_counts(combdf,:huber50),:huber50)
     huber_hist[!,:prob] = huber_hist[!,:nrow]./sum(huber_hist[!,:nrow])
     huber_hist[!,:cum_prob] = Float32.(cumsum(huber_hist[!,:prob]))
@@ -271,5 +275,5 @@ function getHuberLossParam(
     is_decoy::AbstractVector{Bool})
     best_psms =  getPsmsForHuberEstimation(prec_to_irt,is_decoy)
     gbpsms = groupby(best_psms,:ms_file_idx)
-    return getHuberLossParam(huber_δs);
+    return getHuberLossParam(huber_δs,gbpsms)
 end

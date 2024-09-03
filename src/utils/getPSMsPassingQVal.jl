@@ -135,7 +135,6 @@ function getPEPSpline(
     Q = length(psms_scores[1])
     M = ceil(Int, Q / min_pep_points_per_bin)
     bin_target_fraction, bin_mean_prob = Vector{Float32}(undef, M), Vector{Float32}(undef, M)
-    last_idx = 1
     bin_size = 0
     bin_idx = 0
     mean_prob, targets = 0.0f0, 0
@@ -167,7 +166,6 @@ function getQValueSpline(
     Q = length(psms_scores[1])
     M = ceil(Int, Q / min_pep_points_per_bin)
     bin_qval, bin_mean_prob = Vector{Float32}(undef, M), Vector{Float32}(undef, M)
-    last_idx = 1
     bin_size = 0
     bin_idx = 0
     mean_prob, targets, decoys = 0.0f0, 0, 0
@@ -198,8 +196,11 @@ function getQValueSpline(
     end
     bin_qval[end] = targets/bin_size
     bin_mean_prob[end] = mean_prob/bin_size
-    #UniformSpline(bin_target_fraction, bin_mean_prob, 3, 20)
-    return linear_interpolation(bin_mean_prob, bin_qval, extrapolation_bc=Line())
+    prepend!(bin_qval, 1.0f0)
+    prepend!(bin_mean_prob, 0.0f0)
+    return linear_interpolation(
+        Interpolations.deduplicate_knots!(bin_mean_prob, move_knots=true),
+        bin_qval, extrapolation_bc=Line())
 end
 
 function getPSMsPassingQVal(
@@ -210,7 +211,7 @@ function getPSMsPassingQVal(
                             q_val_threshold::Float32,
                             )
     
-    file_paths = readdir(quant_psms_folder, join=true)
+    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
     for file_path in file_paths
         # Read the Arrow table
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))

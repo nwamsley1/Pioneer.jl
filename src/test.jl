@@ -197,7 +197,8 @@ function threeProteomePeptideTest(
         (string(first(conditions)), string(last(conditions)))#("E5H50Y45","E20H50Y30")
         ), 
         groupby(gpsms, [:species, :accession_numbers, :modified_sequence, :charge, :isotopes_captured]));
-        three_proteome_results = filterResults(three_proteome_results, 3, 20.0)
+        #return three_proteome_results
+        three_proteome_results = filterResults(three_proteome_results, 4, 20.0)
         gdf = groupby(three_proteome_results, [:species])
         nt = NamedTuple.(keys(gdf))
         prec_counts = size(three_proteome_results, 1)
