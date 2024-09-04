@@ -1,45 +1,61 @@
 #Group psms by file of origin
 function qcPlots(
-    best_psms,
-    protein_quant,
+    precursors_wide_path,
+    protein_groups_wide_path,
     params_,
     parsed_fnames,
     qc_plot_folder,
     file_id_to_parsed_name,
     MS_TABLE_PATHS,
-    iRT_RT,
+    irt_rt,
     frag_err_dist_dict
 )
-    grouped_precursors = groupby(best_psms, :file_name)
-    grouped_protein_groups = groupby(protein_quant, :file_name)
+    #grouped_precursors = groupby(best_psms, :file_name)
+    #grouped_protein_groups = groupby(protein_quant, :file_name)
     #Number of files to parse
-    n_files = length(grouped_precursors)
+    precursors_wide = Arrow.Table(precursors_wide_path)
+    protein_groups_wide = Arrow.Table(protein_groups_wide_path)
+    n_files = length(parsed_fnames)
     n_files_per_plot = Int64(params_[:qc_plot_params]["n_files_per_plot"])
     #Number of QC plots to build 
     n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
     ###############
     #Plot precursor abundance distribution
     function plotAbundanceECDF(
-        gpsms::GroupedDataFrame,
+        precursors_wide::Arrow.Table,
         parsed_fnames::Vector{<:Any};
-        column::Symbol = peak_area,
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
+
         p = Plots.plot(title = title,
         legend=:outertopright, layout = (1, 1), show = true)
+        function getColumnECDF(
+            abundance::AbstractVector{Union{Missing, Float32}})
+            non_missing_count = 0
+            for i in range(1, length(abundance))
+                if !ismissing(abundance[i])
+                    non_missing_count += 1
+                end
+            end
+            sorted_precursor_abundances = zeros(eltype(abundance), non_missing_count)
+            non_missing_count = 0
+            for i in range(1, length(abundance))
+                if !ismissing(abundance[i])
+                    non_missing_count += 1
+                    sorted_precursor_abundances[non_missing_count] = abundance[i]
+                end
+            end
+            sort!(sorted_precursor_abundances, rev=true)
+            sampled_range = 1:20:length(sorted_precursor_abundances)
+            return sampled_range, [log2(x) for x in sorted_precursor_abundances[sampled_range]]
+        end
 
         for parsed_fname in parsed_fnames
-            psms = gpsms[(file_name = parsed_fname,)]
-
-            sorted_precursor_abundances = sort(psms[!,column], 
-                                                rev = true)
-
-            sampled_range = 1:20:length(sorted_precursor_abundances)
-
-            Plots.plot!(p, sampled_range,
-                    [log2.(max(sorted_precursor_abundances[x], 0.0)) for x in sampled_range],
-                    ylim = (0, log2(maximum(sorted_precursor_abundances))),
+            sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
+            Plots.plot!(p, collect(sampled_range),
+                    sorted_precursor_abundances,
+                    #ylim = (0, log2(maximum(sorted_precursor_abundances))),
                     subplot = 1,
                     label = parsed_fname
                     )
@@ -51,9 +67,8 @@ function qcPlots(
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
         plotAbundanceECDF(
-            grouped_precursors,
+            precursors_wide,
             parsed_fnames[start:stop],
-            column = :peak_area,
             title = "Precursor Abundance by Rank",
             f_out = joinpath(qc_plot_folder, "precursor_abundance_qc_"*string(n)*".pdf")
         )
@@ -62,19 +77,27 @@ function qcPlots(
     ###############
     #Plot precursor IDs
     function plotPrecursorIDBarPlot(
-        gpsms::GroupedDataFrame,
+        precursors_wide::Arrow.Table,
         parsed_fnames::Vector{<:Any};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
-
+        function getColumnIDs(
+            abundance::AbstractVector{Union{Missing, Float32}})
+            non_missing_count = 0
+            for i in range(1, length(abundance))
+                if !ismissing(abundance[i])
+                    non_missing_count += 1
+                end
+            end
+            return non_missing_count
+        end
+        ids = zeros(Int64, length(parsed_fnames))
+        for (i, fname) in enumerate(parsed_fnames)
+            ids[i] = getColumnIDs(precursors_wide[Symbol(fname)])
+        end
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1), show = true)
-
-        ids = Vector{Int64}(undef, length(parsed_fnames))
-        for (i, parsed_fname) in enumerate(parsed_fnames)
-            ids[i] = size(gpsms[(file_name = parsed_fname,)], 1)
-        end
 
         Plots.bar!(p, 
         parsed_fnames,
@@ -93,7 +116,7 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
         plotPrecursorIDBarPlot(
-            grouped_precursors,
+            precursors_wide,
             parsed_fnames[start:stop],
             title = "Precursor ID's per File",
             f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_"*string(n)*".pdf")
@@ -103,76 +126,56 @@ function qcPlots(
 
     ###############
     #Plot precursor IDs
-    function plotProteinIDBarPlot(
-        gpsms::GroupedDataFrame,
-        parsed_fnames::Vector{<:Any};
-        title::String = "precursor_abundance_qc",
-        f_out::String = "./test.pdf"
-        )
-
-        p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
-
-        ids = Vector{Int64}(undef, length(parsed_fnames))
-        for (i, parsed_fname) in enumerate(parsed_fnames)
-            ids[i] = size(gpsms[(file_name = parsed_fname,)], 1)
-        end
-
-        Plots.bar!(p, 
-        parsed_fnames,
-        ids,
-        subplot = 1,
-        texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
-        xrotation = 45,
-        )
-
-        savefig(p, f_out)
-    end
-
-
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
-        plotProteinIDBarPlot(
-            grouped_protein_groups,
+        plotPrecursorIDBarPlot(
+            protein_groups_wide,
             parsed_fnames[start:stop],
-            title = "Precursor ID's per File",
+            title = "Protein Group ID's per File",
             f_out = joinpath(qc_plot_folder, "protein_ids_barplot_"*string(n)*".pdf")
         )
 
     end
 
-
     ###############
     #Plot missed cleavage rate
     function plotMissedCleavageRate(
-        gpsms::GroupedDataFrame,
+        precursors_wide::Arrow.Table,
         parsed_fnames::Vector{<:Any};
-        abundance_col::Symbol = :weight,
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
+        function getMissedCleavageRate(
+            abundance::AbstractVector{Union{Missing, Float32}},
+            precursor_idx::AbstractVector{Union{UInt32}},
+            missed_cleavages::AbstractVector{UInt8})
 
+            non_missing_count = 0
+            missed_cleavage_count = 0
+            for i in range(1, length(abundance))
+                if !ismissing(abundance[i])
+                    non_missing_count += 1
+                    missed_cleavage_count += missed_cleavages[precursor_idx[i]]
+                end
+            end
+            return missed_cleavage_count/non_missing_count
+        end
+        ids = zeros(Float32, length(parsed_fnames))
+        for (i, fname) in enumerate(parsed_fnames)
+            ids[i] = 100*getMissedCleavageRate(precursors_wide[Symbol(fname)],
+            precursors_wide[:precursor_idx],
+            precursors[:missed_cleavages])
+        end
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1), show = true)
 
-        missed_cleavage_rates = Vector{Float64}(undef, length(parsed_fnames))
-
-        for (i, parsed_fname) in enumerate(parsed_fnames)
-            psms = gpsms[(file_name = parsed_fname,)]
-        
-            missed_abundance = sum(psms[!,:missed_cleavage].*psms[!,abundance_col])
-
-            missed_cleavage_rates[i] = round(missed_abundance/sum(psms[!,abundance_col]), sigdigits = 3)
-
-        end
-
         Plots.bar!(p, 
         parsed_fnames,
-        missed_cleavage_rates,
+        ids,
         subplot = 1,
-        texts = [text(string(x)[1:min(4, length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in  missed_cleavage_rates],
+        texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in ids],
         xrotation = 45,
         )
 
@@ -184,9 +187,9 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
         plotMissedCleavageRate(
-            grouped_precursors,
+            precursors_wide,
             parsed_fnames[start:stop],
-            title = "Missed Cleavage Rate",
+            title = "Missed Cleavage Percentage",
             f_out = joinpath(qc_plot_folder, "missed_cleavage_plot_"*string(n)*".pdf")
         )
 
@@ -233,7 +236,6 @@ function qcPlots(
         )
     end
 
-
     ###############
     #Plot RT_align
     function plotRTAlign(
@@ -267,13 +269,12 @@ function qcPlots(
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
         plotRTAlign(
-            iRT_RT,
-            collect(keys(iRT_RT))[start:stop],
+            irt_rt,
+            collect(keys(irt_rt))[start:stop],
             title = "RT Alignment Plot",
             f_out = joinpath(qc_plot_folder, "rt_align_plot_"*string(n)*".pdf")
         )
     end
-
 
     ###############
     #Plot precursor IDs
@@ -409,10 +410,7 @@ function qcPlots(
 
     end
     =#
-    println("qc_plot_folder ", qc_plot_folder)
     plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
-    println("plots_to_merge ", plots_to_merge)
-
     if length(plots_to_merge)>1
         merge_pdfs(plots_to_merge, 
                     joinpath(qc_plot_folder, "QC_PLOTS.pdf"), cleanup=true)

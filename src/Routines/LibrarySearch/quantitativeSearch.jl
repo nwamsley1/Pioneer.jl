@@ -3,27 +3,27 @@ function quantSearch(
     frag_err_dist_dict,
     pid_to_cv_fold,
     precID_to_iRT,
-    RT_INDICES,
+    quant_psms_folder,
+    rt_index_paths,
+    bin_rt_size,
     RT_iRT,
-    irt_err,
+    irt_errs,
     chromatograms,
-    file_id_to_parsed_name,
+    file_path_to_parsed_name,
     MS_TABLE_PATHS,
     params_,
-    precursors,
     spec_lib,
     ionMatches,
     ionMisses,
     IDtoCOL,
     ionTemplates,
     iso_splines,
-    complex_scored_PSMs,
-    complex_unscored_PSMs,
+    complex_scored_psms,
+    complex_unscored_psms,
     complex_spectral_scores,
     precursor_weights
     )
 
-    BPSMS = Dict{Int64, DataFrame}()
     function quantSearch(
                         #Mandatory Args
                         spectra::Arrow.Table, 
@@ -48,7 +48,7 @@ function quantSearch(
                 return secondSearch(
                                     spectra,
                                     last(thread_task), #getRange(thread_task),
-                                    kwargs[:precursors],
+                                    spec_lib["precursors"],
                                     kwargs[:fragment_lookup_table], 
                                     kwargs[:ms_file_idx],
                                     kwargs[:rt_to_irt_spline],
@@ -88,46 +88,37 @@ function quantSearch(
         psms = fetch.(tasks)
         return psms
     end
-
+    ms_table_path_to_psms_path = Dict{String, String}()
     quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         
+        parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
+        rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
+        rt_index = buildRtIndex(rt_df,
+                                bin_rt_size = bin_rt_size)
+        rt_irt = RT_iRT[parsed_fname]
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
-        params_[:deconvolution_params]["huber_delta"] = median(
-            [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
-        
-
-            #params_[:deconvolution_params]["huber_delta"] = 100.0f0
-            
-            params_[:deconvolution_params]["lambda"] = 0.0f0
-            params_[:deconvolution_params]["accuracy_bisection"] = 10.0
-            params_[:deconvolution_params]["accuracy_newton"] = 10.0
-            params_[:quant_search_params]["n_frag_isotopes"] = 3
-            params_[:quant_search_params]["min_frag_count"] = 3
-            params_[:quant_search_params]["min_y_count"] = 1
-            params_[:quant_search_params]["max_best_rank"] = 1
-            #include("src/PSM_TYPES/ScoredPSMs.jl")
-            
+            precursors = spec_lib["precursors"]
             psms = vcat(quantSearch(
                 MS_TABLE, 
                 params_;
                 precursors = spec_lib["precursors"],
                 fragment_lookup_table = spec_lib["f_det"],
-                rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+                rt_index = rt_index,
                 ms_file_idx = UInt32(ms_file_idx), 
-                rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
+                rt_to_irt_spline = rt_irt,
                 mass_err_model = frag_err_dist_dict[ms_file_idx],
-                irt_err = irt_err,#irt_errs[ms_file_idx]/3,
+                irt_err = irt_errs[parsed_fname],#irt_errs[ms_file_idx]/3,
                 ion_matches = ionMatches,
                 ion_misses = ionMisses,
                 id_to_col = IDtoCOL,
                 ion_templates = ionTemplates,
                 iso_splines = iso_splines,
                 chromatograms = chromatograms,
-                scored_psms = complex_scored_PSMs,
-                unscored_psms = complex_unscored_PSMs,
+                scored_psms = complex_scored_psms,
+                unscored_psms = complex_unscored_psms,
                 spectral_scores = complex_spectral_scores,
                 precursor_weights = precursor_weights,
-                quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
+                quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 
@@ -136,19 +127,17 @@ function quantSearch(
                                             spec_lib["precursors"][:is_decoy],
                                             pid_to_cv_fold);
             psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
-            getIsotopesCaptured!(psms, precursors[:prec_charge],precursors[:mz], MS_TABLE);
+            getIsotopesCaptured!(psms,  spec_lib["precursors"][:prec_charge], spec_lib["precursors"][:mz], MS_TABLE);
             psms[!,:best_scan] .= false;
             filter!(x->first(x.isotopes_captured)<2, psms);
-            
             initSummaryColumns!(psms);
             for (key, gpsms) in pairs(groupby(psms, [:precursor_idx,:isotopes_captured]))
-                
                 getSummaryScores!(
                     gpsms, 
                     gpsms[!,:weight],
                     gpsms[!,:gof],
                     gpsms[!,:matched_ratio],
-                    gpsms[!,:entropy_score],
+                    #gpsms[!,:entropy_score],
                     gpsms[!,:fitted_manhattan_distance],
                     gpsms[!,:fitted_spectral_contrast],
                     gpsms[!,:y_count]
@@ -166,13 +155,17 @@ function quantSearch(
                 precursors[:prec_charge],
                 precursors[:missed_cleavages],
                 ms_file_idx,
-                file_id_to_parsed_name,
-                RT_iRT,
+                rt_irt,
                 precID_to_iRT
 
             );
-            psms[!,:file_name].=file_id_to_parsed_name[ms_file_idx];
-            BPSMS[ms_file_idx] = psms;
+            temp_path = joinpath(quant_psms_folder, parsed_fname*".arrow")
+            psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+
+            Arrow.write(
+                temp_path,
+                psms,
+                )
     end
-    return BPSMS
+    return
 end

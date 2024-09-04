@@ -8,7 +8,7 @@ struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     matched_ratio::T
-    entropy_score::T
+    #entropy_score::T
 end
 
 struct SpectralScoresSimple{T<:AbstractFloat} <: SpectralScores{T} 
@@ -181,12 +181,12 @@ function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, sp
         spectral_scores[col] = SpectralScoresComplex(
             Float16(spectral_contrast), #spectral_contrast
             Float16(fitted_spectral_contrast), #fitted_spectral_contrast
-            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks)), #normalized_residuals
-            Float16(-log2(manhattan_distance/x_sum)), #city_block
-            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched)),#Float16(dot_product_corrected/(H2_norm_corrected*X2_norm_corrected)), #spectral_contrast_corrected
-            Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #city_block
+            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks)), #gof
+            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched)),#max_matched_residual
+            Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #max_unmatched_residual
+            Float16(-log2(manhattan_distance/x_sum)), #fitted_manhattan_distance
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            Float16(-1.0*getEntropy(H, r, col)) #entropy
+            #Float16(-1.0*getEntropy(H, r, col)) #entropy
         )
     end
 end

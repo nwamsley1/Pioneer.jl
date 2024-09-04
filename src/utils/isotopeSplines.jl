@@ -40,12 +40,12 @@ function (s::CubicSpline)(t::U) where {U<:AbstractFloat}
 end
 
 struct QuadTransmission{T<:AbstractFloat}
-    width::T
+    overhang::T
     b::T
 end
 
-function (qtf::QuadTransmission)(window_center::T, x::T) where {T<:AbstractFloat}
-    return one(T)/(one(T) + abs((x - (window_center))/qtf.width)^(T(2)*qtf.b))
+function (qtf::QuadTransmission)(window_center::T, window_half_width::T, x::T) where {T<:AbstractFloat}
+    return one(T)/(one(T) + abs((x - (window_center))/(window_half_width + qtf.overhang))^(T(2)*qtf.b))
 end
 
 
@@ -259,7 +259,7 @@ function getFragIsotopes!(isotopes::Vector{Float32},
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     #total_fragment_intensity /= sum(isotopes)
     #isotopes /= isotopes[1]
-    total_fragment_intensity = total_fragment_intensity*sum(isotopes)
+    #total_fragment_intensity = total_fragment_intensity*sum(isotopes)
     for i in reverse(range(1, length(isotopes)))
         isotopes[i] = total_fragment_intensity*isotopes[i]
     end
@@ -362,11 +362,12 @@ function getPrecursorIsotopeTransmission!(
                                             prec_mono_mz::Float32,
                                             prec_charge::UInt8,
                                             center_mz::Float32,
+                                            qt_half_width::Float32,
                                             qtf::QuadTransmission)
     fill!(prec_isotope_transmission, zero(Float32))
     prec_iso_mz = prec_mono_mz
     for i in range(0, length(prec_isotope_transmission)-1)
-        prec_isotope_transmission[i + 1] = qtf(center_mz, prec_iso_mz)
+        prec_isotope_transmission[i + 1] = qtf(center_mz, qt_half_width, prec_iso_mz)
         prec_iso_mz += Float32(NEUTRON/prec_charge)
     end
 end

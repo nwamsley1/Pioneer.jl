@@ -1,25 +1,27 @@
-function secondQuant!( 
-    grouped_best_psms,   
+function secondQuantSearch!( 
+    file_path_to_parsed_name,
+    passing_psms_folder,
+    second_quant_folder,
     frag_err_dist_dict,
-    traces_passing,
-    RT_INDICES,
-    RT_iRT,
-    irt_err,
+    rt_index_paths,
+    rt_irt,
+    irt_errs,
     chromatograms,
-    file_id_to_parsed_name,
     MS_TABLE_PATHS,
     params_,
     precursors,
+    accession_number_to_id,
     spec_lib,
     ionMatches,
     ionMisses,
     IDtoCOL,
     ionTemplates,
     iso_splines,
-    complex_scored_PSMs,
-    complex_unscored_PSMs,
+    complex_scored_psms,
+    complex_unscored_psms,
     complex_spectral_scores,
     precursor_weights)
+
 function secondQuant(
                     #Mandatory Args
                     spectra::Arrow.Table, 
@@ -83,30 +85,44 @@ end
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
-    params_[:deconvolution_params]["huber_delta"] = median(
-        [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"] 
+    parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
+    rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
+    rt_index = buildRtIndex(rt_df,
+                            bin_rt_size = bin_rt_size)
+    #Map raw file name to psms table 
+    sub_bpsms_path = joinpath(passing_psms_folder, parsed_fname.*".arrow")
+    #Get psms table for this raw file. 
+    sub_bpsms = DataFrame(
+                    Tables.columntable(#Need a modifiable deep copy
+                            Arrow.Table(
+                                sub_bpsms_path
+                                )))
+    filter!(x->x.target, sub_bpsms) #remove decoys IMPOrtANT
+    sub_bpsms[!,:peak_area] = zeros(Float32, size(sub_bpsms, 1))
+    sub_bpsms[!,:new_best_scan] = zeros(UInt32, size(sub_bpsms, 1))
+
         chroms = vcat(secondQuant(
             MS_TABLE, 
             params_;
             precursors = spec_lib["precursors"],
             fragment_lookup_table = spec_lib["f_det"],
-            rt_index = RT_INDICES[file_id_to_parsed_name[ms_file_idx]],
+            rt_index = rt_index,
             ms_file_idx = UInt32(ms_file_idx), 
-            rt_to_irt_spline = RT_iRT[file_id_to_parsed_name[ms_file_idx]],
+            rt_to_irt_spline = rt_irt[parsed_fname],
             mass_err_model = frag_err_dist_dict[ms_file_idx],
-            irt_err = irt_err,#irt_errs[ms_file_idx]/3,
+            irt_err = irt_errs[parsed_fname],#irt_errs[ms_file_idx]/3,
             ion_matches = ionMatches,
             ion_misses = ionMisses,
             id_to_col = IDtoCOL,
             ion_templates = ionTemplates,
             iso_splines = iso_splines,
             chromatograms = chromatograms,
-            scored_psms = complex_scored_PSMs,
-            unscored_psms = complex_unscored_PSMs,
+            scored_psms = complex_scored_psms,
+            unscored_psms = complex_unscored_psms,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
-            traces_passing = traces_passing,
-            quad_transmission_func = QuadTransmission(1.0f0, 1000.0f0)
+            traces_passing = Set(sub_bpsms[!,:precursor_idx]),
+            quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
             )...);
 
 
@@ -114,7 +130,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         filter!(x->first(x.isotopes_captured)<2, chroms)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
-        sub_bpsms = grouped_best_psms[(file_name = file_id_to_parsed_name[ms_file_idx],)]
         integratePrecursors(
                             gchroms,
                             sub_bpsms[!,:precursor_idx],
@@ -122,8 +137,29 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             sub_bpsms[!,:scan_idx],
                             sub_bpsms[!,:peak_area],
                             sub_bpsms[!,:new_best_scan],
-                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"])
+                            λ=Float32(params_[:quant_search_params]["WH_smoothing_strength"]),
+                            n_pad = params_[:quant_search_params]["n_pad"],
+                            max_apex_offset = params_[:quant_search_params]["max_apex_offset"]
                             )
-        #BPSMS[ms_file_idx] = psms_integrated;
+
+        temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
+        #psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+        filter!(x->!(isnan(x.peak_area)), sub_bpsms)
+        sub_bpsms[!,:accession_numbers] = [precursors[:accession_numbers][prec_idx] for prec_idx in sub_bpsms[!,:precursor_idx]]
+        sub_bpsms[!,:protein_idx] = [accession_number_to_id[accession_numbers] for accession_numbers in sub_bpsms[!,:accession_numbers]]
+        sub_bpsms[!,:ms_file_idx] =  UInt32.(sub_bpsms[!,:ms_file_idx])
+        sort!(sub_bpsms, [:protein_idx,:precursor_idx,:ms_file_idx])
+        sub_bpsms[!,:species] = [precursors[:proteome_identifiers][pid] for pid in sub_bpsms[!,:precursor_idx]]
+        sub_bpsms[!,:peak_area] =  allowmissing(sub_bpsms[!,:peak_area])
+        sub_bpsms[!,:peak_area_normalized] =  allowmissing(zeros(Float32, size(sub_bpsms, 1)))
+        sub_bpsms[!,:structural_mods] = allowmissing([precursors[:structural_mods][pid] for pid in sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:isotopic_mods] = allowmissing([precursors[:isotopic_mods][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:charge] = allowmissing([precursors[:prec_charge][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:sequence] = allowmissing([precursors[:sequence][pid] for pid in  sub_bpsms[!,:precursor_idx]])
+        sub_bpsms[!,:file_name] .= file_path_to_parsed_name[MS_TABLE_PATH]
+        Arrow.write(
+            temp_path,
+            sub_bpsms,
+            )
 end
 end

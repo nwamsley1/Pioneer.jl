@@ -28,7 +28,17 @@ function importScripts()
                                                                     "max_lfq.jl",
                                                                     "scoreProteinGroups.jl",
                                                                     "wittakerHendersonSmoothing.jl",
-                                                                    "getBestTrace.jl"]];
+                                                                    "getBestTrace.jl",
+                                                                    "getCVFolds.jl",
+                                                                    "getBestPSMs.jl",
+                                                                    "mapLibraryToEmpiricalRT.jl",
+                                                                    "getBestPrecursorsAccrossRuns.jl",
+                                                                    "getIrtErrs.jl",
+                                                                    "getPSMsPassingQVal.jl",
+                                                                    "samplePSMsForXgboost.jl",
+                                                                    "mergePsmTables.jl",
+                                                                    "summarizeToProtein.jl",
+                                                                    "writeCSVTables.jl"]];
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
     #Files needed for PRM routines
@@ -53,6 +63,7 @@ function importScripts()
                                                                                     "scoreTraces.jl",
                                                                                     "secondQuant.jl",
                                                                                     "proteinQuant.jl",
-                                                                                    "qcPlots.jl"]]; 
+                                                                                    "qcPlots.jl",
+                                                                                    "huberLossSearch.jl"]]; 
 
 end

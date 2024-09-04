@@ -146,24 +146,6 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         return norm_factor, start_rt, rt_width, best_rt
     end
 
-    function getPeakProperties(state::Chromatogram)
-        points_above_FWHM = zero(Int32)
-        points_above_FWHM_01 = zero(Int32)
-        for i in range(1, state.max_index)
-            intensity = state.data[i]
-            if intensity > (state.params.H*0.5)
-                points_above_FWHM += one(Int32)
-            end
-            if intensity > (state.params.H*0.01)
-                points_above_FWHM_01 += one(Int32)
-            end 
-        end
-
-        FWHM = getFWHM(state, 0.5)
-        FWHM_01 = getFWHM(state, 0.01)
-
-        return FWHM, FWHM_01, points_above_FWHM, points_above_FWHM_01
-    end
     #Baseline subtraction?
     function subtractBaseline!(
         u::Vector{Float32}, #smoothed data
@@ -267,6 +249,7 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])
         hline!([norm_factor*0.95])
     end
+
     trapezoid_area = rt_norm*norm_factor*integrateTrapezoidal(state)
 
     #trapezoid_area = 0.0f0
@@ -278,7 +261,7 @@ function getSummaryScores!(
                             weight::AbstractVector{Float32},
                             gof::AbstractVector{Float16},
                             matched_ratio::AbstractVector{Float16},
-                            entropy::AbstractVector{Float16},
+                            #entropy::AbstractVector{Float16},
                             fitted_manhattan_distance::AbstractVector{Float16},
                             fitted_spectral_contrast::AbstractVector{Float16},
                             y_count::AbstractVector{UInt8},
@@ -287,7 +270,7 @@ function getSummaryScores!(
 
     max_gof = -100.0
     max_matched_ratio = -100.0
-    max_entropy = -100.0
+   # max_entropy = -100.0
     max_fitted_manhattan_distance = -100.0
     max_fitted_spectral_contrast= -100
     count = 0
@@ -308,9 +291,9 @@ function getSummaryScores!(
             max_matched_ratio = matched_ratio[i]
         end
 
-        if entropy[i]>max_entropy
-            max_entropy=entropy[i]
-        end
+        #if entropy[i]>max_entropy
+        #    max_entropy=entropy[i]
+        #end
 
         if fitted_manhattan_distance[i]>max_fitted_manhattan_distance
             max_fitted_manhattan_distance = fitted_manhattan_distance[i]
@@ -330,7 +313,7 @@ function getSummaryScores!(
 
     psms.max_gof[apex_scan] = max_gof
     psms.max_matched_ratio[apex_scan] = max_matched_ratio
-    psms.max_entropy[apex_scan] = max_entropy
+   # psms.max_entropy[apex_scan] = max_entropy
     psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
     psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
     psms.y_ions_sum[apex_scan] = y_ions_sum
@@ -346,7 +329,10 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32}; 
-                             λ::Float32 = 1.0f0)
+                             λ::Float32 = 1.0f0,
+                             n_pad::Int64 = 20,
+                             max_apex_offset::Int64 = 2,
+                             )
 
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
@@ -358,7 +344,7 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
             N = size(chrom, 1)
         end
     end
-    N += 20
+    N += n_pad*2
     group_keys = keys(chromatograms)
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
@@ -391,8 +377,8 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                                 linsolve,
                                 u2,
                                 state,
-                                n_pad = 10,
-                                max_apex_offset = 10,
+                                n_pad = n_pad,
+                                max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
                                 

@@ -22,7 +22,7 @@ struct SimpleScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     city_block::L
     spectral_contrast::L
     matched_ratio::L
-    log2_intensity_explained::L
+    log2_summed_intensity::L
     entropy_score::L
 
     #Non-scores/Labels
@@ -46,13 +46,12 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     p_count::UInt8
     non_cannonical_count::UInt8
     isotope_count::UInt8
-    prec_mz_offset::Float32
 
     #Basic Metrics 
     poisson::L
-    hyperscore::L
+    #hyperscore::L
     log2_intensity_explained::L
-    error::H
+    error::L
 
     #Spectral Simmilarity
     spectral_contrast::L
@@ -62,7 +61,7 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_unmatched_residual::L 
     fitted_manhattan_distance::L 
     matched_ratio::L 
-    entropy_score::L
+    #entropy_score::L
     weight::H
 
     #Non-scores/Labels
@@ -151,7 +150,8 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             spectral_scores[scores_idx].city_block,
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].matched_ratio,
-            Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
+            #Float16(log2((unscored_PSMs[i].intensity)/spectrum_intensity)),
+            Float16(log2(unscored_PSMs[i].intensity)),
             spectral_scores[scores_idx].entropy_score,
 
             UInt32(unscored_PSMs[i].precursor_idx),
@@ -248,12 +248,10 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             unscored_PSMs[i].p_count,
             unscored_PSMs[i].non_cannonical_count,
             unscored_PSMs[i].isotope_count,
-            zero(Float32),
-
             Float16(getPoisson(expected_matches, total_ions)),
-            Float16(HyperScore(unscored_PSMs[i])),
+            #Float16(HyperScore(unscored_PSMs[i])),
             Float16(log2((unscored_PSMs[i].b_int + unscored_PSMs[i].y_int)/spectrum_intensity)),
-            unscored_PSMs[i].error,
+            Float16(log2(unscored_PSMs[i].error)),
             
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].fitted_spectral_contrast,
@@ -262,7 +260,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
             spectral_scores[scores_idx].matched_ratio,
-            spectral_scores[scores_idx].entropy_score,
+            #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 
             

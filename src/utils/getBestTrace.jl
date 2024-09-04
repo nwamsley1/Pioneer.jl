@@ -1,59 +1,49 @@
+function getBestTraces(
+    quant_psms_folder::String,
+    min_prob::Float32 = 0.75f0
+)
+    psms_trace_scores = Dictionary{
+            @NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
 
-function getBestTrace!(psms::DataFrame,
-                       max_q_value::AbstractFloat,
-                       quant_col::Symbol)
-
-    function getScore(
-        abundance::AbstractVector{Float32},
-        q_value::AbstractVector{Float32},
-        max_q_value::AbstractFloat)
-        
-        score = zero(Float32)
-        for i in range(1, length(abundance))
-            if q_value[i] <= max_q_value
-                score += abundance[i]
-            end
-        end 
-        return score
-    end
-    function fillBestTrace!(
-        best_psm::AbstractVector{Bool})
-        for i in range(1, length(best_psm))
-            best_psm[i] = true
+    for file_path in readdir(quant_psms_folder, join = true)
+        if splitext(file_path)[end] != ".arrow"
+            continue
         end
-    end
+        row_score = zero(Float32)
+        psms_table = Arrow.Table(file_path)
+        for i in range(1, length(psms_table[1]))
+            psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-    @time sort!(psms,[:precursor_idx,:isotopes_captured])
-    psms[!,:best_trace] .= false
-    grouped_psms = groupby(psms, :precursor_idx)
-    #partition(1:length(grouped_psms), chunk_size)
-    #For each precursor
-    for i in range(1, length(grouped_psms))
+            if psms_table[:prob][i]>min_prob
+                row_score = psms_table[:weight][i]
+            else
+                row_score = zero(Float32)
+            end
 
-        #For all psms for the given precursor
-        #group by isotope subsets 
-        iso_sets = groupby(grouped_psms[i],:isotopes_captured)
-        best_iso_set = nothing
-        best_score = typemin(Float32)
-        for (iso_set, subpsms) in pairs(iso_sets)
-            #Score is sum of peak areas where the q_value was 
-            #below the threshold 
-            score = getScore(
-                subpsms[!,quant_col],
-                subpsms[!,:q_value],
-                max_q_value
-            )
-            #If the score is the best encountered so far, 
-            #then this it he best isotope trace so far. 
-            if score > best_score
-                best_score = score
-                best_iso_set = iso_set
+            row_score = log2(psms_table[:prob][i])
+            if haskey(psms_trace_scores, psms_key)
+                psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
+            else
+                insert!(
+                    psms_trace_scores,
+                    psms_key,
+                    row_score
+                )
             end
         end
-
-        if best_iso_set !== nothing
-            fillBestTrace!(iso_sets[best_iso_set][!,:best_trace])
-        end
     end
-    #filter!(x->x.best_trace, psms);
+
+    psms_trace_df = DataFrame(
+    (precursor_idx = [key[:precursor_idx] for key in keys(psms_trace_scores)],
+    isotopes_captured = [key[:isotopes_captured] for key in keys(psms_trace_scores)],
+    score = [val for val in values(psms_trace_scores)])
+    );
+    psms_trace_df[!,:best_trace] .= false;
+    gpsms = groupby(psms_trace_df,:precursor_idx)
+    for (precursor_idx, psms) in pairs(gpsms)
+        psms[argmax(psms[!,:score]),:best_trace] = true
+    end
+    filter!(x->x.best_trace, psms_trace_df);
+    traces_passing = Set([(precursor_idx = x.precursor_idx, isotopes_captured = x.isotopes_captured) for x in eachrow(psms_trace_df)]);
+    return traces_passing
 end
