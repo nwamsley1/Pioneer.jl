@@ -149,7 +149,8 @@ function SearchDIA(params_path::String)
             spec_lib["precursors"][:mz],
             rt_irt, 
             max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
-                   
+   
+    
     irt_errs = getIrtErrs(
         peak_fwhms,
         precursor_dict,
@@ -173,6 +174,11 @@ function SearchDIA(params_path::String)
     huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
     params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
         huber_δs,precursor_dict ,precursors[:is_decoy]);
+
+    if params_[:output_params]["delete_temp"]
+        rm(first_search_psms_folder,recursive=true)
+    end      
+    
     #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
     #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
     ############
@@ -213,7 +219,7 @@ function SearchDIA(params_path::String)
 
     best_traces = getBestTraces(
         quant_psms_folder,
-        params_[:xgboost_params]["min_best_trace_prob"]);
+        Float32(params_[:xgboost_params]["min_best_trace_prob"]));
     #Path for merged quant psms scores 
     merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
     #Sort quant tables in descenging order of probability and remove 
@@ -244,7 +250,10 @@ function SearchDIA(params_path::String)
                                     precursor_pep_spline,
                                     precursor_qval_interp,
                                     0.01f0)
-
+    #Delete Quant PSMs
+    if params_[:output_params]["delete_temp"]
+        rm(quant_psms_folder,recursive=true)
+    end
     ###########
     #Score Protein Groups
     sorted_pg_score_path = getProteinGroups(
@@ -254,7 +263,9 @@ function SearchDIA(params_path::String)
             precursors[:accession_numbers],
             accession_number_to_id,
             precursors[:sequence])
-
+    if params_[:output_params]["delete_temp"]
+        rm(passing_proteins_folder,recursive=true)
+    end
     pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
                                 :max_pg_score, 
                                 min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
@@ -290,6 +301,9 @@ function SearchDIA(params_path::String)
                     complex_unscored_PSMs,
                     complex_spectral_scores,
                     precursor_weights)
+    if params_[:output_params]["delete_temp"]
+        rm(passing_psms_folder,recursive=true)
+    end
     ###########
     #Normalize Quant 
     ###########
@@ -317,10 +331,13 @@ function SearchDIA(params_path::String)
         (:protein_idx,:precursor_idx),
         N = 1000000
     )
-
+    if params_[:output_params]["delete_temp"]
+        rm(second_quant_folder,recursive=true)
+    end
     precursors_wide_arrow = writePrecursorCSV(
         joinpath(results_folder, "precursors_long.arrow"),
-        sort(collect(values(file_id_to_parsed_name)))
+        sort(collect(values(file_id_to_parsed_name))),
+        write_csv = params_[:output_params]["write_csv"],
         )
      #Summarize Precursor ID's
      #value_counts(df, col) = combine(groupby(df, col), nrow)
@@ -344,7 +361,8 @@ function SearchDIA(params_path::String)
         precursors[:isotopic_mods],
         precursors[:structural_mods],
         precursors[:prec_charge],
-        sort(collect(values(file_id_to_parsed_name)))
+        sort(collect(values(file_id_to_parsed_name))),
+        write_csv = params_[:output_params]["write_csv"],
         )
     println("QC Plots")
     if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
@@ -361,7 +379,7 @@ function SearchDIA(params_path::String)
         irt_rt,
         frag_err_dist_dict
     )
+    if params_[:output_params]["delete_temp"]
+        rm(temp_folder,recursive=true)
+    end
 end
-
-protein_groups_wide_path = "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS/protein_groups_wide.arrow"
-precursors_wide_path = "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS/precursors_wide.arrow"

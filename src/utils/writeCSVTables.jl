@@ -47,6 +47,7 @@ end
 function writePrecursorCSV(
     long_precursors_path::String,
     file_names::Vector{String};
+    write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
     function makeWideFormat(
@@ -77,8 +78,10 @@ function writePrecursorCSV(
     open(long_precursors_path,"w") do io1
         open(wide_precursors_path, "w") do io2
             #Make file headers 
-            println(io1,join(names(precursors_long),"\t"))
-            println(io2,join(sorted_columns,"\t"))
+            if write_csv
+                println(io1,join(names(precursors_long),"\t"))
+                println(io2,join(sorted_columns,"\t"))
+            end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
@@ -93,7 +96,9 @@ function writePrecursorCSV(
                 subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
                 batch_start_idx = batch_end_idx + 1
                 batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-                CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                if write_csv 
+                    CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                end
                 subunstack = makeWideFormat(subdf)
                 col_names = names(subunstack)
                 for fname in file_names
@@ -101,10 +106,16 @@ function writePrecursorCSV(
                         subunstack[!,fname] .= missing
                     end
                 end
-                CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                if write_csv
+                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                end
                 Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
             end
         end
+    end
+    if write_csv == false
+        rm(long_precursors_path, force = true)
+        rm(wide_precursors_path, force = true)
     end
     return wide_precursors_arrow_path
 end
@@ -116,6 +127,7 @@ function writeProteinGroupsCSV(
     structural_mods::AbstractVector{String},
     precursor_charge::AbstractVector{UInt8},
     file_names::Vector{String};
+    write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
     function makeWideFormat(
@@ -140,8 +152,10 @@ function writeProteinGroupsCSV(
     open(long_protein_groups_path,"w") do io1
         open(wide_protein_groups_path, "w") do io2
             #Make file headers 
-            println(io1,join(names(protein_groups_long),"\t"))
-            println(io2,join(sorted_columns,"\t"))
+            if write_csv 
+                println(io1,join(names(protein_groups_long),"\t"))
+                println(io2,join(sorted_columns,"\t"))
+            end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
@@ -174,7 +188,9 @@ function writeProteinGroupsCSV(
                 end
                 subdf[!,:peptides] = subdf[!,:modified_sequence]
                 select!(subdf, Not([:modified_sequence]))
-                CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                if write_csv 
+                    CSV.write(io1, subdf, append=true, header=false, delim="\t")
+                end
                 subunstack = makeWideFormat(subdf)
                 col_names = names(subunstack)
                 for fname in file_names
@@ -182,9 +198,15 @@ function writeProteinGroupsCSV(
                         subunstack[!,fname] .= missing
                     end
                 end
-                CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                if write_csv
+                    CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
+                end
                 Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
             end
+        end
+        if write_csv == false
+            rm(ong_protein_groups_path, force = true)
+            rm(wide_protien_groups_path, force = true)
         end
     end
     return wide_protein_groups_path

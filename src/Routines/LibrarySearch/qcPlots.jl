@@ -53,7 +53,6 @@ function qcPlots(
 
         for parsed_fname in parsed_fnames
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-            println("length(sorted_precursor_abundances) ", length(sorted_precursor_abundances))
             Plots.plot!(p, collect(sampled_range),
                     sorted_precursor_abundances,
                     #ylim = (0, log2(maximum(sorted_precursor_abundances))),

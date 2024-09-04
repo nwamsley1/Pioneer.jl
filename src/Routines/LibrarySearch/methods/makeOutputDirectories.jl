@@ -6,7 +6,7 @@ function makeOutputDirectories(
         mkpath(OUT_DIR)
     end
 
-    search_folder = joinpath(OUT_DIR, "Search")
+    search_folder = joinpath(OUT_DIR)
     if !isdir(search_folder)
         mkpath(search_folder)
     end
