@@ -17,8 +17,8 @@ function secondQuantSearch!(
     IDtoCOL,
     ionTemplates,
     iso_splines,
-    complex_scored_PSMs,
-    complex_unscored_PSMs,
+    complex_scored_psms,
+    complex_unscored_psms,
     complex_spectral_scores,
     precursor_weights)
 
@@ -87,7 +87,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
     rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
-    rt_index = buildRTIndex(rt_df,
+    rt_index = buildRtIndex(rt_df,
                             bin_rt_size = bin_rt_size)
     #Map raw file name to psms table 
     sub_bpsms_path = joinpath(passing_psms_folder, parsed_fname.*".arrow")
@@ -97,13 +97,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             Arrow.Table(
                                 sub_bpsms_path
                                 )))
-    filter!(x->x.target, sub_bpsms) #remove decoys IMPORTANT
+    filter!(x->x.target, sub_bpsms) #remove decoys IMPOrtANT
     sub_bpsms[!,:peak_area] = zeros(Float32, size(sub_bpsms, 1))
     sub_bpsms[!,:new_best_scan] = zeros(UInt32, size(sub_bpsms, 1))
-
-    #params_[:deconvolution_params]["huber_delta"] = median(
-    #    [quantile(x, 0.25) for x in MS_TABLE[:intensities]])*params_[:deconvolution_params]["huber_delta_prop"];
-    
 
         chroms = vcat(secondQuant(
             MS_TABLE, 
@@ -121,8 +117,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             ion_templates = ionTemplates,
             iso_splines = iso_splines,
             chromatograms = chromatograms,
-            scored_psms = complex_scored_PSMs,
-            unscored_psms = complex_unscored_PSMs,
+            scored_psms = complex_scored_psms,
+            unscored_psms = complex_unscored_psms,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
             traces_passing = Set(sub_bpsms[!,:precursor_idx]),

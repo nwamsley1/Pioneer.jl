@@ -1030,7 +1030,6 @@ end
 function LibrarySearch(
     spectra::Arrow.Table,
     params::NamedTuple;
-    sample_rate = Inf,
     kwargs...)
     #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
     thread_tasks, total_peaks = partitionScansToThreads(
@@ -1058,7 +1057,7 @@ function LibrarySearch(
                                 Tuple([Int64(x) for x in params[:isotope_err_bounds]]),
                                 UInt8(kwargs[:params]["min_index_search_score"]),
                                 Float64(kwargs[:irt_tol]),
-                                sample_rate,
+                                kwargs[:sample_rate],
                                 Set(2)
                             )
         end

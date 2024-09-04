@@ -18,13 +18,12 @@ function quantSearch(
     IDtoCOL,
     ionTemplates,
     iso_splines,
-    complex_scored_PSMs,
-    complex_unscored_PSMs,
+    complex_scored_psms,
+    complex_unscored_psms,
     complex_spectral_scores,
     precursor_weights
     )
 
-    BPSMS = Dict{Int64, DataFrame}()
     function quantSearch(
                         #Mandatory Args
                         spectra::Arrow.Table, 
@@ -94,7 +93,7 @@ function quantSearch(
         
         parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
         rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
-        rt_index = buildRTIndex(rt_df,
+        rt_index = buildRtIndex(rt_df,
                                 bin_rt_size = bin_rt_size)
         rt_irt = RT_iRT[parsed_fname]
         MS_TABLE = Arrow.Table(MS_TABLE_PATH);
@@ -115,8 +114,8 @@ function quantSearch(
                 ion_templates = ionTemplates,
                 iso_splines = iso_splines,
                 chromatograms = chromatograms,
-                scored_psms = complex_scored_PSMs,
-                unscored_psms = complex_unscored_PSMs,
+                scored_psms = complex_scored_psms,
+                unscored_psms = complex_unscored_psms,
                 spectral_scores = complex_spectral_scores,
                 precursor_weights = precursor_weights,
                 quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])

@@ -1,6 +1,6 @@
 function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
                          prec_mzs::AbstractVector{Float32},
-                         RT_iRT = Dict{Int64, Any};
+                         rt_irt = Dict{Int64, Any};
                          max_q_val::Float32 = 0.01f0,
                          max_precursors::Int = 250000)
     function readPSMs!(
@@ -18,7 +18,8 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
         rts::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::UniformSpline)
+        rt_irt::UniformSpline,
+        max_q_val::Float32)
         for row in eachindex(precursor_idxs)
 
             #precursor data 
@@ -83,7 +84,8 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
         rts::AbstractVector{Float32},
-        rt_irt::UniformSpline)
+        rt_irt::UniformSpline,
+        max_q_val::Float32)
         for row in eachindex(precursor_idxs)
             #precursor data 
             q_value = q_values[row]
@@ -127,10 +129,11 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             psms[:precursor_idx],
             psms[:q_value],
             psms[:prob],
-            psms[:RT],
+            psms[:rt],
             psms[:scan_idx],
             psms[:ms_file_idx],
-            RT_iRT[key]
+            rt_irt[key],
+            max_q_val
         )
     end
     # Get the top N peptide_idx's with their corresponding maximum probabilities
@@ -152,8 +155,9 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
             prec_to_best_prob,
             psms[:precursor_idx],
             psms[:q_value],
-            psms[:RT],
-            RT_iRT[key]
+            psms[:rt],
+            rt_irt[key],
+            max_q_val
         )
     end 
 

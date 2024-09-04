@@ -1,5 +1,5 @@
 module Pioneer
-
+__precompile__(false)
 using Arrow, ArrowTypes, ArgParse
 #using BSplineKit Don't need this imports anymore?
 using Base64

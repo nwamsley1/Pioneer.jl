@@ -5,7 +5,7 @@ function huberLossSearch(
     scan_idxs,
     δs,
     bin_rt_size,
-    RT_iRT,
+    rt_irt,
     irt_errs,
     chromatograms,
     file_path_to_parsed_name,
@@ -18,8 +18,8 @@ function huberLossSearch(
     IDtoCOL,
     ionTemplates,
     iso_splines,
-    complex_scored_PSMs,
-    complex_unscored_PSMs,
+    complex_scored_psms,
+    complex_unscored_psms,
     complex_spectral_scores,
     precursor_weights
     )
@@ -90,9 +90,9 @@ function huberLossSearch(
     ms_table_path_to_psms_path = Dict{String, String}()
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
     rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
-    rt_index = buildRTIndex(rt_df,
+    rt_index = buildRtIndex(rt_df,
                             bin_rt_size = bin_rt_size)
-    rt_irt = RT_iRT[parsed_fname]
+    rt_irt = rt_irt[parsed_fname]
     MS_TABLE = Arrow.Table(MS_TABLE_PATH);
         params_[:quant_search_params]["min_y_count"] = 1
         precursors = spec_lib["precursors"]
@@ -115,8 +115,8 @@ function huberLossSearch(
             ion_templates = ionTemplates,
             iso_splines = iso_splines,
             chromatograms = chromatograms,
-            scored_psms = complex_scored_PSMs,
-            unscored_psms = complex_unscored_PSMs,
+            scored_psms = complex_scored_psms,
+            unscored_psms = complex_unscored_psms,
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
             quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])

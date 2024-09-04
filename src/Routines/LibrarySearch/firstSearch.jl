@@ -2,7 +2,7 @@
 
 function firstSearch(
                     temp_folder,
-                    RT_to_iRT_map_dict,
+                    rt_to_irt_map_dict,
                     frag_err_dist_dict,
                     irt_errs,
                     file_id_to_parsed_name,
@@ -15,8 +15,8 @@ function firstSearch(
                     IDtoCOL,
                     ionTemplates,
                     iso_splines,
-                    scored_PSMs,
-                    unscored_PSMs,
+                    scored_psms,
+                    unscored_psms,
                     spectral_scores,
                     precs)
 
@@ -24,13 +24,13 @@ peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Floa
 psms_paths = Dictionary{String, String}()
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    PSMs = vcat(LibrarySearch(
+    psms = vcat(LibrarySearch(
         MS_TABLE,
         params_;
         frag_index = spec_lib["f_index"],
         precursors = spec_lib["precursors"],
         fragment_lookup_table = spec_lib["f_det"],
-        rt_to_irt_spline =  RT_to_iRT_map_dict[ms_file_idx],
+        rt_to_irt_spline =  rt_to_irt_map_dict[ms_file_idx],
         ms_file_idx = UInt32(ms_file_idx),
         irt_tol = irt_errs[ms_file_idx],
         ion_matches = ionMatches,
@@ -39,8 +39,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         id_to_col = IDtoCOL,
         ion_templates = ionTemplates,
         iso_splines = iso_splines,
-        scored_psms = scored_PSMs,
-        unscored_psms = unscored_PSMs,
+        scored_psms = scored_psms,
+        unscored_psms = unscored_psms,
         spectral_scores = spectral_scores,
         prec_to_score = precs,
         mass_err_model = frag_err_dist_dict[ms_file_idx],
@@ -48,23 +48,24 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         params = params_[:first_search_params],
         quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                         )...)
-    addMainSearchColumns!(PSMs, MS_TABLE, 
-                        RT_to_iRT_map_dict[ms_file_idx],
+
+    addMainSearchColumns!(psms, MS_TABLE, 
+                        rt_to_irt_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
                         spec_lib["precursors"][:missed_cleavages],
                         spec_lib["precursors"][:is_decoy],
                         spec_lib["precursors"][:irt],
                         spec_lib["precursors"][:prec_charge]);
-    sort!(PSMs, :iRT);
-    #Observed iRT estimates based on pre-search
-    PSMs[!,:iRT_observed] = RT_to_iRT_map_dict[ms_file_idx].(PSMs[!,:RT])
-    PSMs[!,:iRT_error] = Float16.(abs.(PSMs[!,:iRT_observed] .- PSMs[!,:iRT_predicted]))
-   #psms = copy(PSMs)
+    sort!(psms, :irt);
+    #Observed irt estimates based on pre-search
+    psms[!,:irt_observed] = rt_to_irt_map_dict[ms_file_idx].(psms[!,:rt])
+    psms[!,:irt_error] = Float16.(abs.(psms[!,:irt_observed] .- psms[!,:irt_predicted]))
+   #psms = copy(psms)
 
-    PSMs[!,:i_count] = Float16.(PSMs[!,:i_count]./(PSMs[!,:y_count].+PSMs[!,:b_count].+PSMs[!,:p_count]))
-    filter!(x->isinf(x.i_count)==false, PSMs)
-    filter!(x->isnan(x.i_count)==false, PSMs)
-    PSMs[!,:charge2] = UInt8.(PSMs[!,:charge].==2)
+    psms[!,:i_count] = Float16.(psms[!,:i_count]./(psms[!,:y_count].+psms[!,:b_count].+psms[!,:p_count]))
+    filter!(x->isinf(x.i_count)==false, psms)
+    filter!(x->isnan(x.i_count)==false, psms)
+    psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
 
     column_names = [
                     :spectral_contrast,
@@ -74,7 +75,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     #:combined,
                     :charge2,
                     :poisson,
-                    :iRT_error,
+                    :irt_error,
                     :missed_cleavage,
                     :Mox,
                     :charge,
@@ -85,17 +86,14 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     :spectrum_peak_count,
                     :intercept]
 
-    scoreMainSearchPSMs!(PSMs,
+    scoreMainSearchpsms!(psms,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
                                 max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
 
-    getProbs!(PSMs);
-    #include("Routines/LibrarySearch/methods/manipulateDataFrames.jl")
-    #PSMs = copy(old_psms)
-    #old_psms = copy(PSMs)
-    getBestPSMs!(PSMs,
+    getProbs!(psms);
+    getBestPSMs!(psms,
                     spec_lib["precursors"][:mz],
                     max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
@@ -103,8 +101,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     
     #irt_diffs is the difference between the first and last psm for a precursor
     #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
-
-    fwhms = skipmissing(PSMs[!,:fwhm])
+    fwhms = skipmissing(psms[!,:fwhm])
     fwhm_points = 0
     for fwhm in fwhms
         if !ismissing(fwhm)
@@ -116,7 +113,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         @warn "Not enough datapoints to infer peak width. n: "*string(length(irt_diffs))*"\n 
         using default "*string(params_[:summarize_first_search_params]["default_irt_width"])
     end
-
     #Integration width is double the fwhm + n times the fwhm standard deviation
     #as estimated from mad (median absolute deviation normalized to a robust 
     #estimate of standard deviation )
@@ -125,12 +121,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         file_id_to_parsed_name[ms_file_idx], 
         (median_fwhm = median(fwhms), mad_fwhm = mad(fwhms, normalize = true))
     )
-
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
-    PSMs[!,:ms_file_idx] .= UInt32(ms_file_idx)
+    psms[!,:ms_file_idx] .= UInt32(ms_file_idx)
     Arrow.write(
         temp_path,
-        select!(PSMs, [:ms_file_idx,:scan_idx,:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob,:scan_count])
+        select!(psms, [:ms_file_idx,:scan_idx,:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:scan_count])
         )
 
     insert!(

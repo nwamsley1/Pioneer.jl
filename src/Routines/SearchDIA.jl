@@ -95,7 +95,7 @@ function SearchDIA(params_path::String)
     ###########
     #Tune Parameters
     println("Parameter Tuning Search...")
-    RT_to_iRT_map_dict, frag_err_dist_dict, median_matched_intensity, irt_errs = parameterTuningSearch(rt_alignment_folder,
+    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder,
                                                                             mass_err_estimation_folder,
                                                                             MS_TABLE_PATHS,
                                                                             params_,
@@ -148,6 +148,7 @@ function SearchDIA(params_path::String)
             psms_paths, 
             spec_lib["precursors"][:mz],
             rt_irt, 
+            max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
             max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
    
     
@@ -156,7 +157,6 @@ function SearchDIA(params_path::String)
         precursor_dict,
         params_
     )
-
     bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
     prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
     rt_index_paths = makeRTIndices(
@@ -212,11 +212,9 @@ function SearchDIA(params_path::String)
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
-
     #Wipe memory
     best_psms = nothing
     GC.gc()
-
     best_traces = getBestTraces(
         quant_psms_folder,
         Float32(params_[:xgboost_params]["min_best_trace_prob"]));
@@ -319,13 +317,10 @@ function SearchDIA(params_path::String)
     if isfile(merged_second_quant_path)
         rm(merged_second_quant_path, force = true)
     end
-
-    
-
     if isfile(joinpath(results_folder, "precursors_long.arrow"))
         rm(joinpath(results_folder, "precursors_long.arrow"), force=true)
     end
-    @time mergeSortedArrowTables(
+    mergeSortedArrowTables(
         second_quant_folder,
         joinpath(results_folder, "precursors_long.arrow"),
         (:protein_idx,:precursor_idx),
@@ -341,7 +336,6 @@ function SearchDIA(params_path::String)
         )
      #Summarize Precursor ID's
      #value_counts(df, col) = combine(groupby(df, col), nrow)
- 
      println("Max LFQ...")
     if isfile( joinpath(results_folder, "protein_groups_long.arrow"))
         rm( joinpath(results_folder, "protein_groups_long.arrow"), force=true)
@@ -369,8 +363,8 @@ function SearchDIA(params_path::String)
         rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
     end
     qcPlots(
-        precursors_wide_path,
-        protein_groups_wide_path,
+        precursors_wide_arrow,
+        protein_groups_wide_arrow,
         params_,
         parsed_fnames,
         qc_plot_folder,

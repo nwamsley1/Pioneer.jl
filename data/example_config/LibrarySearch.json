@@ -37,7 +37,7 @@
         "max_precursors": 500000,
         "scan_count_range": [4, 10],
         "max_q_val_for_irt": 0.01,
-        "max_prob_to_impute": 0.5,
+        "max_prob_to_impute": 0.75,
         "min_inference_points": 1000,
         "fwhm_nstd":4,
         "irt_nstd": 4,
@@ -48,13 +48,15 @@
     "quant_search_params":
     {
         "WH_smoothing_strength": 1.0,
-        "min_frag_count": 1,
-        "min_y_count": 1,
+        "min_frag_count": 3,
+        "min_y_count": 2,
         "min_log2_matched_ratio": -1.7,
         "min_spectral_contrast": 0.0,
-        "min_topn_of_m": [1, 3],
+        "min_topn_of_m": [2, 3],
         "n_frag_isotopes": 2,
-        "max_best_rank": 3
+        "max_best_rank": 3,
+        "n_pad": 20,
+        "max_apex_offset": 2
     },
     "irt_mapping_params": 
     {
@@ -67,12 +69,14 @@
     {
         "lambda": 0.0,
         "huber_delta": 0,
-        "huber_delta_prop": 1.0,
+        "huber_delta0": 300,
+        "huber_delta_exp": 1.5,
+        "huber_delta_iters": 15,
         "max_iter_newton": 100,
         "max_iter_bisection": 100,
         "max_iter_outer": 100,
-        "accuracy_newton": 100,
-        "accuracy_bisection": 100,
+        "accuracy_newton": 10,
+        "accuracy_bisection": 10,
         "max_diff": 0.01
     },
     "qc_plot_params":
@@ -82,15 +86,19 @@
     "normalization_params":
     {
         "n_rt_bins": 100,
-        "spline_n_knots": 7,
-        "max_q_value": 0.01,
-        "min_points_above_FWHM": 2
+        "spline_n_knots": 7
     },
     "xgboost_params":
     {
-        "max_n_samples": 10000000
+        "max_n_samples": 10000000,
+        "min_best_trace_prob": 0.75,
+        "precursor_prob_spline_points_per_bin": 500,
+        "precursor_q_value_interpolation_points_per_bin": 10,
+        "pg_prob_spline_points_per_bin": 500,
+        "pg_q_value_interpolation_points_per_bin": 10
+
     },
-    "quad_transmision":
+    "quad_transmission":
     {
         "fit_from_data": false,
         "overhang": 0.25,
@@ -99,6 +107,11 @@
     "benchmark_params":
     {   
         "results_folder": "/Users/n.t.wamsley/Desktop/testresults"
+    },
+    "output_params":
+    {
+        "write_csv": true,
+        "delete_temp": true
     },
     "library_folder": "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib",
     "ms_data_dir":"/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"

@@ -209,5 +209,5 @@ function writeProteinGroupsCSV(
             rm(wide_protien_groups_path, force = true)
         end
     end
-    return wide_protein_groups_path
+    return wide_protein_groups_arrow
 end

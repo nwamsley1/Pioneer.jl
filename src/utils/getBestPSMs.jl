@@ -11,7 +11,7 @@ function getBestPSMs!(psms::DataFrame,
     psms[!,:scan_count] = zeros(UInt16,size(psms, 1))
 
     #Get best psm for each precursor 
-    #ASSUMES psms IS SORTED BY RT IN ASCENDING ORDER
+    #ASSUMES psms IS SOrtED BY rt IN ASCENDING ORDER
     gpsms = groupby(psms,:precursor_idx)
     for (precursor_idx, prec_psms) in pairs(gpsms)
 
@@ -42,7 +42,7 @@ function getBestPSMs!(psms::DataFrame,
             #Is the i'th psm above half the maximum 
             if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
-                min_irt = prec_psms[i,:iRT]
+                min_irt = prec_psms[i,:irt]
             else
                 break
             end
@@ -54,7 +54,7 @@ function getBestPSMs!(psms::DataFrame,
             #Is the i'th psm above half the maximum 
             if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
-                max_irt = prec_psms[i,:iRT]
+                max_irt = prec_psms[i,:irt]
             else
                 break
             end
@@ -68,7 +68,7 @@ function getBestPSMs!(psms::DataFrame,
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
     n = size(psms, 1)
-    select!(psms, [:precursor_idx,:RT,:iRT_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
+    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
     delete!(psms, min(n, max_psms + 1):n)
 
     mz = zeros(T, size(psms, 1));
