@@ -45,6 +45,7 @@ import the Pioneer package from within the Julia REPL.
 julia> using Pioneer
 ```
 
+
 ### File Conversion
 `Pioneer` requires Thermo .raw files be converted to an Apache .arrow format with a specific column specification. Use [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) to convert .raw files. 
 
@@ -96,38 +97,38 @@ An Example prameters file is given below. Most default parameters should apply t
     },
     "summarize_first_search_params":
     {
-        "max_precursors": 500000,
-        "scan_count_range": [4, 10],
-        "max_q_val_for_irt": 0.01,
-        "max_prob_to_impute": 0.75,
+        "max_precursors": 500000, //A single list of the best 'n' precursors are assembled based on the first search of all raw files. Only these 'n' precursors ar quantified and scored in the second search.
+        "scan_count_range": [4, 10], //Only precursors with between n-m psms below the q-value threshold are used to estimate fwhm
+        "max_q_val_for_irt": 0.01, //Estimate run-to-run irt varaiance of precursors apexes using only psms below this q_value threshold
+        "max_prob_to_impute": 0.75, //Impute an irt value from the best psm for a precursor accross the entire experiment only when the probability of the psm is below this quantity.
         "min_inference_points": 1000,
-        "fwhm_nstd":4,
-        "irt_nstd": 4,
-        "default_irt_width": 1.0,
+        "fwhm_nstd":4, //Set irt integration tolerance assuming 'n' standard deviations of fwhm
+        "irt_nstd": 4, //Set irt integration tolerance assuming 'n' standard deviations of run-to-run irt variance 
+        "default_irt_width": 1.0, 
         "peak_width_quantile": 0.95,
         "max_irt_bin_size": 0.1
     },
     "quant_search_params":
     {
-        "WH_smoothing_strength": 1.0,
-        "min_frag_count": 3,
-        "min_y_count": 2,
-        "min_log2_matched_ratio": -1.7,
-        "min_spectral_contrast": 0.0,
-        "min_topn_of_m": [2, 3],
-        "n_frag_isotopes": 2,
-        "max_best_rank": 3,
-        "n_pad": 20,
-        "max_apex_offset": 2
+        "WH_smoothing_strength": 1.0, //Whittaker henderson smoothing strength
+        "min_frag_count": 3, //Minimum matched fragments to include a psm
+        "min_y_count": 2, //Minimum matched y-ions to include a psm
+        "min_log2_matched_ratio": -1.7, //Log2 of ratio of sum of matched fragment predicted intensities to sum of unmatched fragment predicted intensities
+        "min_spectral_contrast": 0.0, // u*v/(||u||*||v||). Cosine simmilarity of predicted spectrum to observation
+        "min_topn_of_m": [2, 3], //At least m of the top n predicted fragments must match to the spectrum
+        "n_frag_isotopes": 2, //Number of fragment isotopes to consider (1 = M0, 2 = M0 + M1, etc. up to 5) 
+        "max_best_rank": 3, //A fragment ranking 'n' or better in the predicted spectrum must match to the empirical spectrum
+        "n_pad": 20, //0-padding size for chromatogram integration. Helps with smoothing. 
+        "max_apex_offset": 2 //
     },
-    "irt_mapping_params": 
+    "irt_mapping_params": //Parameters for fitting spline to map library retention times to empirical retention times 
     {
         "n_bins": 200,
         "bandwidth": 0.25,
         "n_sigma_tol":4,
         "min_prob": 0.95
     },
-    "deconvolution_params":         
+    "deconvolution_params": //Parameters governing coordinate descent algorithm for regression of empirical spectra onto fragment ion templates     
     {
         "lambda": 0.0,
         "huber_delta": 0,
@@ -141,16 +142,16 @@ An Example prameters file is given below. Most default parameters should apply t
         "accuracy_bisection": 10,
         "max_diff": 0.01
     },
-    "qc_plot_params":
+    "qc_plot_params": //Include a maximum of 'n' raw files per plot for the quality-control metric plots 
     {
         "n_files_per_plot": 12
     },
-    "normalization_params":
+    "normalization_params": //Spline parameters for normalizing peak areas accross runs 
     {
         "n_rt_bins": 100,
         "spline_n_knots": 7
     },
-    "xgboost_params":
+    "xgboost_params": //Parameters for the xg-boost algirhtm and for reporting q-values and PEPs
     {
         "max_n_samples": 10000000,
         "min_best_trace_prob": 0.75,
@@ -160,7 +161,7 @@ An Example prameters file is given below. Most default parameters should apply t
         "pg_q_value_interpolation_points_per_bin": 10
 
     },
-    "quad_transmission":
+    "quad_transmission": //Parameters governing quadrupole transmission efficiency 
     {
         "fit_from_data": false,
         "overhang": 0.25,
@@ -179,8 +180,6 @@ An Example prameters file is given below. Most default parameters should apply t
     "ms_data_dir":"/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
 }
 ```
-
-### SearchDIA
 
 ###### .pion Spectral Library
 `SearchDIA` requires a properly formated spectral library. Spectral libraries are contained in folders with the `.pion` extension. The contents include the following. 
