@@ -382,11 +382,3 @@ function mergeSortedArrowTables(
     return nothing
 end
 
-#=
-@time mergeSortedArrowTables(
-    second_quant_folder,
-    "/Users/n.t.wamsley/Desktop/test.arrow",
-    (:protein_idx,:precursor_idx)
-    N = 1000000
-)
-=#

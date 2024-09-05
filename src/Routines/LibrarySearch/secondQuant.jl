@@ -4,6 +4,7 @@ function secondQuantSearch!(
     second_quant_folder,
     frag_err_dist_dict,
     rt_index_paths,
+    bin_rt_size,
     rt_irt,
     irt_errs,
     chromatograms,

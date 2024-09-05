@@ -27,5 +27,6 @@ importScripts()
 include(joinpath(@__DIR__, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
-export SearchDIA
+include(joinpath(@__DIR__, "Routines","ThreeProteomeAnalysis.jl"))
+export SearchDIA, ThreeProteomeAnalysis
 end

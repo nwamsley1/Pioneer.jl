@@ -1,6 +1,6 @@
 function SearchDIA(params_path::String)
     #params_path = "data/example_config/LibrarySearch.json"
- 
+     total_time = @timed begin
      params = JSON.parse(read(params_path, String));
      #params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
      MS_DATA_DIR = params["ms_data_dir"];
@@ -78,7 +78,7 @@ function SearchDIA(params_path::String)
     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    iso_splines = parseIsoXML("./data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml");
+    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -144,7 +144,7 @@ function SearchDIA(params_path::String)
     min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
     )
     #Summarize list of best N precursors accross all runs. 
-    @time precursor_dict = getBestPrecursorsAccrossRuns(
+    precursor_dict = getBestPrecursorsAccrossRuns(
             psms_paths, 
             spec_lib["precursors"][:mz],
             rt_irt, 
@@ -172,8 +172,30 @@ function SearchDIA(params_path::String)
     delta_exp = params_[:deconvolution_params]["huber_delta_exp"];
     delta_iters = params_[:deconvolution_params]["huber_delta_iters"];
     huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
+    println("Optimize Huber Loss Smoothing Parameter...")
     params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
-        huber_δs,precursor_dict ,precursors[:is_decoy]);
+        huber_δs,
+        precursor_dict,
+        MS_TABLE_PATHS,
+        precursors[:is_decoy],
+        frag_err_dist_dict,
+        rt_index_paths,
+        bin_rt_size,
+        rt_irt,
+        irt_errs,
+        chromatograms,
+        file_path_to_parsed_name,
+        params_,
+        spec_lib,
+        ionMatches,
+        ionMisses,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        complex_scored_PSMs,
+        complex_unscored_PSMs,
+        complex_spectral_scores,
+        precursor_weights);
 
     if params_[:output_params]["delete_temp"]
         rm(first_search_psms_folder,recursive=true)
@@ -282,6 +304,7 @@ function SearchDIA(params_path::String)
                     second_quant_folder,
                     frag_err_dist_dict,
                     rt_index_paths,
+                    bin_rt_size,
                     rt_irt,
                     irt_errs,
                     chromatograms,
@@ -366,6 +389,7 @@ function SearchDIA(params_path::String)
         precursors_wide_arrow,
         protein_groups_wide_arrow,
         params_,
+        precursors,
         parsed_fnames,
         qc_plot_folder,
         file_id_to_parsed_name,
@@ -376,4 +400,6 @@ function SearchDIA(params_path::String)
     if params_[:output_params]["delete_temp"]
         rm(temp_folder,recursive=true)
     end
+end
+println("total_time $total_time")
 end

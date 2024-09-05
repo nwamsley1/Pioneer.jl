@@ -3,6 +3,7 @@ function qcPlots(
     precursors_wide_path,
     protein_groups_wide_path,
     params_,
+    precursors,
     parsed_fnames,
     qc_plot_folder,
     file_id_to_parsed_name,
@@ -264,7 +265,7 @@ function qcPlots(
         end
         savefig(p, f_out)
     end
-
+#=
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
@@ -275,7 +276,7 @@ function qcPlots(
             f_out = joinpath(qc_plot_folder, "rt_align_plot_"*string(n)*".pdf")
         )
     end
-
+=#
     ###############
     #Plot precursor IDs
     function plotMS2MassErrors(

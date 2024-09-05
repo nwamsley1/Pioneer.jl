@@ -110,7 +110,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     end
 
     if fwhm_points < params_[:summarize_first_search_params]["min_inference_points"]
-        @warn "Not enough datapoints to infer peak width. n: "*string(length(irt_diffs))*"\n 
+        @warn "Not enough datapoints to infer peak width. n: "*string(fwhm_points)*"\n 
         using default "*string(params_[:summarize_first_search_params]["default_irt_width"])
     end
     #Integration width is double the fwhm + n times the fwhm standard deviation

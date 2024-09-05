@@ -121,7 +121,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
                                                         n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
     #prec_to_best_prob = zeros(Float32, n_precursors)
-    @time for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    for (key, psms_path) in pairs(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
         readPSMs!(
@@ -138,7 +138,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
     end
     # Get the top N peptide_idx's with their corresponding maximum probabilities
     #Currently this is slow
-    @time sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
+    sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
     N = 0
     for key in collect(keys(prec_to_best_prob))
         N += 1
@@ -148,7 +148,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
     end
 
     #get variance 
-    @time for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    for (key, psms_path) in pairs(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
         getVariance!(

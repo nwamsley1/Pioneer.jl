@@ -127,10 +127,29 @@ end
 
 function getHuberLossParam(
     huber_δs::Vector{Float32},
-    gbpsms;
+    gbpsms,
+    MS_TABLE_PATHS,
+    frag_err_dist_dict,
+    rt_index_paths,
+    bin_rt_size,
+    rt_irt,
+    irt_errs,
+    chromatograms,
+    file_path_to_parsed_name,
+    params_,
+    spec_lib,
+    ionMatches,
+    ionMisses,
+    IDtoCOL,
+    ionTemplates,
+    iso_splines,
+    complex_scored_PSMs,
+    complex_unscored_PSMs,
+    complex_spectral_scores,
+    precursor_weights;
     minimum_percent_diff::Float32 = 10.0f0)
     psms = []
-    @time for (key, sub_bpsms) in pairs(gbpsms)
+    for (key, sub_bpsms) in ProgressBar(pairs(gbpsms))
         ms_file_idx = key[:ms_file_idx]
         MS_TABLE_PATH = MS_TABLE_PATHS[ms_file_idx]
         prec_set = Set(zip(sub_bpsms[!,:precursor_idx], sub_bpsms[!,:scan_idx]))
@@ -272,8 +291,50 @@ function getHuberLossParam(
                 var_irt::Union{Missing, Float32}, 
                 n::Union{Missing, UInt16},
                 mz::Float32}},
-    is_decoy::AbstractVector{Bool})
+    MS_TABLE_PATHS::Vector{String},
+    is_decoy::AbstractVector{Bool},
+    frag_err_dist_dict,
+    rt_index_paths,
+    bin_rt_size,
+    rt_irt,
+    irt_errs,
+    chromatograms,
+    file_path_to_parsed_name,
+    params_,
+    spec_lib,
+    ionMatches,
+    ionMisses,
+    IDtoCOL,
+    ionTemplates,
+    iso_splines,
+    complex_scored_PSMs,
+    complex_unscored_PSMs,
+    complex_spectral_scores,
+    precursor_weights)
+
     best_psms =  getPsmsForHuberEstimation(prec_to_irt,is_decoy)
     gbpsms = groupby(best_psms,:ms_file_idx)
-    return getHuberLossParam(huber_δs,gbpsms)
+    return getHuberLossParam(
+        huber_δs,
+        gbpsms,
+        MS_TABLE_PATHS,
+        frag_err_dist_dict,
+        rt_index_paths,
+        bin_rt_size,
+        rt_irt,
+        irt_errs,
+        chromatograms,
+        file_path_to_parsed_name,
+        params_,
+        spec_lib,
+        ionMatches,
+        ionMisses,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        complex_scored_PSMs,
+        complex_unscored_PSMs,
+        complex_spectral_scores,
+        precursor_weights
+        )
 end
