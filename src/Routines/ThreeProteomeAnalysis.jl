@@ -229,7 +229,7 @@ function ThreeProteomeAnalysis(
             precursors_wide,
             species_to_log2fc,
             precursors_results_dir,
-            true,
+            false,
             "precursors"
         )
     end
