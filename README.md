@@ -1,8 +1,6 @@
 <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.jpg" align="right" width="150px"/>
-<h1>Pioneer: Fast and Open-Source Analysis of Data-Indepdendent Aquisition Proteomics Experiments
+<h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Aquisition Proteomics Experiments
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/stable/)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/dev/)
 [![Build Status](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl)
 </h1>
@@ -10,7 +8,7 @@
 
 ##  Development Aims
   Pioneer is a cross-platform and open-source tool fully implemented 
-in Juilia that identifies and quantifies proteins and peptides from data independent acquisition (DIA) experiments. Given a 
+in Julia that identifies and quantifies proteins and peptides from data independent acquisition (DIA) experiments. Given a 
 spectral library of fragment ion intensities and retention time estimates on an arbitrary scale, Pioneer employs a spectrum-centric 
 algorithm and heuristics to statistically infer the identification status and abundance of each library precursor in the data. We develop Pioneer with the following goals:
 
@@ -39,7 +37,7 @@ shell> cd Pioneer.jl
 ```
 
 ## Usage
-Pioneer exports three the "SearchDIA" method, which takes a single argument, that is a file path to a .json parameters files (examples included). To access these methods
+Pioneer exports three `SearchDIA` methods, each of which takes a single argument, that is a file path to a .json parameters files (examples included). To access these methods
 import the Pioneer package from within the Julia REPL. 
 ```
 julia> using Pioneer
