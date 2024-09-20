@@ -69,7 +69,7 @@ end
 function addMainSearchColumns!(psms::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
                                 rt_irt::UniformSpline,
-                                structural_mods::Arrow.List{String, Int32, Vector{UInt8}},
+                                structural_mods::AbstractVector{Union{Missing, String}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
@@ -112,7 +112,7 @@ function addMainSearchColumns!(psms::DataFrame,
 
                 targets[i] = prec_is_decoy[prec_idx] == false;
                 missed_cleavage[i] = prec_missed_cleavages[prec_idx]
-                Mox[i] = countMOX(structural_mods[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
+                Mox[i] = countMOX(coalesce(structural_mods[prec_idx], ""))::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 irt_pred[i] = Float32(prec_irt[prec_idx]);
                 rt[i] = Float32(scan_retention_time[scan_idx[i]]);
                 irt[i] = rt_irt(rt[i])
@@ -403,7 +403,7 @@ end
 function addPostIntegrationFeatures!(psms::DataFrame, 
                                     MS_TABLE::Arrow.Table, 
                                     precursor_sequence::AbstractArray{String},
-                                    structural_mods::AbstractArray{String},
+                                    structural_mods::AbstractArray{Union{String, Missing}},
                                     prec_mz::AbstractArray{T},
                                     prec_irt::AbstractArray{T},
                                     prec_charge::AbstractArray{UInt8},
@@ -451,6 +451,10 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
     function countMOX(seq::String)
         return UInt8(count("Unimod:35", seq))
+    end
+
+    function countMOX(seq::Missing)
+        return zero(UInt8)
     end
 
 

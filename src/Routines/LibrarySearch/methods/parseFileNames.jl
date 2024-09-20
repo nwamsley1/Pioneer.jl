@@ -35,6 +35,11 @@ function parseFileNames(
                 parsed_file_names = file_names
             end
     
+            for (i, fname) in enumerate(parsed_file_names)
+                if fname == ""
+                    parsed_file_names[i] = string(i)
+                end
+            end
             file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
             #Parsed file names 
             parsed_fnames = sort(collect(values(file_id_to_parsed_name)))

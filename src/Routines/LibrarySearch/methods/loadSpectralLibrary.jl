@@ -11,8 +11,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
 
     println("Loading spectral libraries into main memory...")
     spec_lib = Dict{String, Any}()
-    detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
-    prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
+    detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_frags"]
+    prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
     #Is this still necessary?
     #last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
@@ -20,7 +20,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
     #library_fragment_lookup_table.prec_frag_ranges[end] = last_range
     spec_lib["f_det"] = library_fragment_lookup_table
 
-    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursor_table.arrow"))#DataFrame(precursors)
+    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))#DataFrame(precursors)
     f_index = FragmentIndex(
         f_index_frag_bins[:FragIndexBin],
         f_index_rt_bins[:FragIndexBin],

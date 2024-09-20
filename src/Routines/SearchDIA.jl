@@ -2,9 +2,15 @@ function SearchDIA(params_path::String)
     #params_path = "data/example_config/LibrarySearch.json"
      total_time = @timed begin
      params = JSON.parse(read(params_path, String));
-     #params = JSON.parse(read("data/example_config/LibrarySearch.json", String));
+
+     #
+     #=
+     params = JSON.parse(read("../data/example_config/LibrarySearch.json", String));
+     params["library_folder"] = "/Users/n.t.wamsley/Desktop/test_index_2"
+     =#
      MS_DATA_DIR = params["ms_data_dir"];
      #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test"
+     #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
      SPEC_LIB_DIR = params["library_folder"];
  
      #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
@@ -18,6 +24,8 @@ function SearchDIA(params_path::String)
      params_[:first_search_params]["min_log2_matched_ratio"] = -1.0
      params_[:first_search_params]["max_precursors_passing"] = 125000
      params_[:first_search_params]["n_frag_isotopes"] = 2
+
+     MS_TABLE_PATHS = [first(MS_TABLE_PATHS)]
      =#
      qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
          joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
@@ -56,17 +64,25 @@ function SearchDIA(params_path::String)
     ###########
     #Load Spectral Libraries
     ###########
-    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR)
-    precursors = spec_lib["precursors"]
-    unique_proteins = unique(precursors[:accession_numbers])
-    accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))))
+    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR);
+    precursors = spec_lib["precursors"];
+    unique_proteins = unique(precursors[:accession_numbers]);
+    accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
     ###########
     #Set CV Folds 
     ###########
     pid_to_cv_fold = getCVFolds(
         collect(range(UInt32(1), UInt32(length(spec_lib["precursors"][:sequence])))),#precursor id's, 
         spec_lib["precursors"][:accession_numbers]
-        )
+        );
+
+    #=
+    pid = 0x000d7076
+    DataFrame(precursors)[pid,:]
+    getFragments(spec_lib["f_det"])[getPrecFragRange(spec_lib["f_det"], pid)]
+    pid += 1
+    spec_lib["presearch_f_index"]
+    =#
     ###########
     #Load Pre-Allocated Data Structures. One of each for each thread. 
     ###########
@@ -78,7 +94,7 @@ function SearchDIA(params_path::String)
     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
+    iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -89,7 +105,8 @@ function SearchDIA(params_path::String)
     complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
     ###########
-    #File Names Parsing 
+    #File Names parsing
+
     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
 
     ###########
@@ -110,7 +127,22 @@ function SearchDIA(params_path::String)
                                                                             unscored_PSMs,
                                                                             spectral_scores,
                                                                             precs)
-    println("Parameter Tuning Search...")
+
+                                                                            test_df = parameterTuningSearch(rt_alignment_folder,
+                                                                            mass_err_estimation_folder,
+                                                                            MS_TABLE_PATHS,
+                                                                            params_,
+                                                                            spec_lib,
+                                                                            ionMatches,
+                                                                            ionMisses,
+                                                                            all_fmatches,
+                                                                            IDtoCOL,
+                                                                            ionTemplates,
+                                                                            iso_splines,
+                                                                            scored_PSMs,
+                                                                            unscored_PSMs,
+                                                                            spectral_scores,
+                                                                            precs)                                                                            println("Parameter Tuning Search...")
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,
@@ -150,13 +182,16 @@ function SearchDIA(params_path::String)
             rt_irt, 
             max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
             max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
-   
-    
-    irt_errs = getIrtErrs(
-        peak_fwhms,
-        precursor_dict,
-        params_
-    )
+    irt_errs = nothing
+    if length(keys(peak_fwhms)) > 1
+        irt_errs = getIrtErrs(
+            peak_fwhms,
+            precursor_dict,
+            params_
+        )
+    else
+        irt_errs = Dict(zip(keys(peak_fwhms), zeros(Float32, length(keys(peak_fwhms)))))
+    end
     bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
     prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
     rt_index_paths = makeRTIndices(
