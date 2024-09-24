@@ -50,6 +50,8 @@ function setMatch!(matches::Vector{M},
         ion_type = UInt8(2)
     elseif transition.is_p
         ion_type = UInt8(3)
+    elseif transition.is_b
+        ion_type = UInt8(1)
     end
     matches[i] = FragmentMatch(
                                 Float32(getIntensity(transition)), 

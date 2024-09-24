@@ -20,11 +20,11 @@ function SearchDIA(params_path::String)
      #=
      params_[:summarize_first_search_params]["max_precursors"] = 125000
      params_[:presearch_params]["sample_rate"] = 0.05
-      params_[:quant_search_params]["min_y_count"] = 1
+     params_[:quant_search_params]["min_y_count"] = 1
      params_[:first_search_params]["min_log2_matched_ratio"] = -1.0
      params_[:first_search_params]["max_precursors_passing"] = 125000
      params_[:first_search_params]["n_frag_isotopes"] = 2
-
+     params_[:presearch_params]["sample_rate"] = 0.05
      MS_TABLE_PATHS = [first(MS_TABLE_PATHS)]
      =#
      qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
@@ -82,6 +82,10 @@ function SearchDIA(params_path::String)
     getFragments(spec_lib["f_det"])[getPrecFragRange(spec_lib["f_det"], pid)]
     pid += 1
     spec_lib["presearch_f_index"]
+
+    DataFrame(precursors)[pid,[:sequence,:prec_charge,:mz,:length,:irt,:structural_mods]]
+    old_precursors[findall(x->x==precursors[:sequence][pid], old_precursors[!,:sequence]),:]
+    pid += 10
     =#
     ###########
     #Load Pre-Allocated Data Structures. One of each for each thread. 
