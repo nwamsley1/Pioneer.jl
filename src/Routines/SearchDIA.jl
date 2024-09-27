@@ -1,55 +1,39 @@
 function SearchDIA(params_path::String)
-    #params_path = "data/example_config/LibrarySearch.json"
-     total_time = @timed begin
-     params = JSON.parse(read(params_path, String));
+    println("JLD2 version is: ", Pkg.installed()["JLD2"])
+    total_time = @timed begin
+    params = JSON.parse(read(params_path, String));
 
-     #
-     #=
-     params = JSON.parse(read("../data/example_config/LibrarySearch.json", String));
-     params["library_folder"] = "/Users/n.t.wamsley/Desktop/test_index_2"
-     =#
-     MS_DATA_DIR = params["ms_data_dir"];
-     #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/exploris_test"
-     #MS_DATA_DIR = "/Users/n.t.wamsley/TEST_DATA/PXD046444/arrow/astral_test"
-     SPEC_LIB_DIR = params["library_folder"];
- 
-     #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
-     MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
- 
-     params_ = parseParams(params)
-     #=
-     params_[:summarize_first_search_params]["max_precursors"] = 125000
-     params_[:presearch_params]["sample_rate"] = 0.05
-     params_[:quant_search_params]["min_y_count"] = 1
-     params_[:first_search_params]["min_log2_matched_ratio"] = -1.0
-     params_[:first_search_params]["max_precursors_passing"] = 125000
-     params_[:first_search_params]["n_frag_isotopes"] = 2
-     params_[:presearch_params]["sample_rate"] = 0.05
-     MS_TABLE_PATHS = [first(MS_TABLE_PATHS)]
-     =#
-     qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
-         joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
-         params
-     )
- 
-     first_search_psms_folder = joinpath(temp_folder, "first_search_psms")
-     if !isdir(first_search_psms_folder)
-         mkpath(first_search_psms_folder)
-     end
+    MS_DATA_DIR = params["ms_data_dir"];
+    SPEC_LIB_DIR = params["library_folder"];
 
-     irt_indices_folder = joinpath(temp_folder, "irt_indices_folder")
-     if !isdir(irt_indices_folder)
-         mkpath(irt_indices_folder)
-     end
+    #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
+    MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
 
-     quant_psms_folder = joinpath(temp_folder, "quant_psms_folder")
-     if !isdir(quant_psms_folder )
-         mkpath(quant_psms_folder )
-     end
+    params_ = parseParams(params)
 
-     passing_psms_folder = joinpath(temp_folder, "passing_psms")
-     if !isdir( passing_psms_folder )
-        mkpath( passing_psms_folder )
+    qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
+        joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
+        params
+    )
+
+    first_search_psms_folder = joinpath(temp_folder, "first_search_psms")
+    if !isdir(first_search_psms_folder)
+        mkpath(first_search_psms_folder)
+    end
+
+    irt_indices_folder = joinpath(temp_folder, "irt_indices_folder")
+    if !isdir(irt_indices_folder)
+        mkpath(irt_indices_folder)
+    end
+
+    quant_psms_folder = joinpath(temp_folder, "quant_psms_folder")
+    if !isdir(quant_psms_folder )
+        mkpath(quant_psms_folder )
+    end
+
+    passing_psms_folder = joinpath(temp_folder, "passing_psms")
+    if !isdir( passing_psms_folder )
+    mkpath( passing_psms_folder )
     end
 
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
@@ -75,18 +59,6 @@ function SearchDIA(params_path::String)
         collect(range(UInt32(1), UInt32(length(spec_lib["precursors"][:sequence])))),#precursor id's, 
         spec_lib["precursors"][:accession_numbers]
         );
-
-    #=
-    pid = 0x000d7076
-    DataFrame(precursors)[pid,:]
-    getFragments(spec_lib["f_det"])[getPrecFragRange(spec_lib["f_det"], pid)]
-    pid += 1
-    spec_lib["presearch_f_index"]
-
-    DataFrame(precursors)[pid,[:sequence,:prec_charge,:mz,:length,:irt,:structural_mods]]
-    old_precursors[findall(x->x==precursors[:sequence][pid], old_precursors[!,:sequence]),:]
-    pid += 10
-    =#
     ###########
     #Load Pre-Allocated Data Structures. One of each for each thread. 
     ###########
@@ -98,7 +70,7 @@ function SearchDIA(params_path::String)
     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
+    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -110,7 +82,6 @@ function SearchDIA(params_path::String)
     complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
     ###########
     #File Names parsing
-
     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
 
     ###########
@@ -132,21 +103,6 @@ function SearchDIA(params_path::String)
                                                                             spectral_scores,
                                                                             precs)
 
-                                                                            test_df = parameterTuningSearch(rt_alignment_folder,
-                                                                            mass_err_estimation_folder,
-                                                                            MS_TABLE_PATHS,
-                                                                            params_,
-                                                                            spec_lib,
-                                                                            ionMatches,
-                                                                            ionMisses,
-                                                                            all_fmatches,
-                                                                            IDtoCOL,
-                                                                            ionTemplates,
-                                                                            iso_splines,
-                                                                            scored_PSMs,
-                                                                            unscored_PSMs,
-                                                                            spectral_scores,
-                                                                            precs)                                                                            println("Parameter Tuning Search...")
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,
@@ -167,7 +123,15 @@ function SearchDIA(params_path::String)
         spectral_scores,
         precs
     )
-
+    first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]))
+    first_psms = first_psms[first_psms[!,:q_value].<=0.01,:]
+    value_counts(df, col) = combine(groupby(df, col), nrow)
+    psms_counts = value_counts(first_psms, :ms_file_idx)
+    CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts)
+    first_psms = nothing
+    #test_table = DataFrame(Arrow.Table(collect(values(psms_paths))))
+    #test_table = test_table[test_table[!,:q_value].<=0.01,:]
+    #value_counts(test_table,:ms_file_idx)
     ##########
     #Combine First Search Results
     ##########
@@ -240,8 +204,6 @@ function SearchDIA(params_path::String)
         rm(first_search_psms_folder,recursive=true)
     end      
     
-    #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
-    #params_[:deconvolution_params]["accuracy_bisection"] = 100.0f0
     ############
     #Quantitative Search
     println("Begining Quantitative Search...")
@@ -361,6 +323,7 @@ function SearchDIA(params_path::String)
                     complex_unscored_PSMs,
                     complex_spectral_scores,
                     precursor_weights)
+                    
     if params_[:output_params]["delete_temp"]
         rm(passing_psms_folder,recursive=true)
     end
@@ -440,5 +403,4 @@ function SearchDIA(params_path::String)
         rm(temp_folder,recursive=true)
     end
 end
-println("total_time $total_time")
 end

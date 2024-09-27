@@ -14,7 +14,7 @@ using JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
-using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars
+using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars, Pkg
 using Tables, Test
 using StatsPlots
 using Random

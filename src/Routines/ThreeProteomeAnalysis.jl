@@ -235,6 +235,19 @@ function ThreeProteomeAnalysis(
     end
 
 end
+function ThreeProteomeAnalysis(
+    params_path::String,
+    key_file_path::String
+)
+    params = JSON.parse(read(params_path, String));
+    out_dir = params["benchmark_params"]["results_folder"]
+    results_folder = joinpath(out_dir, "RESULTS","RESULTS")
+
+    ThreeProteomeAnalysis(results_folder,
+                        key_file_path,
+                        out_dir
+                        )
+end
 #condition_a = [Symbol("E10H50Y40_1"), Symbol("E10H50Y40_2"), Symbol("E10H50Y40_3"), Symbol("E10H50Y40_4")]
 #condition_b = [Symbol("E30H50Y20_1"), Symbol("E30H50Y20_2"), Symbol("E30H50Y20_3"), Symbol("E30H50Y20_4")]
 #N = size(precursors_wide,1)

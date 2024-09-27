@@ -73,7 +73,7 @@ function mergeSortedArrowTables(
         sorted_tuples::Vector{Tuple{Int64, Int64}},
         tables::Vector{Arrow.Table},
         n
-    ) where {R<:Real}
+    )
         for i in range(1, max(min(length(peptide_batch_col), n - 1), 1))
             table_idx, idx = sorted_tuples[i]
             peptide_batch_col[i] = tables[table_idx][col][idx]::String
@@ -90,7 +90,7 @@ function mergeSortedArrowTables(
     )
         for i in range(1, max(min(length(peptide_batch_col), n - 1), 1))
             table_idx, idx = sorted_tuples[i]
-            peptide_batch_col[i] = tables[table_idx][col][idx]::String
+            peptide_batch_col[i] = tables[table_idx][col][idx]::Union{String,Missing}
         end
     end
 

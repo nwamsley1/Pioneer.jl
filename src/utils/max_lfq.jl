@@ -305,7 +305,7 @@ function LFQ(prot::DataFrame,
         score_to_qval(coalesce(x.max_pg_score, 0.0f0))::Float32<q_value_threshold, 
         subdf);
         #Exclude precursors with mods that impact quantitation
-        filter!(x->!occursin("M,Unimod:35", x.structural_mods), subdf)
+        filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
             [:target, :species, :accession_numbers]

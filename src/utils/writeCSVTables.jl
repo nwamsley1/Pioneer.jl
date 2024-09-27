@@ -42,6 +42,29 @@ function getModifiedSequence(
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
+
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::String,
+    structural_mods::Missing,
+    charge::UInt8)
+
+    mods = isotope_mods
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
+end
+
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::Missing,
+    structural_mods::Missing,
+    charge::UInt8)
+
+    mods = ""
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
+end
+
 #Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
 #loading the entire table into memory. 
 function writePrecursorCSV(
@@ -124,7 +147,7 @@ function writeProteinGroupsCSV(
     long_pg_path::String,
     sequences::AbstractVector{String},
     isotope_mods::AbstractVector{String},
-    structural_mods::AbstractVector{String},
+    structural_mods::AbstractVector{Union{String,Missing}},
     precursor_charge::AbstractVector{UInt8},
     file_names::Vector{String};
     write_csv::Bool = true,

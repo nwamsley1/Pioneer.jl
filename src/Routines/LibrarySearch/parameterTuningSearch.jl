@@ -61,7 +61,7 @@ function parameterTuningSearch(rt_alignment_folder,
                                                     );
 
             psms = vcat([result for result in RESULT]...)
-            println("size(psms) ", size(psms))
+            #println("size(psms) ", size(psms))
             psms[!,:best_psms ] .= false
             addPreSearchColumns!(psms, 
                                         MS_TABLE, 
@@ -74,9 +74,9 @@ function parameterTuningSearch(rt_alignment_folder,
             else
                 rtpsms = vcat(rtpsms, psms)
             end            
-            println(size(rtpsms))
-            println(sum(rtpsms.decoy)/size(rtpsms, 1))
-            display(first(rtpsms, 5))
+            #println(size(rtpsms))
+            #println(sum(rtpsms.decoy)/size(rtpsms, 1))
+            #display(first(rtpsms, 5))
             scorePresearch!(rtpsms)
             getQvalues!(rtpsms[!,:prob], rtpsms[!,:target], rtpsms[!,:q_value])
             

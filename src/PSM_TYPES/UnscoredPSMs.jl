@@ -154,7 +154,7 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
         elseif getIonType(match) == UInt8(3)
             p_count += 1
         else
-            non_canonnical_count += 1
+            non_cannonical_count += 1
         end
     end
 

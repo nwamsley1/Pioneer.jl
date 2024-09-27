@@ -116,6 +116,26 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     sulfur_count::UInt8
 end
 
+
+# Define how to convert the loaded type to your current type
+function JLD2.rconvert(::Type{DetailedFrag{T}}, x::JLD2.ReconstructedStatic) where T
+    DetailedFrag{T}(
+        x.prec_id, 
+        x.mz, 
+        x.intensity,
+        x.ion_type,
+        x.is_y,
+        x.is_b,
+        x.is_p,
+        x.is_isotope,
+        x.frag_charge,
+        x.ion_position,
+        x.prec_charge,
+        x.rank,
+        x.sulfur_count
+        )  # Fill in all fields
+end
+
 ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:DetailedFrag}) = DetailedFrag
 
@@ -154,6 +174,29 @@ struct LibraryFragmentLookup{T<:AbstractFloat}
     frags::Vector{DetailedFrag{T}}
     prec_frag_ranges::Vector{UInt64}
 end
+
+function DetailedFrag{T}(x::NamedTuple) where T
+    DetailedFrag{T}(
+        x.prec_id, x.mz, x.intensity, x.ion_type,
+        x.is_y, x.is_b, x.is_p, x.is_isotope,
+        x.frag_charge, x.ion_position, x.prec_charge,
+        x.rank, x.sulfur_count
+    )
+end
+
+function LibraryFragmentLookup(
+    frags::Vector{JLD2.ReconstructedStatic{Symbol("DetailedFrag{Float32}"), 
+    (:prec_id, :mz, :intensity, :ion_type, :is_y, :is_b, :is_p, :is_isotope, :frag_charge, :ion_position, :prec_charge, :rank, :sulfur_count), T}},
+    indices::Vector{UInt64}) where T
+    
+    converted_frags = [DetailedFrag{Float32}(
+                            x.prec_id, x.mz, x.intensity, x.ion_type,
+                            x.is_y, x.is_b, x.is_p, x.is_isotope,
+                            x.frag_charge, x.ion_position, x.prec_charge,
+                            x.rank, x.sulfur_count) for x in frags]
+    LibraryFragmentLookup(converted_frags, indices)
+end
+
 
 getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::LibraryFragmentLookup{<:AbstractFloat}) = lfp.frags
