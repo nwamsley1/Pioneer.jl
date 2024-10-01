@@ -126,7 +126,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
             )...);
 
-
         #Format Chromatograms 
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
         filter!(x->first(x.isotopes_captured)<2, chroms)

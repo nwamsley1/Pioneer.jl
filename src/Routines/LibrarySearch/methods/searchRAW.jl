@@ -792,7 +792,6 @@ function getChromatograms(
     rt_idx = 0
     prec_temp_size = 0
     precs_temp = Vector{UInt32}(undef, 50000)
-
     
     ##########
     #Iterate through spectra
@@ -869,7 +868,8 @@ function getChromatograms(
         ##########
         #Spectral Deconvolution and Distance Metrics 
         if nmatches > 2 #Few matches to do not perform de-convolution 
-        
+            
+         
             #Spectral deconvolution. Build sparse design/template matrix for regression 
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
@@ -922,6 +922,7 @@ function getChromatograms(
                 end
 
             end
+            
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]

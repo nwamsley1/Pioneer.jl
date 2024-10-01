@@ -198,6 +198,9 @@ function getQValueSpline(
     bin_mean_prob[end] = mean_prob/bin_size
     prepend!(bin_qval, 1.0f0)
     prepend!(bin_mean_prob, 0.0f0)
+    bin_qval = bin_qval[isnan.(bin_mean_prob).==false]
+    bin_mean_prob = bin_mean_prob[isnan.(bin_mean_prob).==false]
+    #return bin_qval, bin_mean_prob
     return linear_interpolation(
         Interpolations.deduplicate_knots!(bin_mean_prob, move_knots=true),
         bin_qval, extrapolation_bc=Line())
