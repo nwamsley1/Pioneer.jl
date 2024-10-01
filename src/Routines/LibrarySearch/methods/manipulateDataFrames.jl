@@ -95,7 +95,7 @@ function addMainSearchColumns!(psms::DataFrame,
     total_ions::Vector{UInt8} = psms[!,:y_count] .+ psms[!,:b_count]
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
+    masses = MS_TABLE[:mz_array]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
     function countMOX(seq::String)
         return UInt8(count("Unimod:35", seq))
     end
@@ -334,8 +334,8 @@ function getIsotopesCaptured!(chroms::DataFrame,
                 charge = prec_charge[prec_id]
 
                 scan_id = chroms[i,:scan_idx]
-                scan_mz = MS_TABLE[:centerMass][scan_id]
-                window_width = MS_TABLE[:isolationWidth][scan_id]
+                scan_mz = MS_TABLE[:centerMz][scan_id]
+                window_width = MS_TABLE[:isolationWidthMz][scan_id]
 
                 isotopes = getPrecursorIsotopeSet(mz, 
                                                     charge, 
@@ -442,7 +442,7 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
+    masses = MS_TABLE[:mz_array]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
     #longest_y::Vector{UInt8} = psms[!,:longest_y]
     #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:rt]

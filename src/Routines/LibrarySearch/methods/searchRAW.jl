@@ -30,10 +30,10 @@ function searchFragmentIndex(
         if i == 0 
             continue
         end
-        if i > length(spectra[:masses])
+        if i > length(spectra[:mz_array])
             continue
         end
-        thread_peaks += length(spectra[:masses][i])
+        thread_peaks += length(spectra[:mz_array][i])
         if thread_peaks > 100000
 
             thread_peaks = 0
@@ -77,19 +77,17 @@ function searchFragmentIndex(
         #if !ismissing(precs)
             #searchScan! is the MsFragger style fragment index search
             #Loads `precs` with scores for each potential precursor matching the spectrum
-            #println("length(spectra[:masses][i]) ", length(spectra[:masses][i]))
-            #println("spec_order", spec_order)
             searchScan!(
                         precs, #counter which keeps track of plausible matches 
                         getRTBins(frag_index),
                         getFragBins(frag_index),
                         getFragments(frag_index), 
-                        spectra[:masses][i], spectra[:intensities][i],
+                        spectra[:mz_array][i], spectra[:intensity_array][i],
                         rt_bin_idx, 
                         iRT_high,
                         mass_err_model,
-                        spectra[:centerMass][i],
-                        spectra[:isolationWidth][i]/2.0f0,
+                        spectra[:centerMz][i],
+                        spectra[:isolationWidthMz][i]/2.0f0,
                         isotope_err_bounds
                         )
             
@@ -168,7 +166,7 @@ function getPSMS(
         if i == 0 
             continue
         end
-        if i > length(spectra[:masses])
+        if i > length(spectra[:mz_array])
             continue
         end
         if ismissing(scan_to_prec_idx[i])
@@ -204,11 +202,11 @@ function getPSMS(
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol), #rt_tol
                                         (
-                                        spectra[:centerMass][i] - spectra[:isolationWidth][i]/2.0f0,
-                                        spectra[:centerMass][i] + spectra[:isolationWidth][i]/2.0f0,
+                                        spectra[:centerMz][i] - spectra[:isolationWidthMz][i]/2.0f0,
+                                        spectra[:centerMz][i] + spectra[:isolationWidthMz][i]/2.0f0,
                                         ),
                                         (
-                                            spectra[:lowMass][i], spectra[:highMass][i]
+                                            spectra[:lowMz][i], spectra[:highMz][i]
                                         ),
                                         isotope_err_bounds = isotope_err_bounds
                                         )
@@ -221,10 +219,10 @@ function getPSMS(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][i], 
-                                        spectra[:intensities][i], 
+                                        spectra[:mz_array][i], 
+                                        spectra[:intensity_array][i], 
                                         mass_err_model,
-                                        spectra[:highMass][i],
+                                        spectra[:highMz][i],
                                         UInt32(i), 
                                         ms_file_idx)
         sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
@@ -262,7 +260,7 @@ function getPSMS(
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(spectra[:intensities][i])), 
+                Float32(sum(spectra[:intensity_array][i])), 
                 i,
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
@@ -311,7 +309,7 @@ function getMassErrors(
         if i == 0 
             continue
         end
-        if i > length(spectra[:masses])
+        if i > length(spectra[:mz_array])
             continue
         end
         if ismissing(scan_to_prec_idx[i])
@@ -337,10 +335,10 @@ function getMassErrors(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][i], 
-                                        spectra[:intensities][i], 
+                                        spectra[:mz_array][i], 
+                                        spectra[:intensity_array][i], 
                                         mass_err_model,
-                                        spectra[:highMass][i],
+                                        spectra[:highMz][i],
                                         UInt32(i), 
                                         ms_file_idx)  
         #sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
@@ -428,7 +426,7 @@ function huberTuningSearch(
         irt = rt_to_irt(spectra[:retentionTime][scan_idx])
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-        prec_mz_string_new = string(spectra[:centerMass][scan_idx])
+        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
         if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
             irt_start = irt_start_new
@@ -454,10 +452,10 @@ function huberTuningSearch(
                 rt_index,
                 irt_start,
                 irt_stop,
-                spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
-                spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
                 (
-                    spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),
                 isotope_err_bounds,
                 10000)
@@ -468,10 +466,10 @@ function huberTuningSearch(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][scan_idx], 
-                                        spectra[:intensities][scan_idx], 
+                                        spectra[:mz_array][scan_idx], 
+                                        spectra[:intensity_array][scan_idx], 
                                         mass_err_model,
-                                        spectra[:highMass][scan_idx],
+                                        spectra[:highMz][scan_idx],
                                         UInt32(scan_idx), 
                                         ms_file_idx)
 
@@ -599,7 +597,7 @@ function secondSearch(
         if scan_idx == 0 
             continue
         end
-        if scan_idx > length(spectra[:masses])
+        if scan_idx > length(spectra[:mz_array])
             continue
         end
 
@@ -614,7 +612,7 @@ function secondSearch(
         irt = rt_to_irt(spectra[:retentionTime][scan_idx])
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-        prec_mz_string_new = string(spectra[:centerMass][scan_idx])
+        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
 
         if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
@@ -641,10 +639,10 @@ function secondSearch(
                 rt_index,
                 irt_start,
                 irt_stop,
-                spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
-                spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
                 (
-                    spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),
                 isotope_err_bounds,
                 10000)
@@ -655,10 +653,10 @@ function secondSearch(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][scan_idx], 
-                                        spectra[:intensities][scan_idx], 
+                                        spectra[:mz_array][scan_idx], 
+                                        spectra[:intensity_array][scan_idx], 
                                         mass_err_model,
-                                        spectra[:highMass][scan_idx],
+                                        spectra[:highMz][scan_idx],
                                         UInt32(scan_idx), 
                                         ms_file_idx)
 
@@ -720,7 +718,7 @@ function secondSearch(
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(spectra[:intensities][scan_idx])), 
+                Float32(sum(spectra[:intensity_array][scan_idx])), 
                 scan_idx,
                 min_spectral_contrast = min_spectral_contrast,
                 min_log2_matched_ratio = min_log2_matched_ratio,
@@ -799,7 +797,7 @@ function getChromatograms(
         if scan_idx == 0 
             continue
         end
-        if scan_idx > length(spectra[:masses])
+        if scan_idx > length(spectra[:mz_array])
             continue
         end
         ###########
@@ -813,7 +811,7 @@ function getChromatograms(
         irt = rt_to_irt(spectra[:retentionTime][scan_idx])
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1) #First RT bin to search
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x, r)->r.ub>x) + 1, length(rt_index.rt_bins)) #Last RT bin to search 
-        prec_mz_string_new = string(spectra[:centerMass][scan_idx])
+        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
         prec_mz_string_new = prec_mz_string_new[1:max(length(prec_mz_string_new), 6)]
 
         if (irt_start_new != irt_start) | (irt_stop_new != irt_stop) | (prec_mz_string_new != prec_mz_string)
@@ -841,10 +839,10 @@ function getChromatograms(
                 rt_index,
                 irt_start,
                 irt_stop,
-                spectra[:centerMass][scan_idx] - spectra[:isolationWidth][scan_idx]/2.0f0,
-                spectra[:centerMass][scan_idx] + spectra[:isolationWidth][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
+                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
                 (
-                    spectra[:lowMass][scan_idx], spectra[:highMass][scan_idx]
+                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),
                 isotope_err_bounds,
                 10000)
@@ -855,10 +853,10 @@ function getChromatograms(
                                         ionMisses, 
                                         ionTemplates, 
                                         ion_idx, 
-                                        spectra[:masses][scan_idx], 
-                                        spectra[:intensities][scan_idx], 
+                                        spectra[:mz_array][scan_idx], 
+                                        spectra[:intensity_array][scan_idx], 
                                         mass_err_model,
-                                        spectra[:highMass][scan_idx],
+                                        spectra[:highMz][scan_idx],
                                         UInt32(scan_idx), 
                                         ms_file_idx)
         sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
@@ -988,7 +986,7 @@ function massErrorSearch(
         return scan_to_prec_idx
     end
 
-    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra[:masses]))
+    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra[:mz_array]))
   
     ########
     #Each thread needs to handle a similair number of peaks. 
@@ -1034,9 +1032,9 @@ function LibrarySearch(
     kwargs...)
     #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
     thread_tasks, total_peaks = partitionScansToThreads(
-                                                            spectra[:masses],
+                                                            spectra[:mz_array],
                                                             spectra[:retentionTime],
-                                                            spectra[:centerMass],
+                                                            spectra[:centerMz],
                                                             spectra[:msOrder],
                                                             Threads.nthreads(),
                                                             1

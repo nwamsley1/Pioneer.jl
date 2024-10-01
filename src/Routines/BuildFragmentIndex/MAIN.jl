@@ -122,11 +122,11 @@ if params_[:auto_detect_frag_bounds]
 
     MS_TABLE = Arrow.Table(params_[:frag_bound_detection_raw_file])
     frag_bounds, prec_mz_min, prec_mz_max = getFragBounds(
-        MS_TABLE[:centerMass],
-        MS_TABLE[:isolationWidth],
+        MS_TABLE[:centerMz],
+        MS_TABLE[:isolationWidthMz],
         MS_TABLE[:msOrder],
-        MS_TABLE[:lowMass],
-        MS_TABLE[:highMass])
+        MS_TABLE[:lowMz],
+        MS_TABLE[:highMz])
     prec_mz_min -= 1.0f0
     prec_mz_max += 1.0f0
 else

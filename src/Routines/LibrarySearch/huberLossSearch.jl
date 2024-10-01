@@ -37,9 +37,9 @@ function huberLossSearch(
         #For example if there are 10,000 scans and two threads, choose n so that
         #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
         #of scans have an equal number of fragment peaks in the spectra
-        thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
+        thread_tasks, total_peaks = partitionScansToThreads(spectra[:mz_array],
                                                             spectra[:retentionTime],
-                                                            spectra[:centerMass],
+                                                            spectra[:centerMz],
                                                             spectra[:msOrder],
 
                                                             Threads.nthreads(),
