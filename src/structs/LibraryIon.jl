@@ -116,12 +116,13 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     sulfur_count::UInt8
 end
 
+# Define custom serialization
+JLD2.writeas(::Type{<:DetailedFrag}) = Vector{Any}
 
-# Define how to convert the loaded type to your current type
-function JLD2.rconvert(::Type{DetailedFrag{T}}, x::JLD2.ReconstructedStatic) where T
-    DetailedFrag{T}(
-        x.prec_id, 
-        x.mz, 
+function JLD2.wconvert(::Type{Vector{Any}}, x::DetailedFrag{T}) where T
+    return Any[
+        x.prec_id,
+        x.mz,
         x.intensity,
         x.ion_type,
         x.is_y,
@@ -132,8 +133,37 @@ function JLD2.rconvert(::Type{DetailedFrag{T}}, x::JLD2.ReconstructedStatic) whe
         x.ion_position,
         x.prec_charge,
         x.rank,
-        x.sulfur_count
-        )  # Fill in all fields
+        x.sulfur_count,
+        T  # Save the type parameter
+    ]
+end
+
+function JLD2.rconvert(::Type{<:DetailedFrag}, v::Vector{Any})
+    T = v[end]  # Get the type parameter
+    return DetailedFrag{T}(
+        v[1],    # prec_id
+        v[2],    # mz
+        v[3],    # intensity
+        v[4],    # ion_type
+        v[5],    # is_y
+        v[6],    # is_b
+        v[7],    # is_p
+        v[8],    # is_isotope
+        v[9],    # frag_charge
+        v[10],   # ion_position
+        v[11],   # prec_charge
+        v[12],   # rank
+        v[13]    # sulfur_count
+    )
+end
+
+# Example usage
+function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
+    jldsave(filename; data)
+end
+
+function load_detailed_frags(filename::String)
+    return load(filename, "data")
 end
 
 ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
@@ -184,6 +214,7 @@ function DetailedFrag{T}(x::NamedTuple) where T
     )
 end
 
+#=
 function LibraryFragmentLookup(
     frags::Vector{JLD2.ReconstructedStatic{Symbol("DetailedFrag{Float32}"), 
     (:prec_id, :mz, :intensity, :ion_type, :is_y, :is_b, :is_p, :is_isotope, :frag_charge, :ion_position, :prec_charge, :rank, :sulfur_count), T}},
@@ -196,7 +227,7 @@ function LibraryFragmentLookup(
                             x.rank, x.sulfur_count) for x in frags]
     LibraryFragmentLookup(converted_frags, indices)
 end
-
+=#
 
 getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::LibraryFragmentLookup{<:AbstractFloat}) = lfp.frags
