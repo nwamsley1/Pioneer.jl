@@ -28,5 +28,17 @@ include(joinpath(@__DIR__, "Routines","LibrarySearch","methods","loadSpectralLib
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
 include(joinpath(@__DIR__, "Routines","ThreeProteomeAnalysis.jl"))
-export SearchDIA, ThreeProteomeAnalysis
+const charge_facs = Float64[1, 0.9, 0.85, 0.8, 0.75]
+const prediction_model_options =  Set(["unispec","prosit_2020_hcd","AlphaPeptDeep"])
+const prediction_model_to_annotation_type = Dict(
+    "unispec" => UniSpecFragAnnotation("y1^1"),
+    "prosit_2020_hcd" => GenericFragAnnotation("y1+1"),
+    "AlphaPeptDeep" => GenericFragAnnotation("y1+1")
+)
+const prediction_model_to_model_type = Dict(
+    "unispec" => InstrumentSpecificModel("unispec"),
+    "prosit_2020_hcd" => InstrumentAgnosticModel("prosit_2020_hcd"),
+    "AlphaPeptDeep" => InstrumentSpecificModel("AlphaPeptDeep")
+)
+export SearchDIA, ThreeProteomeAnalysis, BuildSpecLib
 end

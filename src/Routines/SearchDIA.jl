@@ -1,6 +1,7 @@
 function SearchDIA(params_path::String)
     println("JLD2 version is: ", Pkg.installed()["JLD2"])
     total_time = @timed begin
+    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
     params = JSON.parse(read(params_path, String));
 
     MS_DATA_DIR = params["ms_data_dir"];

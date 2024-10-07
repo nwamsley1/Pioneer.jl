@@ -11,7 +11,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
 
     println("Loading spectral libraries into main memory...")
     spec_lib = Dict{String, Any}()
-    detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_frags"]
+    detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["data"]
     prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
     #Is this still necessary?
