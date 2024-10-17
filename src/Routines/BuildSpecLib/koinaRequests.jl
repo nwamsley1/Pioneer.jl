@@ -162,12 +162,28 @@ Parse text output from koina into a dataframe
 function parseBatchToTable(
     json_out::Vector{Any})::Tuple{DataFrame, Int64}
     df = DataFrame()
+    n_precs, n_frags_per_prec = first(json_out)["shape"]
+    n_rows = n_precs*n_frags_per_prec
     for col in json_out
+
         col_name = Symbol(col["name"])
         if col_name ∈[:intensities, :mz]
             df[!,col_name] = Float32.(col["data"])
         else
-            df[!,:annotation] = string.(col["data"])
+            if length(col["data"]) == size(df, 1)
+                df[!,:annotation] = string.(col["data"])
+            else
+               
+                df[!,:annotation] = Vector{String}(undef, first(col["shape"])*last(col["shape"]))
+                i = 1
+                for peptide in col["data"]
+                    for frag in peptide
+                        df[i,:annotation] = string.(frag)
+                        i += 1
+                    end
+                end
+                #df[!,:annotation] = string.(reduce(vcat, col["data"]))
+            end
         end
     end
     return (df, Int64(last(first(json_out)["shape"])))
@@ -196,8 +212,9 @@ function filterEachPrecursor!(
     df::DataFrame;
     intensity_threshold::Float32 = 0.001f0
     )
-    filter!(x->x.intensities::Float32>intensity_threshold, df) #Filter invalid intensities
-    filter!(x->x.mz::Float32>zero(Float32), df) #Filter invalid masses
+    ctype = eltype(df[!,:intensities])
+    filter!(x->x.intensities::ctype>intensity_threshold, df) #Filter invalid intensities
+    filter!(x->x.mz::ctype>zero(Float32), df) #Filter invalid masses
     filter!(x->!occursin('i', x.annotation::String), df) #Filter out M1+ isotopes
 end
 
@@ -378,4 +395,52 @@ function predictFragments(
             frags_out
         )
     end
+end
+
+function predictFragments(
+    frags_out_path::String, #"/Users/n.t.wamsley/Desktop/test_out.arrow",
+    altimeter_dir::String,
+    intensity_threshold::Float32 = 0.001f0)
+
+    println("Getting json fpaths...")
+    ordered_altimeter_json_paths = joinpath.(
+        altimeter_dir,
+        sort(
+            readdir(altimeter_dir), 
+            by = x->parse(Int64, String(split(split(x,'_')[end], '.')[1])) #Names in format of "Altimiter_####.json"
+            )
+    )
+    precursor_idx = one(UInt32)
+    println("Reading Altimeter Outputs...")
+    batch_dfs = DataFrame()
+    batch_counter = 0
+    for (fid, batch_path) in ProgressBar(enumerate(ordered_altimeter_json_paths))
+        df, frags_per_prec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"])
+        addPrecursorID!(
+            df, 
+            UInt32(precursor_idx),
+            frags_per_prec
+        ) 
+        precursor_idx = df[end,:precursor_idx] + one(UInt32)
+        filterEachPrecursor!(df, intensity_threshold = intensity_threshold)
+        sortEachPrecursor!(
+                df, 
+                :intensities,
+                )
+        batch_dfs = vcat(batch_dfs, df)
+        batch_counter += 1
+        if batch_counter > 500
+            println("Batch finished...")
+            Arrow.append(frags_out_path,
+                    batch_dfs)
+            batch_dfs = nothing
+            df = nothing
+            GC.gc()
+            batch_dfs = DataFrame()
+            batch_counter = 0
+        end
+    end
+    Arrow.append(frags_out_path,
+    batch_dfs)
+
 end

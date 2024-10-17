@@ -360,14 +360,14 @@ function LFQ(prot::DataFrame,
             end
         end
         filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
-        
+        out[!,:abundance] = exp2.(out[!,:log2_abundance])
         Arrow.append(
             protein_quant_path,
             select!(
                 out,
                 [:file_name,
                  :target,
-                 :species,:protein,:peptides,:n_peptides,:log2_abundance])
+                 :species,:protein,:peptides,:n_peptides,:abundance])
         )
     end
 

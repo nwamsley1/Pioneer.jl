@@ -348,6 +348,7 @@ function getMassErrors(
     return @view(all_fmatches[1:frag_err_idx])
 end
 
+
 function huberTuningSearch(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
@@ -532,6 +533,7 @@ function huberTuningSearch(
     end
     return DataFrame(tuning_results)
 end
+
 
 function secondSearch(
                     spectra::Arrow.Table,
@@ -786,11 +788,11 @@ function getChromatograms(
     precursor_transmission = zeros(Float32, 5)
     irt_start, irt_stop = 1, 1
     prec_mz_string = ""
-
+    reached_max_iters = 0
     rt_idx = 0
     prec_temp_size = 0
     precs_temp = Vector{UInt32}(undef, 50000)
-    
+    test_vals = Float32[]
     ##########
     #Iterate through spectra
     for scan_idx in thread_task
@@ -886,17 +888,51 @@ function getChromatograms(
             end
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
+            #_δ_ = (sort(abs.(_residuals_[1:Hs.m]), rev=true)[min(Hs.n, Hs.m)])
+            #_δ_ = Float32(100000.0f0)#Float32(iqr(abs.(_residuals_[1:Hs.m]))*1.5)
             #Spectral deconvolution. Hybrid bisection/newtowns method
-            solveHuber!(Hs, _residuals_, _weights_, 
-                            δ, λ, 
-                            max_iter_newton, 
-                            max_iter_bisection,
-                            max_iter_outer,
-                            accuracy_newton,
-                            accuracy_bisection,
-                            10.0,#Hs.n/10.0,
-                            max_diff
-                            );
+            #_δ_ = 100000.0f0
+            #for _index_ in range(1, 2)
+                solveHuber!(Hs, _residuals_, _weights_, 
+                                δ, 
+                                #_δ_,
+                                λ, 
+                                max_iter_newton, 
+                                max_iter_bisection,
+                                max_iter_outer,
+                                accuracy_newton,
+                                accuracy_bisection,
+                                10.0,#Hs.n/10.0,
+                                max_diff
+                                );
+                #_δ_ = Float32(quantile(abs.(_residuals_[1:Hs.m]), 0.9))
+            #    _δ_ = maximum(_weights_[1:Hs.n])/100.0f0
+                #_δ_ = 10.0f0
+            #end
+                #_δ_ = Float32(iqr(abs.(_residuals_[1:Hs.m]))*3)
+                            #Spectral deconvolution. Hybrid bisection/newtowns method
+            #push!(test_vals, _δ_)
+            #end
+            
+            #=
+            iters = 0
+            for _δ_ in [1500.0f0]
+                iters = solveHuber!(Hs, _residuals_, _weights_, 
+                _δ_, λ, 
+                max_iter_newton, 
+                max_iter_bisection,
+                max_iter_outer,
+                accuracy_newton,
+                accuracy_bisection,
+                10.0,#Hs.n/10.0,
+                max_diff
+                );
+                if iters >= max_iter_outer
+                    reached_max_iters += 1
+                end
+            end
+            =#
+            #push!(reached_max_iters, iters)
             for j in range(1, prec_temp_size)
                 if !iszero(IDtoCOL[precs_temp[j]])
                     rt_idx += 1
@@ -949,7 +985,8 @@ function getChromatograms(
         reset!(IDtoCOL);
         reset!(Hs);
     end
-
+    #println(describe(test_vals))
+    #println("describe(reached_max_iters): ", reached_max_iters)
     return DataFrame(@view(chromatograms[1:rt_idx]))
 end
 

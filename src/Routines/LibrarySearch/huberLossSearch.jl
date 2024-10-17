@@ -149,6 +149,7 @@ function getHuberLossParam(
     precursor_weights;
     minimum_percent_diff::Float32 = 10.0f0)
     psms = []
+
     for (key, sub_bpsms) in ProgressBar(pairs(gbpsms))
         ms_file_idx = key[:ms_file_idx]
         MS_TABLE_PATH = MS_TABLE_PATHS[ms_file_idx]
@@ -182,6 +183,7 @@ function getHuberLossParam(
             ));
     end
     psms = vcat(psms...);
+
     gpsms = groupby(psms, [:precursor_idx,:ms_file_idx,:scan_idx])
 
 
@@ -223,6 +225,7 @@ function getHuberLossParam(
     combdf = combine(gpsms) do sdf
         processHuberLossCurve(sdf[!,:weight],sdf[!,:huber_δ])
     end
+
     #Filter examples with incomplete curves
     filter!(x->x.n==length(huber_δs), combdf)
     #Filter on minimum fold difference between high/low huber_δ value

@@ -1,5 +1,6 @@
 function SearchDIA(params_path::String)
-    println("JLD2 version is: ", Pkg.installed()["JLD2"])
+    #println("JLD2 version is: ", Pkg.installed()["JLD2"])
+    #println("TESTTESTTEST")
     total_time = @timed begin
     #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
     params = JSON.parse(read(params_path, String));
@@ -71,7 +72,7 @@ function SearchDIA(params_path::String)
     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
+    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -176,6 +177,7 @@ function SearchDIA(params_path::String)
     delta_exp = params_[:deconvolution_params]["huber_delta_exp"];
     delta_iters = params_[:deconvolution_params]["huber_delta_iters"];
     huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
+
     println("Optimize Huber Loss Smoothing Parameter...")
     params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
         huber_δs,
@@ -358,6 +360,7 @@ function SearchDIA(params_path::String)
     precursors_wide_arrow = writePrecursorCSV(
         joinpath(results_folder, "precursors_long.arrow"),
         sort(collect(values(file_id_to_parsed_name))),
+        false,#normalized
         write_csv = params_[:output_params]["write_csv"],
         )
      #Summarize Precursor ID's
@@ -369,7 +372,7 @@ function SearchDIA(params_path::String)
     LFQ(
         DataFrame(Arrow.Table(joinpath(results_folder, "precursors_long.arrow"))),
         joinpath(results_folder, "protein_groups_long.arrow"),
-        :peak_area_normalized,
+        :peak_area,
         file_id_to_parsed_name,
         0.01f0,
         pg_qval_interp,
@@ -384,6 +387,23 @@ function SearchDIA(params_path::String)
         sort(collect(values(file_id_to_parsed_name))),
         write_csv = params_[:output_params]["write_csv"],
         )
+
+        #=
+        new_path = "/Users/n.t.wamsley/Desktop/astral_test_AltimeterFirstTry"
+        mkdir(new_path)
+        ThreeProteomeAnalysis(
+        "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS",
+            "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
+            new_path
+        )
+
+                ThreeProteomeAnalysis(
+        "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS",
+            "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
+            "/Users/n.t.wamsley/Desktop/astral_test_out_nonnorm"
+        )
+
+        =#
     println("QC Plots")
     if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
         rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))

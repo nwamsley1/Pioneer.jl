@@ -93,6 +93,7 @@ function ThreeProteomeAnalysis(
         gdf = groupby(sub_precursors_wide,:unique_species)
         for (species, precursors) in pairs(gdf)
             println("$species has ", size(precursors, 1), " precursors")
+            println("$species has ", std(precursors[!,:log2_diff]))
         end
 
         open(text_results_path,"w") do io1
@@ -105,13 +106,14 @@ function ThreeProteomeAnalysis(
         p = plot(legenZd=:outertopright, show = true, title = "Olsen Astral Benchmark Pioneer \n 3of3, CV<20%, 1% FDR \n $total_passing_precs Precursors",
         topmargin=5mm, dpi = 300)
         i = 1
-        xlim = (quantile(sub_precursors_wide[!,:log2_diff], 0.001), quantile(sub_precursors_wide[!,:log2_diff], 0.999))
-        ylim = (-3, 3)
+        #xlim = (quantile(sub_precursors_wide[!,:log2_diff], 0.001), quantile(sub_precursors_wide[!,:log2_diff], 0.999))
+        xlim = (-3.5, 3.5)
+        ylim = (0, 2.5)
         #SPECIES_TO_LOG2FC = Dict("HUMAN" => 0.0,
         #                     "YEAST" => -1.0,
         #                     "ECOLI" => log2(3.0))
         for k in ["HUMAN","YEAST","ECOLI"]
-            density!(p, gdf[(unique_species = k,)][:,:log2_diff], color = i, label=nothing, bins = LinRange(-3, 3, 100), xlim = xlim, show = true, normalize = :probability)
+            density!(p, gdf[(unique_species = k,)][:,:log2_diff], color = i, label=nothing, bins = LinRange(-3, 3, 100), xlim = xlim, ylim = ylim, show = true, normalize = :probability)
             vline!([species_to_log2fc[k]], color = i, legend = true,
                 label="$(nt[i][:unique_species])"
             )
@@ -126,14 +128,14 @@ function ThreeProteomeAnalysis(
         return 
     end
 
-    precursors_wide = DataFrame(Tables.columntable(Arrow.Table(joinpath(results_folder, "protein_groups_wide.arrow"))))
+    pg_wide = DataFrame(Tables.columntable(Arrow.Table(joinpath(results_folder, "protein_groups_wide.arrow"))))
     proteome_results_dir = joinpath(out_dir,"three_proteome_results")
     if !isdir(proteome_results_dir)
         mkdir(proteome_results_dir)
     end
 
-    content = read(key_file_path, String)
-    lines = split(content, '\n')
+    content_ = read(key_file_path, String)
+    lines = split(content_, '\n')
     condition_keys = Vector{String}(split(lines[2],','))
     comparisons = lines[4:end]
     condition_to_columns = Dictionary{String, Vector{Symbol}}()
@@ -141,17 +143,17 @@ function ThreeProteomeAnalysis(
         insert!(
             condition_to_columns,
             condition_key,
-            [Symbol(colname) for colname in names(precursors_wide) if occursin(condition_key, colname)]
+            [Symbol(colname) for colname in names(pg_wide) if occursin(condition_key, colname)]
         )
     end
-    #precursors_wide = precursors_wide[getModsFilter(precursors_wide[!,:structural_mods]),:]
-    precursors_wide = precursors_wide[getSpeciesFilter(precursors_wide[!,:species]),:]
+    #pg_wide = pg_wide[getModsFilter(pg_wide[!,:structural_mods]),:]
+    pg_wide = pg_wide[getSpeciesFilter(pg_wide[!,:species]),:]
     for (condition_key, condition_columns) in pairs(condition_to_columns)
-        row_major = collect(Matrix(precursors_wide[!,condition_columns])')
+        row_major = collect(Matrix(pg_wide[!,condition_columns])')
         condition_newcols = DataFrame(summarizeCondition(row_major))
-        precursors_wide[!,Symbol(condition_key*"_CV")] = condition_newcols[!,:CV]
-        precursors_wide[!,Symbol(condition_key*"_Mean")] = condition_newcols[!,:Mean]
-        precursors_wide[!,Symbol(condition_key*"_N")] = condition_newcols[!,:N]
+        pg_wide[!,Symbol(condition_key*"_CV")] = condition_newcols[!,:CV]
+        pg_wide[!,Symbol(condition_key*"_Mean")] = condition_newcols[!,:Mean]
+        pg_wide[!,Symbol(condition_key*"_N")] = condition_newcols[!,:N]
     end
     #base_cols = [Symbol(x) for x in ["species","accession_numbers","sequence","structural_mods","isotopic_mods","precursor_idx","target"]]
     base_cols = [Symbol(x) for x in ["species","protein","target"]]
@@ -172,11 +174,12 @@ function ThreeProteomeAnalysis(
             condition_a,
             condition_b,
             base_cols,
-            precursors_wide,
+            pg_wide,
             species_to_log2fc,
             proteome_results_dir,
-            true,
-            "protein_groups"
+            false,
+            "protein_groups",
+            max_cv = 20.0f0#typemax(Float32)
         )
     end
 
@@ -230,7 +233,8 @@ function ThreeProteomeAnalysis(
             species_to_log2fc,
             precursors_results_dir,
             false,
-            "precursors"
+            "precursors",
+            max_cv = 20.0f0,#typemax(Float32)
         )
     end
 

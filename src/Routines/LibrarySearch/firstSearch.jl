@@ -55,7 +55,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                         spec_lib["precursors"][:missed_cleavages],
                         spec_lib["precursors"][:is_decoy],
                         spec_lib["precursors"][:irt],
-                        spec_lib["precursors"][:prec_charge]);
+                        spec_lib["precursors"][:prec_charge],
+                        MS_TABLE[:retentionTime],
+                        MS_TABLE[:TIC],
+                        MS_TABLE[:mz_array]);
     sort!(psms, :irt);
     #Observed irt estimates based on pre-search
     psms[!,:irt_observed] = rt_to_irt_map_dict[ms_file_idx].(psms[!,:rt])
@@ -91,14 +94,13 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
                                 max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
-
     getProbs!(psms);
     getBestPSMs!(psms,
                     spec_lib["precursors"][:mz],
                     max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
-    
+
     #irt_diffs is the difference between the first and last psm for a precursor
     #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
     fwhms = skipmissing(psms[!,:fwhm])

@@ -122,6 +122,7 @@ function quantSearch(
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 
+                                            MS_TABLE[:retentionTime],
                                             spec_lib["precursors"][:mz],
                                             spec_lib["precursors"][:prec_charge], 
                                             spec_lib["precursors"][:is_decoy],
@@ -154,6 +155,8 @@ function quantSearch(
                 precursors[:irt],
                 precursors[:prec_charge],
                 precursors[:missed_cleavages],
+                MS_TABLE[:TIC],
+                MS_TABLE[:mz_array],
                 ms_file_idx,
                 rt_irt,
                 precID_to_iRT

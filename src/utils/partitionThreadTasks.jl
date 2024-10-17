@@ -43,10 +43,10 @@ function partitionScansToThreadsQuant(spectra::Arrow.List{Union{Missing, SubArra
     return thread_tasks, total_peaks
 end
 
-function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
-                                rt::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},
-                                prec_mz::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},
-                                ms_order::Arrow.Primitive{Union{Missing, Int32}, Vector{Int32}},
+function partitionScansToThreads(spectra::AbstractArray,
+                                rt::AbstractVector{Float32},
+                                prec_mz::AbstractVector{Union{Missing, Float32}},
+                                ms_order::AbstractVector{UInt8},
                                 n_threads::Int,
                                 tasks_per_thread::Int)
     total_peaks = sum(length.(spectra))

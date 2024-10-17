@@ -6,12 +6,18 @@ function getQuantSplines(psms_paths::Vector{String},
     min_rt, max_rt = typemax(Float32), typemin(Float32)
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        #psms = psms[psms[!,:species].=="HUMAN",:]
         sort!(psms, :irt_obs, alg = QuickSort)
+        if minimum(psms[!,:irt_obs])<min_rt
+            min_rt = minimum(psms[!,:irt_obs])
+        end
+        if maximum(psms[!,:irt_obs])>max_rt
+            max_rt = maximum(psms[!,:irt_obs])
+        end
         nprecs = size(psms, 1)
         bin_size = nprecs÷N
         median_quant = zeros(Float64,N);
         median_rts = zeros(Float64, N);
-
         for bin_idx in range(1, N)
             bin_start = (bin_idx - 1)*bin_size + 1
             bin_stop = bin_idx*bin_size
@@ -24,12 +30,7 @@ function getQuantSplines(psms_paths::Vector{String},
             median_rts,
             3, spline_n_knots
         )
-        if minimum(psms[!,:irt_obs])<min_rt
-            min_rt = minimum(psms[!,:irt_obs])
-        end
-        if maximum(psms[!,:irt_obs])>max_rt
-            max_rt = maximum(psms[!,:irt_obs])
-        end
+
         insert!(quant_splines, fpath, splinefit)
     end
     return quant_splines, (min_rt, max_rt)
