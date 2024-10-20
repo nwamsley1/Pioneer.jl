@@ -43,12 +43,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         unscored_psms = unscored_psms,
         spectral_scores = spectral_scores,
         prec_to_score = precs,
-        mass_err_model = frag_err_dist_dict[ms_file_idx],
+        mass_err_model = frag_err_dist_dict[ms_file_idx],#MassErrorModel(0.9f0, (12.0f0, 17.0f0)),#frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,
         params = params_[:first_search_params],
         quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                         )...)
-
     addMainSearchColumns!(psms, MS_TABLE, 
                         rt_to_irt_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
@@ -75,7 +74,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     :city_block,
                     :entropy_score,
                     :scribe,
-                    #:combined,
                     :charge2,
                     :poisson,
                     :irt_error,
@@ -84,16 +82,19 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
                     :charge,
                     :TIC,
                     :y_count,
-                    #:i_count,
                     :err_norm,
                     :spectrum_peak_count,
                     :intercept]
 
-    scoreMainSearchpsms!(psms,
+    try 
+        scoreMainSearchpsms!(psms,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
                                 max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
                                 max_q_value = params_[:first_search_params]["max_q_value_probit_rescore"]);
+    catch
+        psms[!,:score] .= one(Float32)
+    end
     getProbs!(psms);
     getBestPSMs!(psms,
                     spec_lib["precursors"][:mz],
@@ -103,6 +104,9 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 
     #irt_diffs is the difference between the first and last psm for a precursor
     #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
+    println("A")
+    println("MS_TABLE_PATH $MS_TABLE_PATH, ", size(psms))
+    println("B")
     fwhms = skipmissing(psms[!,:fwhm])
     fwhm_points = 0
     for fwhm in fwhms
@@ -112,17 +116,23 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
     end
 
     if fwhm_points < params_[:summarize_first_search_params]["min_inference_points"]
-        @warn "Not enough datapoints to infer peak width. n: "*string(fwhm_points)*"\n 
-        using default "*string(params_[:summarize_first_search_params]["default_irt_width"])
+        #@warn "Not enough datapoints to infer peak width. n: "*string(fwhm_points)*"\n 
+        #using default "*string(params_[:summarize_first_search_params]["default_irt_width"])
+        #Integration width is double the fwhm + n times the fwhm standard deviation
+        #as estimated from mad (median absolute deviation normalized to a robust 
+        #estimate of standard deviation )
+        insert!(
+            peak_fwhms,
+            file_id_to_parsed_name[ms_file_idx], 
+            (median_fwhm = median(fwhms), mad_fwhm = mad(fwhms, normalize = true))
+        )
+    else
+        insert!(
+            peak_fwhms,
+            file_id_to_parsed_name[ms_file_idx], 
+            (median_fwhm = median(fwhms), mad_fwhm = mad(fwhms, normalize = true))
+        )
     end
-    #Integration width is double the fwhm + n times the fwhm standard deviation
-    #as estimated from mad (median absolute deviation normalized to a robust 
-    #estimate of standard deviation )
-    insert!(
-        peak_fwhms,
-        file_id_to_parsed_name[ms_file_idx], 
-        (median_fwhm = median(fwhms), mad_fwhm = mad(fwhms, normalize = true))
-    )
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
     psms[!,:ms_file_idx] .= UInt32(ms_file_idx)
     Arrow.write(

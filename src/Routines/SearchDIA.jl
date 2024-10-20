@@ -141,8 +141,11 @@ function SearchDIA(params_path::String)
     #Use high scoring psms to map library retention times (irt)
     #onto the empirical retention times and vise-versa.
     #uniform B-spline
+    #println("typeof(RT_to_iRT_map_dict) ", typeof(RT_to_iRT_map_dict))
+    #println("RT_to_iRT_map_dict ", RT_to_iRT_map_dict)
     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
-    psms_paths,#Need to change this to a list of temporrary file paths
+    psms_paths,#Need to change this to a list of temporrary file paths]
+    RT_to_iRT_map_dict,
     min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
     )
     #Summarize list of best N precursors accross all runs. 
@@ -162,6 +165,7 @@ function SearchDIA(params_path::String)
     else
         irt_errs = Dict(zip(keys(peak_fwhms), zeros(Float32, length(keys(peak_fwhms)))))
     end
+    println("irt_errs $irt_errs")
     bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
     prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
     rt_index_paths = makeRTIndices(
@@ -203,10 +207,10 @@ function SearchDIA(params_path::String)
         complex_spectral_scores,
         precursor_weights);
 
-    if params_[:output_params]["delete_temp"]
-        rm(first_search_psms_folder,recursive=true)
-    end      
-    
+    #if params_[:output_params]["delete_temp"]
+    #    rm(first_search_psms_folder,recursive=true)
+    #end      
+        println("huber ", params_[:deconvolution_params]["huber_delta"])
     ############
     #Quantitative Search
     println("Begining Quantitative Search...")
@@ -236,8 +240,10 @@ function SearchDIA(params_path::String)
         );
 
     println("Traning Target-Decoy Model...")
+    println("max_n_samples: ", params_[:xgboost_params]["max_n_samples"])
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
+    Arrow.write("/Users/n.t.wamsley/Desktop/test_psms_quant.arrow", best_psms)
     #Wipe memory
     best_psms = nothing
     GC.gc()
@@ -260,6 +266,7 @@ function SearchDIA(params_path::String)
                     merged_quant_path
                     )
     #functions to convert "prob" to q-value and posterior-error-probability "pep" 
+    println("n_points ", params_[:xgboost_params]["precursor_prob_spline_points_per_bin"])
     precursor_pep_spline = getPEPSpline(merged_quant_path, 
                                         :prob, 
                                         min_pep_points_per_bin = params_[:xgboost_params]["precursor_prob_spline_points_per_bin"], 
@@ -275,9 +282,42 @@ function SearchDIA(params_path::String)
                                     precursor_qval_interp,
                                     0.01f0)
     #Delete Quant PSMs
-    if params_[:output_params]["delete_temp"]
-        rm(quant_psms_folder,recursive=true)
-    end
+    #if params_[:output_params]["delete_temp"]
+    #    rm(quant_psms_folder,recursive=true)
+    #end
+    #=
+        quant_psms_test = DataFrame(Arrow.Table("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/merged_quant.arrow"))
+        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
+        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:prob]
+        tbins = LinRange(0, 1, 100)
+        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+
+
+
+        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/quant_psms_folder", join=true)))
+        target_probs = quant_psms_test[quant_psms_test[!,:target],:max_unmatched_residual]
+        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:max_unmatched_residual]
+        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
+        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+
+
+        target_probs = quant_psms_test[quant_psms_test[!,:target],:fitted_manhattan_distance]
+        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:fitted_manhattan_distance]
+        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
+        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+
+
+        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/first_search_psms", join=true)))
+        quant_psms_test[!,:target] = [precursors[:target][pid] for pid in quant_psms_test[!,:precursor_idx]]
+        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
+        tbins = LinRange(0, 1, 100)
+        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
+
+    =#
     ###########
     #Score Protein Groups
     sorted_pg_score_path = getProteinGroups(

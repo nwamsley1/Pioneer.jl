@@ -170,8 +170,9 @@ function parseBatchToTable(
         if col_name ∈[:intensities, :mz]
             df[!,col_name] = Float32.(col["data"])
         else
-            if length(col["data"]) == size(df, 1)
+            #if length(col["data"]) == size(df, 1)
                 df[!,:annotation] = string.(col["data"])
+            #=
             else
                
                 df[!,:annotation] = Vector{String}(undef, first(col["shape"])*last(col["shape"]))
@@ -184,6 +185,7 @@ function parseBatchToTable(
                 end
                 #df[!,:annotation] = string.(reduce(vcat, col["data"]))
             end
+            =#
         end
     end
     return (df, Int64(last(first(json_out)["shape"])))

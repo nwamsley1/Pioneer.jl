@@ -455,7 +455,6 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     #longest_y::Vector{UInt8} = psms[!,:longest_y]
     #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:rt]
-    println(describe(rt))
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
     #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}

@@ -216,7 +216,7 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
             #frag_absolute_min, frag_min, frag_max = mass_err_model(mass, log2(intensity), 0.995f0)
             #corrected_mz, δ = getCorrectedMz(mass, intensity)
 
-            frag_min, frag_max = mass_err_model(mass)
+            frag_min, frag_max = getMzBounds(mass_err_model, mass)#mass_err_model(mass)
             #For every precursor that could have produced the observed ion
             #award to it the corresponding score
             lower_bound_guess, upper_bound_guess = queryFragment!(prec_id_to_score, 

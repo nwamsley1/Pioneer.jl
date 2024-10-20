@@ -149,11 +149,18 @@ function getPEPSpline(
             bin_size, targets, mean_prob = zero(Int64), zero(Int64), zero(Float32)
         end
     end
-    bin_target_fraction[end] = targets/bin_size
-    bin_mean_prob[end] = mean_prob/bin_size
-    #n_spline_bins = ceil(Int, length(bin_mean_prob)/15)
-    #UniformSpline(bin_target_fraction, bin_mean_prob, 3, 20)
-    return UniformSpline(bin_target_fraction, bin_mean_prob, 3, n_spline_bins)
+    bin_target_fraction[end] = targets/max(bin_size, 1)
+    bin_mean_prob[end] = mean_prob/max(bin_size, 1)
+    try 
+        return UniformSpline(bin_target_fraction, bin_mean_prob, 3, 3)
+    catch
+        _order_ = sortperm(bin_target_fraction, rev = true)
+        bin_target_fraction = bin_target_fraction[_order_]
+        bin_mean_prob = bin_mean_prob[_order_]
+        println("bin_target_fraction $bin_target_fraction")
+        println("bin_mean_prob $bin_mean_prob")
+        return UniformSpline(bin_target_fraction, bin_mean_prob, 3, n_spline_bins)
+    end
 end
 
 function getQValueSpline(

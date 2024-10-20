@@ -87,7 +87,7 @@ function BuildSpecLib(params_path::String)
         #write to a .csv file
         println("Predicting Retention Times with chronologer (Wilburn et al. 2023)...")
         #run(`python3.9 ../chronologer/Predict_RT.py $chronologer_out_path $chronologer_out_path`)
-        chronologer_dir = joinpath(@__DIR__, "../chronologer/Predict_RT.py")
+        chronologer_dir = joinpath(@__DIR__, "../../../chronologer/Predict_RT.py")
         run(`python3.9 $chronologer_dir $chronologer_out_path $chronologer_out_path`)
 
         #Parse isotope mod groups into this dictionary
@@ -135,7 +135,7 @@ function BuildSpecLib(params_path::String)
             ion_annotation_set,
             frag_name_to_idx,
             params["match_lib_build_batch"],
-            joinpath(@__DIR__, "../data/immonium.txt"),
+            joinpath(@__DIR__, "../../../data/immonium.txt"),
             lib_dir,
             Dict{String, Int8}(), #mods to sulfur dict 
             iso_mod_to_mass,

@@ -61,7 +61,6 @@ function parameterTuningSearch(rt_alignment_folder,
                                                     );
 
             psms = vcat([result for result in RESULT]...)
-            println("size(psms) ", size(psms))
             psms[!,:best_psms ] .= false
             addPreSearchColumns!(psms, 
                                         MS_TABLE, 
