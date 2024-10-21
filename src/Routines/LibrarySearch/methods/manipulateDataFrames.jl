@@ -2,7 +2,9 @@ function addPreSearchColumns!(psms::DataFrame,
                                 MS_TABLE::Arrow.Table, 
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
-                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}}) where {T<:AbstractFloat}
+                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
+                                scan_retention_time::AbstractVector{Float32},
+                                tic::AbstractVector{Float32}) where {T<:AbstractFloat}
     
     N = size(psms, 1)
     decoys = zeros(Bool, N);
@@ -15,8 +17,9 @@ function addPreSearchColumns!(psms::DataFrame,
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
     matched_ratio::Vector{Float16} = psms[!,:matched_ratio]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    
+    #tic = MS_TABLE[:TIC]::SentinelArrays.ChainedVector{Float32, Arrow.Primitive{Float32, Vector{Float32}}}
+    #scan_retention_time = MS_TABLE[:retentionTime]::SentinelArrays.ChainedVector{Float32, Arrow.Primitive{Float32, Vector{Float32}}}
 
     tasks_per_thread = 10
     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -69,11 +72,14 @@ end
 function addMainSearchColumns!(psms::DataFrame, 
                                 MS_TABLE::Arrow.Table, 
                                 rt_irt::UniformSpline,
-                                structural_mods::Arrow.List{String, Int32, Vector{UInt8}},
+                                structural_mods::AbstractVector{Union{Missing, String}},
                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
-                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}};
+                                prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
+                                scan_retention_time::AbstractVector{Float32},
+                                tic::AbstractVector{Float32},
+                                masses::AbstractArray;
                                 ) where {T<:AbstractFloat}
     
     ###########################
@@ -93,9 +99,9 @@ function addMainSearchColumns!(psms::DataFrame,
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     error::Vector{Float32} = psms[!,:error]
     total_ions::Vector{UInt8} = psms[!,:y_count] .+ psms[!,:b_count]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
+    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #masses = MS_TABLE[:mz_array]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
     function countMOX(seq::String)
         return UInt8(count("Unimod:35", seq))
     end
@@ -112,7 +118,7 @@ function addMainSearchColumns!(psms::DataFrame,
 
                 targets[i] = prec_is_decoy[prec_idx] == false;
                 missed_cleavage[i] = prec_missed_cleavages[prec_idx]
-                Mox[i] = countMOX(structural_mods[prec_idx])::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
+                Mox[i] = countMOX(coalesce(structural_mods[prec_idx], ""))::UInt8 #UInt8(length(collect(eachmatch(r"ox",  precursors[precursor_idx[i]].sequence))))
                 irt_pred[i] = Float32(prec_irt[prec_idx]);
                 rt[i] = Float32(scan_retention_time[scan_idx[i]]);
                 irt[i] = rt_irt(rt[i])
@@ -193,6 +199,7 @@ end
 
 function addSecondSearchColumns!(psms::DataFrame, 
                         MS_TABLE::Arrow.Table, 
+                        scan_retention_time::AbstractVector{Float32},
                         prec_mz::AbstractVector{T},
                         prec_charge::AbstractVector{UInt8},
                         prec_is_decoy::AbstractVector{Bool},
@@ -223,7 +230,7 @@ function addSecondSearchColumns!(psms::DataFrame,
     error::Vector{Float32} = psms[!,:error]
     #psms[!,:total_ions]
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
-    scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #scan_retention_time = MS_TABLE[:retentionTime]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     matched_ratio::Vector{Float16} = psms[!,:matched_ratio]
 
     tasks_per_thread = 5
@@ -334,8 +341,8 @@ function getIsotopesCaptured!(chroms::DataFrame,
                 charge = prec_charge[prec_id]
 
                 scan_id = chroms[i,:scan_idx]
-                scan_mz = MS_TABLE[:centerMass][scan_id]
-                window_width = MS_TABLE[:isolationWidth][scan_id]
+                scan_mz = MS_TABLE[:centerMz][scan_id]
+                window_width = MS_TABLE[:isolationWidthMz][scan_id]
 
                 isotopes = getPrecursorIsotopeSet(mz, 
                                                     charge, 
@@ -403,11 +410,13 @@ end
 function addPostIntegrationFeatures!(psms::DataFrame, 
                                     MS_TABLE::Arrow.Table, 
                                     precursor_sequence::AbstractArray{String},
-                                    structural_mods::AbstractArray{String},
+                                    structural_mods::AbstractArray{Union{String, Missing}},
                                     prec_mz::AbstractArray{T},
                                     prec_irt::AbstractArray{T},
                                     prec_charge::AbstractArray{UInt8},
                                     precursor_missed_cleavage::AbstractArray{UInt8},
+                                    tic::AbstractVector{Float32},
+                                    masses::AbstractArray,
                                     ms_file_idx::Integer,
                                     rt_to_irt_interp::UniformSpline,
                                     prec_id_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}) where {T<:AbstractFloat}
@@ -439,18 +448,22 @@ function addPostIntegrationFeatures!(psms::DataFrame,
     Mox = zeros(UInt8, N);
     TIC = zeros(Float16, N);
 
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] 
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
-    masses = MS_TABLE[:masses]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
+    #masses = MS_TABLE[:mz_array]::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}}
     #longest_y::Vector{UInt8} = psms[!,:longest_y]
     #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:rt]
-    tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
+    #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
     #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
     function countMOX(seq::String)
         return UInt8(count("Unimod:35", seq))
+    end
+
+    function countMOX(seq::Missing)
+        return zero(UInt8)
     end
 
 

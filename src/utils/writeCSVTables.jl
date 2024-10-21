@@ -42,19 +42,62 @@ function getModifiedSequence(
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
+
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::String,
+    structural_mods::Missing,
+    charge::UInt8)
+
+    mods = isotope_mods
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
+end
+
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::Missing,
+    structural_mods::String,
+    charge::UInt8)
+
+    mods = structural_mods
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
+end
+
+
+function getModifiedSequence(
+    sequence::String,
+    isotope_mods::Missing,
+    structural_mods::Missing,
+    charge::UInt8)
+
+    mods = ""
+    mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
+    return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
+end
+
 #Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
 #loading the entire table into memory. 
 function writePrecursorCSV(
     long_precursors_path::String,
-    file_names::Vector{String};
+    file_names::Vector{String},
+    normalized::Bool;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
     function makeWideFormat(
-        longdf::DataFrame)
-        return unstack(longdf,
-        [:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],
-        :file_name,:peak_area_normalized)
+        longdf::DataFrame,
+        normalized::Bool)
+        if normalized
+            return unstack(longdf,
+            [:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],
+            :file_name,:peak_area_normalized)
+        else
+            return unstack(longdf,
+            [:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],
+            :file_name,:peak_area)
+        end
     end
     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
     n_rows = size(precursors_long, 1)
@@ -99,7 +142,7 @@ function writePrecursorCSV(
                 if write_csv 
                     CSV.write(io1, subdf, append=true, header=false, delim="\t")
                 end
-                subunstack = makeWideFormat(subdf)
+                subunstack = makeWideFormat(subdf, normalized)
                 col_names = names(subunstack)
                 for fname in file_names
                     if fname ∉ col_names
@@ -123,8 +166,8 @@ end
 function writeProteinGroupsCSV(
     long_pg_path::String,
     sequences::AbstractVector{String},
-    isotope_mods::AbstractVector{String},
-    structural_mods::AbstractVector{String},
+    isotope_mods::AbstractVector{Union{Missing, String}},
+    structural_mods::AbstractVector{Union{String,Missing}},
     precursor_charge::AbstractVector{UInt8},
     file_names::Vector{String};
     write_csv::Bool = true,
@@ -134,7 +177,7 @@ function writeProteinGroupsCSV(
         longdf::DataFrame)
         return unstack(longdf,
         [:species,:protein,:target],
-        :file_name,:log2_abundance)
+        :file_name,:abundance)
     end
     protein_groups_long = DataFrame(Arrow.Table(long_pg_path))
     n_rows = size(protein_groups_long, 1)

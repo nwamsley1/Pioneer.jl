@@ -33,9 +33,9 @@ function secondQuant(
     #For example if there are 10,000 scans and two threads, choose n so that
     #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
     #of scans have an equal number of fragment peaks in the spectra
-    thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
+    thread_tasks, total_peaks = partitionScansToThreads(spectra[:mz_array],
                                                         spectra[:retentionTime],
-                                                        spectra[:centerMass],
+                                                        spectra[:centerMz],
                                                         spectra[:msOrder],
 
                                                         Threads.nthreads(),
@@ -125,7 +125,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             traces_passing = Set(sub_bpsms[!,:precursor_idx]),
             quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
             )...);
-
 
         #Format Chromatograms 
         getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)

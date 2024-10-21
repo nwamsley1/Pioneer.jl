@@ -149,11 +149,17 @@ function getPEPSpline(
             bin_size, targets, mean_prob = zero(Int64), zero(Int64), zero(Float32)
         end
     end
-    bin_target_fraction[end] = targets/bin_size
-    bin_mean_prob[end] = mean_prob/bin_size
-    #n_spline_bins = ceil(Int, length(bin_mean_prob)/15)
-    #UniformSpline(bin_target_fraction, bin_mean_prob, 3, 20)
-    return UniformSpline(bin_target_fraction, bin_mean_prob, 3, n_spline_bins)
+    bin_target_fraction[end] = targets/max(bin_size, 1)
+    bin_mean_prob[end] = mean_prob/max(bin_size, 1)
+    try 
+        if length(bin_target_fraction)<20
+            @warn "Less than 20 bins to estimate PEP. PEP results suspect..."
+        end
+        return UniformSpline(bin_target_fraction, bin_mean_prob, 3, 3)
+    catch
+        @warn "Failed to estimate PEP spline"
+        return UniformSpline(SVector{4, Float32}([0, 0, 0, 0]), 3, 0.0f0, 1.0f0, 100.0f0)
+    end
 end
 
 function getQValueSpline(
@@ -198,6 +204,9 @@ function getQValueSpline(
     bin_mean_prob[end] = mean_prob/bin_size
     prepend!(bin_qval, 1.0f0)
     prepend!(bin_mean_prob, 0.0f0)
+    bin_qval = bin_qval[isnan.(bin_mean_prob).==false]
+    bin_mean_prob = bin_mean_prob[isnan.(bin_mean_prob).==false]
+    #return bin_qval, bin_mean_prob
     return linear_interpolation(
         Interpolations.deduplicate_knots!(bin_mean_prob, move_knots=true),
         bin_qval, extrapolation_bc=Line())

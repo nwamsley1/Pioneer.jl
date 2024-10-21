@@ -305,7 +305,7 @@ function LFQ(prot::DataFrame,
         score_to_qval(coalesce(x.max_pg_score, 0.0f0))::Float32<q_value_threshold, 
         subdf);
         #Exclude precursors with mods that impact quantitation
-        filter!(x->!occursin("M,Unimod:35", x.structural_mods), subdf)
+        filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
             [:target, :species, :accession_numbers]
@@ -360,14 +360,14 @@ function LFQ(prot::DataFrame,
             end
         end
         filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
-        
+        out[!,:abundance] = exp2.(out[!,:log2_abundance])
         Arrow.append(
             protein_quant_path,
             select!(
                 out,
                 [:file_name,
                  :target,
-                 :species,:protein,:peptides,:n_peptides,:log2_abundance])
+                 :species,:protein,:peptides,:n_peptides,:abundance])
         )
     end
 

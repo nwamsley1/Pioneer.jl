@@ -333,7 +333,7 @@ function selectRTIndexedTransitions!(
 end
 =#
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
-                            precursor_fragment_range::UnitRange{UInt32},
+                            precursor_fragment_range::UnitRange{UInt64},
                             fragment_ions::Vector{DetailedFrag{Float32}},
                             prec_mz::Float32,
                             prec_charge::UInt8,
@@ -393,7 +393,11 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                 frag_mz, #Estimated isotopic m/z
                 Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
 
+                
                 frag.ion_type,
+                frag.is_y,
+                frag.is_b,
+                frag.is_p,
                 iso_idx>0, #Is the fragment an isotope?
 
                 frag.frag_charge,

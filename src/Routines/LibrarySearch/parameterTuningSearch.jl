@@ -66,13 +66,18 @@ function parameterTuningSearch(rt_alignment_folder,
                                         MS_TABLE, 
                                         spec_lib["precursors"][:is_decoy],
                                         spec_lib["precursors"][:irt],
-                                        spec_lib["precursors"][:prec_charge]
+                                        spec_lib["precursors"][:prec_charge],
+                                        MS_TABLE[:retentionTime],
+                                        MS_TABLE[:TIC]
                                     )
             if rtpsms === nothing
                 rtpsms = psms
             else
                 rtpsms = vcat(rtpsms, psms)
             end            
+            #println(size(rtpsms))
+            #println(sum(rtpsms.decoy)/size(rtpsms, 1))
+            #display(first(rtpsms, 5))
             scorePresearch!(rtpsms)
             getQvalues!(rtpsms[!,:prob], rtpsms[!,:target], rtpsms[!,:q_value])
             
@@ -103,7 +108,6 @@ function parameterTuningSearch(rt_alignment_folder,
                 end
                 filter!(x->x.best_psms, rtpsms)
         end
-
         rt_to_irt_map = UniformSpline( 
                                         rtpsms[!,:irt_predicted], 
                                         rtpsms[!,:rt], 

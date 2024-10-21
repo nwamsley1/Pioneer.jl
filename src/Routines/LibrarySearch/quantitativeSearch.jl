@@ -34,9 +34,9 @@ function quantSearch(
         #For example if there are 10,000 scans and two threads, choose n so that
         #thread 1 handles (0, n) and thread 2 handls (n+1, 10,000) and both seriestype
         #of scans have an equal number of fragment peaks in the spectra
-        thread_tasks, total_peaks = partitionScansToThreads(spectra[:masses],
+        thread_tasks, total_peaks = partitionScansToThreads(spectra[:mz_array],
                                                             spectra[:retentionTime],
-                                                            spectra[:centerMass],
+                                                            spectra[:centerMz],
                                                             spectra[:msOrder],
 
                                                             Threads.nthreads(),
@@ -122,6 +122,7 @@ function quantSearch(
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 
+                                            MS_TABLE[:retentionTime],
                                             spec_lib["precursors"][:mz],
                                             spec_lib["precursors"][:prec_charge], 
                                             spec_lib["precursors"][:is_decoy],
@@ -154,6 +155,8 @@ function quantSearch(
                 precursors[:irt],
                 precursors[:prec_charge],
                 precursors[:missed_cleavages],
+                MS_TABLE[:TIC],
+                MS_TABLE[:mz_array],
                 ms_file_idx,
                 rt_irt,
                 precID_to_iRT

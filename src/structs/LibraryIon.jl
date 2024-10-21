@@ -62,6 +62,10 @@ struct PioneerFrag
     intensity::Float16
     ion_type::UInt16 
     is_y::Bool
+    is_b::Bool
+    is_p::Bool
+    is_axcz::Bool
+    has_neutral_diff::Bool
     frag_index::UInt8 #posiiton of fragment
     charge::UInt8
     isotope::UInt8
@@ -70,6 +74,9 @@ struct PioneerFrag
     internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
     sulfur_count::UInt8
 end
+ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
+ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
+
 getIntensity(pf::PioneerFrag) = pf.intensity
 getMZ(pf::PioneerFrag) = pf.mz
 getType(pf::PioneerFrag) = pf.ion_type
@@ -77,9 +84,8 @@ getIndex(pf::PioneerFrag) = pf.frag_index
 getCharge(pf::PioneerFrag) = pf.charge
 getSulfurCount(pf::PioneerFrag) = pf.sulfur_count
 isY(pf::PioneerFrag) = pf.is_y
-ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
-ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
 
+#Need this information for each distinct fragment type
 #Need this information for each distinct fragment type
 struct PioneerFragAnnotation
     base_type::Char
@@ -88,12 +94,12 @@ struct PioneerFragAnnotation
     isotope::UInt8
     internal::Bool
     immonium::Bool
+    neutral_diff::Bool
     sulfur_diff::Int8
 end
-getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
-
 ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
 ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
+getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
 
 
 struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
@@ -102,7 +108,10 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     mz::T
     intensity::Float16
     
-    ion_type::UInt8
+    ion_type::UInt16
+    is_y::Bool
+    is_b::Bool
+    is_p::Bool
     is_isotope::Bool
 
     frag_charge::UInt8
@@ -112,8 +121,19 @@ struct DetailedFrag{T<:AbstractFloat} <: LibraryFragmentIon{T}
     sulfur_count::UInt8
 end
 
+
+# Example usage
+function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
+    jldsave(filename; data)
+end
+
+function load_detailed_frags(filename::String)
+    return load(filename, "data")
+end
+
 ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:DetailedFrag}) = DetailedFrag
+
 
 
 getIntensity(f::DetailedFrag) = f.intensity
@@ -131,7 +151,10 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(T), #mz
                 zero(Float16), #intensity
 
-                zero(UInt8),
+                zero(UInt16),
+                false,
+                false,
+                false,
                 false,
                 
                 zero(UInt8), #frag_charge
@@ -140,15 +163,44 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8), #rank
                 zero(UInt8)  #sulfur_count
  )
-export DetailedFrag
+ 
+
 struct LibraryFragmentLookup{T<:AbstractFloat}
     frags::Vector{DetailedFrag{T}}
-    prec_frag_ranges::Vector{UnitRange{UInt32}}
+    prec_frag_ranges::Vector{UInt64}
 end
+
+
+
+#=
+function DetailedFrag{T}(x::NamedTuple) where T
+    DetailedFrag{T}(
+        x.prec_id, x.mz, x.intensity, x.ion_type,
+        x.is_y, x.is_b, x.is_p, x.is_isotope,
+        x.frag_charge, x.ion_position, x.prec_charge,
+        x.rank, x.sulfur_count
+    )
+end
+=#
+
+#=
+function LibraryFragmentLookup(
+    frags::Vector{JLD2.ReconstructedStatic{Symbol("DetailedFrag{Float32}"), 
+    (:prec_id, :mz, :intensity, :ion_type, :is_y, :is_b, :is_p, :is_isotope, :frag_charge, :ion_position, :prec_charge, :rank, :sulfur_count), T}},
+    indices::Vector{UInt64}) where T
+    
+    converted_frags = [DetailedFrag{Float32}(
+                            x.prec_id, x.mz, x.intensity, x.ion_type,
+                            x.is_y, x.is_b, x.is_p, x.is_isotope,
+                            x.frag_charge, x.ion_position, x.prec_charge,
+                            x.rank, x.sulfur_count) for x in frags]
+    LibraryFragmentLookup(converted_frags, indices)
+end
+=#
 
 getFrag(lfp::LibraryFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::LibraryFragmentLookup{<:AbstractFloat}) = lfp.frags
-getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt32} = lfp.prec_frag_ranges[prec_idx]
+getPrecFragRange(lfp::LibraryFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
 """
     PrecursorBinItem{T<:AbstractFloat}

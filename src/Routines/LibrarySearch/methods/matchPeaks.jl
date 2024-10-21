@@ -44,6 +44,15 @@ function setMatch!(matches::Vector{M},
         append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
     end
 
+    ion_type = zero(UInt8)
+    #ion_type = transition.is_y ? one(UInt8) : zero(UInt8)
+    if transition.is_y
+        ion_type = UInt8(2)
+    elseif transition.is_p
+        ion_type = UInt8(3)
+    elseif transition.is_b
+        ion_type = UInt8(1)
+    end
     matches[i] = FragmentMatch(
                                 Float32(getIntensity(transition)), 
                                  intensity,
@@ -53,7 +62,7 @@ function setMatch!(matches::Vector{M},
                                  getIonPosition(transition),
                                  getFragCharge(transition),
                                  UInt8(0),
-                                 transition.ion_type,
+                                 ion_type,
                                  transition.is_isotope,
                                  getPrecID(transition),
                                  UInt8(1), 

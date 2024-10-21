@@ -1,3 +1,25 @@
+function load_detailed_frags(filename::String)
+    jldopen(filename, "r") do file
+        data = read(file, "data")
+        return map(x -> DetailedFrag{Float32}(
+            x.prec_id,
+            x.mz,
+            x.intensity,
+            x.ion_type,
+            x.is_y,
+            x.is_b,
+            x.is_p,
+            x.is_isotope,
+            x.frag_charge,
+            x.ion_position,
+            x.prec_charge,
+            x.rank,
+            x.sulfur_count
+        ), data)
+    end
+end
+
+
 function loadSpectralLibrary(SPEC_LIB_DIR::String)
     f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
     f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
@@ -11,8 +33,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
 
     println("Loading spectral libraries into main memory...")
     spec_lib = Dict{String, Any}()
-    detailed_frags = load(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))["detailed_fragments"]
-    prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["precursor_to_fragment_indices"]
+    detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
+    prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
     #Is this still necessary?
     #last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
@@ -20,7 +42,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
     #library_fragment_lookup_table.prec_frag_ranges[end] = last_range
     spec_lib["f_det"] = library_fragment_lookup_table
 
-    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursor_table.arrow"))#DataFrame(precursors)
+    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))#DataFrame(precursors)
     f_index = FragmentIndex(
         f_index_frag_bins[:FragIndexBin],
         f_index_rt_bins[:FragIndexBin],

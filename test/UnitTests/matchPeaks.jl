@@ -2,14 +2,14 @@ M = 100
 test_matches = [FragmentMatch{Float32}() for _ in range(1, M)];
 test_misses = [FragmentMatch{Float32}() for _ in range(1, M)];
 test_templates = [
-    DetailedFrag{Float32}(0x007a1200, 169.09715f0, Float16(0.08875), false, false, 0x01, 0x02, 0x02, 0x0e, 0x00)
-    DetailedFrag{Float32}(0x007a1200, 630.8601f0, Float16(0.0887), true, false, 0x02, 0x0c, 0x02, 0x0f, 0x01)
-    DetailedFrag{Float32}(0x007a1200, 704.3943f0, Float16(0.05826), true, false, 0x02, 0x0d, 0x02, 0x13, 0x01)
-    DetailedFrag{Float32}(0x007a1200, 747.91034f0, Float16(0.06537), true, false, 0x02, 0x0e, 0x02, 0x12, 0x02)
-    DetailedFrag{Float32}(0x007a1200, 747.91034f0, Float16(0.06537), true, false, 0x02, 0x0e, 0x02, 0x12, 0x02) #Duplicate
-    DetailedFrag{Float32}(0x007a1200, 800.91034f0, Float16(0.06537), true, false, 0x02, 0x0e, 0x02, 0x12, 0x02) #Duplicate
-    DetailedFrag{Float32}(0x007a1200, 962.58514f0, Float16(0.0668), true, false, 0x01, 0x09, 0x02, 0x11, 0x00)
-    DetailedFrag{Float32}(0x007a1200, 1668.8107f0, Float16(0.0829), false, false, 0x01, 0x10, 0x02, 0x10, 0x03)
+    DetailedFrag{Float32}(0x007a1200, 169.09715f0, Float16(0.08875), 0x02,true, false, true,false,0x01, 0x02, 0x02, 0x0e, 0x00)
+    DetailedFrag{Float32}(0x007a1200, 630.8601f0, Float16(0.0887), 0x02,true, false, true,false, 0x02, 0x0c, 0x02, 0x0f, 0x01)
+    DetailedFrag{Float32}(0x007a1200, 704.3943f0, Float16(0.05826), 0x02,true, false, true,false,0x02, 0x0d, 0x02, 0x13, 0x01)
+    DetailedFrag{Float32}(0x007a1200, 747.91034f0, Float16(0.06537), 0x02,true, false, true,false,0x02, 0x0e, 0x02, 0x12, 0x02)
+    DetailedFrag{Float32}(0x007a1200, 747.91034f0, Float16(0.06537), 0x02,true, false, true,false,0x02, 0x0e, 0x02, 0x12, 0x02) #Duplicate
+    DetailedFrag{Float32}(0x007a1200, 800.91034f0, Float16(0.06537), 0x02,true, false, true,false, 0x02, 0x0e, 0x02, 0x12, 0x02) #Duplicate
+    DetailedFrag{Float32}(0x007a1200, 962.58514f0, Float16(0.0668), 0x02,true, false, true,false, 0x01, 0x09, 0x02, 0x11, 0x00)
+    DetailedFrag{Float32}(0x007a1200, 1668.8107f0, Float16(0.0829), 0x02,true, false, true,false,0x01, 0x10, 0x02, 0x10, 0x03)
 ];
 masses = allowmissing(Float32[
     169.09715, 

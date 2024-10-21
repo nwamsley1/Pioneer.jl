@@ -70,7 +70,7 @@ function ModelMassErrs(ppm_errs::Vector{Float32};
     ppm_errs = ppm_errs .- mass_err
     l_bound = quantile(ppm_errs, frag_err_quantile)
     r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
-    errs = ppm_errs#ppm_errs .+ mass_err
+    errs = ppm_errs .+ mass_err
     plot_title = ""
     n = 0
     for i in range(1, length(out_fname))

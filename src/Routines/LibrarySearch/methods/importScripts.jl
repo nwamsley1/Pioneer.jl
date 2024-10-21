@@ -9,8 +9,10 @@ function importScripts()
                                                                     "LibraryIon.jl",
                                                                     "MatchIon.jl",
                                                                     "LibraryFragmentIndex.jl",
-                                                                    "SparseArray.jl"]];
-
+                                                                    "SparseArray.jl",
+                                                                    "fastaEntry.jl",
+                                                                    "fragBoundModel.jl",
+                                                                    "modelTypes.jl"]];
     #Utilities
     [include(joinpath(package_root, "src","utils", jl_file)) for jl_file in [
 
@@ -64,6 +66,25 @@ function importScripts()
                                                                                     "secondQuant.jl",
                                                                                     "proteinQuant.jl",
                                                                                     "qcPlots.jl",
-                                                                                    "huberLossSearch.jl"]]; 
+                                                                                    "huberLossSearch.jl"]];                                                                                      
+
+                                                                                                                                
+    [include(joinpath(package_root,"src","Routines","BuildSpecLib",jl_file)) for jl_file in [
+    "PioneerLib.jl",
+    "buildPioneerLib.jl",  
+    "buildUniSpecInput.jl",
+    "estimateCollisionEv.jl",
+    "fragBounds.jl",
+    "getIonAnnotations.jl",
+    "getMZ.jl",
+    "koinaRequests.jl",
+    "paramsChecks.jl",
+    "parseChronologerResults.jl",
+    "parseFasta.jl",
+    "parseIonAnnotations.jl",
+    "parseIsotopeMods.jl",
+    "parseKoinaFragments.jl",
+    "prepareChronologerInput.jl"
+    ]];
 
 end

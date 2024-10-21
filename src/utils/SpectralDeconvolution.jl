@@ -229,7 +229,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         end
        i += 1
     end
-    return
+    return i
 end
 
 
