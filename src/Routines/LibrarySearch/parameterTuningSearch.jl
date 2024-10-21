@@ -20,6 +20,8 @@ function parameterTuningSearch(rt_alignment_folder,
     rt_to_irt_map_dict = Dict{Int64, Any}()
     frag_err_dist_dict = Dict{Int64,MassErrorModel}()
     irt_errs = Dict{Int64, Float64}()
+    ms_file_idx_to_remove = Int64[]
+    failed_ms_file_idx = Int64[]
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
@@ -62,6 +64,11 @@ function parameterTuningSearch(rt_alignment_folder,
 
             psms = vcat([result for result in RESULT]...)
             psms[!,:best_psms ] .= false
+            if iszero(size(psms, 1))
+                #@warn "No psms in pre-search iteration $n for $MS_TABLE_PATH"
+                n += 1
+                continue
+            end
             addPreSearchColumns!(psms, 
                                         MS_TABLE, 
                                         spec_lib["precursors"][:is_decoy],
@@ -75,12 +82,15 @@ function parameterTuningSearch(rt_alignment_folder,
             else
                 rtpsms = vcat(rtpsms, psms)
             end            
-            #println(size(rtpsms))
-            #println(sum(rtpsms.decoy)/size(rtpsms, 1))
-            #display(first(rtpsms, 5))
-            scorePresearch!(rtpsms)
-            getQvalues!(rtpsms[!,:prob], rtpsms[!,:target], rtpsms[!,:q_value])
-            
+            try
+                #Only allow targets?
+                scorePresearch!(rtpsms)
+                getQvalues!(rtpsms[!,:prob], rtpsms[!,:target], rtpsms[!,:q_value])
+            catch
+                n += 1
+                continue
+            end
+                
             if sum(rtpsms[!,:q_value].<=params_[:presearch_params]["max_qval"]) >= params_[:presearch_params]["min_samples"]
                 filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtpsms)
                 rtpsms[!,:best_psms] .= false
@@ -99,15 +109,21 @@ function parameterTuningSearch(rt_alignment_folder,
             min_samples = params_[:presearch_params]["min_samples"]
             max_iters = params_[:presearch_params]["max_presearch_iters"]
             @warn "Presearch did not find $min_samples precursors at the specified fdr in $max_iters iterations"
+            if rtpsms === nothing
+                 @warn "Presearch found zero psms in $max_iters iterations... Removing file $MS_TABLE_PATH from the search..."
+                 push!(ms_file_idx_to_remove, ms_file_idx)
+                 continue
+            end
             filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtpsms)
-                rtpsms[!,:best_psms] .= false
-                grouped_psms = groupby(rtpsms,:precursor_idx)
-                for psms in grouped_psms
-                    best_idx = argmax(psms.prob)
-                    psms[best_idx,:best_psms] = true
-                end
-                filter!(x->x.best_psms, rtpsms)
+            rtpsms[!,:best_psms] .= false
+            grouped_psms = groupby(rtpsms,:precursor_idx)
+            for psms in grouped_psms
+                best_idx = argmax(psms.prob)
+                psms[best_idx,:best_psms] = true
+            end
+            filter!(x->x.best_psms, rtpsms)
         end
+        try
         rt_to_irt_map = UniformSpline( 
                                         rtpsms[!,:irt_predicted], 
                                         rtpsms[!,:rt], 
@@ -174,12 +190,17 @@ function parameterTuningSearch(rt_alignment_folder,
         #PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
         #File name but remove file type
         frag_err_dist_dict[ms_file_idx] = mass_err_model
+        catch
+            psms_count = size(rtpsms, 1)
+            @warn "Presearch parameter estimation failed for $MS_TABLE_PATH with psms count: $psms_count, will substitute with 
+            parameters from nearest successful presearch"
+            push!(failed_ms_file_idx, ms_file_idx)
+        end
     end
     #Merge Quality Control PDFs 
     merge_pdfs([joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) if endswith(x, ".pdf")], 
                     joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), cleanup=true)
     merge_pdfs([joinpath(mass_err_estimation_folder, x) for x in readdir(mass_err_estimation_folder) if endswith(x, ".pdf")], 
         joinpath(mass_err_estimation_folder, "mass_err_estimation_folder.pdf"), cleanup=true)
-        return rt_to_irt_map_dict, frag_err_dist_dict, irt_errs
+    return rt_to_irt_map_dict, frag_err_dist_dict, irt_errs, ms_file_idx_to_remove, failed_ms_file_idx
 end
-export parameterTuningSearch

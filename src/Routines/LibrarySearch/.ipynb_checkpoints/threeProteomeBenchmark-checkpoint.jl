@@ -195,7 +195,6 @@ jldsave(joinpath(benchmark_results_folder, "pioneer_all_passing.jld2"); best_psm
 
 transform!(best_psms_passing, AsTable(:) => ByRow(precursor -> getCondition(precursor, :file_name)) => [:condition, :biological, :technical]);
 best_psms_passing[!,:species] .= "HUMAN"
-println("size(best_psms_passing) ", size(best_psms_passing))
 conditions = unique(best_psms_passing[!,:condition])
 conditions = ["E10H50Y40","E30H50Y20"]
 quant_name = :trapezoid_area_normalized

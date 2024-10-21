@@ -53,6 +53,8 @@ function qcPlots(
         end
 
         for parsed_fname in parsed_fnames
+            println("parsed_fname $parsed_fname")
+            println(first(DataFrame(precursors_wide), 5))
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
             Plots.plot!(p, collect(sampled_range),
                     sorted_precursor_abundances,
@@ -67,6 +69,7 @@ function qcPlots(
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
+
         plotAbundanceECDF(
             precursors_wide,
             parsed_fnames[start:stop],

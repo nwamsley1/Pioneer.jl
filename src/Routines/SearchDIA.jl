@@ -17,7 +17,6 @@ function SearchDIA(params_path::String)
     if isabspath(MS_DATA_DIR)
         MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
     else
-        println("B")
         MS_DATA_DIR = joinpath(@__DIR__, "../../", MS_DATA_DIR)
         MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
     end
@@ -100,7 +99,7 @@ function SearchDIA(params_path::String)
     ###########
     #Tune Parameters
     println("Parameter Tuning Search...")
-    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder,
+    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs, ms_file_idx_to_remove, failed_ms_file_idxs = parameterTuningSearch(rt_alignment_folder,
                                                                             mass_err_estimation_folder,
                                                                             MS_TABLE_PATHS,
                                                                             params_,
@@ -115,7 +114,79 @@ function SearchDIA(params_path::String)
                                                                             unscored_PSMs,
                                                                             spectral_scores,
                                                                             precs)
+    ############
+    #Remove files that filed the presearch
+    #_new_parsed_fnames = []
+    n_files = length(MS_TABLE_PATHS)
+    for failed_ms_file_idx in failed_ms_file_idxs
+        for ms_file_idx in union(range(1, failed_ms_file_idx - 1), range(failed_ms_file_idx + 1, n_files))
+            if (ms_file_idx in ms_file_idx_to_remove) | (ms_file_idx in failed_ms_file_idx)
+                continue
+            end
+            RT_to_iRT_map_dict[failed_ms_file_idx] = RT_to_iRT_map_dict[ms_file_idx]
+            frag_err_dist_dict[failed_ms_file_idx] = frag_err_dist_dict[ms_file_idx]
+            irt_errs[failed_ms_file_idx] = irt_errs[ms_file_idx]
+            break
+        end
+    end
+    #for failed_ms_file_idx in setdiff(Set(failed_ms_file_idxs), Set(keys(irt_errs)))
+    #    println("A")
+    #    push!(ms_file_idx_to_remove, failed_ms_file_idx)
+    #end
+    println("ms_file_idx_to_remove $ms_file_idx_to_remove")
+    if length(ms_file_idx_to_remove) > 0
+        ms_file_idx = 1
+        RT_to_iRT_map_dict_, frag_err_dist_dict_, irt_errs_ =  Dict{Int64, Any}(),  Dict{Int64,MassErrorModel}(), Dict{Int64, Float64}()
+        file_id_to_parsed_name_ = Dict{Int64, String}()
+        _new_parsed_fnames = []
+        println("length(MS_TABLE_PATHS), ", length(MS_TABLE_PATHS))
+        for i in range(1, length(MS_TABLE_PATHS))
+            if i in ms_file_idx_to_remove
+                println("continue")
+                continue
+            end
+            RT_to_iRT_map_dict_[ms_file_idx] = RT_to_iRT_map_dict[i]
+            frag_err_dist_dict_[ms_file_idx] = frag_err_dist_dict[i]
+            irt_errs_[ms_file_idx] = irt_errs[i]
+            file_id_to_parsed_name_[ms_file_idx] = parsed_fnames[i]
+            push!(_new_parsed_fnames, parsed_fnames[i])
+            ms_file_idx += 1
+        end
+        RT_to_iRT_map_dict = copy(RT_to_iRT_map_dict_)
+        frag_err_dist_dict = copy(frag_err_dist_dict_)
+        irt_errs = copy(irt_errs_)
+        file_id_to_parsed_name = copy(file_id_to_parsed_name_)
+        parsed_fnames = _new_parsed_fnames
+        MS_TABLE_PATHS_ = Vector{String}()#undef, length(MS_TABLE_PATHS) - length(ms_file_idx_to_remove))
+        for i in range(1, length(MS_TABLE_PATHS))
+            if i in ms_file_idx_to_remove
+                continue
+            else
+                push!(MS_TABLE_PATHS_, MS_TABLE_PATHS[i])
+            end
+        end
+        MS_TABLE_PATHS = copy(MS_TABLE_PATHS_)
+    end
+    println("parsed_fnames $parsed_fnames")
+    println("irt_errs $irt_errs")
+    println("length(MS_TABLE_PATHS), ", length(MS_TABLE_PATHS))
+    println("MS_TABLE_PATHS $MS_TABLE_PATHS")
+    #=
+    testt = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/raw/ecoli_filtered_03.arrow")))
+    filter!(x->(x.retentionTime<60)&(x.retentionTime<59), testt)
+    filter!(x->(x.centerMz>500)&(x.centerMz<600), testt)
+    testt[!,:centerMz] = allowmissing(testt[!,:centerMz])
+    Arrow.write("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/raw/ecoli_filtered_tiny.arrow", testt)
 
+
+
+    testt = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/raw/ecoli_filtered_02.arrow")))
+    filter!(x->(x.retentionTime<60)&(x.retentionTime>59), testt)
+    filter!(x->(x.centerMz>500)&(x.centerMz<600), testt)
+    testt[!,:centerMz] = allowmissing(testt[!,:centerMz])
+    Arrow.write("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/raw/ecoli_filtered_tinytiny.arrow", testt)
+
+    =#
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,
@@ -457,6 +528,8 @@ function SearchDIA(params_path::String)
     if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
         rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
     end
+    println("parsed_fnames $parsed_fnames")
+    println("file_id_to_parsed_name $file_id_to_parsed_name")
     qcPlots(
         precursors_wide_arrow,
         protein_groups_wide_arrow,
