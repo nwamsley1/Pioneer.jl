@@ -252,7 +252,7 @@ function SearchDIA(params_path::String)
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
-    Arrow.write("/Users/n.t.wamsley/Desktop/test_psms_quant.arrow", best_psms)
+    #Arrow.write("/Users/n.t.wamsley/Desktop/test_psms_quant.arrow", best_psms)
     #Wipe memory
     best_psms = nothing
     GC.gc()

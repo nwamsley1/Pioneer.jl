@@ -49,7 +49,6 @@ using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries, Distributions 
-using ExpectationMaximization
 using FASTX
 using Interpolations
 using JSON, JLD2
