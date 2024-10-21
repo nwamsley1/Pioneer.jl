@@ -152,14 +152,13 @@ function getPEPSpline(
     bin_target_fraction[end] = targets/max(bin_size, 1)
     bin_mean_prob[end] = mean_prob/max(bin_size, 1)
     try 
+        if length(bin_target_fraction)<20
+            @warn "Less than 20 bins to estimate PEP. PEP results suspect..."
+        end
         return UniformSpline(bin_target_fraction, bin_mean_prob, 3, 3)
     catch
-        _order_ = sortperm(bin_target_fraction, rev = true)
-        bin_target_fraction = bin_target_fraction[_order_]
-        bin_mean_prob = bin_mean_prob[_order_]
-        println("bin_target_fraction $bin_target_fraction")
-        println("bin_mean_prob $bin_mean_prob")
-        return UniformSpline(bin_target_fraction, bin_mean_prob, 3, n_spline_bins)
+        @warn "Failed to estimate PEP spline"
+        return UniformSpline(SVector{4, Float32}([0, 0, 0, 0]), 3, 0.0f0, 1.0f0, 100.0f0)
     end
 end
 

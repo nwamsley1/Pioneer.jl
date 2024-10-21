@@ -104,9 +104,6 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
 
     #irt_diffs is the difference between the first and last psm for a precursor
     #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
-    println("A")
-    println("MS_TABLE_PATH $MS_TABLE_PATH, ", size(psms))
-    println("B")
     fwhms = skipmissing(psms[!,:fwhm])
     fwhm_points = 0
     for fwhm in fwhms

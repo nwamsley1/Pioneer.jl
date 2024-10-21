@@ -3,13 +3,24 @@ function SearchDIA(params_path::String)
     #println("TESTTESTTEST")
     total_time = @timed begin
     #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
+    if !isabspath(params_path)
+        params_path = joinpath(@__DIR__, "../../", params_path)
+    end
     params = JSON.parse(read(params_path, String));
-
     MS_DATA_DIR = params["ms_data_dir"];
     SPEC_LIB_DIR = params["library_folder"];
+    if !isabspath(SPEC_LIB_DIR)
+        SPEC_LIB_DIR =  joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
+    end
 
     #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
-    MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+    if isabspath(MS_DATA_DIR)
+        MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+    else
+        println("B")
+        MS_DATA_DIR = joinpath(@__DIR__, "../../", MS_DATA_DIR)
+        MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
+    end
 
     params_ = parseParams(params)
 
@@ -165,7 +176,6 @@ function SearchDIA(params_path::String)
     else
         irt_errs = Dict(zip(keys(peak_fwhms), zeros(Float32, length(keys(peak_fwhms)))))
     end
-    println("irt_errs $irt_errs")
     bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
     prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
     rt_index_paths = makeRTIndices(
@@ -240,7 +250,6 @@ function SearchDIA(params_path::String)
         );
 
     println("Traning Target-Decoy Model...")
-    println("max_n_samples: ", params_[:xgboost_params]["max_n_samples"])
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
     Arrow.write("/Users/n.t.wamsley/Desktop/test_psms_quant.arrow", best_psms)
@@ -266,7 +275,6 @@ function SearchDIA(params_path::String)
                     merged_quant_path
                     )
     #functions to convert "prob" to q-value and posterior-error-probability "pep" 
-    println("n_points ", params_[:xgboost_params]["precursor_prob_spline_points_per_bin"])
     precursor_pep_spline = getPEPSpline(merged_quant_path, 
                                         :prob, 
                                         min_pep_points_per_bin = params_[:xgboost_params]["precursor_prob_spline_points_per_bin"], 
@@ -330,11 +338,12 @@ function SearchDIA(params_path::String)
     if params_[:output_params]["delete_temp"]
         rm(passing_proteins_folder,recursive=true)
     end
+    #=
     pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
                                 :max_pg_score, 
                                 min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
                                 n_spline_bins = 5)
-
+    =#
     pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
                                     :max_pg_score, 
                                     min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3))
@@ -464,4 +473,5 @@ function SearchDIA(params_path::String)
         rm(temp_folder,recursive=true)
     end
 end
+    return 10
 end

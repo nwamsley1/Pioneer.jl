@@ -1076,7 +1076,6 @@ function LibrarySearch(
                                                         )
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
-    println("TESTING ", kwargs[:mass_err_model])
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)

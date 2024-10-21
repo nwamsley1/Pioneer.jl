@@ -2,6 +2,10 @@ function makeOutputDirectories(
     OUT_DIR::String,
     params::Dict{String, Any}
 )
+
+    if !isabspath(OUT_DIR)
+        OUT_DIR = joinpath(@__DIR__, "../../../../", OUT_DIR)
+    end
     if !isdir(OUT_DIR)
         mkpath(OUT_DIR)
     end
