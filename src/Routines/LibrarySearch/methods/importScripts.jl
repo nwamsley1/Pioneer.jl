@@ -37,7 +37,7 @@ function importScripts()
                                                                     "getBestPrecursorsAccrossRuns.jl",
                                                                     "getIrtErrs.jl",
                                                                     "getPSMsPassingQVal.jl",
-                                                                    "samplePSMsForXgboost.jl",
+                                                                    "samplePsmsForXgboost.jl",
                                                                     "mergePsmTables.jl",
                                                                     "summarizeToProtein.jl",
                                                                     "writeCSVTables.jl"]];
