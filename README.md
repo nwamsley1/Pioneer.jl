@@ -32,6 +32,7 @@ shell> cd Pioneer.jl
 4) Return to julia by hitting the backspace key. Activate the julia package manager by typing "]" into the REPL and enter the following:
 ```
 (@v1.10) pkg> activate
+(@v1.10) pkg> add https://github.com/JuliaIO/JLD2.jl#v0.5.0
 (@v1.10) pkg> develop ./
 (@v1.10) pkg> add ./
 ```
