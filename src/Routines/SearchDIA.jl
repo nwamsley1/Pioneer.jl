@@ -83,6 +83,7 @@ function SearchDIA(params_path::String)
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
+    #iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -134,6 +135,7 @@ function SearchDIA(params_path::String)
     #    push!(ms_file_idx_to_remove, failed_ms_file_idx)
     #end
     println("ms_file_idx_to_remove $ms_file_idx_to_remove")
+
     if length(ms_file_idx_to_remove) > 0
         ms_file_idx = 1
         RT_to_iRT_map_dict_, frag_err_dist_dict_, irt_errs_ =  Dict{Int64, Any}(),  Dict{Int64,MassErrorModel}(), Dict{Int64, Float64}()
@@ -186,6 +188,9 @@ function SearchDIA(params_path::String)
     testt[!,:centerMz] = allowmissing(testt[!,:centerMz])
     Arrow.write("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/raw/ecoli_filtered_tinytiny.arrow", testt)
 
+    =#
+    #=
+    params_[:first_search_params]
     =#
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
