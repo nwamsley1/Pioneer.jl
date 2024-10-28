@@ -136,12 +136,12 @@ function SearchDIA(params_path::String)
         spectral_scores,
         precs
     )
-    first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]))
-    first_psms = first_psms[first_psms[!,:q_value].<=0.01,:]
-    value_counts(df, col) = combine(groupby(df, col), nrow)
-    psms_counts = value_counts(first_psms, :ms_file_idx)
-    CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts)
-    first_psms = nothing
+    #first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]))
+    #first_psms = first_psms[first_psms[!,:q_value].<=0.01,:]
+    #value_counts(df, col) = combine(groupby(df, col), nrow)
+    #psms_counts = value_counts(first_psms, :ms_file_idx)
+    #CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts)
+    #first_psms = nothing
     #test_table = DataFrame(Arrow.Table(collect(values(psms_paths))))
     #test_table = test_table[test_table[!,:q_value].<=0.01,:]
     #value_counts(test_table,:ms_file_idx)
