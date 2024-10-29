@@ -3,7 +3,7 @@ function UniformSplineDesignMat(
                         t0::Vector{T}, 
                         t1::Vector{T},
                         degree::I, #Degree of the piecewise polynomials
-                        n_knots::I, #Number of control points
+                        n_knots::I #Number of control points
                         ) where {I<:Integer, T<:AbstractFloat}
     if degree != 3
         error("Non-cubic splines not yet implemented. Use a degree of 3")
@@ -105,9 +105,19 @@ function UniformSplineDesignMat(
     knots = collect(LinRange(_first, _last, n_knots))
     X0 = buildDesignMat(t0, collect(knots), bin_width, spline_basis)
     X1 = buildDesignMat(t1, collect(knots), bin_width, spline_basis)
+
+    println("TEST")
     X = X0 .- X1
+    # Closed-form solution with L2 regularization (Ridge Regression)
+    #𝐼 = Diagonal(ones(size(X, 2)))  # Identity matrix
+    #return X, 𝐼, λ, u
+    #c = (X' * X + λ * 𝐼) \ (X' * u)
+    #X[:,end] .= one(Float32)
     c = X\u 
-    plot(X*c, u, seriestype=:scatter, show=true, alpha = 0.1)
+    println("c $c")
+    #plot(X*c, u, seriestype=:scatter, show=true, alpha = 0.1)
+    #t = X*c
+    #plot!([minimum(t), maximum(t)], [minimum(t), maximum(t)])
     XPoly = buildPieceWise(knots, bin_width, spline_basis)
     piecewise_polynomials = XPoly*c
     n_coeffs = n_knots*(degree + 1)
@@ -165,6 +175,8 @@ function simmulateQuad(
     end
     return DataFrame((x0 = x0, x1 = x1, yt = yt))
 end
+
+
 using Distributions 
 qtf = QuadTransmission(0.0f0, 5.0f0)
 quad_results = simmulateQuad(
@@ -174,6 +186,21 @@ quad_results = simmulateQuad(
     (400.0f0, 1000.0f0),
     1000
 )
+CSV.write("/Users/n.t.wamsley/Desktop/simm_results.csv")
+
+
+
+
+using Distributions 
+qtf = QuadTransmission(0.3f0, 3.0f0)
+quad_results = simmulateQuad(
+    qtf,
+    1.0f0,
+    (-2.0f0, 2.0f0),
+    (400.0f0, 1000.0f0),
+    1000
+)
+CSV.write("/Users/n.t.wamsley/Desktop/simm_results2.csv", quad_results)
 
 gx = UniformSplineDesignMat(
     quad_results[!,:yt], 
@@ -188,6 +215,114 @@ y = exp2.(log2y .- maximum(log2y))
 plot(LinRange(-4, 4, 100), y)
 plot!(LinRange(-4, 4, 100), qtf.(0.0f0, 1.0f0, Float32.(LinRange(-4, 4, 100))))
 
+
+
+mzvals = copy(precursors[:mz])
+filter!(x->x<604, mzvals)
+filter!(x->x>598, mzvals)
+histogram(mzvals, bins = LinRange(598, 604, 1000))
+
+
+outf[!,:prec_charge] = [precursors[:prec_charge][pid] for pid in outf[!,:precursor_idx]]
+#filter!(x->coalesce(x.x0, -Inf)>(0.0), outf)
+outf2 = copy(outf[outf[!,:prec_charge].==2,:])
+outf3 = copy(outf[outf[!,:prec_charge].==3,:])
+
+add_equal_width_bins!(outf2, :x0, 25)
+add_equal_width_bins!(outf3, :x0, 25)
+outf = vcat([outf2, outf3]...)
+comb_df = combine(groupby(outf,[:prec_charge,:x0_bin])) do outbin 
+    return (n = size(outbin, 1), 
+            median_yt = median(outbin[!,:yt]),
+            mean_yt = mean(outbin[!,:yt]),
+            median_x0 = median(outbin[!,:x0]),
+            prec_charge = outbin.prec_charge[1]
+            )
+end
+filter!(x->x.n>50,comb_df)
+
+plot(comb_df[!,:median_x0], comb_df[!,:median_yt], seriestype=:scatter, alpha = 1.0)
+yt = comb_df[!,:median_yt]
+x0 = Float32.(comb_df[!,:median_x0])
+x1 = Float32.(comb_df[!,:median_x0] .+ NEUTRON./comb_df[!,:prec_charge])
+#=
+bin_to_val = Dict(zip(comb_df[!,:x0_bin], comb_df[!,:median_yt]))
+outf[!,:yt_corrected] .= -1.0f0
+for i in range(1, size(outf, 1))
+    bin_id = outf[i,:x0_bin]
+    if bin_id  ∈ keys(bin_to_val)
+        outf[i,:yt_corrected] = bin_to_val[bin_id]
+    end
+end
+filter!(x->x.yt_corrected>-1.0, outf)
+filter!(x->x.yt_corrected>-1.0, outf)
+
+yt, x0, x1 = Float32.(coalesce.(outf[!,:yt_corrected], 0.0f0)), Float32.(coalesce.(outf[!,:x0], 0.0f0)),Float32.(coalesce.(outf[!,:x1], 0.0f0))
+
+yt, x0, x1 = Float32.(coalesce.(outf[!,:yt], 0.0f0)), Float32.(coalesce.(outf[!,:x0], 0.0f0)),Float32.(coalesce.(outf[!,:x1], 0.0f0))
+
+plot(x0, yt, seriestype=:scatter, alpha = 0.1)
+=#
+
+
+tspline = UniformSpline(yt,x0,3,5)
+plot(x0, yt, seriestype=:scatter)
+plot!(LinRange(-2, 2, 100), tspline.(LinRange(-2, 2, 100)))
+
+
+tspline = UniformSpline(max.(outf[!,:yt], 0.0f0),outf[!,:x0],3,10)
+plot(outf[!,:x0], max.(outf[!,:yt], 0.0f0), seriestype=:scatter, xlim = (0, 2), ylim = (-1, 5), alpha = 0.02)
+plot!(LinRange(-2, 2, 100), tspline.(LinRange(-2, 2, 100)))
+
+
+[x0.>0]
+gx = UniformSplineDesignMat(
+    yt, x0, x1,
+    3, 
+    5
+)
+#plot(LinRange(-4, 4, 100), gx.(LinRange(-4, 4, 100)))
+log2y = gx.(LinRange(0, 4, 100))
+y = exp2.(log2y .- maximum(log2y))
+plot(LinRange(0, 4, 100), y)
+qtf = QuadTransmission(0.4f0, 5.0f0)
+plot!(LinRange(0, 4, 100), qtf.(0.0f0, 1.0f0, Float32.(LinRange(0, 4, 100))))
+
+
+qtf = QuadTransmission(0.5f0, 2.0f0)
+plot!(LinRange(-4, 4, 100), qtf.(0.0f0, 1.0f0, Float32.(LinRange(-4, 4, 100))))
+
+
+
+ind_to_keep = x0 .> -0.5f0
+gx = UniformSplineDesignMat(
+    yt[ind_to_keep], x0[ind_to_keep], x1[ind_to_keep],
+    3, 
+    5
+)
+gx2 = UniformSplineDesignMat(
+    yt[ind_to_keep], x0[ind_to_keep], x1[ind_to_keep],
+    3, 
+    30
+)
+#plot(LinRange(-4, 4, 100), gx.(LinRange(-4, 4, 100)))
+log2y = gx.(LinRange(0, 4, 100))
+y = exp2.(log2y .- maximum(log2y))
+plot(LinRange(0, 4, 100), y)
+log2y2= gx2.(LinRange(0, 4, 100))
+y2 = exp2.(log2y2 .- maximum(log2y2))
+plot!(LinRange(0, 4, 100), y2)
+plot!(LinRange(0, 4, 100), qtf.(0.0f0, 1.0f0, Float32.(LinRange(0, 4, 100))))
+
+
+
+plot(LinRange(0, 4, 100), qtf.(0.0f0, 1.0f0, Float32.(LinRange(0, 4, 100))))
+test_tq = TQuad(1.0, 2.0, 2.0, 2.0, 0.0)
+plot_bins = LinRange(-3, 3, 100)
+plot!(
+    plot_bins,
+    test_tq.(plot_bins)
+)
 
 #=
 
@@ -272,9 +407,11 @@ A, b = rand(1000, 8), rand(1000);
 
 #=
 IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*2 +1 ) for _ in range(1, N)];
- precursor_weights = [zeros(Float32, n_precursors*2 + 1 ) for _ in range(1, N)];
+precursor_weights = [zeros(Float32, n_precursors*2 + 1 ) for _ in range(1, N)];
+
+include("utils/isotopeSplines.jl")
 test_qpsms = getQuadT(
-        1500.0f0,
+        100000.0f0,
         0,
         precursor_dict,
         MS_TABLE_PATHS,
@@ -311,13 +448,16 @@ test_qpsms[!,:δ] .= zero(Float32)
 for i in range(1, size(test_qpsms, 1))
     s_count = min(Int64(test_qpsms[i,:sulfur_count]), 5)
     mono_mass =  test_qpsms[i,:mono_mz]*test_qpsms[i,:prec_charge]
-    test_qpsms[i,:δ] = iso_splines(s_count, 0, mono_mass)/iso_splines(s_count, 1, mono_mass)
+    iso_probs = [iso_splines(s_count, iso_idx, mono_mass) for iso_idx in range(0, 5)]
+    #iso_probs = iso_probs./sum(iso_probs)
+    test_qpsms[i,:δ] = iso_probs[1]/iso_probs[2]
 end
 histogram(test_qpsms[!,:δ])
 
 gqpsms = groupby(test_qpsms, [:ms_file_idx, :scan_idx,:precursor_idx])
 outf = combine(gqpsms) do psms
     if size(psms, 1) == 2
+        sort!(psms, :iso_idx)
        return (center_mz = psms[1,:center_mz],
                min_weight = minimum(psms[!,:weight]),
                max_weight = maximum(psms[!,:weight]),
@@ -332,7 +472,55 @@ end
 filter!(x->!ismissing(x.yt), outf)
 filter!(x->!isinf(x.yt), outf)
 filter!(x->!isnan(x.yt), outf)
-filter!(x->x.max_weight>10000.0f0, outf)
+#filter!(x->x.x0>0.0, outf)
+#plot(outf[!,:x0], outf[!,:yt], seriestype=:scatter, ylim = (-1, 5), alpha = 0.02)
+
+outf[!,:prec_charge] = [precursors[:prec_charge][pid] for pid in outf[!,:precursor_idx]];
+#plot(outf[outf[!,:prec_charge].==2,:x0], outf[outf[!,:prec_charge].==2,:yt], seriestype=:scatter, ylim = (-1, 5), alpha = 0.02)
+#plot!(outf[outf[!,:prec_charge].==3,:x0], outf[outf[!,:prec_charge].==3,:yt], seriestype=:scatter, ylim = (-1, 5), alpha = 0.02)
+
+
+outf2 = copy(outf[outf[!,:prec_charge].==2,:])
+outf3 = copy(outf[outf[!,:prec_charge].==3,:])
+
+add_equal_width_bins!(outf2, :x0, 25)
+add_equal_width_bins!(outf3, :x0, 25)
+outf = vcat([outf2, outf3]...)
+comb_df = combine(groupby(outf,[:prec_charge,:x0_bin])) do outbin 
+    return (n = size(outbin, 1), 
+            median_yt = median(outbin[!,:yt]),
+            mean_yt = mean(outbin[!,:yt]),
+            median_x0 = median(outbin[!,:x0]),
+            prec_charge = outbin.prec_charge[1]
+            )
+end
+filter!(x->x.n>50,comb_df)
+p = plot(
+ ylabel = "log2(f(z0)/f(z1))",
+ xlabel = "z0")
+plot!(p, comb_df[comb_df[!,:prec_charge].==2,:median_x0], comb_df[comb_df[!,:prec_charge].==2,:median_yt], seriestype=:scatter,
+label = "charge +2")
+plot!(p, comb_df[comb_df[!,:prec_charge].==3,:median_x0], comb_df[comb_df[!,:prec_charge].==3,:median_yt], seriestype=:scatter,
+label = "charge +3")
+
+
+qtf = QuadTransmission(0.5f0, 7.0f0)
+quad_results = simmulateQuad(
+    qtf,
+    1.0f0,
+    (-2.0f0, 2.0f0),
+    (400.0f0, 1000.0f0),
+    1000
+)
+sort!(quad_results,:x0)
+plot!(p,
+quad_results[!,:x0],
+quad_results[!,:yt],
+label = "simmulated_data"
+)
+hline!([-1.0, 0.0, 1.0])
+
+filter!(x->x.max_weight>1000.0f0, outf)
 
 
 yt = Float32.(coalesce.(outf[!,:yt], 0.0))
@@ -502,6 +690,9 @@ function getQuadT(
     precursor_weights)
 
     best_psms = getPsmsForHuberEstimation(prec_to_irt,is_decoy)
+    best_psms2 = copy(best_psms)
+    best_psms2[!,:scan_idx] .+= one(UInt32)
+    best_psms = vcat([best_psms, best_psms2]...)
     gbpsms = groupby(best_psms,:ms_file_idx)
     return getQuadT(
         δ,
@@ -661,3 +852,50 @@ function estimateQuadTransmissionSearch(
     return psms
 end
 
+using DataFrames
+using Statistics
+
+function add_equal_width_bins!(df::DataFrame, column::Symbol=:y, n_bins::Int=100)
+    """
+    Add a column indicating which equal-width bin each value falls into.
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        Input DataFrame containing the column to bin
+    column : Symbol, default=:y
+        Name of the column to bin
+    n_bins : Int, default=100
+        Number of bins to create
+        
+    Returns:
+    --------
+    Nothing (modifies df in place by adding a new column)
+    """
+    
+    # Calculate min and max values
+    min_val = minimum(df[!, column])
+    max_val = maximum(df[!, column])
+    
+    # Calculate bin width
+    bin_width = (max_val - min_val) / n_bins
+    
+    # Create bin edges
+    bin_edges = range(min_val, max_val, length=n_bins+1)
+    
+    # Function to find bin index (0-based)
+    function get_bin_index(x)
+        if x == max_val
+            return n_bins - 1  # Put maximum value in last bin
+        else
+            bin_idx = floor(Int, (x - min_val) / bin_width)
+            return min(bin_idx, n_bins - 1)  # Ensure we don't exceed n_bins-1
+        end
+    end
+    
+    # Add new column with bin indices
+    new_col = Symbol(string(column, "_bin"))
+    df[!, new_col] = [get_bin_index(x) for x in df[!, column]]
+    
+    return nothing
+end

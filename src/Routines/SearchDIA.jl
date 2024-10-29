@@ -214,6 +214,7 @@ function SearchDIA(params_path::String)
     )
     first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]))
     first_psms = first_psms[first_psms[!,:q_value].<=0.01,:]
+    #first_psms_small_window = copy(first_psms)
     value_counts(df, col) = combine(groupby(df, col), nrow)
     psms_counts = value_counts(first_psms, :ms_file_idx)
     CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts)
@@ -240,8 +241,9 @@ function SearchDIA(params_path::String)
             psms_paths, 
             spec_lib["precursors"][:mz],
             rt_irt, 
-            max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
-            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
+            max_q_val = 0.01f0,#Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
+            max_precursors = 100000,#Int64(params_[:summarize_first_search_params]["max_precursors"])
+            );
     irt_errs = nothing
     if length(keys(peak_fwhms)) > 1
         irt_errs = getIrtErrs(

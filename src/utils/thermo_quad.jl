@@ -33,7 +33,7 @@ end
 test_tq = TQuad(1.0, 2.0, 0.8, 0.8, 0.0)
 
 plot_bins = LinRange(-3, 3, 100)
-plot(
+plot!(
     plot_bins,
     test_tq.(plot_bins)
 )

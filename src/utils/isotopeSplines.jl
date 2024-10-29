@@ -163,6 +163,7 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 ### Examples 
 
 """
+#=
 function getFragAbundance!(isotopes::Vector{T}, 
                             iso_splines::IsotopeSplineModel, 
                             frag::isotope{T, I}, 
@@ -192,7 +193,7 @@ function getFragAbundance!(isotopes::Vector{T},
     return nothing
     #return isotopes#isotopes./sum(isotopes)
 end
-
+=#
 function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragment isotopes (initialized as zeros)
                            prec_isotopes::Vector{T}, #Probability of each precursor isotope (determined by quadrupole transmission function)
                             iso_splines::IsotopeSplineModel,
@@ -219,6 +220,7 @@ function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragme
     return nothing
 end
 
+#=
 function getFragAbundance!(isotopes::Vector{Float32}, 
                             iso_splines::IsotopeSplineModel,
                             prec_mz::Float32,
@@ -234,7 +236,8 @@ function getFragAbundance!(isotopes::Vector{Float32},
         pset
         )
 end
-
+=#
+#=
 function getFragIsotopes!(isotopes::Vector{Float32}, 
                             iso_splines::IsotopeSplineModel, 
                             prec_mz::Float32,
@@ -258,13 +261,14 @@ function getFragIsotopes!(isotopes::Vector{Float32},
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     #total_fragment_intensity /= sum(isotopes)
+    iso_sum = sum(isotopes)
     #isotopes /= isotopes[1]
     #total_fragment_intensity = total_fragment_intensity*sum(isotopes)
     for i in reverse(range(1, length(isotopes)))
-        isotopes[i] = total_fragment_intensity*isotopes[i]
+        isotopes[i] = total_fragment_intensity*isotopes[i]/iso_sum
     end
 end
-
+=#
 function getFragAbundance!(frag_isotopes::Vector{Float32}, 
                             precursor_transmition::Vector{Float32},
                             iso_splines::IsotopeSplineModel,
@@ -276,8 +280,8 @@ function getFragAbundance!(frag_isotopes::Vector{Float32},
         frag_isotopes,
         precursor_transmition,
         iso_splines,
-        isotope(frag.mz*frag.frag_charge, Int64(frag.sulfur_count), 0),
-        isotope(prec_mz*prec_charge, Int64(prec_sulfur_count), 0)
+        isotope((frag.mz - Float32(PROTON))*frag.frag_charge, Int64(frag.sulfur_count), 0),
+        isotope((prec_mz - Float32(PROTON))*prec_charge, Int64(prec_sulfur_count), 0)
         )
 end
 
@@ -290,7 +294,6 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
                             frag::LibraryFragmentIon{Float32})
     #Reset relative abundances of isotopes to zero 
     fill!(frag_isotopes, zero(eltype(frag_isotopes)))
-
     #Predicted total fragment ion intensity (sum of fragment isotopes)
     total_fragment_intensity = frag.intensity
 
@@ -306,8 +309,8 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
     #total_fragment_intensity /= sum(frag_isotopes)
-    #isotopes /= isotopes[1]
-    total_fragment_intensity = total_fragment_intensity#/sum(frag_isotopes)
+    #frag_isotopes /= sum(frag_isotopes)
+    #total_fragment_intensity = total_fragment_intensity/sum(frag_isotopes)
     for i in reverse(range(1, length(frag_isotopes)))
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end

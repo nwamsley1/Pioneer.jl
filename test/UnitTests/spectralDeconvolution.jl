@@ -49,6 +49,7 @@ test_alg = NMF.CoordinateDescent{Float32}(
                 l₁ratio=1.0,
                 update_H = false,
                 regularization=:none)
+                
 NMF.solve!(test_alg, z, ŷ, Matrix(transpose(H)))
 
 @test (cor(ŷ[:,], _weights_) - 1.0) < 1e-6

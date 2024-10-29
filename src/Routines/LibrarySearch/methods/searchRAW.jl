@@ -87,7 +87,8 @@ function searchFragmentIndex(
                         iRT_high,
                         mass_err_model,
                         spectra[:centerMz][i],
-                        spectra[:isolationWidthMz][i]/2.0f0,
+                        #spectra[:isolationWidthMz][i]/2.0f0,
+                        spectra[:isolationWidthMz][i],
                         isotope_err_bounds
                         )
             
@@ -201,10 +202,14 @@ function getPSMS(
                                         ion_list,
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol), #rt_tol
+                                        #(
+                                        #spectra[:centerMz][i] - spectra[:isolationWidthMz][i]/2.0f0,
+                                        #spectra[:centerMz][i] + spectra[:isolationWidthMz][i]/2.0f0,
+                                        #),
                                         (
-                                        spectra[:centerMz][i] - spectra[:isolationWidthMz][i]/2.0f0,
-                                        spectra[:centerMz][i] + spectra[:isolationWidthMz][i]/2.0f0,
-                                        ),
+                                        spectra[:centerMz][i] - spectra[:isolationWidthMz][i],
+                                        spectra[:centerMz][i] + spectra[:isolationWidthMz][i],
+                                        ),                                       
                                         (
                                             spectra[:lowMz][i], spectra[:highMz][i]
                                         ),
@@ -632,7 +637,6 @@ function QuadTransmissionSearch(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
-                quad_transmission_func,
                 precursor_transmission,
                 isotopes,
                 rt_index,
@@ -667,7 +671,6 @@ function QuadTransmissionSearch(
             #Sparse matrix representation of templates written to Hs. 
             #IDtoCOL maps precursor ids to their corresponding columns. 
             buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-
             #Adjuste size of pre-allocated arrays if needed 
             if IDtoCOL.size > length(_weights_)
                 new_entries = IDtoCOL.size - length(_weights_) + 1000 
@@ -695,12 +698,29 @@ function QuadTransmissionSearch(
                             10.0,#Hs.n/10.0,
                             max_diff
                             );
+            #=               
+            if scan_idx == 79024
+                global_variable = Hs
+                N = Hs.n_vals
+                println("TEST")
+                println("IDtoCOL.keys[i] ", IDtoCOL.keys[1])
+                println("scan[:center_mz] ", spectra[:centerMz][scan_idx])
+                println(SparseArray(
+                    Hs.n_vals,
+                    Hs.m, Hs.n, Hs.rowval[1:N], Hs.colval[1:N], Hs.nzval[1:N],
+                    Hs.matched[1:N], Hs.isotope[1:N], Hs.x[1:N],Hs.colptr[1:Hs.n + 1]
+                ))
+                println("TEST")
+            end
+            =#
             #Record weights for each precursor
             for i in range(1, IDtoCOL.size)
                 precursor_weights[IDtoCOL.keys[i]] = _weights_[IDtoCOL[IDtoCOL.keys[i]]]# = precursor_weights[id]
-                isotope_pid = IDtoCOL.keys[i]
-                pid = isodd(isotope_pid) ? UInt32((isotope_pid - 1)/2) : UInt32(isotope_pid/2)
-                isotope_idx = isodd(isotope_pid) ? UInt8(1) : UInt8(0)
+                id = IDtoCOL.keys[i]
+                #pid = isodd(isotope_pid) ? UInt32((isotope_pid - 1)/2) : UInt32(isotope_pid/2)
+                #isotope_idx = isodd(isotope_pid) ? UInt8(1) : UInt8(0)
+                isotope_idx = UInt32(((id - 1) % 3) + 1)
+                pid = UInt32(((id - 1) ÷ 3) + 1)
                 if (pid,UInt32(scan_idx)) ∈ prec_set
                     weight = _weights_[IDtoCOL[IDtoCOL.keys[i]]]
                     push!(tuning_results[:precursor_idx],pid)
