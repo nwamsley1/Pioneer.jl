@@ -76,6 +76,19 @@ outf[!,:prec_charge] = [precursors[:prec_charge][pid] for pid in outf[!,:precurs
 plot(outf[outf[!,:prec_charge].==2,:x0], outf[outf[!,:prec_charge].==2,:yt], seriestype=:scatter, ylim = (-5, 5), alpha = 0.02)
 plot!(outf[outf[!,:prec_charge].==3,:x0], outf[outf[!,:prec_charge].==3,:yt], seriestype=:scatter, ylim = (-5, 5), alpha = 0.02)
 
+outf2 = outf[outf[!,:prec_charge].==2,:]
+outf2[!,:x0] = Float64.(outf2[!,:x0])
+CSV.write("/Users/n.t.wamsley/Desktop/test_to_bin2.csv", outf2)
+
+
+outf3 = outf[outf[!,:prec_charge].==3,:]
+outf3[!,:x0] = Float64.(outf3[!,:x0])
+CSV.write("/Users/n.t.wamsley/Desktop/test_to_bin3.csv", outf3)
+
+
+
+outf[!,:x0] = Float64.(outf[!,:x0])
+CSV.write("/Users/n.t.wamsley/Desktop/test_to_bin.csv", outf)
 
 outf2 = copy(outf[(outf[!,:prec_charge].==2).&((outf[!,:center_mz].>800.0)),:])
 outf3 = copy(outf[(outf[!,:prec_charge].==3).&((outf[!,:center_mz].>800.0)),:])

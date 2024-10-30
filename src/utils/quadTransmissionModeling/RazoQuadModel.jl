@@ -397,7 +397,6 @@ function fitRazoQuadModel(
         rqm_new = rqm + rqm_Δ
         #If updated guess was out of bounds, increase damping coeficient 
         if !inBounds(rqm_new, u_bounds, l_bounds)
-            println("out of bounds")
             λ *= 10
             continue
         end
@@ -425,13 +424,10 @@ function fitRazoQuadModel(
         
         if n > 10
             if maximum(abs.(Jy)) < ϵ1
-                println("a n $n, rqm : $rqm")
                 return rqm
             elseif maximum(abs(rqm_Δ/rqm)) < ϵ2
-                println("b n $n, rqm : $rqm")
                 return rqm        
             elseif SE_new/(M - N) < ϵ3
-                println("c n $n, rqm : $rqm")
                 return rqm
             end
         end
