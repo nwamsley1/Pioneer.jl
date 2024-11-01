@@ -59,6 +59,8 @@ function parameterTuningSearch(rt_alignment_folder,
                                     mass_err_model = mass_err_model,
                                     sample_rate = params_[:presearch_params]["sample_rate"],
                                     params = params_[:presearch_params],
+                                    isotope_err_bounds = params_[:isotope_err_bounds],
+                                    mz_overhang = 0.0f0,
                                     quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
                                                     );
 

@@ -454,25 +454,25 @@ end
 Helper function for `fitRazoQuadModel`. Automatically determins upper and lower bounds and initial guess given the `quad_window_width`. 
 """
 function fitRazoQuadModel(
-    quad_window_width::T,
+    quad_window_width::R,
     x0_dat::Vector{T}, 
     x1_dat::Vector{T}, 
     yt_dat::Vector{T};
-        λ0 = 1e-2, #Initial L-M damping coeficient 
-        ϵ1 = 1e-5, #Convergence in the gradient
-        ϵ2 = 1e-4, #Convergence in the coeficients
-        ϵ3 = 1e-5, #Conergence in squared error
+        λ0 = 1e1, #Initial L-M damping coeficient 
+        ϵ1 = 1e-6, #Convergence in the gradient
+        ϵ2 = 1e-5, #Convergence in the coeficients
+        ϵ3 = 1e-6, #Conergence in squared error
         lup = 9,
         ldown = 11,
         max_iter = 100000, #Maximum iterations
-    ) where {T<:AbstractFloat}
-    al0 = quad_window_width/T(2.0)
-    ar0 = quad_window_width/T(2.0)
+    ) where {T<:AbstractFloat, R<:Real}
+    al0 = T(quad_window_width)/2
+    ar0 = T(quad_window_width)/2
     bl0, br0 = T(5.0), T(5.0)
-    al_bounds = (T(0.2), quad_window_width)
-    ar_bounds = (T(0.2), quad_window_width)
-    bl_bounds = (T(1.0), T(100.0))
-    br_bounds = (T(1.0), T(100.0))
+    al_bounds = (T(0.2), T(quad_window_width))
+    ar_bounds = (T(0.2), T(quad_window_width))
+    bl_bounds = (T(1e-3), T(100.0))
+    br_bounds = (T(1e-3), T(100.0))
     return fitRazoQuadModel(
                 al0, ar0, bl0, br0,
                 al_bounds, ar_bounds,

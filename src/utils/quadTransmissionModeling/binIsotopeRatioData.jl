@@ -24,7 +24,7 @@ function findLocalMinima(arr::AbstractVector{T})::Vector{Int64} where {T<:Real}
     return minima_indices
 end
 
-function getBinIdx(x::AbstractVector{T}, x_bins::AbstractVector{T}) where T<:Real
+function getBinIdx(x::AbstractVector{T}, x_bins::AbstractVector{U}) where {T,U<:Real}
     # Returns bin indices for each value in x
     # A value x[i] is in bin j if x_bins[j] ≤ x[i] < x_bins[j+1]
     # Values less than x_bins[1] get bin 0
@@ -103,9 +103,13 @@ function estimateKdeBins(
     density_atx = KernelDensity.pdf(x_kde, (kde_eval_points))
     #Get Local Minima/x bin boundaries
     x_bin_boundaries = kde_eval_points[findLocalMinima(density_atx)]
+    #p = plot(kde_eval_points, density_atx)
+    #vline!(p, x_bin_boundaries)
+    #display(p)
     #Pad boundaires 
     pushfirst!(x_bin_boundaries, typemin(Float32))
     push!(x_bin_boundaries, typemax(Float32))
+
     #Get bin_idx for each element in the x array
     return getBinIdx(x, x_bin_boundaries), length(x_bin_boundaries) - 2 + 1
 end
@@ -113,14 +117,13 @@ end
 function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Real}; min_bin_size=300, min_bin_width=0.1, max_iterations=100)
     
     isotopes_ratio_data = copy(isotopes_ratio_data)
-    x0_min, x0_max = first(x0_lim), last(x0_lim)
+    x0_min, x0_max = max(first(x0_lim), minimum(isotopes_ratio_data[!,:x0])), min(last(x0_lim), maximum(isotopes_ratio_data[!,:x0]))
     
     filter!(x->(x.x0>x0_min)&(x.x0<x0_max), isotopes_ratio_data)
     min_bin_count = max(
         (ceil(Int64, abs(x0_max - x0_min)) - 1)*2, #Should have two bins per Thompson (1 m/z)
         6 #but at least 6 bins 
     )
-    println("min_bin_count $min_bin_count")
     #Estimate KDE Bins 
     bin_idxs, n_bins = estimateKdeBins(isotopes_ratio_data[!,:x0])
     isotopes_ratio_data[!,:kde_bin_idx] = bin_idxs
@@ -128,14 +131,14 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     #Use KDE bins or uniform bins? Base this decision on the median intra-bin standard deviation 
     #A better bin selection means less intra-bin variance. 
     if n_bins < min_bin_count #KDE estimation did not give enough bins. Default to uniform binning 
-        uniform_x_bounds = collect(LinRange(x0_min, x0_max, min_bin_count))
+        uniform_x_bounds = collect(LinRange{Float32, Int64}(x0_min, x0_max, min_bin_count))
         push!(uniform_x_bounds, typemax(Float32))
         pushfirst!(uniform_x_bounds, typemin(Float32))
         isotopes_ratio_data[!,:bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
-        @warn "KDE bin estimation failed... Default to uniform binning"
+        @warn "KDE bin estimation failed... Default to uniform binning $n_bins $min_bin_count"
     else
         #Estimate uniform bins 
-        uniform_x_bounds = collect(LinRange(x0_min, x0_max, n_bins+2))
+        uniform_x_bounds = collect(LinRange{Float32, Int64}(x0_min, x0_max, n_bins+2))
         push!(uniform_x_bounds, typemax(Float32))
         pushfirst!(uniform_x_bounds, typemin(Float32))
         isotopes_ratio_data[!,:uniform_bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
@@ -145,7 +148,7 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         kde_bin_stds = values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:kde_bin_idx))[:,2])
         mean_uniform_std = median(skipmissing(uniform_bin_stds))
         mean_kde_std = median(skipmissing(kde_bin_stds))
-        if mean_kde_std/mean_uniform_std < 0.9
+        if mean_uniform_std < mean_kde_std*0.9
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:uniform_bin_idx]
             @warn "KDE bin estimation failed... Default to uniform binning"
         else
@@ -209,6 +212,7 @@ function MergeBins(isotopes_ratio_data::DataFrame, x0_lim::Tuple{<:Real,<:Real};
     bined_ratio_data = combine(groupby(isotopes_ratio_data,:prec_charge)) do subdf
         MergeBins(subdf,x0_lim, min_bin_size = min_bin_size, min_bin_width = min_bin_width, max_iterations = max_iterations)
     end
-    filter!(x->x.n_bins>=6, bined_ratio_data)
+    filter!(x->x.n_bins>=2, bined_ratio_data)
+    filter!(x->x.n>=min_bin_size, bined_ratio_data)
     return bined_ratio_data
 end
