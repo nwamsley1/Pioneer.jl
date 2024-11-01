@@ -56,6 +56,7 @@ function searchFragmentIndex(
         #Ion Template Selection
         #searchScan! is the MsFragger style fragment index search
         #Loads `precs` with scores for each potential precursor matching the spectrum
+        quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][i], spectra[:isolationWidthMz][i])
         searchScan!(
                     precs, #counter which keeps track of plausible matches 
                     getRTBins(frag_index),
@@ -65,7 +66,7 @@ function searchFragmentIndex(
                     rt_bin_idx, 
                     iRT_high,
                     mass_err_model,
-                    getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][i], spectra[:isolationWidthMz][i])
+                    quad_transmission_function,
                     isotope_err_bounds
                     )
         

@@ -31,7 +31,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
 
         #Manage isotope errors. NEUTRON is global constant. 
         mz_low = getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/prec_charge
-        mz_low = getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/prec_charge
+        mz_high = getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/prec_charge
         if (prec_mz < mz_low) | (prec_mz > mz_high)
             continue
         end

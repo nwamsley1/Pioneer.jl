@@ -60,9 +60,7 @@ function parameterTuningSearch(rt_alignment_folder,
                                     sample_rate = params_[:presearch_params]["sample_rate"],
                                     params = params_[:presearch_params],
                                     isotope_err_bounds = params_[:isotope_err_bounds],
-                                    mz_overhang = 0.0f0,
-                                    quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
-                                                    );
+                                    quad_transmission_model = SquareQuadModel(0.0f0));
 
             psms = vcat([result for result in RESULT]...)
             psms[!,:best_psms ] .= false

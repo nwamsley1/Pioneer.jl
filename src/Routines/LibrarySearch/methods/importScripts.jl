@@ -1,6 +1,15 @@
 function importScripts()
     package_root = dirname(dirname(dirname(dirname(@__DIR__))))
     
+    [include(joinpath(package_root, "src","utils", "quadTransmissionModeling", jl_file)) for jl_file in [
+    "quadTransmissionModel.jl",
+    "RazoQuadModel.jl",
+    "SplineQuadModel.jl",
+    "binIsotopeRatioData.jl",
+    "squareQuadModel.jl",
+   
+]];   
+
     [include(joinpath(package_root, "src", "structs", jl_file)) for jl_file in [
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
@@ -41,6 +50,8 @@ function importScripts()
                                                                     "mergePsmTables.jl",
                                                                     "summarizeToProtein.jl",
                                                                     "writeCSVTables.jl"]];
+
+                                             
 
     [include(joinpath(package_root,"src","PSM_TYPES", jl_file)) for jl_file in ["PSM.jl","spectralDistanceMetrics.jl","UnscoredPSMs.jl","ScoredPSMs.jl"]];
     #Files needed for PRM routines

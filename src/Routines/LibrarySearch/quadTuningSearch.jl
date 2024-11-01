@@ -173,6 +173,7 @@ function quadTuningSearch(    rt_to_irt_map_dict,
 
     precursors = spec_lib["precursors"]
     model_fits = []
+    quad_model_dict = Dict{Int64, }
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         psms =  vcat(LibrarySearch(
@@ -199,10 +200,7 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                                 params = params_[:presearch_params],
                                 isotope_err_bounds = (0, 0),
                                 mz_overhang = 1.0f0,
-                                quad_transmission_func = QuadTransmission(
-                                    2.0, 
-                                    100.0
-                                    )
+                                quad_transmission_model = SquareQuadModel(1.0f0)
                                                 )...);
 
         psms[!,:best_psms ] .= false

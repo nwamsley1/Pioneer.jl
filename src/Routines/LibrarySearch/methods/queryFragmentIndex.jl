@@ -200,8 +200,8 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     quad_transmission_func::QuadTransmissionFunction,
                     isotope_err_bounds::Tuple{Int64, Int64}
                     ) where {U<:AbstractFloat}
-    prec_min = getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/2
-    prec_max = getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/2
+    prec_min = U(getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/2)
+    prec_max = U(getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/2)
     @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
 
         #BinRanges

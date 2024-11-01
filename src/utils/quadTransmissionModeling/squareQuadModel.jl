@@ -34,6 +34,3 @@ function (sqf::SquareQuadFunction{T})(ionMz::U) where {T,U<:AbstractFloat}
         return one(U)
     end
 end
-
-
-function (s::CubicSpline)(t::U) where {U<:AbstractFloat}

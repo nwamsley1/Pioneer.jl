@@ -117,140 +117,35 @@ function SearchDIA(params_path::String)
                                                                             precs)
 
     println("Parameter Tuning Search...")
-    params_[:presearch_params]["min_quad_tuning_samples"] = 10000
+    #params_[:presearch_params]["min_quad_tuning_samples"] = 10000
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3 +1 ) for _ in range(1, N)];
-precursor_weights = [zeros(Float32, n_precursors*3 + 1 ) for _ in range(1, N)];
-p = plot()
-model_fits = []
-    test_time = @timed begin
-        params_[:presearch_params]["sample_rate"] = 0.1
-        params_[:presearch_params]["min_log2_matched_ratio"] = 1.5f0
-        params_[:presearch_params]["min_spectral_contrast"] = 0.9f0
-        params_[:presearch_params]["min_index_search_score"] = 22
-        fitted_rqms = quadTuningSearch(    RT_to_iRT_map_dict,
-                                        frag_err_dist_dict,
-                                        irt_errs,
-                                        MS_TABLE_PATHS,
-                                        params_,
-                                        spec_lib,
-                                        ionMatches,
-                                        ionMisses,
-                                        all_fmatches,
-                                        IDtoCOL,
-                                        ionTemplates,
-                                        iso_splines,
-                                        scored_PSMs,
-                                        unscored_PSMs,
-                                        spectral_scores,
-                                        precursor_weights,
-                                        precs)
-        p = plot()
-        for (i, fitted_rqm) in enumerate(fitted_rqms)
-            plot_bins = LinRange(-3, 3, 100)
-            plot!(p, plot_bins, fitted_rqm.(plot_bins), alpha = 0.5, lw = 2, label = "file_id $i")
-        end
-        display(p)
-end
+    precursor_weights = [zeros(Float32, n_precursors*3 + 1 ) for _ in range(1, N)];
+    params_[:presearch_params]["sample_rate"] = 0.1
+    fitted_rqms = quadTuningSearch(    RT_to_iRT_map_dict,
+                                    frag_err_dist_dict,
+                                    irt_errs,
+                                    MS_TABLE_PATHS,
+                                    params_,
+                                    spec_lib,
+                                    ionMatches,
+                                    ionMisses,
+                                    all_fmatches,
+                                    IDtoCOL,
+                                    ionTemplates,
+                                    iso_splines,
+                                    scored_PSMs,
+                                    unscored_PSMs,
+                                    spectral_scores,
+                                    precursor_weights,
+                                    precs)
+    p = plot()
+    for (i, fitted_rqm) in enumerate(fitted_rqms)
+        plot_bins = LinRange(-3, 3, 100)
+        plot!(p, plot_bins, fitted_rqm.(plot_bins), alpha = 0.5, lw = 2, label = "file_id $i")
+    end
+    display(p)
 
 
-test_bined2 = MergeBins(test_out[test_out[!,:center_mz].>800.0,:],(-8.0, 8.0), min_bin_size = 10, min_bin_width = 0.1)
-println("size(test_bined) ", size(test_bined))
-fitted_rqm_big = fitRazoQuadModel(
-2.0,
-test_bined2[!,:median_x0],  test_bined2[!,:median_x1],  test_bined2[!,:median_yt],
-λ0 = 1e-1, #Initial L-M damping coeficient 
-ϵ1 = 1e-5, #Convergence in the gradient
-ϵ2 = 1e-4, #Convergence in the coeficients
-ϵ3 = 1e-5 #Conergence in squared error
-)
-
-test_bined3 = MergeBins(test_out[test_out[!,:center_mz].<500.0,:],(-8.0, 8.0), min_bin_size = 10, min_bin_width = 0.1)
-println("size(test_bined) ", size(test_bined))
-fitted_rqm_small = fitRazoQuadModel(
-2.0,
-test_bined3[!,:median_x0],  test_bined3[!,:median_x1],  test_bined3[!,:median_yt],
-λ0 = 1e-1, #Initial L-M damping coeficient 
-ϵ1 = 1e-5, #Convergence in the gradient
-ϵ2 = 1e-4, #Convergence in the coeficients
-ϵ3 = 1e-5 #Conergence in squared error
-)
-
-plot_bins = LinRange(-3, 3, 100)
-plot(plot_bins, fitted_rqm_big.(plot_bins), alpha = 0.5, lw = 2, label = "> 800 m/z")
-plot!(plot_bins, fitted_rqm_small.(plot_bins), alpha = 0.5, lw = 2, label = "< 500 m/z")
-
-
-fitted_
-display(p)
-test_time
-    #
-    #=
-    #=
-    test_out2 = test_out[test_out[!,:prec_charge].==2,:]
-    test_out3 = test_out[test_out[!,:prec_charge].==3,:]
-    test_out4 = test_out[test_out[!,:prec_charge].==4,:]
-    plot(test_out2[!,:x0], test_out2[!,:yt], seriestype=:scatter, ylim = (-3, 5), xlim = (-2, 2), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-    label = "+2", title = "Astral", alpha = 0.05)
-    plot!(test_out3[!,:x0], test_out3[!,:yt], seriestype=:scatter, ylim = (-3, 5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-    label = "+3", title = "Astral", alpha = 0.05)
-        plot!(test_out4[!,:x0], test_out4[!,:yt], seriestype=:scatter, ylim = (-3, 5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-    label = "+4", title = "Astral", alpha = 0.05)
-    vline!([-8.0, 8.0, -7.0, 7.0])
-    hline!([median(test_out[!,:yt])])
-    hline!([-1.0, 1.0])
-    test_out[!,:prec_charge] = UInt8.(test_out[!,:prec_charge])
-    test_out[!,:x0] = Float32.(test_out[!,:x0])
-    test_out[!,:yt] = Float32.(test_out[!,:yt])
-    test_out[!,:x1] = Float32.(test_out[!,:x1])
-    =#
-    tgo = groupby(test_out,:precursor_idx)
-test_out2 = test_out[test_out[!,:prec_charge].==2,:]
-test_out3 = test_out[test_out[!,:prec_charge].==3,:]
-plot(test_out2[!,:x0], test_out2[!,:yt], seriestype=:scatter, ylim = (-3, 5), xlim = (-2.5, 2.5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-label = "+2", title = "Astral", alpha = 0.05)
-plot!(test_out3[!,:x0], test_out3[!,:yt], seriestype=:scatter, ylim = (-3, 5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-label = "+3", title = "Astral", alpha = 0.05)
-
-
-filter!(x->x.min_weight>1000.0, test_out)
-test_out2 = test_out[test_out[!,:center_mz].<500,:]
-test_out3 = test_out[test_out[!,:center_mz].>800,:]
-plot(test_out2[!,:x0], test_out2[!,:yt], seriestype=:scatter, ylim = (-3, 5), xlim = (-2.5, 2.5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-label = "<500 m/z", title = "Astral", alpha = 0.03)
-plot!(test_out3[!,:x0], test_out3[!,:yt], seriestype=:scatter, ylim = (-3, 5), ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-label = ">800 m/z", title = "Astral", alpha = 0.03)
-
-
-
-test_bined2 = test_bined[test_bined[!,:prec_charge].==2,:]
-test_bined3 = test_bined[test_bined[!,:prec_charge].==3,:]
-
-plot(test_bined2[!,:median_x0], test_bined2[!,:median_yt], seriestype=:scatter,
-     ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-            label = "+2", title = "Astral", alpha = 0.5)
-plot!(test_bined3[!,:median_x0], test_bined3[!,:median_yt], seriestype=:scatter,
-     ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-            label = "+3", title = "Astral", alpha = 0.5)
-    
-    test_out2 = test_out[test_out[!,:prec_charge].==2,:]
-    qspline = UniformSpline(
-    test_out2[!,:yt],
-    test_out2[!,:x0],
-    3, 7
-    )
-    plot(test_out[!,:x0], test_out[!,:yt], seriestype=:scatter, ylim = (-3, 5), xlim = (6, 8), alpha = 0.2, ylabel = "log2(f(z0)/f(z1))", xlabel = "m/z offset of M0 ion", 
-    label = nothing, title = "Exploris 480")
-    plot!(test_out[!,:x0], qspline.(test_out[!,:x0]), seriestype=:scatter, ylim = (-3, 5), alpha = 0.2)
-    vline!([-7.0, 7.0, -8.0, 8.0])
-
-        test_out[!,:err] = qspline.(test_out[!,:x0]) .- test_out[!,:yt]
-    err_tol = mad(test_out[!,:err])
-    filter!(x->abs(x.err)<err_tol*4, test_out)
-plot!(test_out[!,:x0], test_out[!,:yt], seriestype=:scatter, ylim = (-3, 5), alpha = 0.2)
-
-     mad(abs.(qspline.(test_out[!,:x0]) .- test_out[!,:yt]))*4
-    =#
-############
     #Remove files that filed the presearch
     #_new_parsed_fnames = []
     n_files = length(MS_TABLE_PATHS)
