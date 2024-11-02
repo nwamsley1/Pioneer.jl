@@ -121,7 +121,7 @@ function SearchDIA(params_path::String)
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3 +1 ) for _ in range(1, N)];
     precursor_weights = [zeros(Float32, n_precursors*3 + 1 ) for _ in range(1, N)];
     params_[:presearch_params]["sample_rate"] = 0.1
-    fitted_rqms = quadTuningSearch(    RT_to_iRT_map_dict,
+    quad_model_dict = quadTuningSearch(    RT_to_iRT_map_dict,
                                     frag_err_dist_dict,
                                     irt_errs,
                                     MS_TABLE_PATHS,
@@ -228,6 +228,7 @@ function SearchDIA(params_path::String)
         RT_to_iRT_map_dict,
         frag_err_dist_dict,
         irt_errs,
+        quad_model_dict,
         file_id_to_parsed_name,
         MS_TABLE_PATHS,
         params_,
@@ -313,6 +314,7 @@ function SearchDIA(params_path::String)
         bin_rt_size,
         rt_irt,
         irt_errs,
+        quad_model_dict,
         chromatograms,
         file_path_to_parsed_name,
         params_,
@@ -343,6 +345,7 @@ function SearchDIA(params_path::String)
         bin_rt_size,
         rt_irt,
         irt_errs,
+        quad_model_dict,
         chromatograms,
         file_path_to_parsed_name,
         MS_TABLE_PATHS,
@@ -399,43 +402,7 @@ function SearchDIA(params_path::String)
                                     precursor_pep_spline,
                                     precursor_qval_interp,
                                     0.01f0)
-    #Delete Quant PSMs
-    #if params_[:output_params]["delete_temp"]
-    #    rm(quant_psms_folder,recursive=true)
-    #end
-    #=
-        quant_psms_test = DataFrame(Arrow.Table("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/merged_quant.arrow"))
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:prob]
-        tbins = LinRange(0, 1, 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-
-        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/quant_psms_folder", join=true)))
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:max_unmatched_residual]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:max_unmatched_residual]
-        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:fitted_manhattan_distance]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:fitted_manhattan_distance]
-        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/first_search_psms", join=true)))
-        quant_psms_test[!,:target] = [precursors[:target][pid] for pid in quant_psms_test[!,:precursor_idx]]
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
-        tbins = LinRange(0, 1, 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-    =#
+    
     ###########
     #Score Protein Groups
     sorted_pg_score_path = getProteinGroups(
@@ -470,6 +437,7 @@ function SearchDIA(params_path::String)
                     bin_rt_size,
                     rt_irt,
                     irt_errs,
+                    quad_model_dict,
                     chromatograms,
                     MS_TABLE_PATHS,
                     params_,

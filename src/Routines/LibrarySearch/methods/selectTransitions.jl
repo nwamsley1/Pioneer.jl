@@ -126,23 +126,22 @@ function selectRTIndexedTransitions!(
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
                             iso_splines::IsotopeSplineModel,
-                            quad_transmission_func::QuadTransmission,
+                            quad_transmission_func::QuadTransmissionFunction,
                             precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt_start_idx::Int64, 
                             rt_stop_idx::Int64,
-                            min_prec_mz::Float32,
-                            max_prec_mz::Float32,
                             frag_mz_bounds::Tuple{Float32, Float32},
                             isotope_err_bounds::Tuple{Int64, Int64},
                             block_size::Int64)
     transition_idx = 0
     n = 0
+    min_prec_mz = getPrecMinBound(quad_transmission_func)
+    max_prec_mz  = getPrecMaxBound(quad_transmission_func)
     for rt_bin_idx in range(rt_start_idx, rt_stop_idx) #Add transitions
         precs = rt_index.rt_bins[rt_bin_idx].prec
-        #println("precs")
         start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
         stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
         for i in start:stop #Get transitions for each precursor
@@ -154,8 +153,6 @@ function selectRTIndexedTransitions!(
             prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
             mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
             mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
-            #println("prec_idx $prec_idx prec_mz $prec_mz mz_low $mz_low")
-            #println("prec_mzs $prec_mzs")
             #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
             (prec_mz < mz_low) | (prec_mz > mz_high) ? continue : nothing
             #println("passed ternary")
@@ -183,6 +180,75 @@ function selectRTIndexedTransitions!(
           by = x->getMZ(x),
           alg=PartialQuickSort(1:transition_idx))
           #println("transition_idx $transition_idx, n $n precs_temp_size $precs_temp_size")
+    #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
+    return transition_idx, n, precs_temp_size
+end
+function selectRTIndexedTransitions!(
+                            transitions::Vector{DetailedFrag{Float32}}, 
+                            precs_temp::Vector{UInt32},
+                            precs_temp_size::Int64,
+                            precursors_passing::Set{UInt32},
+                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
+                            prec_mzs::AbstractArray{Float32},
+                            prec_charges::AbstractArray{UInt8},
+                            prec_sulfur_counts::AbstractArray{UInt8},
+                            iso_splines::IsotopeSplineModel,
+                            quad_transmission_func::QuadTransmissionFunction,
+                            precursor_transmission::Vector{Float32},
+                            isotopes::Vector{Float32},
+                            n_frag_isotopes::Int64,
+                            rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
+                            rt_start_idx::Int64, 
+                            rt_stop_idx::Int64,
+                            frag_mz_bounds::Tuple{Float32, Float32},
+                            isotope_err_bounds::Tuple{Int64, Int64},
+                            block_size::Int64)
+    transition_idx = 0
+    n = 0
+    min_prec_mz = getPrecMinBound(quad_transmission_func)
+    max_prec_mz  = getPrecMaxBound(quad_transmission_func)
+    for rt_bin_idx in range(rt_start_idx, rt_stop_idx) #Add transitions
+        precs = rt_index.rt_bins[rt_bin_idx].prec
+        start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
+        stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
+        for i in start:stop #Get transitions for each precursor
+            prec_idx = first(precs[i])
+            if prec_idx ∉ precursors_passing
+                continue
+            end
+            precs_temp_size += 1
+            n += 1 #Keep track of number of precursors 
+            precs_temp[precs_temp_size] = prec_idx
+            prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
+            mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
+            mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
+
+            #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
+            (prec_mz < mz_low) | (prec_mz > mz_high) ? continue : nothing
+
+            #Which precursor isotopes where captured in the quadrupole isolation window? 
+            #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
+            transition_idx = @inline fillTransitionList!(transitions, 
+                                            getPrecFragRange(library_fragment_lookup, prec_idx),
+                                            getFragments(library_fragment_lookup),
+                                            prec_mz,
+                                            prec_charge,
+                                            prec_sulfur_count,
+                                            transition_idx,
+                                            quad_transmission_func,
+                                            precursor_transmission,
+                                            isotopes, 
+                                            n_frag_isotopes,
+                                            iso_splines, 
+                                            frag_mz_bounds,
+                                            block_size
+                                            )
+        end
+    end
+
+    sort!(@view(transitions[1:transition_idx]), 
+          by = x->getMZ(x),
+          alg=PartialQuickSort(1:transition_idx))
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n, precs_temp_size
 end
@@ -231,75 +297,7 @@ function selectTransitionsForQuadEstimation!(
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n
 end
-function selectRTIndexedTransitions!(
-                            transitions::Vector{DetailedFrag{Float32}}, 
-                            precs_temp::Vector{UInt32},
-                            precs_temp_size::Int64,
-                            precursors_passing::Set{UInt32},
-                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
-                            prec_mzs::AbstractArray{Float32},
-                            prec_charges::AbstractArray{UInt8},
-                            prec_sulfur_counts::AbstractArray{UInt8},
-                            iso_splines::IsotopeSplineModel,
-                            quad_transmission_func::QuadTransmission,
-                            precursor_transmission::Vector{Float32},
-                            isotopes::Vector{Float32},
-                            n_frag_isotopes::Int64,
-                            rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
-                            rt_start_idx::Int64, 
-                            rt_stop_idx::Int64,
-                            min_prec_mz::Float32,
-                            max_prec_mz::Float32,
-                            frag_mz_bounds::Tuple{Float32, Float32},
-                            isotope_err_bounds::Tuple{Int64, Int64},
-                            block_size::Int64)
-    transition_idx = 0
-    n = 0
-    for rt_bin_idx in range(rt_start_idx, rt_stop_idx) #Add transitions
-        precs = rt_index.rt_bins[rt_bin_idx].prec
-        start = searchsortedfirst(precs, by = x->last(x), min_prec_mz - first(isotope_err_bounds)*NEUTRON/2) #First precursor in the isolation window
-        stop = searchsortedlast(precs, by = x->last(x), max_prec_mz + last(isotope_err_bounds)*NEUTRON/2) #Last precursor in the isolation window
-        for i in start:stop #Get transitions for each precursor
-            prec_idx = first(precs[i])
-            if prec_idx ∉ precursors_passing
-                continue
-            end
-            precs_temp_size += 1
-            n += 1 #Keep track of number of precursors 
-            precs_temp[precs_temp_size] = prec_idx
-            prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
-            mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
-            mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
 
-            #If precursor m/z (with isotope error) out of qaudrupole isolation bounds 
-            (prec_mz < mz_low) | (prec_mz > mz_high) ? continue : nothing
-
-            #Which precursor isotopes where captured in the quadrupole isolation window? 
-            #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
-            transition_idx = @inline fillTransitionList!(transitions, 
-                                            getPrecFragRange(library_fragment_lookup, prec_idx),
-                                            getFragments(library_fragment_lookup),
-                                            prec_mz,
-                                            prec_charge,
-                                            prec_sulfur_count,
-                                            transition_idx,
-                                            quad_transmission_func,
-                                            precursor_transmission,
-                                            isotopes, 
-                                            n_frag_isotopes,
-                                            iso_splines, 
-                                            frag_mz_bounds,
-                                            block_size
-                                            )
-        end
-    end
-
-    sort!(@view(transitions[1:transition_idx]), 
-          by = x->getMZ(x),
-          alg=PartialQuickSort(1:transition_idx))
-    #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
-    return transition_idx, n, precs_temp_size
-end
 
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_fragment_range::UnitRange{UInt64},

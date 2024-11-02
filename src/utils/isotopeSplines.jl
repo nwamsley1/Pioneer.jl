@@ -344,6 +344,25 @@ A Tuple of two integers. (1, 3) would indicate the M+1 through M+3 isotopes were
 """
 function getPrecursorIsotopeSet(prec_mz::Float32, 
                                 prec_charge::UInt8, 
+                                min_prec_mz::Float32, 
+                                max_prec_mz::Float32;
+                                max_iso::Int64 = 5)
+    first_iso, last_iso = -1, 0
+    for iso_count in range(0, max_iso) #Arbitrary cutoff after 5 
+        iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
+        if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz) 
+            if first_iso < 0
+                first_iso = iso_count
+            end
+            last_iso = iso_count
+        end
+    end
+    return (first_iso, last_iso)
+end
+
+
+function getPrecursorIsotopeSet(prec_mz::Float32, 
+                                prec_charge::UInt8, 
                                 qtf::QuadTransmissionFunction;
                                 max_iso::Int64 = 5)
     first_iso, last_iso = -1, 0

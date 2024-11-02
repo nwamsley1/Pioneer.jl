@@ -132,14 +132,11 @@ end
 
 function getQuadTransmissionFunction(rqm::RazoQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
     
-    slope_l = rqm.params.bl/(2*rqm.params.al)
-    slope_r = (-1)*rqm.params.br/(2*rqm.params.ar)
-
-    #(0.1 + 0.1 - slope_l*rqm.param.al)/slope_l
+    al, ar, bl, br = rqm.params.al, rqm.params.ar, rqm.params.bl, rqm.params.br
     RazoQuadFunction(
         #T((-1)*rqm.params.al - rqm.params.al/rqm.params.bl),
-        T((-rqm.params.al)*(1 + 1/rqm.params.bl)),
-        T((rqm.params.ar)*(1 + 1/rqm.params.br)),
+        centerMz - T((al)*(1 + 1/bl)),
+        centerMz + T((ar)*(1 + 1/br)),
         centerMz,
         rqm.params
     )
@@ -154,7 +151,7 @@ function getPrecMaxBound(rqm::RazoQuadFunction{T}) where {T<:AbstractFloat}
 end
 
 function (rqf::RazoQuadFunction{T})(ionMz::U) where {T,U<:AbstractFloat}
-    rqf.params(ionMz)
+    rqf.params(ionMz-rqf.center_mz)
 end
 
 #=

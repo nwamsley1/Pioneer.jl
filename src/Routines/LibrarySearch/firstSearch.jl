@@ -5,6 +5,7 @@ function firstSearch(
                     rt_to_irt_map_dict,
                     frag_err_dist_dict,
                     irt_errs,
+                    quad_model_dict,
                     file_id_to_parsed_name,
                     MS_TABLE_PATHS,
                     params_,
@@ -22,6 +23,7 @@ function firstSearch(
 
 peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
 psms_paths = Dictionary{String, String}()
+println("TEST")
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     psms = vcat(LibrarySearch(
@@ -46,8 +48,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         mass_err_model = frag_err_dist_dict[ms_file_idx],#MassErrorModel(0.9f0, (12.0f0, 17.0f0)),#frag_err_dist_dict[ms_file_idx],
         sample_rate = Inf,
         params = params_[:first_search_params],
-        quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
+        isotope_err_bounds = params_[:isotope_err_bounds],
+        quad_transmission_model = quad_model_dict[ms_file_idx]
                         )...)
+    println("size(psms) ", size(psms))
     addMainSearchColumns!(psms, MS_TABLE, 
                         rt_to_irt_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],

@@ -321,7 +321,6 @@ function huberTuningSearch(
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
-                    quad_transmission_func::QuadTransmission,
                     δs::Vector{Float32},
                     λ::Float32,
                     max_iter_newton::Int64,
@@ -338,6 +337,7 @@ function huberTuningSearch(
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
+                    quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
                     rt_index::retentionTimeIndex{Float32, Float32},
@@ -349,7 +349,7 @@ function huberTuningSearch(
 
     ##########
     #Initialize 
-    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    prec_idx, ion_idx, cycle_idx = 0, 0, 0
     Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);
@@ -408,15 +408,13 @@ function huberTuningSearch(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
-                quad_transmission_func,
+                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
                 rt_index,
                 irt_start,
                 irt_stop,
-                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
-                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
                 (
                     spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),
@@ -652,7 +650,6 @@ function secondSearch(
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
-                    quad_transmission_func::QuadTransmission,
                     δ::Float32,
                     λ::Float32,
                     max_iter_newton::Int64,
@@ -670,6 +667,7 @@ function secondSearch(
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
+                    quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     min_y_count::Int64,
                     min_frag_count::Int64,
@@ -743,15 +741,13 @@ function secondSearch(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
-                quad_transmission_func,
+                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
                 rt_index,
                 irt_start,
-                irt_stop,
-                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
-                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
+                irt_stop, 
                 (
                     spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),
@@ -860,7 +856,6 @@ function getChromatograms(
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
-                    quad_transmission_func::QuadTransmission,
                     δ::Float32,
                     λ::Float32,
                     max_iter_newton::Int64,
@@ -878,6 +873,7 @@ function getChromatograms(
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
+                    quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
@@ -943,15 +939,13 @@ function getChromatograms(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
-                quad_transmission_func,
+                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
                 rt_index,
                 irt_start,
                 irt_stop,
-                spectra[:centerMz][scan_idx] - spectra[:isolationWidthMz][scan_idx]/2.0f0,
-                spectra[:centerMz][scan_idx] + spectra[:isolationWidthMz][scan_idx]/2.0f0,
                 (
                     spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
                 ),

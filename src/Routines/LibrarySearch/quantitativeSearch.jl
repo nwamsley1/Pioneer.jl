@@ -8,6 +8,7 @@ function quantSearch(
     bin_rt_size,
     RT_iRT,
     irt_errs,
+    quad_model_dict,
     chromatograms,
     file_path_to_parsed_name,
     MS_TABLE_PATHS,
@@ -53,7 +54,6 @@ function quantSearch(
                                     kwargs[:ms_file_idx],
                                     kwargs[:rt_to_irt_spline],
                                     kwargs[:mass_err_model],
-                                    kwargs[:quad_transmission_func],
                                     Float32(params[:deconvolution_params]["huber_delta"]),
                                     Float32(params[:deconvolution_params]["lambda"]),
                                     Int64(params[:deconvolution_params]["max_iter_newton"]),
@@ -71,6 +71,7 @@ function quantSearch(
                                     kwargs[:unscored_psms][thread_id],
                                     kwargs[:spectral_scores][thread_id],
                                     kwargs[:precursor_weights][thread_id],
+                                    kwargs[:quad_transmission_model],
                                     (3, 0),
                                     Int64(params[:quant_search_params]["min_y_count"]),
                                     Int64(params[:quant_search_params]["min_frag_count"]),
@@ -118,7 +119,7 @@ function quantSearch(
                 unscored_psms = complex_unscored_psms,
                 spectral_scores = complex_spectral_scores,
                 precursor_weights = precursor_weights,
-                quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
+                quad_transmission_model = quad_model_dict[ms_file_idx],
                 )...);
             addSecondSearchColumns!(psms, 
                                             MS_TABLE, 

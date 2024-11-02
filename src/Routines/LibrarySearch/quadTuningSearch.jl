@@ -173,7 +173,7 @@ function quadTuningSearch(    rt_to_irt_map_dict,
 
     precursors = spec_lib["precursors"]
     model_fits = []
-    quad_model_dict = Dict{Int64, }
+    quad_model_dict = Dict{Int64, RazoQuadModel}()
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         psms =  vcat(LibrarySearch(
@@ -329,9 +329,9 @@ function quadTuningSearch(    rt_to_irt_map_dict,
             ϵ2 = 1e-4, #Convergence in the coeficients
             ϵ3 = 1e-5 #Conergence in squared error
             )
-        push!(model_fits, fitted_rqm)
+        quad_model_dict[ms_file_idx] = RazoQuadModel(fitted_rqm)
     end
-    return model_fits
+    return quad_model_dict
 end
 
 

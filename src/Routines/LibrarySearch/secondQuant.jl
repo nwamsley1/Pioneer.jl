@@ -7,6 +7,7 @@ function secondQuantSearch!(
     bin_rt_size,
     rt_irt,
     irt_errs,
+    quad_model_dict,
     chromatograms,
     MS_TABLE_PATHS,
     params_,
@@ -53,7 +54,6 @@ function secondQuant(
                                 kwargs[:ms_file_idx],
                                 kwargs[:rt_to_irt_spline],
                                 kwargs[:mass_err_model],
-                                kwargs[:quad_transmission_func],
                                 Float32(params[:deconvolution_params]["huber_delta"]),
                                 Float32(params[:deconvolution_params]["lambda"]),
                                 Int64(params[:deconvolution_params]["max_iter_newton"]),
@@ -71,6 +71,7 @@ function secondQuant(
                                 kwargs[:unscored_psms][thread_id],
                                 kwargs[:spectral_scores][thread_id],
                                 kwargs[:precursor_weights][thread_id],
+                                kwargs[:quad_transmission_model],
                                 (3, 0),
                                 params[:quant_search_params]["n_frag_isotopes"],
                                 kwargs[:rt_index], 
@@ -123,7 +124,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             spectral_scores = complex_spectral_scores,
             precursor_weights = precursor_weights,
             traces_passing = Set(sub_bpsms[!,:precursor_idx]),
-            quad_transmission_func = QuadTransmission(params_[:quad_transmission]["overhang"], params_[:quad_transmission]["smoothness"])
+            quad_transmission_model = quad_model_dict[ms_file_idx],
             )...);
 
         #Format Chromatograms 
