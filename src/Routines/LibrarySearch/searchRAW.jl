@@ -525,7 +525,7 @@ function QuadTransmissionSearch(
 
     ##########
     #Initialize 
-    prec_idx, ion_idx, cycle_idx, last_val = 0, 0, 0, 0
+    prec_idx, ion_idx, cycle_idx = 0, 0, 0
     Hs = SparseArray(UInt32(5000));
     _weights_ = zeros(Float32, 5000);
     _residuals_ = zeros(Float32, 5000);

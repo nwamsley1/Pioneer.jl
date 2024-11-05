@@ -339,7 +339,6 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         prec_charge, 
                         prec_sulfur_count,
                         frag,
-                        #prec_isotope_set
                         )
         for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
 

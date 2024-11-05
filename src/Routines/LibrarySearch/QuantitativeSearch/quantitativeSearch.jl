@@ -91,7 +91,7 @@ function quantSearch(
     end
     ms_table_path_to_psms_path = Dict{String, String}()
     quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
-        
+        try
         parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
         rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
         rt_index = buildRtIndex(rt_df,
@@ -122,14 +122,18 @@ function quantSearch(
                 quad_transmission_model = quad_model_dict[ms_file_idx],
                 )...);
             addSecondSearchColumns!(psms, 
-                                            MS_TABLE, 
                                             MS_TABLE[:retentionTime],
-                                            spec_lib["precursors"][:mz],
                                             spec_lib["precursors"][:prec_charge], 
                                             spec_lib["precursors"][:is_decoy],
                                             pid_to_cv_fold);
             psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
-            getIsotopesCaptured!(psms,  spec_lib["precursors"][:prec_charge], spec_lib["precursors"][:mz], MS_TABLE);
+            getIsotopesCaptured!(psms,  
+                                   quad_model_dict[ms_file_idx],
+                                    psms[!,:scan_idx],
+                                    spec_lib["precursors"][:prec_charge], 
+                                    spec_lib["precursors"][:mz], 
+                                    MS_TABLE[:centerMz],
+                                    MS_TABLE[:isolationWidthMz]);
             psms[!,:best_scan] .= false;
             filter!(x->first(x.isotopes_captured)<2, psms);
             initSummaryColumns!(psms);
@@ -139,7 +143,6 @@ function quantSearch(
                     gpsms[!,:weight],
                     gpsms[!,:gof],
                     gpsms[!,:matched_ratio],
-                    #gpsms[!,:entropy_score],
                     gpsms[!,:fitted_manhattan_distance],
                     gpsms[!,:fitted_spectral_contrast],
                     gpsms[!,:y_count]
@@ -170,6 +173,9 @@ function quantSearch(
                 temp_path,
                 psms,
                 )
+        catch
+            @warn "Quant search for $MS_TABLE_PATH failed..."
+        end
     end
     return
 end

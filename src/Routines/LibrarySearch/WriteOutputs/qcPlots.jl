@@ -53,8 +53,7 @@ function qcPlots(
         end
 
         for parsed_fname in parsed_fnames
-            println("parsed_fname $parsed_fname")
-            println(first(DataFrame(precursors_wide), 5))
+            try
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
             Plots.plot!(p, collect(sampled_range),
                     sorted_precursor_abundances,
@@ -62,6 +61,9 @@ function qcPlots(
                     subplot = 1,
                     label = parsed_fname
                     )
+            catch
+                continue
+            end
         end
         savefig(p, f_out)
     end
@@ -98,7 +100,11 @@ function qcPlots(
         end
         ids = zeros(Int64, length(parsed_fnames))
         for (i, fname) in enumerate(parsed_fnames)
+            try
             ids[i] = getColumnIDs(precursors_wide[Symbol(fname)])
+            catch
+                continue
+            end
         end
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1), show = true)
@@ -168,9 +174,13 @@ function qcPlots(
         end
         ids = zeros(Float32, length(parsed_fnames))
         for (i, fname) in enumerate(parsed_fnames)
-            ids[i] = 100*getMissedCleavageRate(precursors_wide[Symbol(fname)],
-            precursors_wide[:precursor_idx],
-            precursors[:missed_cleavages])
+            try
+                ids[i] = 100*getMissedCleavageRate(precursors_wide[Symbol(fname)],
+                precursors_wide[:precursor_idx],
+                precursors[:missed_cleavages])
+            catch
+                continue
+            end
         end
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1), show = true)

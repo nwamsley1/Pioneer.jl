@@ -14,14 +14,12 @@ function parameterTuningSearch(rt_alignment_folder,
                                 unscored_psms,
                                 spectral_scores,
                                 precs)
+
     [rm(joinpath(rt_alignment_folder, x)) for x in readdir(rt_alignment_folder)]
     [rm(joinpath(mass_err_estimation_folder, x)) for x in readdir(mass_err_estimation_folder)]
-
     rt_to_irt_map_dict = Dict{Int64, Any}()
     frag_err_dist_dict = Dict{Int64,MassErrorModel}()
     irt_errs = Dict{Int64, Float64}()
-    ms_file_idx_to_remove = Int64[]
-    failed_ms_file_idx = Int64[]
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         MS_TABLE = Arrow.Table(MS_TABLE_PATH)
         out_fname = String(first(split(splitpath(MS_TABLE_PATH)[end],".")));
@@ -65,7 +63,6 @@ function parameterTuningSearch(rt_alignment_folder,
             psms = vcat([result for result in RESULT]...)
             psms[!,:best_psms ] .= false
             if iszero(size(psms, 1))
-                #@warn "No psms in pre-search iteration $n for $MS_TABLE_PATH"
                 n += 1
                 continue
             end
@@ -105,15 +102,7 @@ function parameterTuningSearch(rt_alignment_folder,
             n += 1
         end
 
-        if n >= params_[:presearch_params]["max_presearch_iters"]
-            min_samples = params_[:presearch_params]["min_samples"]
-            max_iters = params_[:presearch_params]["max_presearch_iters"]
-            @warn "Presearch did not find $min_samples precursors at the specified fdr in $max_iters iterations"
-            if rtpsms === nothing
-                 @warn "Presearch found zero psms in $max_iters iterations... Removing file $MS_TABLE_PATH from the search..."
-                 push!(ms_file_idx_to_remove, ms_file_idx)
-                 continue
-            end
+        try
             filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], rtpsms)
             rtpsms[!,:best_psms] .= false
             grouped_psms = groupby(rtpsms,:precursor_idx)
@@ -122,79 +111,91 @@ function parameterTuningSearch(rt_alignment_folder,
                 psms[best_idx,:best_psms] = true
             end
             filter!(x->x.best_psms, rtpsms)
-        end
-        try
-        rt_to_irt_map = UniformSpline( 
-                                        rtpsms[!,:irt_predicted], 
-                                        rtpsms[!,:rt], 
-                                        3, #Degree is always three
-                                        5 #Spline knots fixed. currently not tunable parameter
-                                        );
 
-        rtpsms[!,:irt_observed] = rt_to_irt_map.(rtpsms[!,:rt])
-        irt_MAD = mad(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted])
-        irt_σ = irt_MAD #Robust estimate of standard deviation
-        #Remove outliers and re-fit spline 
-        rtpsms = rtpsms[abs.(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted]) .< irt_MAD*10,:]
-        rt_to_irt_map = UniformSpline( 
-            rtpsms[!,:irt_predicted], 
-            rtpsms[!,:rt], 
-            3, #Degree is always three
-            5 #Spline knots fixed. currently not tunable parameter
-            );
+            rt_to_irt_map = UniformSpline( 
+                                            rtpsms[!,:irt_predicted], 
+                                            rtpsms[!,:rt], 
+                                            3, #Degree is always three
+                                            5 #Spline knots fixed. currently not tunable parameter
+                                            );
 
-        rtpsms[!,:irt_observed] = rt_to_irt_map.(rtpsms[!,:rt])
-        irt_MAD = mad(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted])
-        irt_σ = irt_MAD #Robust estimate of standard deviation
+            rtpsms[!,:irt_observed] = rt_to_irt_map.(rtpsms[!,:rt])
+            irt_MAD = mad(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted])
+            irt_σ = irt_MAD #Robust estimate of standard deviation
+            #Remove outliers and re-fit spline 
+            rtpsms = rtpsms[abs.(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted]) .< irt_MAD*10,:]
+            rt_to_irt_map = UniformSpline( 
+                rtpsms[!,:irt_predicted], 
+                rtpsms[!,:rt], 
+                3, #Degree is always three
+                5 #Spline knots fixed. currently not tunable parameter
+                );
 
-        irt_errs[ms_file_idx] = params_[:irt_mapping_params]["n_sigma_tol"]*irt_σ
-        rt_to_irt_map_dict[ms_file_idx] = rt_to_irt_map
+            rtpsms[!,:irt_observed] = rt_to_irt_map.(rtpsms[!,:rt])
+            irt_MAD = mad(rtpsms[!,:irt_observed] .- rtpsms[!,:irt_predicted])
+            irt_σ = irt_MAD #Robust estimate of standard deviation
 
-        plotRTAlign(rtpsms[:,:rt], 
-                    rtpsms[:,:irt_predicted], 
-                    rt_to_irt_map, 
-                    out_fdir = rt_alignment_folder,
-                    out_fname = out_fname
-                    );
-                    
-        matched_fragments = vcat(massErrorSearch(
-            MS_TABLE,
-            rtpsms[!,:scan_idx],
-            rtpsms[!,:precursor_idx],
-            spec_lib["f_det"],
-            UInt32(ms_file_idx),
-            mass_err_model,
-            ionMatches,
-            ionMisses,
-            all_fmatches,
-            ionTemplates
-        )...);
+            irt_errs[ms_file_idx] = params_[:irt_mapping_params]["n_sigma_tol"]*irt_σ
+            rt_to_irt_map_dict[ms_file_idx] = rt_to_irt_map
 
-        function _getPPM(a::T, b::T) where {T<:AbstractFloat}
-            Float32((b - a)/(a/1e6))
-        end
-        #Get Retention Times and Target/Decoy Status 
-        ####################
-        #Use best_psms to estimate 
-        #1) rt to irt curve and 
-        #2) mass error (ppm) distribution 
+            plotRTAlign(rtpsms[:,:rt], 
+                        rtpsms[:,:irt_predicted], 
+                        rt_to_irt_map, 
+                        out_fdir = rt_alignment_folder,
+                        out_fname = out_fname
+                        );
+                        
+            matched_fragments = vcat(massErrorSearch(
+                MS_TABLE,
+                rtpsms[!,:scan_idx],
+                rtpsms[!,:precursor_idx],
+                spec_lib["f_det"],
+                UInt32(ms_file_idx),
+                mass_err_model,
+                ionMatches,
+                ionMisses,
+                all_fmatches,
+                ionTemplates
+            )...);
 
-        frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in matched_fragments];
-        mass_err_model = ModelMassErrs(
-            frag_ppm_errs,
-            frag_err_quantile = Float32(params_[:presearch_params]["frag_err_quantile"]),
-            out_fdir = mass_err_estimation_folder,
-            out_fname = out_fname
-        )
+            function _getPPM(a::T, b::T) where {T<:AbstractFloat}
+                Float32((b - a)/(a/1e6))
+            end
+            #Get Retention Times and Target/Decoy Status 
+            ####################
+            #Use best_psms to estimate 
+            #1) rt to irt curve and 
+            #2) mass error (ppm) distribution 
 
-        #PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
-        #File name but remove file type
-        frag_err_dist_dict[ms_file_idx] = mass_err_model
-        catch
-            psms_count = size(rtpsms, 1)
-            @warn "Presearch parameter estimation failed for $MS_TABLE_PATH with psms count: $psms_count, will substitute with 
-            parameters from nearest successful presearch"
-            push!(failed_ms_file_idx, ms_file_idx)
+            frag_ppm_errs = [_getPPM(match.theoretical_mz, match.match_mz) for match in matched_fragments];
+            mass_err_model = ModelMassErrs(
+                frag_ppm_errs,
+                frag_err_quantile = Float32(params_[:presearch_params]["frag_err_quantile"]),
+                out_fdir = mass_err_estimation_folder,
+                out_fname = out_fname
+            )
+
+            #PLOT_PATH = joinpath(MS_DATA_DIR, "Search", "QC_PLOTS", split(splitpath(MS_TABLE_PATH)[end],".")[1])
+            #File name but remove file type
+            frag_err_dist_dict[ms_file_idx] = mass_err_model
+        catch e
+            @warn "Presearch parameter estimation failed for $MS_TABLE_PATH, will substitute with 
+            default parameters. "
+            frag_err_dist_dict[ms_file_idx] = MassErrorModel(
+                0.0f0,
+                (
+                    Float32(params_[:presearch_params]["frag_tol_ppm"]), 
+                    Float32(params_[:presearch_params]["frag_tol_ppm"])
+                )
+            )
+            irt_errs[ms_file_idx] = typemax(Float32)
+            rt_to_irt_map_dict[ms_file_idx] = UniformSpline( 
+                collect(LinRange(0, 1, 10)), 
+                collect(LinRange(0, 1, 10)), 
+                3, #Degree is always three
+                5 #Spline knots fixed. currently not tunable parameter
+                );
+            continue
         end
     end
     #Merge Quality Control PDFs 
@@ -202,5 +203,5 @@ function parameterTuningSearch(rt_alignment_folder,
                     joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), cleanup=true)
     merge_pdfs([joinpath(mass_err_estimation_folder, x) for x in readdir(mass_err_estimation_folder) if endswith(x, ".pdf")], 
         joinpath(mass_err_estimation_folder, "mass_err_estimation_folder.pdf"), cleanup=true)
-    return rt_to_irt_map_dict, frag_err_dist_dict, irt_errs, ms_file_idx_to_remove, failed_ms_file_idx
+    return rt_to_irt_map_dict, frag_err_dist_dict, irt_errs
 end

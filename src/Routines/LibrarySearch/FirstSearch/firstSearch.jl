@@ -23,8 +23,8 @@ function firstSearch(
 
 peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
 psms_paths = Dictionary{String, String}()
-println("TEST")
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+    try
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
     psms = vcat(LibrarySearch(
         MS_TABLE,
@@ -51,8 +51,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         isotope_err_bounds = params_[:isotope_err_bounds],
         quad_transmission_model = quad_model_dict[ms_file_idx]
                         )...)
-    println("size(psms) ", size(psms))
-    addMainSearchColumns!(psms, MS_TABLE, 
+
+    addMainSearchColumns!(psms,
                         rt_to_irt_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
                         spec_lib["precursors"][:missed_cleavages],
@@ -146,6 +146,10 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collec
         file_id_to_parsed_name[ms_file_idx],
         temp_path
     )
+    catch
+        @warn "First search failed for $MS_TABLE_PATH"
+        continue
+    end
 end
 return peak_fwhms, psms_paths
 end

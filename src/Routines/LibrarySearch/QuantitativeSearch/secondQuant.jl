@@ -85,7 +85,7 @@ function secondQuant(
 end
 
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
-    
+    try 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
     rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
@@ -128,7 +128,17 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             )...);
 
         #Format Chromatograms 
-        getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
+        #getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
+
+
+        getIsotopesCaptured!(chroms,  
+                            quad_model_dict[ms_file_idx],
+                            chroms[!,:scan_idx],
+                            precursors[:prec_charge],
+                            precursors[:mz],
+                            MS_TABLE[:centerMz],
+                            MS_TABLE[:isolationWidthMz]);
+                            
         filter!(x->first(x.isotopes_captured)<2, chroms)
         gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
         integratePrecursors(
@@ -162,5 +172,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             temp_path,
             sub_bpsms,
             )
+    catch
+        @warn "Second Quant Failed for $MS_TABLE_PATH"
+        continue
+    end
 end
 end
