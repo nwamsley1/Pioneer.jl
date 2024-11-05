@@ -84,13 +84,6 @@ function importScripts()
             "scoreProteinGroups.jl"]];
 
     #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","PSMs",jl_file)) for jl_file in [
-            "PSM.jl",
-            "ScoredPSMs.jl",
-            "spectralDistanceMetrics.jl",
-            "UnscoredPSMs.jl"]];
-
-    #Files needed for PRM routines
     [include(joinpath(package_root,"src","Routines","LibrarySearch","QuantitativeSearch",jl_file)) for jl_file in [
             "addSecondSearchColumns.jl",
             "integrateChroms.jl",
