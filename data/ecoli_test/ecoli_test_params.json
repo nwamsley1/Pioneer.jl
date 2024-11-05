@@ -16,7 +16,11 @@
         "max_qval": 0.01,
         "min_samples": 3500,
         "frag_err_quantile": 0.01,
-        "max_presearch_iters": 10
+        "max_presearch_iters": 10,
+        "estimate_quad_transmission": false,
+        "quad_tuning_sample_rate": 0.1,
+        "min_quad_tuning_fragments": 3,
+        "min_quad_tuning_psms": 10000
     },
     "first_search_params":
     {

@@ -14,7 +14,6 @@ end
 getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = getQvalues!(PSMs, allowmissing(probs), allowmissing(labels))
 
 function getBestScorePerPrec!(
-    #prec_to_best_score_old::Dictionary{UInt32, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
     prec_to_best_score_new::Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
     test_fold_filter::Function,
     test_fold_idx::UInt8,
