@@ -197,13 +197,11 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     rt_bin_idx::Int64,
                     irt_high::Float32, 
                     mass_err_model::MassErrorModel,
-                    prec_mz::Float32, 
-                    prec_tol::Float32, 
+                    quad_transmission_func::QuadTransmissionFunction,
                     isotope_err_bounds::Tuple{Int64, Int64}
                     ) where {U<:AbstractFloat}
-    
-    prec_min = Float32(prec_mz - prec_tol - NEUTRON*first(isotope_err_bounds)/2)
-    prec_max = Float32(prec_mz + prec_tol + NEUTRON*last(isotope_err_bounds)/2)
+    prec_min = U(getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/2)
+    prec_max = U(getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/2)
     @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
 
         #BinRanges

@@ -1,6 +1,5 @@
 function SearchDIA(params_path::String)
     #println("JLD2 version is: ", Pkg.installed()["JLD2"])
-    #println("TESTTESTTEST")
     total_time = @timed begin
     #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
     if !isabspath(params_path)
@@ -17,7 +16,6 @@ function SearchDIA(params_path::String)
     if isabspath(MS_DATA_DIR)
         MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
     else
-        println("B")
         MS_DATA_DIR = joinpath(@__DIR__, "../../", MS_DATA_DIR)
         MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
     end
@@ -84,6 +82,7 @@ function SearchDIA(params_path::String)
     IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
     ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
+    #iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
     scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
@@ -100,7 +99,7 @@ function SearchDIA(params_path::String)
     ###########
     #Tune Parameters
     println("Parameter Tuning Search...")
-    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder,
+    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder, #ms_file_idx_to_remove, failed_ms_file_idxs
                                                                             mass_err_estimation_folder,
                                                                             MS_TABLE_PATHS,
                                                                             params_,
@@ -114,13 +113,57 @@ function SearchDIA(params_path::String)
                                                                             scored_PSMs,
                                                                             unscored_PSMs,
                                                                             spectral_scores,
-                                                                            precs)
+                                                                            precs);
+
+    println("Parameter Tuning Search...")
+    #Otherwise use a default quad transmission model
+    quad_model_dict = nothing
+    if params_[:presearch_params]["estimate_quad_transmission"]
+        IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3+1) for _ in range(1, N)];
+        precursor_weights = [zeros(Float32, n_precursors*3+1) for _ in range(1, N)];
+        quad_model_dict = quadTuningSearch(    RT_to_iRT_map_dict,
+                                        frag_err_dist_dict,
+                                        irt_errs,
+                                        MS_TABLE_PATHS,
+                                        params_,
+                                        spec_lib,
+                                        ionMatches,
+                                        ionMisses,
+                                        all_fmatches,
+                                        IDtoCOL,
+                                        ionTemplates,
+                                        iso_splines,
+                                        scored_PSMs,
+                                        unscored_PSMs,
+                                        spectral_scores,
+                                        precursor_weights,
+                                        precs);
+        IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
+        precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
+    else
+        quad_model_dict = Dict{Int64, QuadTransmissionModel}()
+        for (key, value) in pairs(frag_err_dist_dict)
+            quad_model_dict[key] = GeneralGaussModel(5.0f0, 0.0f0)
+        end
+    end
+
+    #=
+    p = plot()
+    plot_bins = LinRange(400-3, 400+3, 100)
+    for (key, value) in pairs(quad_model_dict)
+    
+       quad_func = getQuadTransmissionFunction(value, 400.0f0, 2.0f0)
+       plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5)
+    end
+    display(p)
+    =#
 
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,
         frag_err_dist_dict,
         irt_errs,
+        quad_model_dict,
         file_id_to_parsed_name,
         MS_TABLE_PATHS,
         params_,
@@ -134,17 +177,14 @@ function SearchDIA(params_path::String)
         scored_PSMs,
         unscored_PSMs,
         spectral_scores,
-        precs
-    )
-    #first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]))
-    #first_psms = first_psms[first_psms[!,:q_value].<=0.01,:]
-    #value_counts(df, col) = combine(groupby(df, col), nrow)
-    #psms_counts = value_counts(first_psms, :ms_file_idx)
-    #CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts)
-    #first_psms = nothing
-    #test_table = DataFrame(Arrow.Table(collect(values(psms_paths))))
-    #test_table = test_table[test_table[!,:q_value].<=0.01,:]
-    #value_counts(test_table,:ms_file_idx)
+        precs);
+
+    first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]));
+    first_psms = first_psms[first_psms[!,:q_value].<=0.01,:];
+    value_counts(df, col) = combine(groupby(df, col), nrow);
+    psms_counts = value_counts(first_psms, :ms_file_idx);
+    CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts);
+    first_psms = nothing
     ##########
     #Combine First Search Results
     ##########
@@ -152,8 +192,6 @@ function SearchDIA(params_path::String)
     #Use high scoring psms to map library retention times (irt)
     #onto the empirical retention times and vise-versa.
     #uniform B-spline
-    #println("typeof(RT_to_iRT_map_dict) ", typeof(RT_to_iRT_map_dict))
-    #println("RT_to_iRT_map_dict ", RT_to_iRT_map_dict)
     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
     psms_paths,#Need to change this to a list of temporrary file paths]
     RT_to_iRT_map_dict,
@@ -165,7 +203,9 @@ function SearchDIA(params_path::String)
             spec_lib["precursors"][:mz],
             rt_irt, 
             max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
-            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"]));
+            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"])
+            );
+
     irt_errs = nothing
     if length(keys(peak_fwhms)) > 1
         irt_errs = getIrtErrs(
@@ -203,6 +243,7 @@ function SearchDIA(params_path::String)
         bin_rt_size,
         rt_irt,
         irt_errs,
+        quad_model_dict,
         chromatograms,
         file_path_to_parsed_name,
         params_,
@@ -216,11 +257,8 @@ function SearchDIA(params_path::String)
         complex_unscored_PSMs,
         complex_spectral_scores,
         precursor_weights);
-
-    #if params_[:output_params]["delete_temp"]
-    #    rm(first_search_psms_folder,recursive=true)
-    #end      
-        println("huber ", params_[:deconvolution_params]["huber_delta"])
+ 
+    println("huber ", params_[:deconvolution_params]["huber_delta"])
     ############
     #Quantitative Search
     println("Begining Quantitative Search...")
@@ -233,6 +271,7 @@ function SearchDIA(params_path::String)
         bin_rt_size,
         rt_irt,
         irt_errs,
+        quad_model_dict,
         chromatograms,
         file_path_to_parsed_name,
         MS_TABLE_PATHS,
@@ -252,7 +291,6 @@ function SearchDIA(params_path::String)
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
-    #Arrow.write("/Users/n.t.wamsley/Desktop/test_psms_quant.arrow", best_psms)
     #Wipe memory
     best_psms = nothing
     GC.gc()
@@ -289,43 +327,6 @@ function SearchDIA(params_path::String)
                                     precursor_pep_spline,
                                     precursor_qval_interp,
                                     0.01f0)
-    #Delete Quant PSMs
-    #if params_[:output_params]["delete_temp"]
-    #    rm(quant_psms_folder,recursive=true)
-    #end
-    #=
-        quant_psms_test = DataFrame(Arrow.Table("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/merged_quant.arrow"))
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:prob]
-        tbins = LinRange(0, 1, 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-
-        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/quant_psms_folder", join=true)))
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:max_unmatched_residual]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:max_unmatched_residual]
-        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:fitted_manhattan_distance]
-        decoy_probs = quant_psms_test[quant_psms_test[!,:target].==false,:fitted_manhattan_distance]
-        tbins = LinRange(minimum(target_probs), maximum(target_probs), 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-
-        quant_psms_test = DataFrame(Arrow.Table(readdir("/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/RESULTS/temp/first_search_psms", join=true)))
-        quant_psms_test[!,:target] = [precursors[:target][pid] for pid in quant_psms_test[!,:precursor_idx]]
-        target_probs = quant_psms_test[quant_psms_test[!,:target],:prob]
-        tbins = LinRange(0, 1, 100)
-        histogram(target_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-        histogram!(decoy_probs, normalize=:probability, bins=tbins, alpha = 0.5)
-
-    =#
     ###########
     #Score Protein Groups
     sorted_pg_score_path = getProteinGroups(
@@ -360,6 +361,7 @@ function SearchDIA(params_path::String)
                     bin_rt_size,
                     rt_irt,
                     irt_errs,
+                    quad_model_dict,
                     chromatograms,
                     MS_TABLE_PATHS,
                     params_,
@@ -413,8 +415,7 @@ function SearchDIA(params_path::String)
         write_csv = params_[:output_params]["write_csv"],
         )
      #Summarize Precursor ID's
-     #value_counts(df, col) = combine(groupby(df, col), nrow)
-     println("Max LFQ...")
+    println("Max LFQ...")
     if isfile( joinpath(results_folder, "protein_groups_long.arrow"))
         rm( joinpath(results_folder, "protein_groups_long.arrow"), force=true)
     end
@@ -437,26 +438,12 @@ function SearchDIA(params_path::String)
         write_csv = params_[:output_params]["write_csv"],
         )
 
-        #=
-        new_path = "/Users/n.t.wamsley/Desktop/astral_test_AltimeterFirstTry"
-        mkdir(new_path)
-        ThreeProteomeAnalysis(
-        "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS",
-            "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-            new_path
-        )
-
-                ThreeProteomeAnalysis(
-        "/Users/n.t.wamsley/Desktop/testresults/RESULTS/RESULTS",
-            "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-            "/Users/n.t.wamsley/Desktop/astral_test_out_nonnorm"
-        )
-
-        =#
     println("QC Plots")
     if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
         rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
     end
+    println("parsed_fnames $parsed_fnames")
+    println("file_id_to_parsed_name $file_id_to_parsed_name")
     qcPlots(
         precursors_wide_arrow,
         protein_groups_wide_arrow,

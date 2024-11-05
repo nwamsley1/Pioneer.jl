@@ -65,8 +65,7 @@ function scoreTraces!(
                             print_importance = false);
     return models;#best_psms
     else
-        println("plan B")
-        println("size(best_psms) ", size(best_psms))
+        @warn "Less than 1,000,000 psms. Training with simplified target-decoy discrimination model..."
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [ 
             :missed_cleavage,
