@@ -177,8 +177,7 @@ function SearchDIA(params_path::String)
         scored_PSMs,
         unscored_PSMs,
         spectral_scores,
-        precs
-    );
+        precs);
 
     first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]));
     first_psms = first_psms[first_psms[!,:q_value].<=0.01,:];
