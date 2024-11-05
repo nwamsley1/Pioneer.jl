@@ -22,9 +22,9 @@ using XGBoost
 using KernelDensity
 #create_app("../Pioneer","../Pioneer_Compiled", force = true)
 #Inport Pioneer Files 
-include(joinpath(@__DIR__, "Routines","LibrarySearch","methods","importScripts.jl"))
+include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
 importScripts()
-include(joinpath(@__DIR__, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))
+#include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
 include(joinpath(@__DIR__, "Routines","ThreeProteomeAnalysis.jl"))
@@ -40,5 +40,9 @@ const prediction_model_to_model_type = Dict(
     "prosit_2020_hcd" => InstrumentAgnosticModel("prosit_2020_hcd"),
     "AlphaPeptDeep" => InstrumentSpecificModel("AlphaPeptDeep")
 )
+const H2O::Float64 = Float64(18.010565)
+const PROTON::Float64 = Float64(1.0072764)
+const NEUTRON::Float64 = Float64(1.00335)
+
 export SearchDIA, ThreeProteomeAnalysis, BuildSpecLib
 end

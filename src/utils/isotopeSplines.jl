@@ -163,7 +163,7 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 ### Examples 
 
 """
-#=
+
 function getFragAbundance!(isotopes::Vector{T}, 
                             iso_splines::IsotopeSplineModel, 
                             frag::isotope{T, I}, 
@@ -193,7 +193,7 @@ function getFragAbundance!(isotopes::Vector{T},
     return nothing
     #return isotopes#isotopes./sum(isotopes)
 end
-=#
+
 function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragment isotopes (initialized as zeros)
                            prec_isotopes::Vector{T}, #Probability of each precursor isotope (determined by quadrupole transmission function)
                             iso_splines::IsotopeSplineModel,
@@ -220,7 +220,7 @@ function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragme
     return nothing
 end
 
-#=
+
 function getFragAbundance!(isotopes::Vector{Float32}, 
                             iso_splines::IsotopeSplineModel,
                             prec_mz::Float32,
@@ -236,8 +236,8 @@ function getFragAbundance!(isotopes::Vector{Float32},
         pset
         )
 end
-=#
-#=
+
+
 function getFragIsotopes!(isotopes::Vector{Float32}, 
                             iso_splines::IsotopeSplineModel, 
                             prec_mz::Float32,
@@ -268,7 +268,7 @@ function getFragIsotopes!(isotopes::Vector{Float32},
         isotopes[i] = total_fragment_intensity*isotopes[i]/iso_sum
     end
 end
-=#
+
 function getFragAbundance!(frag_isotopes::Vector{Float32}, 
                             precursor_transmition::Vector{Float32},
                             iso_splines::IsotopeSplineModel,

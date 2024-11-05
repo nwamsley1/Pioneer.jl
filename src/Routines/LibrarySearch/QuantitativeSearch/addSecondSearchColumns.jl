@@ -194,7 +194,7 @@ function getIsotopesCaptured!(chroms::DataFrame,
                                 centerMz::AbstractVector{Union{Missing, Float32}},
                                 isolationWidthMz::AbstractVector{Union{Missing, Float32}})
     #sum(MS2_CHROMS.weight.!=0.0)
-    isotopes_captured = Vector{Tuple{Int8, Int8}}(undef, size(chroms, 1))
+    chroms[!,:isotopes_captured] = Vector{Tuple{Int8, Int8}}(undef, size(chroms, 1))
     
     tasks_per_thread = 5
     chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -217,10 +217,9 @@ function getIsotopesCaptured!(chroms::DataFrame,
                                                     charge, 
                                                     low_mz, high_mz
                                                     )                
-                isotopes_captured[i] = isotopes
+                chroms[i,:isotopes_captured] = isotopes
             end
         end
-        chroms[!,:isotopes_captured] = isotopes_captured
     end
     fetch.(tasks)
     return nothing

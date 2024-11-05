@@ -131,15 +131,18 @@ struct RazoQuadFunction{T<:AbstractFloat} <: QuadTransmissionFunction
 end
 
 function getQuadTransmissionFunction(rqm::RazoQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
-    
-    al, ar, bl, br = rqm.params.al, rqm.params.ar, rqm.params.bl, rqm.params.br
+    al, ar = rqm.params.al, rqm.params.ar
     RazoQuadFunction(
-        #T((-1)*rqm.params.al - rqm.params.al/rqm.params.bl),
-        centerMz - T((al)*(1 + 1/bl)),
-        centerMz + T((ar)*(1 + 1/br)),
+        centerMz - T(max(al, isolationWidthMz/2)),
+        centerMz + T(max(ar, isolationWidthMz/2)),
         centerMz,
         rqm.params
     )
+end
+
+function getQuadTransmissionBounds(rqm::RazoQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
+        al, ar = rqm.params.al, rqm.params.ar
+        return centerMz - T(max(al, isolationWidthMz/2)), centerMz + T(max(ar, isolationWidthMz/2))
 end
 
 function getPrecMinBound(rqm::RazoQuadFunction{T}) where {T<:AbstractFloat}
@@ -153,16 +156,6 @@ end
 function (rqf::RazoQuadFunction{T})(ionMz::U) where {T,U<:AbstractFloat}
     rqf.params(ionMz-rqf.center_mz)
 end
-
-#=
-test_rqm = RazoQuadParams(1.0f0, 2.0f0, 1.5f0, 10.0f0)
-plot_bins = LinRange(-3, 3, 100)
-plot(plot_bins, test_rqm.(plot_bins), lw = 2)
-razo_quad_model = RazoQuadModel(test_rqm)
-razo_quad_func = getQuadTransmissionFunction(razo_quad_model, 0.0f0, 1.0f0)
-vline!([razo_quad_func.min_mz, razo_quad_func.max_mz])
-=#
-
 
 ##############
 #Model Fitting

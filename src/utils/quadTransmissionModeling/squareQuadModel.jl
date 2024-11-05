@@ -17,6 +17,11 @@ function getQuadTransmissionFunction(qtm::SquareQuadModel{T}, centerMz::T, isola
     )
 end
 
+function getQuadTransmissionBounds(sqm::SquareQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
+    return T(centerMz - isolationWidthMz/2), T(centerMz + isolationWidthMz/2)
+end
+
+
 function getPrecMinBound(sqf::SquareQuadFunction{T}) where {T<:AbstractFloat}
     return sqf.min_mz
 end
