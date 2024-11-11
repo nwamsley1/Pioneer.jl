@@ -314,7 +314,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             frag_mz_bounds::Tuple{Float32, Float32},
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
 
-    NEUTRON = Float64(1.00335)
+    #NEUTRON = Float64(1.00335)
 
     #precursor_transmission = zeros(Float32, 5)
     getPrecursorIsotopeTransmission!(
@@ -328,10 +328,59 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         prec_charge,
         quad_transmission_func
     )
-    for frag_idx in precursor_fragment_range
+    if (first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 2)
+        transition_idx = fillPrecursorFragments!(
+            prec_isotope_set,
+            transitions,
+            precursor_fragment_range,
+            fragment_ions,
+            prec_mz,
+            prec_charge,
+            prec_sulfur_count,
+            transition_idx,
+            precursor_transmission,
+            isotopes,
+            n_frag_isotopes,
+            iso_splines,
+            frag_mz_bounds,
+            block_size)
+    else
+        transition_idx = fillPrecursorFragments!(
+            prec_isotope_set,
+            transitions,
+            precursor_fragment_range,
+            fragment_ions,
+            transition_idx,
+            n_frag_isotopes,
+            iso_splines,
+            frag_mz_bounds,
+            block_size)
+    end
+    return transition_idx
+end
 
+function fillPrecursorFragments!(
+    prec_isotope_set::Tuple{Int64, Int64},
+    transitions::Vector{DetailedFrag{Float32}}, 
+    precursor_fragment_range::UnitRange{UInt64},
+    fragment_ions::Vector{DetailedFrag{Float32}},
+    prec_mz::Float32,
+    prec_charge::UInt8,
+    prec_sulfur_count::UInt8,
+    transition_idx::Int64, 
+    precursor_transmission::Vector{Float32},
+    isotopes::Vector{Float32}, 
+    n_frag_isotopes::Int64,
+    iso_splines::IsotopeSplineModel, 
+    frag_mz_bounds::Tuple{Float32, Float32},
+    block_size::Int64)
+    for frag_idx in precursor_fragment_range
         frag = fragment_ions[frag_idx]
+        if frag.rank > 25
+            continue
+        end
         #Estimate isotope abundances 
+        
         getFragIsotopes!(isotopes, 
                         precursor_transmission,
                         iso_splines, 
@@ -340,6 +389,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                         prec_sulfur_count,
                         frag,
                         )
+        
         for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
 
             frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
@@ -353,6 +403,61 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
 
                 frag_mz, #Estimated isotopic m/z
                 Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
+
+                
+                frag.ion_type,
+                frag.is_y,
+                frag.is_b,
+                frag.is_p,
+                iso_idx>0, #Is the fragment an isotope?
+
+                frag.frag_charge,
+                frag.ion_position,
+                frag.prec_charge,
+                frag.rank,
+                frag.sulfur_count
+            )#::LibraryFragment{T}
+            
+
+            #Grow array if exceeds length
+            
+            if transition_idx >= length(transitions)
+                append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
+            end
+        end
+    end
+    return transition_idx
+end
+
+function fillPrecursorFragments!(
+    prec_isotope_set::Tuple{Int64, Int64},
+    transitions::Vector{DetailedFrag{Float32}}, 
+    precursor_fragment_range::UnitRange{UInt64},
+    fragment_ions::Vector{DetailedFrag{Float32}},
+    transition_idx::Int64, 
+    n_frag_isotopes::Int64,
+    iso_splines::IsotopeSplineModel, 
+    frag_mz_bounds::Tuple{Float32, Float32},
+    block_size::Int64)
+    for frag_idx in precursor_fragment_range
+        frag = fragment_ions[frag_idx]
+        if frag.rank > 25
+            continue
+        end
+        #Estimate isotope abundances 
+        for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
+
+            frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
+            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
+                continue
+            end
+            intensity = Float16(frag.intensity*iso_splines(min(Int64(frag.sulfur_count), 5), iso_idx, frag_mz*frag.frag_charge))
+            transition_idx += 1
+            transitions[transition_idx] = DetailedFrag(
+                frag.prec_id,
+
+                frag_mz, #Estimated isotopic m/z
+                intensity, #Estimated relative abundance 
 
                 
                 frag.ion_type,

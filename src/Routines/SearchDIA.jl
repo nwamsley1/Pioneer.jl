@@ -99,6 +99,7 @@ function SearchDIA(params_path::String)
     ###########
     #Tune Parameters
     println("Parameter Tuning Search...")
+    params_[:presearch_params]
     RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder, #ms_file_idx_to_remove, failed_ms_file_idxs
                                                                             mass_err_estimation_folder,
                                                                             MS_TABLE_PATHS,
@@ -118,7 +119,7 @@ function SearchDIA(params_path::String)
     println("Parameter Tuning Search...")
     #Otherwise use a default quad transmission model
     quad_model_dict = nothing
-    if params_[:presearch_params]["estimate_quad_transmission"]
+    if true==false#params_[:presearch_params]["estimate_quad_transmission"]
         IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3+1) for _ in range(1, N)];
         precursor_weights = [zeros(Float32, n_precursors*3+1) for _ in range(1, N)];
         quad_model_dict = quadTuningSearch(    RT_to_iRT_map_dict,
@@ -158,7 +159,7 @@ function SearchDIA(params_path::String)
     display(p)
     =#
 
-    peak_fwhms, psms_paths = firstSearch(
+    @time peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,
         frag_err_dist_dict,
@@ -181,7 +182,10 @@ function SearchDIA(params_path::String)
     );
 
     first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]));
-    first_psms = first_psms[first_psms[!,:q_value].<=0.01,:];
+    first_psms = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SCIEX_PXD050030/RESULTS/temp/first_search_psms/frag_rank_25.arrow"))
+    size(first_psms[first_psms[!,:q_value].<=0.1,:], 1)
+    size(first_psms[first_psms[!,:q_value].<=0.01,:], 1)
+    first_psms = first_psms[first_psms[!,:q_value].<=0.1,:]
     value_counts(df, col) = combine(groupby(df, col), nrow);
     psms_counts = value_counts(first_psms, :ms_file_idx);
     CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts);

@@ -173,7 +173,7 @@ function getFragAbundance!(isotopes::Vector{T},
     min_p, max_p = first(pset), last(pset) #Smallest and largest precursor isotope
     #placeholder for fragment isotope distributions
     #zero to isotopic state of largest precursor 
-    for f in range(0, min(length(isotopes)-1, max_p)) #Fragment cannot take an isotopic state grater than that of the largest isolated precursor isotope
+    for f in range(0, min(length(isotopes)-1, max_p)) #Fragment cannot take an isoopic state grater than that of the largest isolated precursor isotope
         complement_prob = 0.0 #Denominator in 5) from pg. 11389, Goldfarb et al. 2018
 
         #Splines don't go above five sulfurs

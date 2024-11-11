@@ -87,6 +87,8 @@ function partitionScansToThreads(spectra::AbstractArray,
     return thread_tasks, total_peaks
 end
 
+
+
 #=
 function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                                 rt::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},
