@@ -23,10 +23,10 @@ function firstSearch(
 
 peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
 psms_paths = Dictionary{String, String}()
-main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(MS_TABLE_PATHS))#ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     try
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
-    @time psms = vcat(LibrarySearch(
+    psms = vcat(LibrarySearch(
         MS_TABLE,
         params_;
         frag_index = spec_lib["f_index"],
@@ -51,11 +51,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         isotope_err_bounds = params_[:isotope_err_bounds],
         quad_transmission_model = quad_model_dict[ms_file_idx]
                         )...)
-    println("size(psms) for $MS_TABLE_PATH ", size(psms, 1))
-    println("add colums time")
-    println("size(psms, 2) ", size(psms, 2))
-    println("size(psms, 1) ", size(psms, 1))
-    @time addMainSearchColumns!(psms,
+    #println("size(psms) for $MS_TABLE_PATH ", size(psms, 1))
+    #println("add colums time")
+    #println("size(psms, 2) ", size(psms, 2))
+    #println("size(psms, 1) ", size(psms, 1))
+    addMainSearchColumns!(psms,
                         rt_to_irt_map_dict[ms_file_idx],
                         spec_lib["precursors"][:structural_mods],
                         spec_lib["precursors"][:missed_cleavages],
@@ -67,8 +67,7 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
                         MS_TABLE[:mz_array]);
    
     #Think irt sort is for figured fwhm later? Do this after scoring?
-    println("charge time ")
-    @time begin
+    #println("charge time ")
     #Observed irt estimates based on pre-search
     psms[!,:irt_observed] = rt_to_irt_map_dict[ms_file_idx].(psms[!,:rt])
     psms[!,:irt_error] = Float16.(abs.(psms[!,:irt_observed] .- psms[!,:irt_predicted]))
@@ -77,12 +76,11 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
     #filter!(x->isinf(x.i_count)==false, psms)
     #filter!(x->isnan(x.i_count)==false, psms)
     psms[!,:charge2] = UInt8.(psms[!,:charge].==2)
-    end
-    temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*"full.arrow")
-    Arrow.write(
-        temp_path,
-        psms
-        )
+    #temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*"full.arrow")
+    ##Arrow.write(
+    #    temp_path,
+    #    psms
+    #    )
     psms[!,:ms_file_idx] .= UInt32(ms_file_idx)
     column_names = [
                     :spectral_contrast,
@@ -103,8 +101,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
     select!(psms, vcat(column_names, [:ms_file_idx,:score,:precursor_idx,:scan_idx,:q_value,:log2_summed_intensity,:irt,:rt,:irt_predicted,
     :target]))
     try 
-        println("score time")
-        @time scoreMainSearchpsms!(psms,
+        #println("score time")
+        scoreMainSearchpsms!(psms,
                                 column_names,
                                 n_train_rounds = params_[:first_search_params]["n_train_rounds_probit"],
                                 max_iter_per_round = params_[:first_search_params]["max_iter_probit"],
@@ -113,32 +111,32 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
         throw(e)
         psms[!,:score] .= one(Float32)
     end
-    temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*"fullscored.arrow")
-    Arrow.write(
-        temp_path,
-        psms
-        )
-    println("probs time ")
+    #temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*"fullscored.arrow")
+    #Arrow.write(
+    #    temp_path,
+    #    psms
+    #    )
+    #println("probs time ")
     select!(psms, 
     [:ms_file_idx,:score,:precursor_idx,:scan_idx,:q_value,:log2_summed_intensity,:irt,:rt,:irt_predicted])
-    @time getProbs!(psms);
-    println("getbestpsms time ")
+    getProbs!(psms);
+    #println("getbestpsms time ")
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*"fullscoredprobs.arrow")
-    Arrow.write(
-        temp_path,
-        psms
-        )
-    println("sort time ")
-    @time sort!(psms, :irt);
-    @time getBestPSMs!(psms,
+    #Arrow.write(
+    #    temp_path,
+    #    psms
+    #    )
+    #println("sort time ")
+    sort!(psms, :irt);
+    getBestPSMs!(psms,
                     spec_lib["precursors"][:mz],
                     max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
                     max_psms = Int64(params_[:first_search_params]["max_precursors_passing"])
                 )
-    Arrow.write(
-        temp_path,
-        psms
-        )
+    #Arrow.write(
+    #    temp_path,
+    #    psms
+    #    )
     #irt_diffs is the difference between the first and last psm for a precursor
     #below the `max_q_val_for_irt` threshold. Used as a proxy for peak width
     fwhms = skipmissing(psms[!,:fwhm])
@@ -169,8 +167,8 @@ main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in collect(enumerate(
     end
     temp_path =  joinpath(temp_folder, file_id_to_parsed_name[ms_file_idx]*".arrow")
     psms[!,:ms_file_idx] .= UInt32(ms_file_idx)
-    println("write time ")
-   @time  Arrow.write(
+    #println("write time ")
+    Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx,:scan_idx,:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:scan_count])
         )

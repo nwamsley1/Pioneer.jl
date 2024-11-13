@@ -117,7 +117,7 @@ function BuildSpecLib(params_path::String)
                         params["max_koina_batch"],
                         prediction_model)
         #=
-        basedir = "/Volumes/Active/Backpack/libraries/exploris/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_zCorrected/"
+        basedir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_clear-b5_z"
         predictFragments(
                         raw_fragments_arrow_path,
                         basedir)    
@@ -135,7 +135,7 @@ function BuildSpecLib(params_path::String)
             ion_annotation_set,
             frag_name_to_idx,
             params["match_lib_build_batch"],
-            joinpath(@__DIR__, "../../../data/immonium.txt"),
+            joinpath(@__DIR__, "../data/immonium2.txt"),
             lib_dir,
             Dict{String, Int8}(), #mods to sulfur dict 
             iso_mod_to_mass,

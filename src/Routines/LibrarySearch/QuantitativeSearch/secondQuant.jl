@@ -152,7 +152,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             n_pad = params_[:quant_search_params]["n_pad"],
                             max_apex_offset = params_[:quant_search_params]["max_apex_offset"]
                             )
-        
+
         temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
         #psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
         filter!(x->!(isnan(x.peak_area)), sub_bpsms)
@@ -172,7 +172,6 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             temp_path,
             sub_bpsms,
             )
-        return sub_bpsms
     catch
         @warn "Second Quant Failed for $MS_TABLE_PATH"
         continue

@@ -1179,70 +1179,66 @@ function LibrarySearch(
                                                         )
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
-    println("start frag index search...")
-    @time begin
-        tasks = map(thread_tasks) do thread_task
-            Threads.@spawn begin 
-                thread_id = first(thread_task)
-                return searchFragmentIndex(
-                                    spectra,
-                                    last(thread_task),
-                                    kwargs[:frag_index],
-                                    scan_to_prec_idx,
-                                    kwargs[:rt_to_irt_spline],
-                                    kwargs[:mass_err_model],
-                                    searchScan!,
-                                    kwargs[:prec_to_score][thread_id],
-                                    Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
-                                    kwargs[:quad_transmission_model],
-                                    UInt8(kwargs[:params]["min_index_search_score"]),
-                                    Float64(kwargs[:irt_tol]),
-                                    kwargs[:sample_rate],
-                                    Set(2)
-                                )
-            end
+    #println("start frag index search...")
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return searchFragmentIndex(
+                                spectra,
+                                last(thread_task),
+                                kwargs[:frag_index],
+                                scan_to_prec_idx,
+                                kwargs[:rt_to_irt_spline],
+                                kwargs[:mass_err_model],
+                                searchScan!,
+                                kwargs[:prec_to_score][thread_id],
+                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
+                                kwargs[:quad_transmission_model],
+                                UInt8(kwargs[:params]["min_index_search_score"]),
+                                Float64(kwargs[:irt_tol]),
+                                kwargs[:sample_rate],
+                                Set(2)
+                            )
         end
-        precursors_passed_scoring = fetch.(tasks)
     end
-    println("Finished frag index search...")
-    println("start psms thing...")
-    @time begin
-        tasks = map(thread_tasks) do thread_task
-            Threads.@spawn begin 
-                thread_id = first(thread_task)
-                return getPSMS(
-                                    spectra,
-                                    last(thread_task), #getRange(thread_task),
-                                    kwargs[:precursors],
-                                    scan_to_prec_idx,
-                                    precursors_passed_scoring[thread_id],
-                                    kwargs[:fragment_lookup_table], 
-                                    kwargs[:rt_to_irt_spline],
-                                    kwargs[:ms_file_idx],
-                                    kwargs[:mass_err_model],
-                                    kwargs[:quad_transmission_model],
-                                    kwargs[:ion_matches][thread_id],
-                                    kwargs[:ion_misses][thread_id],
-                                    kwargs[:id_to_col][thread_id],
-                                    kwargs[:ion_templates][thread_id],
-                                    kwargs[:iso_splines],
-                                    kwargs[:scored_psms][thread_id],
-                                    kwargs[:unscored_psms][thread_id],
-                                    kwargs[:spectral_scores][thread_id],
-                                    Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
-                                    kwargs[:params]["min_frag_count"],
-                                    Float32(kwargs[:params]["min_spectral_contrast"]),
-                                    Float32(kwargs[:params]["min_log2_matched_ratio"]),
-                                    Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
-                                    kwargs[:params]["max_best_rank"],
-                                    Int64(kwargs[:params]["n_frag_isotopes"]),
-                                    Float32(kwargs[:irt_tol]),
-                                    Set(2)
-                                )
-            end
+    precursors_passed_scoring = fetch.(tasks)
+    #println("Finished frag index search...")
+    #println("start psms thing...")
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getPSMS(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                kwargs[:precursors],
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                kwargs[:fragment_lookup_table], 
+                                kwargs[:rt_to_irt_spline],
+                                kwargs[:ms_file_idx],
+                                kwargs[:mass_err_model],
+                                kwargs[:quad_transmission_model],
+                                kwargs[:ion_matches][thread_id],
+                                kwargs[:ion_misses][thread_id],
+                                kwargs[:id_to_col][thread_id],
+                                kwargs[:ion_templates][thread_id],
+                                kwargs[:iso_splines],
+                                kwargs[:scored_psms][thread_id],
+                                kwargs[:unscored_psms][thread_id],
+                                kwargs[:spectral_scores][thread_id],
+                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
+                                kwargs[:params]["min_frag_count"],
+                                Float32(kwargs[:params]["min_spectral_contrast"]),
+                                Float32(kwargs[:params]["min_log2_matched_ratio"]),
+                                Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
+                                kwargs[:params]["max_best_rank"],
+                                Int64(kwargs[:params]["n_frag_isotopes"]),
+                                Float32(kwargs[:irt_tol]),
+                                Set(2)
+                            )
         end
-        tasks_out = fetch.(tasks)
     end
+    tasks_out = fetch.(tasks)
     return tasks_out
 end
 
