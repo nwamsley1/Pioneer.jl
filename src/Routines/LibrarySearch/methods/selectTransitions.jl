@@ -328,7 +328,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         prec_charge,
         quad_transmission_func
     )
-    if (first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 2)
+    if true==true#(first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 2)
         transition_idx = fillPrecursorFragments!(
             prec_isotope_set,
             transitions,
@@ -374,6 +374,21 @@ function fillPrecursorFragments!(
     iso_splines::IsotopeSplineModel, 
     frag_mz_bounds::Tuple{Float32, Float32},
     block_size::Int64)
+
+    
+    #=
+    tabundance_w = zero(Float32)
+    for i in range(1, 5)
+        tabundance_w += iso_splines(min(Int64(prec_sulfur_count), 5), i-1, Float32(prec_mz*prec_charge))*precursor_transmission[i]
+    end
+
+    tabundance = zero(Float32)
+    for i in range(1, 5)
+        tabundance += iso_splines(min(Int64(prec_sulfur_count), 5), i-1, Float32(prec_mz*prec_charge))
+    end
+
+    tratio = tabundance_w/tabundance
+    =#
     for frag_idx in precursor_fragment_range
         frag = fragment_ions[frag_idx]
         if frag.rank > 25

@@ -122,7 +122,7 @@ function SearchDIA(params_path::String)
     if params_[:presearch_params]["estimate_quad_transmission"]
         IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3+1) for _ in range(1, N)];
         precursor_weights = [zeros(Float32, n_precursors*3+1) for _ in range(1, N)];
-        quad_model_dict = quadTuningSearch(    RT_to_iRT_map_dict,
+        quad_model_dict = quadTuningSearch(RT_to_iRT_map_dict,
                                         frag_err_dist_dict,
                                         irt_errs,
                                         MS_TABLE_PATHS,
@@ -183,9 +183,6 @@ function SearchDIA(params_path::String)
     );
 
     first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]));
-    #first_psms = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SCIEX_PXD050030/RESULTS/temp/first_search_psms/frag_rank_25.arrow"))
-    #size(first_psms[first_psms[!,:q_value].<=0.1,:], 1)
-    #size(first_psms[first_psms[!,:q_value].<=0.01,:], 1)
     first_psms = first_psms[first_psms[!,:q_value].<=0.01,:];
     value_counts(df, col) = combine(groupby(df, col), nrow);
     psms_counts = value_counts(first_psms, :ms_file_idx);
@@ -267,8 +264,15 @@ function SearchDIA(params_path::String)
     println("huber ", params_[:deconvolution_params]["huber_delta"])
     ############
     #Quantitative Search
+
+    boring_quad_model_dict = Dict{Int64, QuadTransmissionModel}()
+    for (key, value) in pairs(frag_err_dist_dict)
+        boring_quad_model_dict[key] = RazoQuadModel{Float32}(RazoQuadParams{Float32}(1.0, 1.25, 7.0, 7.0))#GeneralGaussModel(20.0f0, 0.0f0)
+    end
+    boring_quad_model_dict = quad_model_dict
     println("Begining Quantitative Search...")
-    ms_table_path_to_psms_path = quantSearch(
+    
+ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
         pid_to_cv_fold,
         prec_to_irt,
@@ -294,6 +298,21 @@ function SearchDIA(params_path::String)
         precursor_weights
         );
 
+    #=
+        ttable = DataFrame(Tables.columntable(Arrow.Table(readdir(quant_psms_folder, join=true))))
+        sort!(ttable, :rt)
+        ttable = ttable[!,[:ms_file_idx,:precursor_idx,:scan_idx,:rt,:isotopes_captured,:weight]]
+        gtable = groupby(ttable,[:ms_file_idx,:precursor_idx])
+    
+        N = 100000
+        sgtable = groupby(gtable[N],:isotopes_captured)
+        println(gtable[N])
+        p = plot()
+        for (key, sg) in pairs(sgtable)
+            plot!(p, sg[!,:rt],sg[!,:weight],label=key[:isotopes_captured], seriestype=:scatter, show = true)
+        end
+        N += 1
+=#
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
@@ -307,7 +326,7 @@ function SearchDIA(params_path::String)
     merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
     #Sort quant tables in descenging order of probability and remove 
     #sub-optimal isotope traces 
-    sortAndFilterQuantTables(
+    sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
         quant_psms_folder,
         merged_quant_path,
         best_traces
@@ -342,10 +361,29 @@ function SearchDIA(params_path::String)
             precursors[:accession_numbers],
             accession_number_to_id,
             precursors[:sequence])
-    if params_[:output_params]["delete_temp"]
-        rm(passing_proteins_folder,recursive=true)
-    end
+            value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
+    #if params_[:output_params]["delete_temp"]
+    #    rm(passing_proteins_folder,recursive=true)
+    #end
     #=
+
+    gpsms = groupby(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),[:ms_file_idx,:precursor_idx])
+    area_ratios = Float32[]
+    minimum_weights = Float32[]
+    for (key, psms) in pairs(gpsms)
+        if size(psms, 1) == 2
+            row_order = sortperm([last(x) for x in psms[!,:isotopes_captured]])
+            if abs(psms[1,:scan_idx] - psms[2,:scan_idx]) > 1
+                continue
+            end
+            push!(area_ratios, psms[row_order[1],:weight]/psms[row_order[2],:weight])
+            push!(minimum_weights, minimum(psms[!,:weight]))
+        end
+    end
+    histogram(log2.(area_ratios), xlim = (-3, 3))
+    describe(log2.(area_ratios))
+    plot(log2.(minimum_weights), log2.(area_ratios), ylim = (-3, 3), seriestype=:scatter, alpha = 0.01,
+    xlabel = "Minimum Isotope Trace Intensity", ylabel = "Log2 Fold Change Between Trace Apex")
     pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
                                 :max_pg_score, 
                                 min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
@@ -367,7 +405,7 @@ function SearchDIA(params_path::String)
                     bin_rt_size,
                     rt_irt,
                     irt_errs,
-                    quad_model_dict,
+                    boring_quad_model_dict,#quad_model_dict,
                     chromatograms,
                     MS_TABLE_PATHS,
                     params_,
@@ -384,9 +422,39 @@ function SearchDIA(params_path::String)
                     complex_spectral_scores,
                     precursor_weights)
 
+    test2q = DataFrame(Tables.columntable(Arrow.Table(readdir(second_quant_folder, join=true))))
+    filter!(x->x.ms_file_idx==1, test2q)
+    g2q = groupby(test2q, [:ms_file_idx,:precursor_idx])
+    describe([size(x, 1) for x in g2q])
+    split_trace = [x for x in g2q if size(x, 1)==2]
+    area_ratios = zeros(Float32, length(split_trace))
+    ms_table = Arrow.Table(first(MS_TABLE_PATHS))
+    mz_offsets = zeros(Float32, length(area_ratios))
+    for (i, (key, psms)) in enumerate(pairs(split_trace))
+        psms_perm = sortperm(psms[!,:isotopes_captured])
+        area_ratios[i] = log2(psms[psms_perm[1],:peak_area]/psms[psms_perm[2],:peak_area])
+        mz_offsets[i] = precursors[:mz][psms[1,:precursor_idx]] - ms_table[:centerMz][psms[1,:scan_idx]]
+    end
+    histogram(area_ratios)
+    vline!([median(area_ratios)])
+    plot(mz_offsets, area_ratios, alpha = 0.1, seriestype=:scatter)
     if params_[:output_params]["delete_temp"]
         rm(passing_psms_folder,recursive=true)
     end
+
+    unique_precursors = collect(unique(test2q[!,:precursor_idx]))
+    prec_mz = [precursors[:mz][pid] for pid in unique_precursors]
+    prec_charge = [precursors[:prec_charge][pid] for pid in unique_precursors ]
+    sulfur_count = [precursors[:sulfur_count][pid] for pid in unique_precursors ]
+    iso_ratios = zeros(Float32, length(unique_precursors))
+    for i in range(1, length(iso_ratios))
+        iso_ratios[i] = iso_splines(min(Int64(sulfur_count[i]), 5), 0, prec_mz[i]*prec_charge[i])
+    end
+
+
+    median(prec_mz.*prec_charge)
+
+    
     ###########
     #Normalize Quant 
     ###########

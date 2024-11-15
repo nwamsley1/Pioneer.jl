@@ -173,7 +173,8 @@ function quantSearch(
                 temp_path,
                 psms,
                 )
-        catch
+        catch e
+            throw(e)
             @warn "Quant search for $MS_TABLE_PATH failed..."
         end
     end

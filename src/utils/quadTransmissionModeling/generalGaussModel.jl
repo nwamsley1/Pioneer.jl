@@ -7,6 +7,7 @@ end
 function (rqm::GeneralGaussQuadParams)(x::T) where {T<:AbstractFloat}
         x = abs(x)
         return 1/(1 + abs(x/(rqm.a + rqm.overhang))^(2*rqm.b))
+        #return one(T)
 end
 
 
@@ -22,6 +23,10 @@ struct GeneralGaussFunction{T<:AbstractFloat} <: QuadTransmissionFunction
     params::GeneralGaussQuadParams{T}
 end
 
+
+function getQuadTransmissionBounds(ggm::GeneralGaussModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
+    return T(centerMz - isolationWidthMz/2), T(centerMz + isolationWidthMz/2)
+end
 
 function getPrecMinBound(ggf::GeneralGaussFunction{T}) where {T<:AbstractFloat}
     return ggf.min_mz
@@ -48,8 +53,4 @@ function getQuadTransmissionFunction(ggm::GeneralGaussModel{T}, centerMz::T, iso
             ggm.overhang
         )
     )
-end
-
-function getQuadTransmissionBounds(ggm::GeneralGaussModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
-    return T(centerMz - isolationWidthMz/2), T(centerMz + isolationWidthMz/2)
 end

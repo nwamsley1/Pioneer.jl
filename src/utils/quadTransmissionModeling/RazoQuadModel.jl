@@ -133,8 +133,8 @@ end
 function getQuadTransmissionFunction(rqm::RazoQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
     al, ar = rqm.params.al, rqm.params.ar
     RazoQuadFunction(
-        centerMz - T(max(al, isolationWidthMz/2)),
-        centerMz + T(max(ar, isolationWidthMz/2)),
+        centerMz - al,
+        centerMz + ar,
         centerMz,
         rqm.params
     )
@@ -142,7 +142,8 @@ end
 
 function getQuadTransmissionBounds(rqm::RazoQuadModel{T}, centerMz::T, isolationWidthMz::T) where {T<:AbstractFloat}
         al, ar = rqm.params.al, rqm.params.ar
-        return centerMz - T(max(al, isolationWidthMz/2)), centerMz + T(max(ar, isolationWidthMz/2))
+        return T(centerMz - al), T(centerMz + ar)
+        #return T(centerMz - isolationWidthMz/2), T(centerMz + isolationWidthMz/2)
 end
 
 function getPrecMinBound(rqm::RazoQuadFunction{T}) where {T<:AbstractFloat}

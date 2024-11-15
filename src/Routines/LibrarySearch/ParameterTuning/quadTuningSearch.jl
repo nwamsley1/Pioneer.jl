@@ -3,6 +3,7 @@ function getNearestAdjacentScans(scan_idx::UInt32,
                             isolationWidthMz::AbstractArray{Union{Missing, T}};
                             scans_to_search::Int64 = 500
         ) where {T<:AbstractFloat}
+    
     upperBoundMz = centerMz[scan_idx] + isolationWidthMz[scan_idx]/T(2.0)
     min_diff, min_diff_idx = typemax(Float32), -1
     for near_scan_idx in range(scan_idx, min(scan_idx + scans_to_search, length(centerMz)))
@@ -10,7 +11,7 @@ function getNearestAdjacentScans(scan_idx::UInt32,
             continue
         end
         lowerBoundMz = centerMz[near_scan_idx] - isolationWidthMz[near_scan_idx]/T(2.0)
-        if abs(upperBoundMz - lowerBoundMz) < min_diff
+        if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
             min_diff_idx = near_scan_idx
             min_diff = abs(upperBoundMz - lowerBoundMz) 
         end
@@ -24,7 +25,7 @@ function getNearestAdjacentScans(scan_idx::UInt32,
             continue
         end
         upperBoundMz = centerMz[near_scan_idx] + isolationWidthMz[near_scan_idx]/T(2.0)
-        if abs(upperBoundMz - lowerBoundMz) < min_diff
+        if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
             min_diff_idx = near_scan_idx
             min_diff = abs(upperBoundMz - lowerBoundMz) 
         end
@@ -43,6 +44,7 @@ function getScanToPrecIdx(
     isolationWidthMz::AbstractVector{Union{Missing, Float32}}
     )
     N = length(scan_idxs)
+    #Maps scans to the list of precursors in the scan 
     scan_idx_to_prec_idx = Dictionary{UInt32, Vector{UInt32}}()
     for i in range(1, N)
         scan_idx = scan_idxs[i]
@@ -94,9 +96,9 @@ function filterPSMs(
     n = length(iso_idx)
     mask = Vector{Bool}(undef, n)
     @inbounds for i in 1:n
-        mask[i] = (iso_idx[i] < 3) && 
-                (n_matches[i] >= min_matched_frags) && 
-                (weight[i]>0)
+        mask[i] = (iso_idx[i] < 3) && #Only M0 and M1
+                (n_matches[i] >= min_matched_frags) &&  
+                (weight[i]>0) #Non-zero abundance 
     end
     return mask
 end
@@ -113,12 +115,13 @@ function addColumns(
     mono_mz = [lib_precursor_mz[pid] for pid in precursor_idx]
     prec_charge = [lib_prec_charge[pid] for pid in precursor_idx]
     sulfur_count = [lib_sulfur_count[pid] for pid in precursor_idx]
-    iso_mz = Float32.(mono_mz .+ NEUTRON.*iso_idx./prec_charge)
+    #The iso_idx is 1 indexed. So the M0 has an index of 1, the M+1 had an index of 2, etc.
+    iso_mz = Float32.(mono_mz .+ NEUTRON.*(iso_idx.-1.0f0)./prec_charge)
     mz_offset = iso_mz .- center_mz
     δ = zeros(Float32, length(precursor_idx))
     for i in range(1, length(precursor_idx))
         s_count = min(Int64(sulfur_count[i]), 5)
-        mono_mass = mono_mz[i]*prec_charge[i]
+        mono_mass = Float32((mono_mz[i] - PROTON)*prec_charge[i])
         δ[i] = iso_splines(s_count, 0, mono_mass)/iso_splines(s_count, 1, mono_mass)
     end
     return DataFrame((mono_mz = mono_mz, prec_charge = prec_charge, sulfur_count = sulfur_count, iso_mz = iso_mz, mz_offset = mz_offset, δ = δ))
@@ -173,7 +176,6 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                                 precs)
 
     precursors = spec_lib["precursors"]
-    model_fits = []
     quad_model_dict = Dict{Int64, RazoQuadModel}()
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
         try
@@ -295,9 +297,8 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                                     )
                 end
             end
-            psms = vcat(fetch.(tasks)...)
-
-            psms = psms[filterPSMs(psms[!,:iso_idx], psms[!,:n_matches], psms[!,:weight], min_matched_frags = params_[:presearch_params]["min_quad_tuning_fragments"]),:]
+            psms = vcat(fetch.(tasks)...);
+            psms = psms[filterPSMs(psms[!,:iso_idx], psms[!,:n_matches], psms[!,:weight], min_matched_frags = params_[:presearch_params]["min_quad_tuning_fragments"]),:];
             sort!(psms, [:scan_idx,:precursor_idx,:iso_idx])
             psms = hcat(psms, addColumns(
                 psms[!,:precursor_idx],
@@ -324,17 +325,16 @@ function quadTuningSearch(    rt_to_irt_map_dict,
             combined_psms[!,:x0] = Float32.(combined_psms[!,:x0])
             combined_psms[!,:yt] = Float32.(combined_psms[!,:yt])
             combined_psms[!,:x1] = Float32.(combined_psms[!,:x1])
-
+            #plot(combined_psms[!,:x0], combined_psms[!,:yt], seriestype=:scatter, alpha = 0.01, show = true, ylim = (-5, 5))
+            #return 1
             combined_psms[!,:keep_charge] .= true
+            #p = plot()
             for (prec_charge, sub_psms) in pairs(groupby(combined_psms, :prec_charge))
-                median_yt = median(sub_psms[!,:yt]::AbstractVector{Float32})
-                for i in range(1, size(sub_psms, 1))
-                    sub_psms[i,:yt] = sub_psms[i,:yt] .- median_yt
-                end
                 if size(sub_psms, 1) < 1000
                     sub_psms[!,:keep_charge] .= false
                 end
             end
+            #return 1
             filter!(x->x.keep_charge::Bool, combined_psms)
             if size(combined_psms, 1) < params_[:presearch_params]["min_quad_tuning_psms"]
                 @warn "Too few psms to estimate quad transmission funtion for $MS_TABLE_PATH. Resorting to default"

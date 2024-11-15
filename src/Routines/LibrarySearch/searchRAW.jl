@@ -633,7 +633,8 @@ function QuadTransmissionSearch(
                     push!(tuning_results[:iso_idx], isotope_idx)
                     push!(tuning_results[:scan_idx], scan_idx)
                     push!(tuning_results[:center_mz], spectra[:centerMz][scan_idx])
-                    push!(tuning_results[:n_matches], n_matches)                end
+                    push!(tuning_results[:n_matches], n_matches)                
+            end
             end
         ##########
         #Reset pre-allocated arrays 

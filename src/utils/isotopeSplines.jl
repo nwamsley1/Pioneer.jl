@@ -209,11 +209,12 @@ function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragme
         f_i = iso_splines(min(frag.sulfurs, 5), f, Float32(frag.mass)) #Probability of fragment isotope in state 'f' assuming full precursor distribution 
         for p in range(max(f, 0), length(prec_isotopes) - 1) #Probabilities of complement fragments 
             #Splines don't go above five sulfurs 
-            complement_prob += prec_isotopes[p + 1]*iso_splines(
+            complement_prob += iso_splines(
                                             min(prec.sulfurs - frag.sulfurs, 5), 
                                             p - f, 
                                             Float32(prec.mass - frag.mass)
-                                        )
+                                        )*prec_isotopes[p + 1]
+                                        
         end
         frag_isotopes[f+1] = f_i*complement_prob
     end
@@ -308,9 +309,6 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
                     )
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
-    #total_fragment_intensity /= sum(frag_isotopes)
-    #frag_isotopes /= sum(frag_isotopes)
-    #total_fragment_intensity = total_fragment_intensity/sum(frag_isotopes)
     for i in reverse(range(1, length(frag_isotopes)))
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end
@@ -387,12 +385,12 @@ function getPrecursorIsotopeTransmission!(
                                             qtf::QuadTransmissionFunction)
     fill!(prec_isotope_transmission, zero(Float32))
     prec_iso_mz = prec_mono_mz
-    for i in range(0, length(prec_isotope_transmission)-1)
-        prec_isotope_transmission[i + 1] = qtf(prec_iso_mz)
+    for i in range(1, length(prec_isotope_transmission))
+        prec_isotope_transmission[i] = qtf(prec_iso_mz)
         prec_iso_mz += Float32(NEUTRON/prec_charge)
     end
 end
-
+#=
 function correctPrecursorAbundance(
     abundance::Float32,
     isotope_splines::IsotopeSplineModel{40, Float32},
@@ -494,3 +492,4 @@ function correctPrecursorAbundances!(
         println("prec_isotopes $prec_isotopes precursor_transmission $precursor_transmission prec_mz $prec_mz window_mz $window_mz")
     end
 end
+=#

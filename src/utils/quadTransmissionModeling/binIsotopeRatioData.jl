@@ -24,6 +24,32 @@ function findLocalMinima(arr::AbstractVector{T})::Vector{Int64} where {T<:Real}
     return minima_indices
 end
 
+function findLocalMaxima(arr::AbstractVector{T})::Vector{Int64} where {T<:Real}
+    # Returns indices of local minima in arr 
+    # A value x[i] is in bin j if x_bins[j] ≤ x[i] < x_bins[j+1]
+    # Values less than x_bins[1] get bin 0
+    # Values ≥ x_bins[end] get bin length(x_bins)
+    N = length(arr)
+    if N < 3
+        if (arr[2] > arr[3]) & (arr[2] > arr[1])
+            return Int64[2]
+        else
+            return  Int64[]
+        end
+    end
+    
+    maxima_indices = Int64[]
+    
+    for i in 2:(N-1)
+        if (arr[i] >= arr[i-1] && arr[i] > arr[i+1]) ||  # Handle regular minima
+           (arr[i] > arr[i-1] && arr[i] >= arr[i+1])     # Handle plateau cases
+            push!(maxima_indices, i)
+        end
+    end
+
+    return maxima_indices
+end
+
 function getBinIdx(x::AbstractVector{T}, x_bins::AbstractVector{U}) where {T,U<:Real}
     # Returns bin indices for each value in x
     # A value x[i] is in bin j if x_bins[j] ≤ x[i] < x_bins[j+1]

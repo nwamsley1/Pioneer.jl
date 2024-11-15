@@ -24,7 +24,7 @@ function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int6
     S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
             if !ismissing(abundance[i]) #Abundance of the the peptide 
-               if abundance[i] != 0.0
+               if abundance[i] > 0.0
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
                else
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
