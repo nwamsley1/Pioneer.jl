@@ -120,6 +120,8 @@ function getPSMS(
                     min_topn_of_m::Tuple{Int64, Int64},
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
+                    max_frag_rank::UInt8,
+                    abreviate_precursor_calc::Bool,
                     irt_tol::AbstractFloat,
                     spec_order::Set{Int64},
                     ) where {L<:LibraryIon{Float32}}
@@ -165,6 +167,8 @@ function getPSMS(
                                         precursor_transmission,
                                         isotopes,
                                         n_frag_isotopes,
+                                        max_frag_rank,
+                                        abreviate_precursor_calc,
                                         ion_list,
                                         Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
                                         Float32(irt_tol),                                  
@@ -340,6 +344,7 @@ function huberTuningSearch(
                     quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
+                    max_frag_rank::UInt8,
                     rt_index::retentionTimeIndex{Float32, Float32},
                     irt_tol::Float32,
                     spec_order::Set{Int64}
@@ -412,6 +417,7 @@ function huberTuningSearch(
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
+                max_frag_rank,
                 rt_index,
                 irt_start,
                 irt_stop,
@@ -677,6 +683,7 @@ function secondSearch(
                     min_topn_of_m::Tuple{Int64, Int64},
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
+                    max_frag_rank::UInt8,
                     rt_index::retentionTimeIndex{Float32, Float32},
                     irt_tol::Float32,
                     spec_order::Set{Int64}
@@ -746,6 +753,7 @@ function secondSearch(
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
+                max_frag_rank,
                 rt_index,
                 irt_start,
                 irt_stop, 
@@ -877,6 +885,7 @@ function getChromatograms(
                     quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
+                    max_frag_rank::UInt8,
                     rt_index::Union{retentionTimeIndex{T, Float32}, Vector{Tuple{Union{U, Missing}, UInt32}}, Missing},
                     irt_tol::Float32,
                     spec_order::Set{Int64}
@@ -944,6 +953,7 @@ function getChromatograms(
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
+                max_frag_rank,
                 rt_index,
                 irt_start,
                 irt_stop,
@@ -1234,6 +1244,8 @@ function LibrarySearch(
                                 Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
                                 kwargs[:params]["max_best_rank"],
                                 Int64(kwargs[:params]["n_frag_isotopes"]),
+                                UInt8(kwargs[:params]["max_frag_rank"]),
+                                Bool(kwargs[:params]["abreviate_precursor_calc"]),
                                 Float32(kwargs[:irt_tol]),
                                 Set(2)
                             )

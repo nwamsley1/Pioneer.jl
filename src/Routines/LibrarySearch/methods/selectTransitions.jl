@@ -10,6 +10,8 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
+                            max_frag_rank::UInt8,
+                            abreviate_precursor_calc::Bool,
                             library_fragment_lookup::LibraryFragmentLookup{Float32}, 
                             iRT::Float32, 
                             iRT_tol::Float32, 
@@ -48,6 +50,8 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                                                     precursor_transmission,
                                                     isotopes, 
                                                     n_frag_isotopes,
+                                                    max_frag_rank,
+                                                    abreviate_precursor_calc,
                                                     iso_splines, 
                                                     frag_mz_bounds,
                                                     block_size
@@ -130,6 +134,7 @@ function selectRTIndexedTransitions!(
                             precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
+                            max_frag_rank::UInt8,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt_start_idx::Int64, 
                             rt_stop_idx::Int64,
@@ -169,6 +174,8 @@ function selectRTIndexedTransitions!(
                                             precursor_transmission,
                                             isotopes, 
                                             n_frag_isotopes,
+                                            max_frag_rank,
+                                            false,
                                             iso_splines, 
                                             frag_mz_bounds,
                                             block_size
@@ -197,6 +204,7 @@ function selectRTIndexedTransitions!(
                             precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32},
                             n_frag_isotopes::Int64,
+                            max_frag_rank::UInt8,
                             rt_index::Union{retentionTimeIndex{Float32, Float32}, Missing}, 
                             rt_start_idx::Int64, 
                             rt_stop_idx::Int64,
@@ -239,6 +247,8 @@ function selectRTIndexedTransitions!(
                                             precursor_transmission,
                                             isotopes, 
                                             n_frag_isotopes,
+                                            max_frag_rank,
+                                            false,
                                             iso_splines, 
                                             frag_mz_bounds,
                                             block_size
@@ -310,6 +320,8 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             precursor_transmission::Vector{Float32},
                             isotopes::Vector{Float32}, 
                             n_frag_isotopes::Int64,
+                            max_frag_rank::UInt8,
+                            abreviate_precursor_calc::Bool,
                             iso_splines::IsotopeSplineModel, 
                             frag_mz_bounds::Tuple{Float32, Float32},
                             block_size::Int64)::Int64 #where {T,U,V,W<:AbstractFloat,I<:Integer}
@@ -328,7 +340,15 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         prec_charge,
         quad_transmission_func
     )
-    if true==true#(first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 2)
+    full_precursor_calc = true
+    if (abreviate_precursor_calc)
+        if !((first(prec_isotope_set) > 0) | (last(prec_isotope_set) < 2))
+            full_precursor_calc = true
+        else
+            full_precursor_calc = false
+        end
+    end
+    if full_precursor_calc
         transition_idx = fillPrecursorFragments!(
             prec_isotope_set,
             transitions,
@@ -341,6 +361,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
             precursor_transmission,
             isotopes,
             n_frag_isotopes,
+            max_frag_rank,
             iso_splines,
             frag_mz_bounds,
             block_size)
@@ -352,6 +373,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
             fragment_ions,
             transition_idx,
             n_frag_isotopes,
+            max_frag_rank,
             iso_splines,
             frag_mz_bounds,
             block_size)
@@ -371,27 +393,14 @@ function fillPrecursorFragments!(
     precursor_transmission::Vector{Float32},
     isotopes::Vector{Float32}, 
     n_frag_isotopes::Int64,
+    max_frag_rank::UInt8,
     iso_splines::IsotopeSplineModel, 
     frag_mz_bounds::Tuple{Float32, Float32},
     block_size::Int64)
 
-    
-    #=
-    tabundance_w = zero(Float32)
-    for i in range(1, 5)
-        tabundance_w += iso_splines(min(Int64(prec_sulfur_count), 5), i-1, Float32(prec_mz*prec_charge))*precursor_transmission[i]
-    end
-
-    tabundance = zero(Float32)
-    for i in range(1, 5)
-        tabundance += iso_splines(min(Int64(prec_sulfur_count), 5), i-1, Float32(prec_mz*prec_charge))
-    end
-
-    tratio = tabundance_w/tabundance
-    =#
     for frag_idx in precursor_fragment_range
         frag = fragment_ions[frag_idx]
-        if frag.rank > 25
+        if frag.rank > max_frag_rank
             continue
         end
         #Estimate isotope abundances 
@@ -451,12 +460,13 @@ function fillPrecursorFragments!(
     fragment_ions::Vector{DetailedFrag{Float32}},
     transition_idx::Int64, 
     n_frag_isotopes::Int64,
+    max_frag_rank::UInt8,
     iso_splines::IsotopeSplineModel, 
     frag_mz_bounds::Tuple{Float32, Float32},
     block_size::Int64)
     for frag_idx in precursor_fragment_range
         frag = fragment_ions[frag_idx]
-        if frag.rank > 25
+        if frag.rank > max_frag_rank
             continue
         end
         #Estimate isotope abundances 
@@ -470,27 +480,20 @@ function fillPrecursorFragments!(
             transition_idx += 1
             transitions[transition_idx] = DetailedFrag(
                 frag.prec_id,
-
                 frag_mz, #Estimated isotopic m/z
                 intensity, #Estimated relative abundance 
-
-                
                 frag.ion_type,
                 frag.is_y,
                 frag.is_b,
                 frag.is_p,
                 iso_idx>0, #Is the fragment an isotope?
-
                 frag.frag_charge,
                 frag.ion_position,
                 frag.prec_charge,
                 frag.rank,
                 frag.sulfur_count
             )#::LibraryFragment{T}
-            
-
             #Grow array if exceeds length
-            
             if transition_idx >= length(transitions)
                 append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
             end

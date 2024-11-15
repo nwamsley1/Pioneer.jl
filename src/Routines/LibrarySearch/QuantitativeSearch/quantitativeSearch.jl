@@ -80,6 +80,7 @@ function quantSearch(
                                     Tuple([Int64(x) for x in params[:quant_search_params]["min_topn_of_m"]]),
                                     Int64(params[:quant_search_params]["max_best_rank"]),
                                     params[:quant_search_params]["n_frag_isotopes"],
+                                    params[:quant_search_params]["max_frag_rank"],
                                     kwargs[:rt_index], 
                                     kwargs[:irt_err],
                                     Set(2),

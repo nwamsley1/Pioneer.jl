@@ -74,6 +74,7 @@ function secondQuant(
                                 kwargs[:quad_transmission_model],
                                 (3, 0),
                                 params[:quant_search_params]["n_frag_isotopes"],
+                                params[:quant_search_params]["max_frag_rank"],
                                 kwargs[:rt_index], 
                                 kwargs[:irt_err],
                                 Set(2),
