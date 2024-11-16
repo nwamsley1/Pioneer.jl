@@ -1,7 +1,6 @@
 function getBestTraces(
     quant_psms_folder::String,
-    min_prob::Float32 = 0.75f0
-)
+    min_prob::Float32 = 0.75f0)
     psms_trace_scores = Dictionary{
             @NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
 
@@ -14,7 +13,7 @@ function getBestTraces(
         for i in range(1, length(psms_table[1]))
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-            if psms_table[:prob][i]>min_prob
+            if (psms_table[:prob][i]>min_prob)&(psms_table[:fraction_transmitted]>0.25)
                 row_score = psms_table[:weight][i]
             else
                 row_score = zero(Float32)

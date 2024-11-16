@@ -80,7 +80,7 @@ function quantSearch(
                                     Tuple([Int64(x) for x in params[:quant_search_params]["min_topn_of_m"]]),
                                     Int64(params[:quant_search_params]["max_best_rank"]),
                                     params[:quant_search_params]["n_frag_isotopes"],
-                                    params[:quant_search_params]["max_frag_rank"],
+                                    UInt8(params[:quant_search_params]["max_frag_rank"]),
                                     kwargs[:rt_index], 
                                     kwargs[:irt_err],
                                     Set(2),
@@ -153,7 +153,6 @@ function quantSearch(
             filter!(x->x.best_scan, psms);
             addPostIntegrationFeatures!(
                 psms, 
-                MS_TABLE,
                 precursors[:sequence],
                 precursors[:structural_mods],
                 precursors[:mz],
@@ -167,6 +166,12 @@ function quantSearch(
                 precID_to_iRT
 
             );
+            @time getTransmission(psms, 
+                            precursors[:sulfur_count],
+                            MS_TABLE[:centerMz],
+                            MS_TABLE[:isolationWidthMz],
+                            quad_model_dict[ms_file_idx],
+                            iso_splines)
             temp_path = joinpath(quant_psms_folder, parsed_fname*".arrow")
             psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
 

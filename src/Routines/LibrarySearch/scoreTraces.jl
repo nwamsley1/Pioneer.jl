@@ -17,6 +17,7 @@ function scoreTraces!(
         :irt_pred,
         :irt_error,
         :irt_diff,
+        :fraction_transmitted,
         :max_y_ions,
         :y_ions_sum,
         :longest_y,
@@ -62,7 +63,7 @@ function scoreTraces!(
                             max_depth = 10,
                             eta = 0.05, 
                             iter_scheme = [100, 100, 200],
-                            print_importance = false);
+                            print_importance = true);
     return models;#best_psms
     else
         @warn "Less than 1,000,000 psms. Training with simplified target-decoy discrimination model..."
