@@ -8,6 +8,7 @@ function secondQuantSearch!(
     rt_irt,
     irt_errs,
     quad_model_dict,
+    isotope_trace_type,
     chromatograms,
     MS_TABLE_PATHS,
     params_,
@@ -71,10 +72,11 @@ function secondQuant(
                                 kwargs[:unscored_psms][thread_id],
                                 kwargs[:spectral_scores][thread_id],
                                 kwargs[:precursor_weights][thread_id],
+                                kwargs[:isotope_trace_type],
                                 kwargs[:quad_transmission_model],
                                 (3, 0),
                                 params[:quant_search_params]["n_frag_isotopes"],
-                                params[:quant_search_params]["max_frag_rank"],
+                                UInt8(params[:quant_search_params]["max_frag_rank"]),
                                 kwargs[:rt_index], 
                                 kwargs[:irt_err],
                                 Set(2),
@@ -126,13 +128,13 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             precursor_weights = precursor_weights,
             traces_passing = Set(sub_bpsms[!,:precursor_idx]),
             quad_transmission_model = quad_model_dict[ms_file_idx],
+            isotope_trace_type = isotope_trace_type
             )...);
 
         #Format Chromatograms 
         #getIsotopesCaptured!(chroms, precursors[:prec_charge],precursors[:mz], MS_TABLE)
-
-
         getIsotopesCaptured!(chroms,  
+                            isotope_trace_type,
                             quad_model_dict[ms_file_idx],
                             chroms[!,:scan_idx],
                             precursors[:prec_charge],
@@ -141,9 +143,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             MS_TABLE[:isolationWidthMz]);
                             
         filter!(x->first(x.isotopes_captured)<2, chroms)
-        gchroms = groupby(chroms,[:precursor_idx,:isotopes_captured])
         integratePrecursors(
-                            gchroms,
+                            chroms,
+                            isotope_trace_type,
                             sub_bpsms[!,:precursor_idx],
                             sub_bpsms[!,:isotopes_captured],
                             sub_bpsms[!,:scan_idx],
@@ -156,7 +158,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
 
         temp_path = joinpath(second_quant_folder, file_path_to_parsed_name[MS_TABLE_PATH]*".arrow")
         #psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
-        filter!(x->!(isnan(x.peak_area)), sub_bpsms)
+        filter!(x->!(isnan(x.peak_area::Float32)), sub_bpsms)
+        filter!(x->x.peak_area::Float32>0.0, sub_bpsms)
         sub_bpsms[!,:accession_numbers] = [precursors[:accession_numbers][prec_idx] for prec_idx in sub_bpsms[!,:precursor_idx]]
         sub_bpsms[!,:protein_idx] = [accession_number_to_id[accession_numbers] for accession_numbers in sub_bpsms[!,:accession_numbers]]
         sub_bpsms[!,:ms_file_idx] =  UInt32.(sub_bpsms[!,:ms_file_idx])
@@ -173,7 +176,8 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             temp_path,
             sub_bpsms,
             )
-    catch
+    catch e
+        throw(e)
         @warn "Second Quant Failed for $MS_TABLE_PATH"
         continue
     end

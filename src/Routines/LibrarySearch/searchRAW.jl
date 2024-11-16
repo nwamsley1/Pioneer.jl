@@ -882,6 +882,7 @@ function getChromatograms(
                     unscored_PSMs::Vector{Q},
                     spectral_scores::Vector{R},
                     precursor_weights::Vector{Float32},
+                    isotope_trace_type::IsotopeTraceType,
                     quad_transmission_model::QuadTransmissionModel,
                     isotope_err_bounds::Tuple{Int64, Int64},
                     n_frag_isotopes::Int64,
@@ -892,7 +893,6 @@ function getChromatograms(
                     ) where {T,U<:AbstractFloat, L<:LibraryIon{Float32},
                     Q<:UnscoredPSM{Float32},
                     R<:SpectralScores{Float16}}
-
     ##########
     #Initialize 
     prec_idx, ion_idx, cycle_idx = 0, 0, 0
@@ -908,6 +908,7 @@ function getChromatograms(
     prec_temp_size = 0
     precs_temp = Vector{UInt32}(undef, 50000)
     test_vals = Float32[]
+    quad_transmission_function = nothing
     ##########
     #Iterate through spectra
     for scan_idx in thread_task
@@ -939,6 +940,7 @@ function getChromatograms(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             precs_temp_size = 0
+            quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx])
             ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
                 ionTemplates,
                 precs_temp,
@@ -949,7 +951,7 @@ function getChromatograms(
                 precursors[:prec_charge],
                 precursors[:sulfur_count],
                 iso_splines,
-                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
+                quad_transmission_function,  
                 precursor_transmission,
                 isotopes,
                 n_frag_isotopes,
@@ -1002,11 +1004,6 @@ function getChromatograms(
             end
             #Get initial residuals
             initResiduals!(_residuals_, Hs, _weights_);
-            #_δ_ = (sort(abs.(_residuals_[1:Hs.m]), rev=true)[min(Hs.n, Hs.m)])
-            #_δ_ = Float32(100000.0f0)#Float32(iqr(abs.(_residuals_[1:Hs.m]))*1.5)
-            #Spectral deconvolution. Hybrid bisection/newtowns method
-            #_δ_ = 100000.0f0
-            #for _index_ in range(1, 2)
                 solveHuber!(Hs, _residuals_, _weights_, 
                                 δ, 
                                 #_δ_,
@@ -1019,35 +1016,18 @@ function getChromatograms(
                                 10.0,#Hs.n/10.0,
                                 max_diff
                                 );
-                #_δ_ = Float32(quantile(abs.(_residuals_[1:Hs.m]), 0.9))
-            #    _δ_ = maximum(_weights_[1:Hs.n])/100.0f0
-                #_δ_ = 10.0f0
-            #end
-                #_δ_ = Float32(iqr(abs.(_residuals_[1:Hs.m]))*3)
-                            #Spectral deconvolution. Hybrid bisection/newtowns method
-            #push!(test_vals, _δ_)
-            #end
-            
-            #=
-            iters = 0
-            for _δ_ in [1500.0f0]
-                iters = solveHuber!(Hs, _residuals_, _weights_, 
-                _δ_, λ, 
-                max_iter_newton, 
-                max_iter_bisection,
-                max_iter_outer,
-                accuracy_newton,
-                accuracy_bisection,
-                10.0,#Hs.n/10.0,
-                max_diff
-                );
-                if iters >= max_iter_outer
-                    reached_max_iters += 1
-                end
-            end
-            =#
             #push!(reached_max_iters, iters)
             for j in range(1, prec_temp_size)
+                pid = precs_temp[j]
+                if fractionTransmitted(
+                    isotope_trace_type,
+                    precursors[:mz][pid],
+                    precursors[:prec_charge][pid],
+                    precursors[:sulfur_count][pid],
+                    quad_transmission_function
+                )==false
+                    continue
+                end
                 if !iszero(IDtoCOL[precs_temp[j]])
                     rt_idx += 1
                     chromatograms[rt_idx] = ChromObject(
@@ -1068,7 +1048,6 @@ function getChromatograms(
                 if rt_idx + 1 > length(chromatograms)
                     growChromObjects!(chromatograms, 500000)
                 end
-
             end
             
             #Record weights for each precursor
@@ -1079,6 +1058,16 @@ function getChromatograms(
             #Scoring and recording data
         else
             for j in range(1, prec_temp_size)
+                pid = precs_temp[j]
+                if fractionTransmitted(
+                    isotope_trace_type,
+                    precursors[:mz][pid],
+                    precursors[:prec_charge][pid],
+                    precursors[:sulfur_count][pid],
+                    quad_transmission_function
+                )==false
+                    continue
+                end
                 rt_idx += 1
                 chromatograms[rt_idx] = ChromObject(
                     Float16(spectra[:retentionTime][scan_idx]),

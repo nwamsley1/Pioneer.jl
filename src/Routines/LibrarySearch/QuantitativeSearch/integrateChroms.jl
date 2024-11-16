@@ -323,7 +323,8 @@ function getSummaryScores!(
 end
 
 
-function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
+function integratePrecursors(chromatograms::DataFrame,
+                             isotope_trace_type::IsotopeTraceType,
                              precursor_idx::AbstractVector{UInt32},
                              isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
                              apex_scan_idx::AbstractVector{UInt32},
@@ -333,19 +334,23 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                              n_pad::Int64 = 20,
                              max_apex_offset::Int64 = 2,
                              )
-
+    chromatogram_keys = [:precursor_idx]
+    if seperateTraces(isotope_trace_type)
+        chromatogram_keys = [:precursor_idx,:isotopes_captured]
+    end
+    grouped_chroms = groupby(chromatograms, chromatogram_keys)
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
 
     #Maximal size of a chromatogram
     N = 0
-    for (chrom_id, chrom) in pairs(chromatograms)
+    for (chrom_id, chrom) in pairs(grouped_chroms)
         if size(chrom, 1) > N
             N = size(chrom, 1)
         end
     end
     N += n_pad*2
-    group_keys = keys(chromatograms)
+    group_keys = keys(grouped_chroms)
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
 
@@ -364,10 +369,17 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                 prec_id = precursor_idx[i]
                 iso_set = isotopes_captured[i]
                 apex_scan = apex_scan_idx[i]
-                #Chromatograms must be sorted by retention time 
-                (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
-                chrom = chromatograms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
-                sort!(chrom,:rt, alg = QuickSort)
+                #grouped_chroms must be sorted by retention time 
+                if seperateTraces(isotope_trace_type)
+                    (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
+                    chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
+                else
+                    (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
+                    chrom = grouped_chroms[(precursor_idx = prec_id,)]
+                end
+                sort!(chrom,
+                        :scan_idx, 
+                        alg = QuickSort) #Could alternatively sort by :rt
                 apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
                 isnothing(apex_scan) ? continue : nothing
                 
@@ -381,7 +393,6 @@ function integratePrecursors(chromatograms::GroupedDataFrame{DataFrame},
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-                                
                 #println("peak_area $peak_area i $i")
                 reset!(state)
             end

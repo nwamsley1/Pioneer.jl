@@ -387,7 +387,8 @@ ms_table_path_to_psms_path = quantSearch(
                     bin_rt_size,
                     rt_irt,
                     irt_errs,
-                    boring_quad_model_dict,#quad_model_dict,
+                    quad_model_dict,
+                    CombineTraces(0.5),
                     chromatograms,
                     MS_TABLE_PATHS,
                     params_,
@@ -403,6 +404,26 @@ ms_table_path_to_psms_path = quantSearch(
                     complex_unscored_PSMs,
                     complex_spectral_scores,
                     precursor_weights)    
+    ttable= DataFrame(Tables.columntable(Arrow.Table([x for x in readdir("/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111224/111124lib_secondtry_debug_OlsenMixedSpeciesAstral200ng_M0M1/RESULTS/temp/second_quant", join=true) if endswith(x, ".arrow")])));
+    size(ttable)
+
+    ttable_seperate = copy(ttable[!,[:precursor_idx,:peak_area,:isotopes_captured]])
+
+    ttable_combined = copy(ttable[!,[:precursor_idx,:peak_area,:isotopes_captured]])
+
+    combined_dict = Dict(zip(ttable_combined[!,:precursor_idx], ttable_combined[!,:peak_area]))
+    seperate_dict = Dict(zip(ttable_seperate[!,:precursor_idx], ttable_seperate[!,:peak_area]))
+
+    a, b = Float32[], Float32[]
+    for (key, value) in pairs(combined_dict)
+        if haskey(seperate_dict, key)
+            if value <= 0
+                continue
+            end
+            push!(a,log2(value))
+            push!(b, log2(seperate_dict[key]))
+        end
+    end
     ###########
     #Normalize Quant 
     ###########
