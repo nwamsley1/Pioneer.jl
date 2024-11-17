@@ -9,6 +9,7 @@ function quantSearch(
     RT_iRT,
     irt_errs,
     quad_model_dict,
+    isotope_trace_type,
     chromatograms,
     file_path_to_parsed_name,
     MS_TABLE_PATHS,
@@ -138,7 +139,12 @@ function quantSearch(
             psms[!,:best_scan] .= false;
             filter!(x->first(x.isotopes_captured)<2, psms);
             initSummaryColumns!(psms);
-            for (key, gpsms) in pairs(groupby(psms, [:precursor_idx,:isotopes_captured]))
+            groupby_cols = [:precursor_idx]
+            if seperateTraces(isotope_trace_type)
+                groupby_cols = [:precursor_idx,:isotopes_captured]
+            end
+            println("Groupby Cols ", groupby_cols)
+            for (key, gpsms) in pairs(groupby(psms, groupby_cols))
                 getSummaryScores!(
                     gpsms, 
                     gpsms[!,:weight],
@@ -149,7 +155,6 @@ function quantSearch(
                     gpsms[!,:y_count]
                 );
             end
-            
             filter!(x->x.best_scan, psms);
             addPostIntegrationFeatures!(
                 psms, 
@@ -166,12 +171,14 @@ function quantSearch(
                 precID_to_iRT
 
             );
+            #=
             @time getTransmission(psms, 
                             precursors[:sulfur_count],
                             MS_TABLE[:centerMz],
                             MS_TABLE[:isolationWidthMz],
                             quad_model_dict[ms_file_idx],
                             iso_splines)
+            =#
             temp_path = joinpath(quant_psms_folder, parsed_fname*".arrow")
             psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
 

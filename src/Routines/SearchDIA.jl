@@ -282,6 +282,7 @@ ms_table_path_to_psms_path = quantSearch(
         rt_irt,
         irt_errs,
         quad_model_dict,
+        CombineTraces(0.5),
         chromatograms,
         file_path_to_parsed_name,
         MS_TABLE_PATHS,
@@ -312,6 +313,13 @@ ms_table_path_to_psms_path = quantSearch(
             plot!(p, sg[!,:rt],sg[!,:weight],label=key[:isotopes_captured], seriestype=:scatter, show = true)
         end
         N += 1
+
+            for (value, psms) in pairs(groupby(best_psms,:ms_file_idx))
+        println(value)
+    println(size(unique(psms[!,[:precursor_idx,:isotopes_captured]])))
+    println(size(unique(psms[!,[:precursor_idx]])))
+    end
+
 =#
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
@@ -319,18 +327,27 @@ ms_table_path_to_psms_path = quantSearch(
     #Wipe memory
     best_psms = nothing
     GC.gc()
-    best_traces = getBestTraces(
-        quant_psms_folder,
-        Float32(params_[:xgboost_params]["min_best_trace_prob"]));
-    #Path for merged quant psms scores 
-    merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
-    #Sort quant tables in descenging order of probability and remove 
-    #sub-optimal isotope traces 
-    sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
+    if seperateTraces(CombineTraces(0.5))
+        best_traces = getBestTraces(
+            quant_psms_folder,
+            Float32(params_[:xgboost_params]["min_best_trace_prob"]));
+        #Path for merged quant psms scores 
+        merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
+        #Sort quant tables in descenging order of probability and remove 
+        #sub-optimal isotope traces 
+        sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
+            quant_psms_folder,
+            merged_quant_path,
+            best_traces
+        )
+    else
+        println("a")
+        sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
         quant_psms_folder,
         merged_quant_path,
         best_traces
     )
+    end
     #Merge sorted tables into a single list with two columns
     #for "prob" and "target"
     mergeSortedPSMScores(
