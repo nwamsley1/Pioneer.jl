@@ -71,72 +71,10 @@ function addSecondSearchColumns!(psms::DataFrame,
     return nothing
 end
 
-function getTransmission(psms::DataFrame,
-                         sulfur_counts::AbstractVector{UInt8},
-                         centerMz::AbstractVector{Union{Missing, Float32}},
-                         isolationWidthMz::AbstractVector{Union{Missing, Float32}},
-                         rqm::QuadTransmissionModel,
-                         iso_splines::IsotopeSplineModel)
-    gpsms = groupby(psms,:scan_idx)
-    psms[!,:fraction_transmitted] = zeros(Float32, size(psms, 1))
-    for (key, scan_psms) in pairs(gpsms)
-        scan_idx = key[:scan_idx]
-        qtf = getQuadTransmissionFunction(rqm, centerMz[scan_idx], isolationWidthMz[scan_idx])
-        fillFractionTransmitted!(scan_psms[!,:fraction_transmitted],
-                                 scan_psms[!,:precursor_idx],
-                                 scan_psms[!,:prec_mz],
-                                 scan_psms[!,:charge],
-                                 sulfur_counts,
-                                 qtf,
-                                 iso_splines)
-    end
-end
 
-function fillFractionTransmitted!(
-    fraction_transmitted::AbstractVector{Float32},
-    precursor_idx::AbstractVector{UInt32},
-    prec_mz::AbstractVector{Float32},
-    prec_charge::AbstractVector{UInt8},
-    sulfur_count::AbstractVector{UInt8},
-    qtf::QuadTransmissionFunction,
-    iso_splines::IsotopeSplineModel)
-    for i in range(1, length(fraction_transmitted))
-        ft = zero(Float32)
-        
-        mz = prec_mz[i]
-        charge = prec_charge[i]
-        iso_mz = mz
-        prec_mass = Float32((prec_mz[i] - PROTON)*charge)
-        iso_mass = prec_mass
 
-        n_sulfur = Int64(min(sulfur_count[precursor_idx[i]], 5))
-        for iso_idx in range(0, 5)
-            ft += iso_splines(n_sulfur, iso_idx, iso_mass)*qtf(iso_mz)
-            iso_mass += Float32(NEUTRON)
-            iso_mz += Float32(NEUTRON/charge)
-        end
-        fraction_transmitted[i] = ft
-    end
-end
 
-function fractionTransmitted(
-    mz::Float32,
-    charge::UInt8,
-    n_sulfur::UInt8,
-    qtf::QuadTransmissionFunction
-)
-    ft = zero(Float32)
-    iso_mz = mz
-    prec_mass = Float32((mz - PROTON)*charge)
-    iso_mass = prec_mass
-    n_sulfur = min(Int64(n_sulfur) ,5)
-    for iso_idx in range(0, 5)
-        ft += iso_splines(n_sulfur, iso_idx, iso_mass)*qtf(iso_mz)
-        iso_mass += Float32(NEUTRON)
-        iso_mz += Float32(NEUTRON/charge)
-    end
-    return ft
-end
+
 function addPostIntegrationFeatures!(psms::DataFrame, 
                                     precursor_sequence::AbstractArray{String},
                                     structural_mods::AbstractArray{Union{String, Missing}},

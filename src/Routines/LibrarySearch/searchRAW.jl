@@ -1018,16 +1018,6 @@ function getChromatograms(
                                 );
             #push!(reached_max_iters, iters)
             for j in range(1, prec_temp_size)
-                pid = precs_temp[j]
-                if fractionTransmitted(
-                    isotope_trace_type,
-                    precursors[:mz][pid],
-                    precursors[:prec_charge][pid],
-                    precursors[:sulfur_count][pid],
-                    quad_transmission_function
-                )==false
-                    continue
-                end
                 if !iszero(IDtoCOL[precs_temp[j]])
                     rt_idx += 1
                     chromatograms[rt_idx] = ChromObject(
@@ -1058,16 +1048,6 @@ function getChromatograms(
             #Scoring and recording data
         else
             for j in range(1, prec_temp_size)
-                pid = precs_temp[j]
-                if fractionTransmitted(
-                    isotope_trace_type,
-                    precursors[:mz][pid],
-                    precursors[:prec_charge][pid],
-                    precursors[:sulfur_count][pid],
-                    quad_transmission_function
-                )==false
-                    continue
-                end
                 rt_idx += 1
                 chromatograms[rt_idx] = ChromObject(
                     Float16(spectra[:retentionTime][scan_idx]),

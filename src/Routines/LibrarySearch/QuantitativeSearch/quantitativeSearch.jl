@@ -167,14 +167,7 @@ function quantSearch(
                 precID_to_iRT
 
             );
-            #=
-            @time getTransmission(psms, 
-                            precursors[:sulfur_count],
-                            MS_TABLE[:centerMz],
-                            MS_TABLE[:isolationWidthMz],
-                            quad_model_dict[ms_file_idx],
-                            iso_splines)
-            =#
+
             temp_path = joinpath(quant_psms_folder, parsed_fname*".arrow")
             psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
 

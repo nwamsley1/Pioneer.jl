@@ -9,25 +9,6 @@ function getPsmGroupbyCols(itt::CombineTraces)
     return [:precursor_idx]
 end
 
-function fractionTransmitted(
-    isotope_trace_type::CombineTraces,
-    mz::Float32,
-    charge::UInt8,
-    n_sulfur::UInt8,
-    qtf::QuadTransmissionFunction
-)
-    ft = zero(Float32)
-    iso_mz = mz
-    prec_mass = Float32((mz - PROTON)*charge)
-    iso_mass = prec_mass
-    n_sulfur = min(Int64(n_sulfur) ,5)
-    for iso_idx in range(0, 5)
-        ft += iso_splines(n_sulfur, iso_idx, iso_mass)*qtf(iso_mz)
-        iso_mass += Float32(NEUTRON)
-        iso_mz += Float32(NEUTRON/charge)
-    end
-    return ft>=isotope_trace_type.min_ft 
-end
 
 
 function getIsotopesCaptured!(chroms::DataFrame, 
@@ -85,17 +66,6 @@ seperateTraces(itt::SeperateTraces) = true
 function getPsmGroupyCols(itt::SeperateTraces)
     return [:precursor_idx,:isotopes_captured]
 end
-
-function fractionTransmitted(
-    isotope_trace_type::SeperateTraces,
-    mz::Float32,
-    charge::UInt8,
-    n_sulfur::UInt8,
-    qtf::QuadTransmissionFunction
-)
-    return true
-end
-
 
 function getIsotopesCaptured!(chroms::DataFrame, 
                                 isotope_trace_type::SeperateTraces,
