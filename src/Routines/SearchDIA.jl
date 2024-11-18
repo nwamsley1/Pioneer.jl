@@ -96,6 +96,15 @@ function SearchDIA(params_path::String)
     #File Names parsing
     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
 
+    ##########
+    #Isotope Trace Type
+    if params_[:quant_search_params]["combine_isotope_traces"]
+        const _ISOTOPE_TRACE_TYPE_ = CombineTraces(parse(Float32, params_[:quant_search_params]["min_fraction_transmitted"]))
+    else
+        const _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
+    end
+        
+
     ###########
     #Tune Parameters
     println("Parameter Tuning Search...")
@@ -264,13 +273,6 @@ function SearchDIA(params_path::String)
     println("huber ", params_[:deconvolution_params]["huber_delta"])
     ############
     #Quantitative Search
-
-    boring_quad_model_dict = Dict{Int64, QuadTransmissionModel}()
-    for (key, value) in pairs(frag_err_dist_dict)
-        boring_quad_model_dict[key] = RazoQuadModel{Float32}(RazoQuadParams{Float32}(1.0, 1.25, 7.0, 7.0))#GeneralGaussModel(20.0f0, 0.0f0)
-    end
-    boring_quad_model_dict = quad_model_dict
-    println("Begining Quantitative Search...")
     
 ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
@@ -299,55 +301,24 @@ ms_table_path_to_psms_path = quantSearch(
         precursor_weights
         );
 
-    #=
-        ttable = DataFrame(Tables.columntable(Arrow.Table(readdir(quant_psms_folder, join=true))))
-        sort!(ttable, :rt)
-        ttable = ttable[!,[:ms_file_idx,:precursor_idx,:scan_idx,:rt,:isotopes_captured,:weight]]
-        gtable = groupby(ttable,[:ms_file_idx,:precursor_idx])
-    
-        N = 100000
-        sgtable = groupby(gtable[N],:isotopes_captured)
-        println(gtable[N])
-        p = plot()
-        for (key, sg) in pairs(sgtable)
-            plot!(p, sg[!,:rt],sg[!,:weight],label=key[:isotopes_captured], seriestype=:scatter, show = true)
-        end
-        N += 1
-
-            for (value, psms) in pairs(groupby(best_psms,:ms_file_idx))
-        println(value)
-    println(size(unique(psms[!,[:precursor_idx,:isotopes_captured]])))
-    println(size(unique(psms[!,[:precursor_idx]])))
-    end
-
-=#
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
     #Wipe memory
     best_psms = nothing
     GC.gc()
-    if seperateTraces(CombineTraces(0.5))
-        best_traces = getBestTraces(
-            quant_psms_folder,
-            Float32(params_[:xgboost_params]["min_best_trace_prob"]));
-        #Path for merged quant psms scores 
-        merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
-        #Sort quant tables in descenging order of probability and remove 
-        #sub-optimal isotope traces 
-        sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
-            quant_psms_folder,
-            merged_quant_path,
-            best_traces
-        )
-    else
-        println("a")
-        sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
+    best_traces = getBestTraces(
+        quant_psms_folder,
+        Float32(params_[:xgboost_params]["min_best_trace_prob"]));
+    #Path for merged quant psms scores 
+    merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
+    #Sort quant tables in descenging order of probability and remove 
+    #sub-optimal isotope traces 
+    sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
         quant_psms_folder,
         merged_quant_path,
         best_traces
     )
-    end
     #Merge sorted tables into a single list with two columns
     #for "prob" and "target"
     mergeSortedPSMScores(
@@ -379,15 +350,7 @@ ms_table_path_to_psms_path = quantSearch(
             accession_number_to_id,
             precursors[:sequence])
             value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
-    #if params_[:output_params]["delete_temp"]
-    #    rm(passing_proteins_folder,recursive=true)
-    #end
-    #=
-    pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
-                                :max_pg_score, 
-                                min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
-                                n_spline_bins = 5)
-    =#
+
     pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
                                     :max_pg_score, 
                                     min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3))

@@ -130,21 +130,17 @@ function quantSearch(
                                             pid_to_cv_fold);
             psms[!,:charge2] = UInt8.(psms[!,:charge].==2);
             getIsotopesCaptured!(psms,  
-                                   quad_model_dict[ms_file_idx],
+                                    isotope_trace_type,
+                                    quad_model_dict[ms_file_idx],
                                     psms[!,:scan_idx],
                                     spec_lib["precursors"][:prec_charge], 
                                     spec_lib["precursors"][:mz], 
                                     MS_TABLE[:centerMz],
                                     MS_TABLE[:isolationWidthMz]);
-            psms[!,:best_scan] .= false;
+            psms[!,:best_scan] = zeros(Bool, size(psms, 1));
             filter!(x->first(x.isotopes_captured)<2, psms);
             initSummaryColumns!(psms);
-            groupby_cols = [:precursor_idx]
-            if seperateTraces(isotope_trace_type)
-                groupby_cols = [:precursor_idx,:isotopes_captured]
-            end
-            println("Groupby Cols ", groupby_cols)
-            for (key, gpsms) in pairs(groupby(psms, groupby_cols))
+            for (key, gpsms) in pairs(groupby(psms, getPsmGroupbyCols(isotope_trace_type)))
                 getSummaryScores!(
                     gpsms, 
                     gpsms[!,:weight],
