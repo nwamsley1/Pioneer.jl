@@ -78,7 +78,7 @@ function huberLossSearch(
                                     kwargs[:quad_transmission_model],
                                     (1, 0),
                                     params[:quant_search_params]["n_frag_isotopes"],
-                                    kwargs[:quant_search_params]["max_frag_rank"]
+                                    UInt8(params[:quant_search_params]["max_frag_rank"]),
                                     kwargs[:rt_index], 
                                     kwargs[:irt_err],
                                     Set(2),

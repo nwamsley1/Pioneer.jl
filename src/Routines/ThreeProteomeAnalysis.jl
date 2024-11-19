@@ -5,10 +5,26 @@ function ThreeProteomeAnalysis(
 )
     #=
     ThreeProteomeAnalysis(
-    "/Users/n.t.wamsley/Desktop/astral_test_out/RESULTS/RESULTS/",
+    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralCombineTraces/RESULTS/RESULTS",
     "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-    "/Users/n.t.wamsley/Desktop/astral_test_out"
+    "/Users/n.t.wamsley/Desktop/CombinedTraces111824"
     )
+
+
+    ThreeProteomeAnalysis(
+    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralSeperateTraces/RESULTS/RESULTS",
+    "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
+    "/Users/n.t.wamsley/Desktop/SeperateTraces111824"
+    )
+
+
+
+    ThreeProteomeAnalysis(
+    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralSeperateTracesNoMax/RESULTS/RESULTS",
+    "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
+    "/Users/n.t.wamsley/Desktop/SeperateTracesNoMax111824"
+    )
+
     =#
     #=
     Example key_file

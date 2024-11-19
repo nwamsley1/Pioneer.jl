@@ -99,9 +99,13 @@ function SearchDIA(params_path::String)
     ##########
     #Isotope Trace Type
     if params_[:quant_search_params]["combine_isotope_traces"]
-        const _ISOTOPE_TRACE_TYPE_ = CombineTraces(parse(Float32, params_[:quant_search_params]["min_fraction_transmitted"]))
+        _ISOTOPE_TRACE_TYPE_ = CombineTraces(Float32(params_[:quant_search_params]["min_fraction_transmitted"]))
+        println("Combine Traces!")
+        @warn "Combine Traces"
     else
-        const _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
+        _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
+        println("Seperate Traces")
+        @warn "Seperate Traces"
     end
         
 
@@ -284,7 +288,7 @@ ms_table_path_to_psms_path = quantSearch(
         rt_irt,
         irt_errs,
         quad_model_dict,
-        _ISOTOPE_TRACE_TYPE_(0.5),
+        _ISOTOPE_TRACE_TYPE_,
         chromatograms,
         file_path_to_parsed_name,
         MS_TABLE_PATHS,
@@ -349,7 +353,7 @@ ms_table_path_to_psms_path = quantSearch(
             precursors[:accession_numbers],
             accession_number_to_id,
             precursors[:sequence])
-            value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
+    #value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
 
     pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
                                     :max_pg_score, 
@@ -368,7 +372,7 @@ ms_table_path_to_psms_path = quantSearch(
                     rt_irt,
                     irt_errs,
                     quad_model_dict,
-                    _ISOTOPE_TRACE_TYPE_(0.5),
+                    _ISOTOPE_TRACE_TYPE_,
                     chromatograms,
                     MS_TABLE_PATHS,
                     params_,
@@ -384,26 +388,7 @@ ms_table_path_to_psms_path = quantSearch(
                     complex_unscored_PSMs,
                     complex_spectral_scores,
                     precursor_weights)    
-    ttable= DataFrame(Tables.columntable(Arrow.Table([x for x in readdir("/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111224/111124lib_secondtry_debug_OlsenMixedSpeciesAstral200ng_M0M1/RESULTS/temp/second_quant", join=true) if endswith(x, ".arrow")])));
-    size(ttable)
-
-    ttable_seperate = copy(ttable[!,[:precursor_idx,:peak_area,:isotopes_captured]])
-
-    ttable_combined = copy(ttable[!,[:precursor_idx,:peak_area,:isotopes_captured]])
-
-    combined_dict = Dict(zip(ttable_combined[!,:precursor_idx], ttable_combined[!,:peak_area]))
-    seperate_dict = Dict(zip(ttable_seperate[!,:precursor_idx], ttable_seperate[!,:peak_area]))
-
-    a, b = Float32[], Float32[]
-    for (key, value) in pairs(combined_dict)
-        if haskey(seperate_dict, key)
-            if value <= 0
-                continue
-            end
-            push!(a,log2(value))
-            push!(b, log2(seperate_dict[key]))
-        end
-    end
+    
     ###########
     #Normalize Quant 
     ###########

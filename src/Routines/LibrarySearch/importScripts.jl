@@ -85,6 +85,7 @@ function importScripts()
 
     #Files needed for PRM routines
     [include(joinpath(package_root,"src","Routines","LibrarySearch","QuantitativeSearch",jl_file)) for jl_file in [
+            "isotopeTraces.jl",
             "addSecondSearchColumns.jl",
             "integrateChroms.jl",
             "quantitativeSearch.jl",
