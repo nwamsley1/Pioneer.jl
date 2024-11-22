@@ -1,7 +1,7 @@
 function SearchDIA(params_path::String)
     #println("JLD2 version is: ", Pkg.installed()["JLD2"])
     total_time = @timed begin
-    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
+    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/AlternatingWindows_CombineTraces.json"
     if !isabspath(params_path)
         params_path = joinpath(@__DIR__, "../../", params_path)
     end
@@ -161,7 +161,7 @@ function SearchDIA(params_path::String)
         end
     end
 
-    
+    #=
     p = plot()
     plot_bins = LinRange(400-3, 400+3, 100)
     for (key, value) in pairs(quad_model_dict)
@@ -171,7 +171,7 @@ function SearchDIA(params_path::String)
     end
     display(p)
     println("quad_model_dict $quad_model_dict")
-    
+    =#
 
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,

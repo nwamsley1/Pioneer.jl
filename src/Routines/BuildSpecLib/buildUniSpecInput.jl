@@ -110,7 +110,8 @@ function getChronologerSeqs(
             for mod in parsed_mods
                 stop_idx = getModIndex(mod.match)#parse(UInt8, first(mod.captures))
                 chronologer_seq *= seq[start_idx:stop_idx]
-                chronologer_seq *= "[+"*mod_name_to_mass[getModName(mod.match)]*"]"
+                #chronologer_seq *= "[+"*mod_name_to_mass[getModName(mod.match)]*"]"
+                chronologer_seq *= "["*uppercase(getModName(mod.match))*"]"
                 start_idx = stop_idx += one(UInt8)
             end
             chronologer_seq *= seq[start_idx:length(seq)]

@@ -123,9 +123,10 @@ function estimateKdeBins(
     =#
 
     #Kernel density estimate for x
-    x_kde = KernelDensity.kde(x)
+    x_kde = KernelDensity.kde(x, bandwidth = 0.01)
     #Evaluate kernel density on grid 
     kde_eval_points = LinRange(minimum(x), maximum(x), 1000)
+
     density_atx = KernelDensity.pdf(x_kde, (kde_eval_points))
     #Get Local Minima/x bin boundaries
     x_bin_boundaries = kde_eval_points[findLocalMinima(density_atx)]
@@ -147,13 +148,15 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     
     filter!(x->(x.x0>x0_min)&(x.x0<x0_max), isotopes_ratio_data)
     min_bin_count = max(
-        (ceil(Int64, abs(x0_max - x0_min)) - 1)*2, #Should have two bins per Thompson (1 m/z)
-        6 #but at least 6 bins 
+        (ceil(Int64, abs(x0_max - x0_min)) - 1)*2-2, #Should have two bins per Thompson (1 m/z)
+        3 #but at least 6 bins 
     )
     #Estimate KDE Bins 
     bin_idxs, n_bins = estimateKdeBins(isotopes_ratio_data[!,:x0])
     isotopes_ratio_data[!,:kde_bin_idx] = bin_idxs
-    
+    if n_bins < 4
+        plot(isotopes_ratio_data[!,:x0], isotopes_ratio_data[!,:yt], seriestype=:scatter, alpha = 0.1, show = true)
+    end
     #Use KDE bins or uniform bins? Base this decision on the median intra-bin standard deviation 
     #A better bin selection means less intra-bin variance. 
     if n_bins < min_bin_count #KDE estimation did not give enough bins. Default to uniform binning 
@@ -236,7 +239,8 @@ function MergeBins(isotopes_ratio_data::DataFrame, x0_lim::Tuple{<:Real,<:Real};
     end
     
     bined_ratio_data = combine(groupby(isotopes_ratio_data,:prec_charge)) do subdf
-        MergeBins(subdf,x0_lim, min_bin_size = min_bin_size, min_bin_width = min_bin_width, max_iterations = max_iterations)
+        mb = MergeBins(subdf,x0_lim, min_bin_size = min_bin_size, min_bin_width = min_bin_width, max_iterations = max_iterations)
+        mb
     end
     filter!(x->x.n_bins>=2, bined_ratio_data)
     filter!(x->x.n>=min_bin_size, bined_ratio_data)

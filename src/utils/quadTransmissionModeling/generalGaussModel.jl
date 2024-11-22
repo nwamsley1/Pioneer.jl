@@ -54,3 +54,4 @@ function getQuadTransmissionFunction(ggm::GeneralGaussModel{T}, centerMz::T, iso
         )
     )
 end
+

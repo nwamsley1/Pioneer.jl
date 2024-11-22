@@ -52,6 +52,36 @@ vline!(p2, x_bin_boundaries[1:4:end])
 window_center_mzs = x_bin_boundaries[1:4:end]
 window_center_mzs_a = window_center_mzs[1:2:end]
 window_center_mzs_b = window_center_mzs[2:2:end]
+
+wcb = x_bin_boundaries[1:2:end]
+series_a = wcb[[n*3 + 1 for n in range(0, length(wcb)÷3)]]
+series_b = wcb[[n*3 for n in range(1, length(wcb)÷3)]]
+series_c =wcb[[n*3 - 1 for n in range(1, length(wcb)÷3)]]
+p = plot(xlim = (390, 410))
+vline!(p, series_a)
+vline!(p, series_b)
+vline!(p, series_c)
+
+############
+#Alternating methods. 2x for 25%
+wcb = x_bin_boundaries[1:4:end]
+series_a = wcb[[n*2+1 for n in range(0, length(wcb)÷2-1)]]
+series_b = wcb[[n*2+2 for n in range(0, length(wcb)÷2-1)]]
+df = DataFrame((center_mz = vcat(series_a, series_b)))
+filter!(x->(x.center_mz>499.0)&(x.center_mz<601.0), df)
+CSV.write("../data/AstralAlternatingMethod2.csv", df)
+############
+#Alternating method 5/4 (25%) improvement for 100%
+wcb = x_bin_boundaries[1:end]
+mz_sequence = vcat([wcb[[n*10+k for n in range(0, length(wcb)÷10-1)]] for k in range(1, 10)]...)
+df = DataFrame((center_mz = mz_sequence))
+filter!(x->(x.center_mz>499.0)&(x.center_mz<601.0), df)
+CSV.write("../data/AstralAlternatingMethod5.csv", df)
+############
+#Standard Method
+CSV.write("../data/AstralStandardMethod.csv", DataFrame((center_mz = x_bin_boundaries[1:4:end])))
+
+
 CSV.write("/Users/n.t.wamsley/Desktop/AstralAlternatingMethod.csv", DataFrame((center_mz = vcat(window_center_mzs_a, window_center_mzs_b))))
 CSV.write("/Users/n.t.wamsley/Desktop/AstralStandardMethod.csv", DataFrame((center_mz = window_center_mzs)))
 

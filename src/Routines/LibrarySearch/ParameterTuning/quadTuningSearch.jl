@@ -20,7 +20,7 @@ function getNearestAdjacentScans(scan_idx::UInt32,
 
     min_diff, min_diff_idx = typemax(Float32), -1
     lowerBoundMz = centerMz[scan_idx] - isolationWidthMz[scan_idx]/T(2.0)
-    for near_scan_idx in range(scan_idx, max(scan_idx - scans_to_search, 1))
+    for near_scan_idx in (scan_idx):-1:max(scan_idx - scans_to_search, 1)
         if ismissing(centerMz[near_scan_idx])
             continue
         end
@@ -174,7 +174,7 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                                 spectral_scores,
                                 precursor_weights,
                                 precs)
-
+    p = plot()
     precursors = spec_lib["precursors"]
     quad_model_dict = Dict{Int64, RazoQuadModel}()
     for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
@@ -196,154 +196,151 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                 Identified the following widths for ms2 scans: $window_widths"
                 throw("error")
             end
-            psms =  vcat(LibrarySearch(
-                                    MS_TABLE,
-                                    params_;
-                                    frag_index = spec_lib["presearch_f_index"],
-                                    precursors = spec_lib["precursors"],
-                                    fragment_lookup_table = spec_lib["f_det"],
-                                    rt_to_irt_spline =  rt_to_irt_map_dict[ms_file_idx],
-                                    ms_file_idx = UInt32(ms_file_idx),
-                                    irt_tol = irt_errs[ms_file_idx],
-                                    ion_matches = ionMatches,
-                                    ion_misses = ionMisses,
-                                    fmatches = all_fmatches,
-                                    id_to_col = IDtoCOL,
-                                    ion_templates = ionTemplates,
-                                    iso_splines = iso_splines,
-                                    scored_psms = scored_psms,
-                                    unscored_psms = unscored_psms,
-                                    spectral_scores = spectral_scores,
-                                    prec_to_score = precs,
-                                    mass_err_model = frag_err_dist_dict[ms_file_idx],
-                                    sample_rate = params_[:presearch_params]["quad_tuning_sample_rate"],
-                                    params = params_[:presearch_params],
-                                    isotope_err_bounds = (0, 0),
-                                    mz_overhang = 1.0f0,
-                                    quad_transmission_model = SquareQuadModel(1.0f0)
-                                                    )...);
-
-            psms[!,:best_psms ] .= false
-            if iszero(size(psms, 1))
-                continue
-            end
-            addPreSearchColumns!(psms, 
-                                        MS_TABLE, 
-                                        spec_lib["precursors"][:is_decoy],
-                                        spec_lib["precursors"][:irt],
-                                        spec_lib["precursors"][:prec_charge],
-                                        MS_TABLE[:retentionTime],
-                                        MS_TABLE[:TIC]
-                                    )
-            #Score Precursors
-            scorePresearch!(psms)
-            getQvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
-            filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], psms)
-            #Get best scan per passing precursor 
-            psms[!,:best_psms] .= false
-            grouped_psms = groupby(psms,:precursor_idx)
-            for psms in grouped_psms
-                best_idx = argmax(psms.prob)
-                psms[best_idx,:best_psms] = true
-            end
-            filter!(x->x.best_psms, psms)
-            filter!(x->x.target, psms)
-
-            scan_idx_to_prec_idx = Dictionary{UInt32, Vector{UInt32}}()
-
-            scan_idx_to_prec_idx = getScanToPrecIdx(
-                psms[!,:scan_idx],
-                psms[!,:precursor_idx],
-                MS_TABLE[:centerMz], MS_TABLE[:isolationWidthMz]
-            )
-
-            scan_idxs = Set(keys(scan_idx_to_prec_idx))
-
-            thread_tasks, total_peaks = partitionScansToThreads(MS_TABLE[:mz_array],
-                                                                MS_TABLE[:retentionTime],
-                                                                MS_TABLE[:centerMz],
-                                                                MS_TABLE[:msOrder],
-                                                                Threads.nthreads(),
-                                                                1)
-
-            tasks = map(thread_tasks) do thread_task
-                Threads.@spawn begin 
-                    thread_id = first(thread_task)
-                    return QuadTransmissionSearch(
+            n = 0
+            total_psms = DataFrame()
+            while n < 10
+                psms =  vcat(LibrarySearch(
                                         MS_TABLE,
-                                        last(thread_task), #getRange(thread_task),
-                                        scan_idx_to_prec_idx,
-                                        scan_idxs,
-                                        precursors,
-                                        spec_lib["f_det"], 
-                                        UInt32(ms_file_idx),
-                                        frag_err_dist_dict[ms_file_idx],
-                                        Float32(100000.0f0), #squared error 
-                                        Int64(params_[:deconvolution_params]["max_iter_newton"]),
-                                        Int64(params_[:deconvolution_params]["max_iter_bisection"]),
-                                        Int64(params_[:deconvolution_params]["max_iter_outer"]),
-                                        Float32(params_[:deconvolution_params]["accuracy_newton"]),
-                                        Float32(params_[:deconvolution_params]["accuracy_bisection"]),
-                                        Float32(params_[:deconvolution_params]["max_diff"]),
-                                        ionMatches[thread_id],
-                                        ionMisses[thread_id],
-                                        IDtoCOL[thread_id],
-                                        ionTemplates[thread_id],
-                                        iso_splines,
-                                        unscored_psms[thread_id],
-                                        spectral_scores[thread_id],
-                                        precursor_weights[thread_id],
-                                        Set(2),
-                                    )
+                                        params_;
+                                        frag_index = spec_lib["presearch_f_index"],
+                                        precursors = spec_lib["precursors"],
+                                        fragment_lookup_table = spec_lib["f_det"],
+                                        rt_to_irt_spline =  rt_to_irt_map_dict[ms_file_idx],
+                                        ms_file_idx = UInt32(ms_file_idx),
+                                        irt_tol = irt_errs[ms_file_idx],
+                                        ion_matches = ionMatches,
+                                        ion_misses = ionMisses,
+                                        fmatches = all_fmatches,
+                                        id_to_col = IDtoCOL,
+                                        ion_templates = ionTemplates,
+                                        iso_splines = iso_splines,
+                                        scored_psms = scored_psms,
+                                        unscored_psms = unscored_psms,
+                                        spectral_scores = spectral_scores,
+                                        prec_to_score = precs,
+                                        mass_err_model = frag_err_dist_dict[ms_file_idx],
+                                        sample_rate = params_[:presearch_params]["quad_tuning_sample_rate"],
+                                        params = params_[:presearch_params],
+                                        isotope_err_bounds = (0, 0),
+                                        mz_overhang = 1.0f0,
+                                        quad_transmission_model = SquareQuadModel(1.0f0)
+                                                        )...);
+                psms[!,:best_psms ] .= false
+                if iszero(size(psms, 1))
+                    continue
                 end
-            end
-            psms = vcat(fetch.(tasks)...);
-            psms = psms[filterPSMs(psms[!,:iso_idx], psms[!,:n_matches], psms[!,:weight], min_matched_frags = params_[:presearch_params]["min_quad_tuning_fragments"]),:];
-            sort!(psms, [:scan_idx,:precursor_idx,:iso_idx])
-            psms = hcat(psms, addColumns(
-                psms[!,:precursor_idx],
-                precursors[:mz],
-                precursors[:prec_charge],
-                precursors[:sulfur_count],
-                psms[!,:iso_idx],
-                psms[!,:center_mz],
-                iso_splines
-            ))
-            combined_psms = combine(groupby(psms, [:scan_idx,:precursor_idx])) do precursor_psms
-                return summarizePrecursor(
-                    precursor_psms[!,:iso_idx],
-                    precursor_psms[!,:center_mz],
-                    precursor_psms[!,:iso_mz],
-                    precursor_psms[!,:prec_charge],
-                    precursor_psms[!,:weight],
-                    precursor_psms[!,:δ]
+                addPreSearchColumns!(psms, 
+                                            MS_TABLE, 
+                                            spec_lib["precursors"][:is_decoy],
+                                            spec_lib["precursors"][:irt],
+                                            spec_lib["precursors"][:prec_charge],
+                                            MS_TABLE[:retentionTime],
+                                            MS_TABLE[:TIC]
+                                        )
+                #Score Precursors
+                scorePresearch!(psms)
+                getQvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
+                filter!(:q_value => x -> x<=params_[:presearch_params]["max_qval"], psms)
+                #Get best scan per passing precursor 
+                psms[!,:best_psms] .= false
+                grouped_psms = groupby(psms,:precursor_idx)
+                for psms in grouped_psms
+                    best_idx = argmax(psms.prob)
+                    psms[best_idx,:best_psms] = true
+                end
+                filter!(x->x.best_psms, psms)
+                filter!(x->x.target, psms)
+                scan_idx_to_prec_idx = Dictionary{UInt32, Vector{UInt32}}()
+                #filter!(x->x.precursor_idx==psms[1,:precursor_idx], psms)
+                scan_idx_to_prec_idx = getScanToPrecIdx(
+                    psms[!,:scan_idx],
+                    psms[!,:precursor_idx],
+                    MS_TABLE[:centerMz], MS_TABLE[:isolationWidthMz]
                 )
-            end
-            filter!(x->!ismissing(x.yt), combined_psms)
-
-            combined_psms[!,:prec_charge] = UInt8.(combined_psms[!,:prec_charge])
-            combined_psms[!,:x0] = Float32.(combined_psms[!,:x0])
-            combined_psms[!,:yt] = Float32.(combined_psms[!,:yt])
-            combined_psms[!,:x1] = Float32.(combined_psms[!,:x1])
-            #plot(combined_psms[!,:x0], combined_psms[!,:yt], seriestype=:scatter, alpha = 0.01, show = true, ylim = (-5, 5))
-            #return 1
-            combined_psms[!,:keep_charge] .= true
-            #p = plot()
-            for (prec_charge, sub_psms) in pairs(groupby(combined_psms, :prec_charge))
-                if size(sub_psms, 1) < 1000
-                    sub_psms[!,:keep_charge] .= false
+                #println(scan_idx_to_prec_idx)
+                scan_idxs = Set(keys(scan_idx_to_prec_idx))
+                thread_tasks, total_peaks = partitionScansToThreads(MS_TABLE[:mz_array],
+                                                                    MS_TABLE[:retentionTime],
+                                                                    MS_TABLE[:centerMz],
+                                                                    MS_TABLE[:msOrder],
+                                                                    Threads.nthreads(),
+                                                                    1)
+                tasks = map(thread_tasks) do thread_task
+                    Threads.@spawn begin 
+                        thread_id = first(thread_task)
+                        return QuadTransmissionSearch(
+                                            MS_TABLE,
+                                            last(thread_task), #getRange(thread_task),
+                                            scan_idx_to_prec_idx,
+                                            scan_idxs,
+                                            precursors,
+                                            spec_lib["f_det"], 
+                                            UInt32(ms_file_idx),
+                                            frag_err_dist_dict[ms_file_idx],
+                                            Float32(100000.0f0), #squared error 
+                                            Int64(params_[:deconvolution_params]["max_iter_newton"]),
+                                            Int64(params_[:deconvolution_params]["max_iter_bisection"]),
+                                            Int64(params_[:deconvolution_params]["max_iter_outer"]),
+                                            Float32(params_[:deconvolution_params]["accuracy_newton"]),
+                                            Float32(params_[:deconvolution_params]["accuracy_bisection"]),
+                                            Float32(params_[:deconvolution_params]["max_diff"]),
+                                            ionMatches[thread_id],
+                                            ionMisses[thread_id],
+                                            IDtoCOL[thread_id],
+                                            ionTemplates[thread_id],
+                                            iso_splines,
+                                            unscored_psms[thread_id],
+                                            spectral_scores[thread_id],
+                                            precursor_weights[thread_id],
+                                            Set(2),
+                                        )
+                    end
                 end
+                psms = vcat(fetch.(tasks)...);
+                psms = psms[filterPSMs(psms[!,:iso_idx], psms[!,:n_matches], psms[!,:weight], min_matched_frags = params_[:presearch_params]["min_quad_tuning_fragments"]),:];
+                sort!(psms, [:scan_idx,:precursor_idx,:iso_idx])
+                psms = hcat(psms, addColumns(
+                    psms[!,:precursor_idx],
+                    precursors[:mz],
+                    precursors[:prec_charge],
+                    precursors[:sulfur_count],
+                    psms[!,:iso_idx],
+                    psms[!,:center_mz],
+                    iso_splines
+                ))
+                combined_psms = combine(groupby(psms, [:scan_idx,:precursor_idx])) do precursor_psms
+                    return summarizePrecursor(
+                        precursor_psms[!,:iso_idx],
+                        precursor_psms[!,:center_mz],
+                        precursor_psms[!,:iso_mz],
+                        precursor_psms[!,:prec_charge],
+                        precursor_psms[!,:weight],
+                        precursor_psms[!,:δ]
+                    )
+                end
+                filter!(x->!ismissing(x.yt), combined_psms)
+                combined_psms[!,:prec_charge] = UInt8.(combined_psms[!,:prec_charge])
+                combined_psms[!,:x0] = Float32.(combined_psms[!,:x0])
+                combined_psms[!,:yt] = Float32.(combined_psms[!,:yt])
+                combined_psms[!,:x1] = Float32.(combined_psms[!,:x1])
+                p = plot()
+                filter!(x->x.prec_charge<4, combined_psms)
+                total_psms = vcat(total_psms, combined_psms)
+                if size(total_psms, 1) > params_[:presearch_params]["min_quad_tuning_psms"]
+                    break
+                end
+                n += 1
             end
-            #return 1
-            filter!(x->x.keep_charge::Bool, combined_psms)
-            if size(combined_psms, 1) < params_[:presearch_params]["min_quad_tuning_psms"]
+            if size(total_psms, 1) < params_[:presearch_params]["min_quad_tuning_psms"]
                 @warn "Too few psms to estimate quad transmission funtion for $MS_TABLE_PATH. Resorting to default"
                 quad_model_dict[ms_file_idx] = GeneralGaussModel(5.0f0, 0.0f0)
             end
-
+            combined_psms = total_psms
             window_width = parse(Float64, collect(window_widths)[1])
             binned_psms = MergeBins(combined_psms,(-(window_width+1.0), window_width+1.0), min_bin_size = 10, min_bin_width = 0.1)
-
+            #plot!(p, combined_psms[!,:x0], combined_psms[!,:yt], seriestype=:scatter, alpha = 0.01, show = true, ylim = (-2.5, 2.5))
+            #display(binned_psms)
+            #plot!(p, binned_psms[!,:median_x0], binned_psms[!,:median_yt], seriestype=:scatter, alpha = 1.0, show = true, ylim = (-5.0, 5.0))
             fitted_rqm = fitRazoQuadModel(
                 window_width,
                 binned_psms[!,:median_x0],  binned_psms[!,:median_x1], binned_psms[!,:median_yt],

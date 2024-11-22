@@ -167,7 +167,7 @@ function parseBatchToTable(
     for col in json_out
 
         col_name = Symbol(col["name"])
-        if col_name ∈[:intensities, :mz]
+        if col_name ∈[:intensities, :mz, :rt]
             df[!,col_name] = Float32.(col["data"])
         else
             #if length(col["data"]) == size(df, 1)

@@ -1,5 +1,6 @@
 function BuildSpecLib(params_path::String)
     #Read library building parameters json
+    # params_path = "/Users/n.t.wamsley/Projects/Pioneer.jl/data/example_config/fragIndex111914.json"
     params = checkParams(read(params_path, String));
     println("chronologer_dir ", joinpath(@__DIR__, "../../../chronologer/Predict_RT.py"))
     #Directory in which to place library
@@ -17,7 +18,7 @@ function BuildSpecLib(params_path::String)
     if !isdir(chronologer_dir)
         mkpath(chronologer_dir)
     end
-    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.tsv")
+    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.arrow")
 
     #Reformat key parameters
     _params = (
@@ -86,6 +87,7 @@ function BuildSpecLib(params_path::String)
         #Predict the retention times for each precursor in the `fasta_df` and 
         #write to a .csv file
         println("Predicting Retention Times with chronologer (Wilburn et al. 2023)...")
+        chronologer_table = Arrow.Table(chronologer_out_path)
         #run(`python3.9 ../chronologer/Predict_RT.py $chronologer_out_path $chronologer_out_path`)
         chronologer_dir = joinpath(@__DIR__, "../../../chronologer/Predict_RT.py")
         run(`python3.9 $chronologer_dir $chronologer_out_path $chronologer_out_path`)
