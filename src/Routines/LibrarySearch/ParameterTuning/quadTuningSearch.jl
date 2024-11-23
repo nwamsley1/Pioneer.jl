@@ -359,3 +359,125 @@ function quadTuningSearch(    rt_to_irt_map_dict,
 end
 
 
+#=
+tprecs = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/RESULTS/RESULTS/precursors_wide.arrow"))
+CV = collect(skipmissing([std(collect(x))/mean(collect(x)) for x in eachrow(tprecs[:,8:10])]));
+length(CV[CV.<=0.20])
+CV = collect(skipmissing([std(collect(x))/mean(collect(x)) for x in eachrow(tprecs[:,11:13])]));
+length(CV[CV.<=0.20])
+CV = collect(skipmissing([std(collect(x))/mean(collect(x)) for x in eachrow(tprecs[:,14:16])]));
+length(CV[CV.<=0.20])
+
+function getRelativeAbsDiff(prec_df)
+    CV = collect(skipmissing([(abs(collect(x)[1] - collect(x)[2]))/mean(collect(x)) for x in eachrow(prec_df[!,9:10])]));
+    println(length(CV[CV.<=0.20]))
+end
+
+standard_seperate = DataFrame(Arrow.Table(
+"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_StandardMethod/RESULTS/RESULTS/precursors_wide.arrow"
+))
+
+v2_combined = DataFrame(Arrow.Table(
+"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_AlternatingV2/RESULTS/RESULTS/precursors_wide.arrow"
+))
+
+v2_seperate = DataFrame(Arrow.Table(
+"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_AlternatingV2/RESULTS/RESULTS/precursors_wide.arrow"
+))
+
+getRelativeAbsDiff(standard_seperate)
+getRelativeAbsDiff(v2_combined)
+getRelativeAbsDiff(v2_seperate)
+
+
+
+chroms_sep_v2 = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_AlternatingV2/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_com_v2 = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_AlternatingV2/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_sep_st = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_Standard/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_com_st = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_Standard/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+
+gchroms_sep_v2 = groupby(chroms_sep_v2, :precursor_idx)
+gchroms_sep_st = groupby(chroms_sep_st, :precursor_idx)
+gchroms_com_v2 = groupby(chroms_com_v2, :precursor_idx)
+gchroms_com_st = groupby(chroms_com_st, :precursor_idx)
+
+N = 1000
+
+key = (precursor_idx = gchroms_com_v2[N][1,:precursor_idx], )
+v2 = gchroms_com_v2[key]
+st = gchroms_com_st[key]
+plot(v2[!,:rt], v2[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Alternating")
+plot!(st[!,:rt], st[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Standard")
+N += 1
+
+
+
+precs_to_keep =  [
+3135834,
+ 2309582,
+  3178163,
+   2743662,
+   3188585,
+     3188636,
+     3190697,
+     3194879,
+      2757932,
+       2758057,
+       2759938,
+       2761811,
+       3209938,
+       3676643,
+        2771567,
+          3219743,
+           3221227  ,
+             3223309
+]
+
+
+key = (precursor_idx = precs_to_keep[n], )
+v2 = gchroms_sep_v2[key]
+st = gchroms_sep_st[key]
+plot(v2[!,:rt], v2[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Alternating")
+plot!(st[!,:rt], st[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Standard")
+n += 1
+=#
+
+#=
+λ::Float32 = 1.0f0
+N = 20 + 26
+b = zeros(Float32, N);
+A = getWittakerHendersonDesignMat(length(b), λ);
+prob = LinearProblem(A, b);
+linsolve = init(prob);
+u2 = zeros(Float32, length(linsolve.b));
+dtype = Float32
+state = Chromatogram(
+    zeros(dtype, N), #t
+    zeros(dtype, N), #data
+    N #max index
+    )
+
+
+apex_scan = findfirst(
+        x->x==v2[!,:scan_idx][argmax(v2[!,:intensity])], v2[!,:scan_idx])
+peak_area, _ = integrateChrom(
+v2,
+apex_scan,
+linsolve,u2,state, n_pad = 20, max_apex_offset = 1,
+isplot = true
+)
+
+plot(state.t[1:state.max_index], state.data[1:state.max_index])
+reset!(state)
+apex_scan = findfirst(
+        x->x==st[!,:scan_idx][argmax(st[!,:intensity])], st[!,:scan_idx])
+peak_area, _ = integrateChrom(
+st,
+apex_scan,
+linsolve,u2,state, n_pad = 20, max_apex_offset = 1,
+isplot = true
+)
+
+plot(state.t[1:state.max_index], state.data[1:state.max_index])
+reset!(state)
+=#

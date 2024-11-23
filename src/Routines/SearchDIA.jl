@@ -161,17 +161,17 @@ function SearchDIA(params_path::String)
         end
     end
 
-    #=
+    
     p = plot()
     plot_bins = LinRange(400-3, 400+3, 100)
     for (key, value) in pairs(quad_model_dict)
     
        quad_func = getQuadTransmissionFunction(value, 400.0f0, 2.0f0)
-       plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, show = true)
+       plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5)
     end
-    display(p)
-    println("quad_model_dict $quad_model_dict")
-    =#
+    mkdir(joinpath(qc_plot_folder, "quad_model"))
+    savefig(p, joinpath(qc_plot_folder, "quad_model", "quad.pdf"))
+
 
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
@@ -308,6 +308,30 @@ ms_table_path_to_psms_path = quantSearch(
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
+    #=
+    best_psms = DataFrame(Tables.columntable(Arrow.Table(readdir(quant_psms_folder, join=true))))
+best_psms[(best_psms[!,:precursor_idx].==2326119).&(best_psms[!,:ms_file_idx].==1),[:isotopes_captured,:scan_idx,:precursor_idx]]
+
+ ttable = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/RESULTS/temp/quant_psms_folder/AlternatingV2_01.arrow"))
+ ttable[ttable[!,:precursor_idx].==2326119,[:precursor_idx,:scan_idx,:isotopes_captured,:weight]]
+
+    sort!(best_psms[!,[:ms_file_idx,:precursor_idx,:isotopes_captured,:irt_obs,:weight,:prob]],[:precursor_idx,:ms_file_idx,:isotopes_captured])
+    gbpsms = groupby(best_psms, :precursor_idx)
+
+     gbpsms[N][!,[:precursor_idx,:ms_file_idx,:isotopes_captured,:scan_idx,:irt_obs,:prob,:weight]]
+     N += 1
+
+             parsed_fname = file_path_to_parsed_name[MS_TABLE_PATHS[1]]
+        rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
+        rt_index = buildRtIndex(rt_df,
+                                bin_rt_size = bin_rt_size)
+    unique_precursors = Set{UInt32}()
+    for rt_bin in rt_index.rt_bins
+        for prec in rt_bin.prec
+                push!(unique_precursors, first(prec))
+        end
+    end
+    =#
     #Wipe memory
     best_psms = nothing
     GC.gc()

@@ -241,13 +241,13 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
         mi = state.max_index
         start = max(apex_scan - 18, 1)
         stop = min(apex_scan + 18, length(chrom.rt))
-        plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true)
-        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]])
-        plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true)
-        xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
-        plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
-        plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])
-        hline!([norm_factor*0.95])
+        plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = "raw")
+        vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]], label = nothing)
+        plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 0.5, show = true, label = "smooth")
+        #xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)
+        #plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])
+        #plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])
+        #hline!([norm_factor*0.95])
     end
 
     trapezoid_area = rt_norm*norm_factor*integrateTrapezoidal(state)

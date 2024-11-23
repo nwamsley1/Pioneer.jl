@@ -123,6 +123,7 @@ function quantSearch(
                 precursor_weights = precursor_weights,
                 quad_transmission_model = quad_model_dict[ms_file_idx],
                 )...);
+            #display(sort!(psms[psms[!,:precursor_idx].==2326119,:scan_idx]))
             addSecondSearchColumns!(psms, 
                                             MS_TABLE[:retentionTime],
                                             spec_lib["precursors"][:prec_charge], 

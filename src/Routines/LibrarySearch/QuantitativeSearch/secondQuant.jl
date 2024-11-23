@@ -143,6 +143,11 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
                             MS_TABLE[:isolationWidthMz]);
                             
         filter!(x->first(x.isotopes_captured)<2, chroms)
+        jldsave(joinpath(second_quant_folder, "../../"*parsed_fname*"testchroms.jld2"); chroms)
+        println("a")
+        println("size(sub_bpsms, 1) ", size(sub_bpsms, 1))
+        println(" length(unique(sub_bpsms[!,:precursor_idx])) ", length(unique(sub_bpsms[!,:precursor_idx])))
+        println("b")
         integratePrecursors(
                             chroms,
                             isotope_trace_type,

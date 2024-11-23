@@ -29,13 +29,14 @@ function plotRTAlign(RT::Vector{T},
             tickfontsize = 24,
             guidefontsize = 24,
             margin = 10Plots.mm,
+            alpha = 0.1,
             dpi = 300)
-
+    #=
     Plots.plot!(p, (LinRange(minimum(RT), maximum(RT), 100)), 
             rt_map.(LinRange(minimum(RT), maximum(RT), 100)),
             lw = 6.0,
             label = "RT Spline")
-
+    =#
     savefig(p, joinpath(out_fdir, out_fname)*".pdf")
 
 

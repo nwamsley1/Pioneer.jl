@@ -52,19 +52,22 @@ function partitionScansToThreads(spectra::AbstractArray,
     total_peaks = sum(length.(spectra))
     n_tasks = n_threads*tasks_per_thread
     peaks_per_task = total_peaks÷(n_tasks)
+    function round_float32_alt(x::Float32, decimals::Int)::Float32
+        Float32(round(x; digits=decimals))
+    end
 
     spectra_ids = collect([x for x in range(1, length(spectra)) if ms_order[x]==2])
     bin_start, bin_stop = 1, 1
     for i in range(1, length(spectra_ids))
         if rt[i] - rt[bin_start] > 1.0f0
             bin_stop = i - 1
-            sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->Int64(round(prec_mz[x])))
+            sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->round_float32_alt(prec_mz[x],6))
             bin_start, bin_stop = i, i
         end
     end
     #sort final bin
     bin_stop = length(spectra_ids)
-    sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->Int64(round(prec_mz[x])))
+    sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->round_float32_alt(prec_mz[x],6))
 
     spectra_count = length(spectra_ids)
     scans_per_thread = spectra_count÷n_threads + n_threads
