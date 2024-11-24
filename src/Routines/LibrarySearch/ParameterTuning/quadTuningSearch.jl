@@ -369,23 +369,28 @@ CV = collect(skipmissing([std(collect(x))/mean(collect(x)) for x in eachrow(tpre
 length(CV[CV.<=0.20])
 
 function getRelativeAbsDiff(prec_df)
-    CV = collect(skipmissing([(abs(collect(x)[1] - collect(x)[2]))/mean(collect(x)) for x in eachrow(prec_df[!,9:10])]));
+    CV = collect(skipmissing([(abs(collect(x)[1] - collect(x)[2]))/mean(collect(x)) for x in eachrow(prec_df[!,8:9])]));
     println(length(CV[CV.<=0.20]))
 end
 
 standard_seperate = DataFrame(Arrow.Table(
-"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_StandardMethod/RESULTS/RESULTS/precursors_wide.arrow"
-))
+"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_Standard/RESULTS/RESULTS/precursors_wide.arrow"
+));
+
+standard_combined = DataFrame(Arrow.Table(
+"/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_Standard/RESULTS/RESULTS/precursors_wide.arrow"
+));
 
 v2_combined = DataFrame(Arrow.Table(
 "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_AlternatingV2/RESULTS/RESULTS/precursors_wide.arrow"
-))
+));
 
 v2_seperate = DataFrame(Arrow.Table(
 "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_AlternatingV2/RESULTS/RESULTS/precursors_wide.arrow"
-))
+));
 
 getRelativeAbsDiff(standard_seperate)
+getRelativeAbsDiff(standard_combined)
 getRelativeAbsDiff(v2_combined)
 getRelativeAbsDiff(v2_seperate)
 
@@ -396,10 +401,20 @@ chroms_com_v2 = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING
 chroms_sep_st = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_Standard/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
 chroms_com_st = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_Standard/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
 
-gchroms_sep_v2 = groupby(chroms_sep_v2, :precursor_idx)
-gchroms_sep_st = groupby(chroms_sep_st, :precursor_idx)
-gchroms_com_v2 = groupby(chroms_com_v2, :precursor_idx)
-gchroms_com_st = groupby(chroms_com_st, :precursor_idx)
+chroms_sep_v2_un = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_AlternatingV2_Uncorrected/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_com_v2_un = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_AlternatingV2_Uncorrected/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_sep_st_un = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces_Standard_Uncorrected/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+chroms_com_st_un = sort(load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/CombinedTraces_Standard_Uncorrected/RESULTS/03testchroms.jld2")["chroms"],:scan_idx);
+
+gchroms_sep_v2 = groupby(chroms_sep_v2, :precursor_idx);
+gchroms_sep_st = groupby(chroms_sep_st, :precursor_idx);
+gchroms_com_v2 = groupby(chroms_com_v2, :precursor_idx);
+gchroms_com_st = groupby(chroms_com_st, :precursor_idx);
+gchroms_sep_v2_un = groupby(chroms_sep_v2_un, :precursor_idx);
+gchroms_sep_st_un = groupby(chroms_sep_st_un, :precursor_idx);
+gchroms_com_v2_un = groupby(chroms_com_v2_un, :precursor_idx);
+gchroms_com_st_un = groupby(chroms_com_st_un, :precursor_idx);
+
 
 N = 1000
 
@@ -432,6 +447,23 @@ precs_to_keep =  [
            3221227  ,
              3223309
 ]
+
+
+key = (precursor_idx = precs_to_keep[n], )
+v2 = gchroms_com_v2_un[key]
+st = gchroms_com_v2[key]
+plot(v2[!,:rt], v2[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Uncorrected")
+plot!(st[!,:rt], st[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Corrected")
+n += 1
+
+key = (precursor_idx = precs_to_keep[n], )
+v2 = gchroms_com_st_un[key]
+st = gchroms_com_st[key]
+plot(v2[!,:rt], v2[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Uncorrected")
+plot!(st[!,:rt], st[!,:intensity], seriestype=:scatter, alpha = 0.5, label = "Corrected")
+n += 1
+
+
 
 
 key = (precursor_idx = precs_to_keep[n], )
@@ -480,4 +512,52 @@ isplot = true
 
 plot(state.t[1:state.max_index], state.data[1:state.max_index])
 reset!(state)
+
+
+
+ttable = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces/RESULTS/temp/second_quant/03.arrow")))
+
+precs_to_keep =  [
+3135834,
+ 2309582,
+  3178163,
+   2743662,
+   3188585,
+     3188636,
+     3190697,
+     3194879,
+      2757932,
+       2758057,
+       2759938,
+       2761811,
+       3209938,
+       3676643,
+        2771567,
+          3219743,
+           3221227  ,
+             3223309
+]
+
+ttable = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces/RESULTS/temp/second_quant/03.arrow")))
+
+ttable = DataFrame(Tables.columntable(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/SeperateTraces/RESULTS/temp/second_quant/03.arrow")))
+
+
+ttable[!,:first_iso] = [first(x) for x in ttable[!,:isotopes_captured]]
+sort!(ttable, :first_iso)
+gquant = groupby(ttable,:precursor_idx)
+area_ratios = Float32[]
+max_area = Float32[]
+for (precursor_idx, psms) in pairs(gquant)
+    if size(psms, 1) != 2
+        continue
+    end
+    push!(area_ratios, log2(psms[1,:peak_area]/psms[2,:peak_area]))
+    push!(max_area, maximum(psms[!,:peak_area]))
+end
+histogram(area_ratios, bins = LinRange(-2, 4, 100))
+
+gquant[(precursor_idx=precs_to_keep[n], )]
+n += 1
+
 =#

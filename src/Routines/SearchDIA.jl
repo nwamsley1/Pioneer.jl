@@ -158,6 +158,8 @@ function SearchDIA(params_path::String)
         quad_model_dict = Dict{Int64, QuadTransmissionModel}()
         for (key, value) in pairs(frag_err_dist_dict)
             quad_model_dict[key] = GeneralGaussModel(5.0f0, 0.0f0)
+            #quad_model_dict[key] = NoQuadModel(0.0f0)
+            #println("TEST TESTing")
         end
     end
 
@@ -437,9 +439,9 @@ best_psms[(best_psms[!,:precursor_idx].==2326119).&(best_psms[!,:ms_file_idx].==
         (:protein_idx,:precursor_idx),
         N = 1000000
     )
-    if params_[:output_params]["delete_temp"]
-        rm(second_quant_folder,recursive=true)
-    end
+    #if params_[:output_params]["delete_temp"]
+    #    rm(second_quant_folder,recursive=true)
+    #end
     precursors_wide_arrow = writePrecursorCSV(
         joinpath(results_folder, "precursors_long.arrow"),
         sort(collect(values(file_id_to_parsed_name))),
