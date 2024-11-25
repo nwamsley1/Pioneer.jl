@@ -230,7 +230,7 @@ function sortAndFilterQuantTables(
             end
         end
         #Filter out unused traces 
-        #filter!(x->x.best_trace,psms_table)
+        filter!(x->x.best_trace,psms_table)
         #Sort in descending order of probability
         sort!(psms_table, :prob, rev = true, alg=QuickSort)
         #write back
