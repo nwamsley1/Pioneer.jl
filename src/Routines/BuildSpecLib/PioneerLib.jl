@@ -18,7 +18,7 @@ function BuildSpecLib(params_path::String)
     if !isdir(chronologer_dir)
         mkpath(chronologer_dir)
     end
-    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.arrow")
+    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.tsv")
 
     #Reformat key parameters
     _params = (
@@ -119,10 +119,82 @@ function BuildSpecLib(params_path::String)
                         params["max_koina_batch"],
                         prediction_model)
         #=
-        basedir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_clear-b5_z"
+        altimeter_dir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_bright-u10"
         predictFragments(
                         raw_fragments_arrow_path,
                         basedir)    
+
+
+        frags_out_path = raw_fragments_arrow_path
+
+        println("Getting json fpaths...")
+            ordered_altimeter_json_paths = joinpath.(
+                altimeter_dir,
+                sort(
+                    readdir(altimeter_dir), 
+                    by = x->parse(Int64, String(split(split(x,'_')[end], '.')[1])) #Names in format of "Altimiter_####.json"
+                    )
+            )
+            precursor_idx = one(UInt32)
+            println("Reading Altimeter Outputs...")
+            batch_dfs = DataFrame()
+            batch_counter = 0
+
+            batch_path = first(ordered_altimeter_json_paths)
+            df, frags_per_prec, knot_vec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"], SplineCoefficientModel("test"))
+            filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
+
+
+            JSON.parse(read(batch_path, String))["outputs"][4]
+
+
+            JSON.parse(read(batch_path, String))["outputs"][3]["data"][1]
+            JSON.parse(read(batch_path, String))["outputs"][4]["data"][[1, 50001, 100001, 150001]]
+
+
+            n = 1
+            JSON.parse(read(batch_path, String))["outputs"][3]["data"][n]
+            JSON.parse(read(batch_path, String))["outputs"][4]["data"][[n, 50000 + n, 100000 + n, 150000 + n]]
+            n += 1
+
+            flat_frags = JSON.parse(read(batch_path, String))["outputs"][4]["data"]
+
+            i = 1
+            test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
+            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
+            @inbounds for i in range(1, 50000)
+                test_coef[i] = ntuple(j -> flat_frags[i + (j - 1)*50000], 4)
+                test_idx[i] = ntuple(j -> i + (j - 1)*50000, 4)
+            end
+
+                        test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
+            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
+            @inbounds for i in range(1, 50000)
+                test_coef[i] = ntuple(j -> flat_frags[(i-1)*4 + j], 4)
+                test_idx[i] = ntuple(j -> (i-1)*4 + j, 4)
+            end
+
+
+
+                    test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
+            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
+            @inbounds for i in range(1, 50000)
+                test_coef[i] = ntuple(j -> flat_frags[i + (j-1)*50], 4)
+                test_idx[i] = ntuple(j -> i + (j-1)*50, 4)
+            end
+
+
+
+            knots = Float32.(JSON.parse(read(batch_path, String))["outputs"][1]["data"]);
+            tus = UniformSpline(
+                 SVector(df[1,:coefficients]),
+                 3,
+                 6.0f0,
+                 55.0f0,
+                 7.0f0
+            )
+            
+            
         =#            
 
         precursors_table = Arrow.Table(precursors_arrow_path)

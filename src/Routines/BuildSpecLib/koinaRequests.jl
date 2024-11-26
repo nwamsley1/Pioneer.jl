@@ -160,14 +160,15 @@ Parse text output from koina into a dataframe
 -'::DataFrame'
 """
 function parseBatchToTable(
-    json_out::Vector{Any})::Tuple{DataFrame, Int64}
+    json_out::Vector{Any},
+    LibraryType::KoinaModelType)::Tuple{DataFrame, Int64}
     df = DataFrame()
     n_precs, n_frags_per_prec = first(json_out)["shape"]
     n_rows = n_precs*n_frags_per_prec
     for col in json_out
 
         col_name = Symbol(col["name"])
-        if col_name ∈[:intensities, :mz, :rt]
+        if col_name ∈[:intensities, :mz]
             df[!,col_name] = Float32.(col["data"])
         else
             #if length(col["data"]) == size(df, 1)
@@ -189,6 +190,45 @@ function parseBatchToTable(
         end
     end
     return (df, Int64(last(first(json_out)["shape"])))
+end
+
+function parseBatchToTable(
+    json_out::Vector{Any},
+    LibraryType::SplineCoefficientModel)::Tuple{DataFrame, Int64, Vector{Float32}}
+    df = DataFrame()
+    knot_vec = Float32[]
+    frags_per_prec = 0
+    for col in json_out
+        col_name = Symbol(col["name"])
+        if col_name==:coefficients
+            n_coef_per_frag = col["shape"][2]
+            n_frags_per_prec = col["shape"][3]
+            n_precs = col["shape"][1]
+
+            n_frags = n_frags_per_prec*n_precs
+            n_coef_per_prec = n_frags_per_prec*n_coef_per_frag
+
+            coef = Vector{NTuple{n_coef, Float32}}(undef, n_frags)
+            flat_coeffs = Float32.(col["data"])
+
+            n = 1
+            @inbounds for i in range(1, n_precs)
+                for j in range(1, n_frags_per_prec)
+                    coef[n] = ntuple(k -> flat_coeffs[(i-1)*n_coef_per_prec + j + (k-1)*n_frags_per_prec], n_coef_per_frag)
+                    n += 1
+                end
+            end
+
+            df[!,:coefficients] = coef
+        elseif col_name == :knots 
+            knot_vec = Float32.(col["data"])
+        elseif col_name == :mz
+            frags_per_prec = last(col["shape"])
+        else
+            df[!,:annotation] = string.(col["data"])
+        end
+    end
+    return df::DataFrame, frags_per_prec::Int64, knot_vec::Vector{Float32}
 end
 
 """
@@ -218,6 +258,19 @@ function filterEachPrecursor!(
     filter!(x->x.intensities::ctype>intensity_threshold, df) #Filter invalid intensities
     filter!(x->x.mz::ctype>zero(Float32), df) #Filter invalid masses
     filter!(x->!occursin('i', x.annotation::String), df) #Filter out M1+ isotopes
+end
+
+
+
+function filterEachPrecursor!(
+    df::DataFrame,
+    model_type::SplineCoefficientModel;
+    intensity_threshold::Float32 = 0.001f0
+    )
+    #ctype = eltype(df[!,:intensities])
+    #filter!(x->x.intensities::ctype>intensity_threshold, df) #Filter invalid intensities
+    #filter!(x->x.mz::ctype>zero(Float32), df) #Filter invalid masses
+    filter!(x->x.annotation::String != "NA", df) #Filter out M1+ isotopes
 end
 
 function sortEachPrecursor!(df::DataFrame, col::Symbol)
@@ -371,7 +424,7 @@ function predictFragments(
                 UInt32(first_prec_idx + batch_start_idxs[i] - 1), #First precursor idx
                 frags_per_prec
             )
-            filterEachPrecursor!(df, intensity_threshold = intensity_threshold)
+            filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
             sortEachPrecursor!(
                     df, 
                     :intensities,
@@ -402,6 +455,7 @@ end
 function predictFragments(
     frags_out_path::String, #"/Users/n.t.wamsley/Desktop/test_out.arrow",
     altimeter_dir::String,
+    model_type::SplineCoefficientModel,
     intensity_threshold::Float32 = 0.001f0)
 
     println("Getting json fpaths...")
@@ -417,14 +471,18 @@ function predictFragments(
     batch_dfs = DataFrame()
     batch_counter = 0
     for (fid, batch_path) in ProgressBar(enumerate(ordered_altimeter_json_paths))
-        df, frags_per_prec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"])
+        #df, frags_per_prec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"])
+        df, frags_per_prec, knot_vec = parseBatchToTable(
+            JSON.parse(read(batch_path, String))["outputs"], 
+            model_type
+        )
         addPrecursorID!(
             df, 
             UInt32(precursor_idx),
             frags_per_prec
         ) 
         precursor_idx = df[end,:precursor_idx] + one(UInt32)
-        filterEachPrecursor!(df, intensity_threshold = intensity_threshold)
+        filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
         sortEachPrecursor!(
                 df, 
                 :intensities,
