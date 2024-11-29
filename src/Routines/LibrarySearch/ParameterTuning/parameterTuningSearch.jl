@@ -195,6 +195,7 @@ function parameterTuningSearch(rt_alignment_folder,
                 3, #Degree is always three
                 5 #Spline knots fixed. currently not tunable parameter
                 );
+            throw(e)
             continue
         end
     end

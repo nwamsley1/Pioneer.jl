@@ -12,7 +12,7 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
                             n_frag_isotopes::Int64,
                             max_frag_rank::UInt8,
                             abreviate_precursor_calc::Bool,
-                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
+                            library_fragment_lookup::LibraryFragmentLookup, 
                             iRT::Float32, 
                             iRT_tol::Float32, 
                             frag_mz_bounds::Tuple{Float32, Float32};
@@ -40,8 +40,10 @@ function selectTransitions!(transitions::Vector{DetailedFrag{Float32}},
         prec_sulfur_count, prec_charge, prec_mz = prec_sulfur_counts[prec_idx], prec_charges[prec_idx], prec_mzs[prec_idx]
         transition_idx = @inline fillTransitionList!(
                                                     transitions, 
-                                                    getPrecFragRange(library_fragment_lookup, prec_idx),
-                                                    getFragments(library_fragment_lookup),
+                                                    library_fragment_lookup,
+                                                    prec_idx,
+                                                    #getPrecFragRange(library_fragment_lookup, prec_idx),
+                                                    #getFragments(library_fragment_lookup),
                                                     prec_mz,
                                                     prec_charge,
                                                     prec_sulfur_count,
@@ -87,11 +89,11 @@ end
 
 function selectTransitions!(
                             transitions::Vector{DetailedFrag{Float32}},
-                            library_fragment_lookup::LibraryFragmentLookup{Float32},
+                            library_fragment_lookup::LibraryFragmentLookup,
                             scan_to_prec_idx::UnitRange{Int64},
                             precursors_passed_scoring::Vector{UInt32};
                             max_rank::Int64 = 5,
-                            block_size::Int64 = 10000)# where {V,W<:AbstractFloat}
+                            block_size::Int64 = 10000) where {W<:AltimeterFragment}
 
     transition_idx = 0
     for i in scan_to_prec_idx
@@ -105,7 +107,6 @@ function selectTransitions!(
             if transition_idx + 1 > length(transitions)
                 append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
             end
-            #Grow array if exceeds length
         end
     end
 
@@ -114,10 +115,51 @@ function selectTransitions!(
             alg=PartialQuickSort(1:transition_idx)
             #alg = TimSort)
     )
+    return transition_idx, false
+end
 
-    #reset!(counter)
+function selectTransitions!(
+                            transitions::Vector{DetailedFrag{Float32}},
+                            library_fragment_lookup::SplineFragmentLookup,
+                            scan_to_prec_idx::UnitRange{Int64},
+                            precursors_passed_scoring::Vector{UInt32};
+                            max_rank::Int64 = 5,
+                            block_size::Int64 = 10000)
+    _nce_ = getNCE(library_fragment_lookup)
+    transition_idx = 0
+    for i in scan_to_prec_idx
+        prec_idx =  precursors_passed_scoring[i]
+        for frag_idx in getPrecFragRange(library_fragment_lookup, prec_idx)
+            frag = getFrag(library_fragment_lookup, frag_idx) 
+            if getRank(frag) <= max_rank
+                transition_idx += 1
+                transitions[transition_idx] = DetailedFrag(
+                    getPID(frag),
+                    getMz(frag),
+                    Float16(getIntensity(frag, getKnots(library_fragment_lookup), 3, _nce_)),
+                    getIonType(frag),
+                    isY(frag),
+                    isB(frag),
+                    isP(frag),
+                    isIso(frag),
+                    getFragCharge(frag),
+                    getIonPosition(frag),
+                    getPrecCharge(frag),
+                    getRank(frag),
+                    sulfurCount(frag)
+                )
+            end
+            if transition_idx + 1 > length(transitions)
+                append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
+            end
+        end
+    end
 
-    #return transition_idx, 0#sort!(transitions, by = x->getFragMZ(x))
+    sort!(@view(transitions[1:transition_idx]), 
+            by = x->getMZ(x),
+            alg=PartialQuickSort(1:transition_idx)
+            #alg = TimSort)
+    )
     return transition_idx, false
 end
 #Get relevant framgents given a retention time and precursor mass using a retentionTimeIndex object
@@ -125,7 +167,7 @@ function selectRTIndexedTransitions!(
                             transitions::Vector{DetailedFrag{Float32}}, 
                             precs_temp::Vector{UInt32},
                             precs_temp_size::Int64,
-                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
+                            library_fragment_lookup::LibraryFragmentLookup, 
                             prec_mzs::AbstractArray{Float32},
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
@@ -164,8 +206,10 @@ function selectRTIndexedTransitions!(
             #Which precursor isotopes where captured in the quadrupole isolation window? 
             #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
             transition_idx = @inline fillTransitionList!(transitions, 
-                                            getPrecFragRange(library_fragment_lookup, prec_idx),
-                                            getFragments(library_fragment_lookup),
+                                            library_fragment_lookup,
+                                            prec_idx,
+                                            #getPrecFragRange(library_fragment_lookup, prec_idx),
+                                            #getFragments(library_fragment_lookup),
                                             prec_mz,
                                             prec_charge,
                                             prec_sulfur_count,
@@ -195,7 +239,7 @@ function selectRTIndexedTransitions!(
                             precs_temp::Vector{UInt32},
                             precs_temp_size::Int64,
                             precursors_passing::Set{UInt32},
-                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
+                            library_fragment_lookup::LibraryFragmentLookup, 
                             prec_mzs::AbstractArray{Float32},
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
@@ -237,8 +281,10 @@ function selectRTIndexedTransitions!(
             #Which precursor isotopes where captured in the quadrupole isolation window? 
             #For example, return (0, 3) if M+0 through M+3 isotopes were captured 
             transition_idx = @inline fillTransitionList!(transitions, 
-                                            getPrecFragRange(library_fragment_lookup, prec_idx),
-                                            getFragments(library_fragment_lookup),
+                                            library_fragment_lookup,
+                                            prec_idx,
+                                            #getPrecFragRange(library_fragment_lookup, prec_idx),
+                                            #getFragments(library_fragment_lookup),
                                             prec_mz,
                                             prec_charge,
                                             prec_sulfur_count,
@@ -266,7 +312,7 @@ end
 function selectTransitionsForQuadEstimation!(
                             prec_idxs::AbstractVector{UInt32},
                             transitions::Vector{DetailedFrag{Float32}}, 
-                            library_fragment_lookup::LibraryFragmentLookup{Float32}, 
+                            library_fragment_lookup::LibraryFragmentLookup, 
                             prec_mzs::AbstractArray{Float32},
                             prec_charges::AbstractArray{UInt8},
                             prec_sulfur_counts::AbstractArray{UInt8},
@@ -308,6 +354,80 @@ function selectTransitionsForQuadEstimation!(
     return transition_idx, n
 end
 
+
+function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
+    library_fragment_lookup::SplineFragmentLookup,
+    prec_idx::UInt32,
+    prec_mz::Float32,
+    prec_charge::UInt8,
+    prec_sulfur_count::UInt8,
+    transition_idx::Int64, 
+    quad_transmission_func::QuadTransmissionFunction,
+    precursor_transmission::Vector{Float32},
+    isotopes::Vector{Float32}, 
+    n_frag_isotopes::Int64,
+    max_frag_rank::UInt8,
+    abreviate_precursor_calc::Bool,
+    iso_splines::IsotopeSplineModel, 
+    frag_mz_bounds::Tuple{Float32, Float32},
+    block_size::Int64)::Int64
+    return fillTransitionList!(
+        transitions, 
+        getPrecFragRange(library_fragment_lookup, prec_idx),
+        getFragments(library_fragment_lookup),
+        getNCE(library_fragment_lookup),
+        getKnots(library_fragment_lookup),
+        prec_mz,
+        prec_charge,
+        prec_sulfur_count,
+        transition_idx,
+        quad_transmission_func,
+        precursor_transmission,
+        isotopes, 
+        n_frag_isotopes,
+        max_frag_rank,
+        abreviate_precursor_calc,
+        iso_splines, 
+        frag_mz_bounds,
+        block_size
+        )
+end
+
+function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
+    library_fragment_lookup::LibraryFragmentLookup,
+    prec_idx::UInt32,
+    prec_mz::Float32,
+    prec_charge::UInt8,
+    prec_sulfur_count::UInt8,
+    transition_idx::Int64, 
+    quad_transmission_func::QuadTransmissionFunction,
+    precursor_transmission::Vector{Float32},
+    isotopes::Vector{Float32}, 
+    n_frag_isotopes::Int64,
+    max_frag_rank::UInt8,
+    abreviate_precursor_calc::Bool,
+    iso_splines::IsotopeSplineModel, 
+    frag_mz_bounds::Tuple{Float32, Float32},
+    block_size::Int64)::Int64
+    return fillTransitionList!(
+        transitions, 
+        getPrecFragRange(library_fragment_lookup, prec_idx),
+        getFragments(library_fragment_lookup),
+        prec_mz,
+        prec_charge,
+        prec_sulfur_count,
+        transition_idx,
+        quad_transmission_func,
+        precursor_transmission,
+        isotopes, 
+        n_frag_isotopes,
+        max_frag_rank,
+        abreviate_precursor_calc,
+        iso_splines, 
+        frag_mz_bounds,
+        block_size
+        )
+end
 
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             precursor_fragment_range::UnitRange{UInt64},
@@ -381,6 +501,96 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
     return transition_idx
 end
 
+function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
+                            precursor_fragment_range::UnitRange{UInt64},
+                            fragment_ions::Vector{SplineDetailedFrag{N, Float32}},
+                            nce::Float32,
+                            knots::NTuple{M, Float32},
+                            prec_mz::Float32,
+                            prec_charge::UInt8,
+                            prec_sulfur_count::UInt8,
+                            transition_idx::Int64, 
+                            quad_transmission_func::QuadTransmissionFunction,
+                            precursor_transmission::Vector{Float32},
+                            isotopes::Vector{Float32}, 
+                            n_frag_isotopes::Int64,
+                            max_frag_rank::UInt8,
+                            abreviate_precursor_calc::Bool,
+                            iso_splines::IsotopeSplineModel, 
+                            frag_mz_bounds::Tuple{Float32, Float32},
+                            block_size::Int64)::Int64 where {M,N}#where {T,U,V,W<:AbstractFloat,I<:Integer}
+
+    #NEUTRON = Float64(1.00335)
+
+    #precursor_transmission = zeros(Float32, 5)
+    getPrecursorIsotopeTransmission!(
+        precursor_transmission,
+        prec_mz,
+        prec_charge,
+        quad_transmission_func
+    )
+    prec_isotope_set = getPrecursorIsotopeSet(
+        prec_mz,
+        prec_charge,
+        quad_transmission_func
+    )
+
+    for frag_idx in precursor_fragment_range
+        frag = fragment_ions[frag_idx]
+        if frag.rank > max_frag_rank
+            continue
+        end
+        #Estimate isotope abundances 
+        
+        getFragIsotopes!(isotopes, 
+                        precursor_transmission,
+                        iso_splines, 
+                        prec_mz,
+                        prec_charge, 
+                        prec_sulfur_count,
+                        frag,
+                        knots,
+                        nce
+                        )
+        
+        for iso_idx in range(0, min(n_frag_isotopes - 1, last(prec_isotope_set)))
+
+            frag_mz = Float32(frag.mz + iso_idx*NEUTRON/frag.frag_charge)
+            if (frag_mz < first(frag_mz_bounds)) |  (frag_mz > last(frag_mz_bounds))
+                continue
+            end
+
+            transition_idx += 1
+            transitions[transition_idx] = DetailedFrag(
+                frag.prec_id,
+
+                frag_mz, #Estimated isotopic m/z
+                Float16(isotopes[iso_idx + 1]), #Estimated relative abundance 
+
+                
+                frag.ion_type,
+                frag.is_y,
+                frag.is_b,
+                frag.is_p,
+                iso_idx>0, #Is the fragment an isotope?
+
+                frag.frag_charge,
+                frag.ion_position,
+                frag.prec_charge,
+                frag.rank,
+                frag.sulfur_count
+            )#::LibraryFragment{T}
+            
+
+            #Grow array if exceeds length
+            
+            if transition_idx >= length(transitions)
+                append!(transitions, [DetailedFrag{Float32}() for _ in range(1, block_size)])
+            end
+        end
+    end
+    return transition_idx
+end
 function fillPrecursorFragments!(
     prec_isotope_set::Tuple{Int64, Int64},
     transitions::Vector{DetailedFrag{Float32}}, 

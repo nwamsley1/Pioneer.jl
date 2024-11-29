@@ -5,9 +5,9 @@ function ThreeProteomeAnalysis(
 )
     #=
     ThreeProteomeAnalysis(
-    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralCombineTraces/RESULTS/RESULTS",
+    "/Users/n.t.wamsley/Desktop/SplineLibraryTest/RESULTS/RESULTS",
     "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-    "/Users/n.t.wamsley/Desktop/CombinedTraces111824"
+    "/Users/n.t.wamsley/Desktop/SplineLibTest"
     )
 
 

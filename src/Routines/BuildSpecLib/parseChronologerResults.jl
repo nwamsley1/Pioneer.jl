@@ -50,6 +50,7 @@ function parseChronologerOutput(
                                 :base_pep_id => UInt32
                                 ))
     #add/rename  columns
+    #precursors_df[!,:base_pep_id] = UInt32.(collect(range(1, size(precursors_df, 1))))
     rename!(precursors_df, :iRT => :irt)
     rename!(precursors_df, :upid => :proteome_identifiers)
     precursors_df[!,:length] = zeros(UInt8, size(precursors_df, 1))

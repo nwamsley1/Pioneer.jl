@@ -1,6 +1,6 @@
 function BuildSpecLib(params_path::String)
     #Read library building parameters json
-    # params_path = "/Users/n.t.wamsley/Projects/Pioneer.jl/data/example_config/fragIndex111914.json"
+    # params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/config.json"
     params = checkParams(read(params_path, String));
     println("chronologer_dir ", joinpath(@__DIR__, "../../../chronologer/Predict_RT.py"))
     #Directory in which to place library
@@ -106,7 +106,7 @@ function BuildSpecLib(params_path::String)
         rm(chronologer_out_path, force = true)
         dir, filename = splitdir(precursors_arrow_path)
         name, _ = splitext(filename)
-        raw_fragments_arrow_path = joinpath(dir, name*"_raw_fragments.arrow")
+        raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
         rm(raw_fragments_arrow_path, force = true)
         ##########
         #Request fragment prediction from koina in batches 
@@ -124,95 +124,41 @@ function BuildSpecLib(params_path::String)
                         raw_fragments_arrow_path,
                         basedir)    
 
-
         frags_out_path = raw_fragments_arrow_path
-
-        println("Getting json fpaths...")
-            ordered_altimeter_json_paths = joinpath.(
-                altimeter_dir,
-                sort(
-                    readdir(altimeter_dir), 
-                    by = x->parse(Int64, String(split(split(x,'_')[end], '.')[1])) #Names in format of "Altimiter_####.json"
-                    )
-            )
-            precursor_idx = one(UInt32)
-            println("Reading Altimeter Outputs...")
-            batch_dfs = DataFrame()
-            batch_counter = 0
-
-            batch_path = first(ordered_altimeter_json_paths)
-            df, frags_per_prec, knot_vec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"], SplineCoefficientModel("test"))
-            filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
-
-
-            JSON.parse(read(batch_path, String))["outputs"][4]
-
-
-            JSON.parse(read(batch_path, String))["outputs"][3]["data"][1]
-            JSON.parse(read(batch_path, String))["outputs"][4]["data"][[1, 50001, 100001, 150001]]
-
-
-            n = 1
-            JSON.parse(read(batch_path, String))["outputs"][3]["data"][n]
-            JSON.parse(read(batch_path, String))["outputs"][4]["data"][[n, 50000 + n, 100000 + n, 150000 + n]]
-            n += 1
-
-            flat_frags = JSON.parse(read(batch_path, String))["outputs"][4]["data"]
-
-            i = 1
-            test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
-            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
-            @inbounds for i in range(1, 50000)
-                test_coef[i] = ntuple(j -> flat_frags[i + (j - 1)*50000], 4)
-                test_idx[i] = ntuple(j -> i + (j - 1)*50000, 4)
-            end
-
-                        test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
-            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
-            @inbounds for i in range(1, 50000)
-                test_coef[i] = ntuple(j -> flat_frags[(i-1)*4 + j], 4)
-                test_idx[i] = ntuple(j -> (i-1)*4 + j, 4)
-            end
+        altimeter_dir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_smooth-b31/"
+        predictFragments(
+        frags_out_path,
+        altimeter_dir,
+        SplineCoefficientModel("test")
+        )   
 
 
 
-                    test_coef = Vector{NTuple{n_coef, Float32}}(undef, 50000)
-            test_idx = Vector{NTuple{n_coef, Int64}}(undef, 50000)
-            @inbounds for i in range(1, 50000)
-                test_coef[i] = ntuple(j -> flat_frags[i + (j-1)*50], 4)
-                test_idx[i] = ntuple(j -> i + (j-1)*50, 4)
-            end
-
-
-
-            knots = Float32.(JSON.parse(read(batch_path, String))["outputs"][1]["data"]);
-            tus = UniformSpline(
-                 SVector(df[1,:coefficients]),
-                 3,
-                 6.0f0,
-                 55.0f0,
-                 7.0f0
-            )
-            
-            
+        df, frags_per_prec, knot_vec = parseBatchToTable(
+            JSON.parse(read(batch_path, String))["outputs"], 
+            model_type
+        )
+        batch_path = 
+        [parse(Int64, String(split(split(x,'_')[end], '.')[1])) for x in  ordered_altimeter_json_paths]
         =#            
-
+        #raw_fragments_arrow_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/raw_fragments.arrow"
         precursors_table = Arrow.Table(precursors_arrow_path)
         fragments_table = Arrow.Table(raw_fragments_arrow_path)
         ion_annotation_set =  getIonAnnotationSet(fragments_table[:annotation])
         frag_name_to_idx = Dict(zip(collect(ion_annotation_set), collect(range(one(UInt16), UInt16(length(ion_annotation_set))))))
-        
+      
         parseKoinaFragments(
             precursors_table,
             fragments_table,
             frag_annotation_type,
             ion_annotation_set,
             frag_name_to_idx,
-            params["match_lib_build_batch"],
+            10000,#params["match_lib_build_batch"],
             joinpath(@__DIR__, "../data/immonium2.txt"),
             lib_dir,
             Dict{String, Int8}(), #mods to sulfur dict 
             iso_mod_to_mass,
+            SplineCoefficientModel("test")
         );
 
         fragments_table = nothing
@@ -300,7 +246,14 @@ function BuildSpecLib(params_path::String)
         UInt8.(_params[:library_params]["rank_to_score"]),
         frag_bounds,
         Float32(_params[:library_params]["frag_bin_tol_ppm"]),
-        Float32(_params[:library_params]["rt_bin_tol"])
+        Float32(_params[:library_params]["rt_bin_tol"]),
+        SplineCoefficientModel("TEST")
     )
+
+    jldsave(
+        joinpath(new_lib_dir, "spline_knots.jld2");
+        spl_knots
+    )
+
     return nothing
 end

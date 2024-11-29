@@ -20,6 +20,7 @@ using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics
 using XGBoost
 using KernelDensity
+using FastGaussQuadrature
 #create_app("../Pioneer","../Pioneer_Compiled", force = true)
 #Inport Pioneer Files 
 include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))

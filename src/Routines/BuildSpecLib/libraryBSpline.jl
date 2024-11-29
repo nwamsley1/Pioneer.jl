@@ -1,17 +1,22 @@
-function _B_(x::T, k::Int, i::Int, t::NTuple{N, T}) where {N, T<:AbstractFloat}
+"""
+    B(x, k, i, t)
+
+Evaluate B-spline basis function of degree k for the i-th basis function.
+"""
+function B(x::T, k::Int, i::Int, t::NTuple{N,T}) where {N,T<:AbstractFloat}
     # Base case for k=0 (constant basis function)
     if k == 0
-        return T(t[i] <= x < t[i+1])
+        return T(t[i] ≤ x < t[i+1])
     end
     
-    # Compute first recursive term
+    # First term: uses nodes t[i] through t[i+k]
     c1 = if t[i+k] == t[i]
         zero(T)
     else
         ((x - t[i]) / (t[i+k] - t[i])) * B(x, k-1, i, t)
     end
     
-    # Compute second recursive term
+    # Second term: uses nodes t[i+1] through t[i+k+1]
     c2 = if t[i+k+1] == t[i+1]
         zero(T)
     else
@@ -21,123 +26,88 @@ function _B_(x::T, k::Int, i::Int, t::NTuple{N, T}) where {N, T<:AbstractFloat}
     return c1 + c2
 end
 
-function speval_naieve(x::T, t::NTuple{N, T}, c::NTuple{M, T}, k::Int) where {M,N,T<:AbstractFloat}
-    # Compute number of basis functions
-    n = length(t) - k - 1
-    # Validate inputs (Julia's equivalent to Python's assert)
-    @assert n >= k+1 && length(c) >= n "Invalid input sizes"
+"""
+    splevl(x, t, c, k)
+
+Evaluate B-spline with knots t, coefficients c, and degree k at point x.
+"""
+function splevl(x::T, knots::NTuple{N,T}, c::NTuple{M,T}, k::Int) where {M,N,T<:AbstractFloat}
+    # Number of basis functions is (length(t) - k - 1)
+    n = length(knots) - k - 1
     
-    # Compute B-spline value
+    # Input validation
+    @assert n ≥ k+1 && length(c) ≥ n "Invalid input sizes"
+    
+    # Sum up the contributions from each basis function
     v = zero(T)
-    for i in range(1, n)
-        v += c[i] * B(x, k, i, t)
+    for i in 1:n
+        v += c[i] * B(x, k, i, knots)
     end
     return v
 end
-knots = Tuple(x for x in SVector{length(knots), Float32}(knots))
-df[1,:coefficients]
-EvalBSpline(25.0f0, knots, df[1,:coefficients],3) 
-p = plot()
-for k in range(1, 30)
-v = [splev_(Float64.(collect(knots)),
-                Float64.(collect(df[k,:coefficients])), 
-                3, x) for x in tbins]
-plot!(tbins, v)
+
+"""
+    getSplineQuadrature(dtype::Type)
+
+Get Quadrature nodes and weights as static vector to integrate B-Splines
+"""
+function getSplineQuadrature(dtype::Type)
+    x, w = gausslegendre(20)
+    return SVector{20}(dtype.(x)), SVector{20}(dtype.(w))
 end
 
-v, _ = splev!(
-    Float64.(collect(knots)),
-    8,
-    Float64.(collect(df[1,:coefficients])),
-    3,
-    collect(LinRange(20, 40, 100)),
-)
+"""
+    splevl(knotw, c, d, gqw, gqx)
 
-knots = Float64[6.0, 13.0, 20.0, 27.0, 34.0, 41.0, 48.0, 55.0]
-coeffs = Float64[1.6181915e-6, 7.382022e-6, 7.887343e-5, 0.00023642876]
-
-# Evaluate the B-spline at x = 25.0, with degree k = 3
-result = splev(knots,
-                Float64.(collect(df[1,:coefficients])), 
-                3, 25.0)
-
-
-tbins = LinRange(20, 40, 100)
-v, _ = splev!(
-    Float64.(collect(knots)),
-    8,
-    Float64.(test_coeff),
-    3,
-    collect(tbins),
-)
-plot(tbins, v)
-tbins = LinRange(20, 40, 100)
-v, _ = splev!(
-    Float64.(collect(knots)),
-    8,
-    Float64.(collect(df[1,:coefficients])),
-    3,
-    collect(tbins),
-)
-plot!(tbins, v)
-
-batch_path = ordered_altimeter_json_paths[5000]
-df, frags_per_prec, knot_vec = parseBatchToTable(JSON.parse(read(batch_path, String))["outputs"], SplineCoefficientModel("test"))
-#filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
-
-batch_id = 5000
-precs_per_batch = 1000
-pid = 1
-
-
-
-
-pbins = LinRange(0.0f0, 60.0f0, 100)
-pid = 1
-color = 0
-
-p = plot(legend = :outertopleft)
-pid = 2
-for k in range((pid-1)*50+1, pid*50)
-    if startswith(df[k,:annotation], "I")
-        color = 1
-        continue
-    elseif startswith(df[k,:annotation], "p")
-        color = 2
-    elseif startswith(df[k,:annotation], "y")
-        color = 3
-    elseif startswith(df[k,:annotation], "b")
-        color = 4
-    else
-        continue
+Use Fast Gaussian Quadrature to compute the definite integral of a B-spline
+over its domain
+"""
+function splint(knots::NTuple{N, T}, 
+                c::NTuple{M, T}, 
+                d::Int,
+                gqx::SVector{20, T},
+                gqw::SVector{20, T}) where {M,N,T<:AbstractFloat}
+    i_eval = zero(T)
+    for i in range(1, length(gqx))
+        i_eval += splevl(gqx[i], knots, c, d)*gqw[i]
     end
-    println("$pid $k ", df[k,:annotation])
-    #plot!(p, pbins ,
-    #    [EvalBSpline(x, knots, df[k,:coefficients], 3) for x in pbins], color = color,
-    #    label = df[k,:annotation], show = true, xlim = (30, 31)
-    #    )
-    coefs = Float64.(collect( df[k,:coefficients]))
-    plot!(p, pbins ,
-    [splev(knots, coefs, 3, Float64(x)) for x in pbins], color = color,
-    label = df[k,:annotation], show = true, xlim = (20, 41)
-    )
+    return i_eval
+end
 
-end 
+"""
+    getSplineQuadrature(dtype::Type, x0::AbstractFloat, x1::AbstractFloat)
 
-ttable[precs_per_batch*(batch_id - 1) + pid,:]
-pid += 1
+Get quadrature weights and nodes as static arrays. Defaults to 20. 
+"""
+function getSplineQuadrature(dtype::Type, x0::AbstractFloat, x1::AbstractFloat)
+    x, w = gausslegendre(20)
+    ws = (x1 - x0)/2
+    for i in range(1, length(x))
+        x[i] = x0 + (x[i] + 1)*(x1- x0)/2
+        w[i] = ws*w[i]
+    end
+    return SVector{20}(dtype.(x)), SVector{20}(dtype.(w))
+end
 
-AAAAAAAAAAAAAAAAGATCLER 
-
+function getSplineAreas(knots::NTuple{N, T}, 
+                        coefficients::AbstractVector{NTuple{M, T}},
+                        d::Int,
+                        gqx::SVector{20, T},
+                        gqw::SVector{20, T}) where {M,N,T<:AbstractFloat}
+    intensities = Vector{T}(undef, length(coefficients))
+    for i in range(1, length(coefficients))
+        intensities[i] = (
+            splint(knots, coefficients[i], d, gqx, gqw)
+        )
+    end
+    return intensities
+end
 #=
-knots = Float32.(JSON.parse(read(batch_path, String))["outputs"][1]["data"]);
-tus = UniformSpline(
-     SVector(df[1,:coefficients]),
-     3,
-     6.0f0,
-     55.0f0,
-     7.0f0
-)
-     =
-     =#
-
+knots = (6.0f0, 13.0f0, 20.0f0, 27.0f0, 34.0f0, 41.0f0, 48.0f0, 55.0f0)
+c = (1.6181915f-6, 7.382022f-6, 7.887343f-5, 0.00023642876f0)
+t = 37.0f0
+degree = 3
+@btime splevl(t, knots, c, degree)
+gqx, gqw = getSplineQuadrature(Float32, 20.0, 40.0);
+@btime splint(knots, c, 3, gqx, gqw)
+=#

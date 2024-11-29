@@ -194,7 +194,7 @@ end
 
 function parseBatchToTable(
     json_out::Vector{Any},
-    LibraryType::SplineCoefficientModel)::Tuple{DataFrame, Int64, Vector{Float32}}
+    LibraryType::SplineCoefficientModel)
     df = DataFrame()
     knot_vec = Float32[]
     frags_per_prec = 0
@@ -208,7 +208,7 @@ function parseBatchToTable(
             n_frags = n_frags_per_prec*n_precs
             n_coef_per_prec = n_frags_per_prec*n_coef_per_frag
 
-            coef = Vector{NTuple{n_coef, Float32}}(undef, n_frags)
+            coef = Vector{NTuple{n_coef_per_frag, Float32}}(undef, n_frags)
             flat_coeffs = Float32.(col["data"])
 
             n = 1
@@ -224,11 +224,12 @@ function parseBatchToTable(
             knot_vec = Float32.(col["data"])
         elseif col_name == :mz
             frags_per_prec = last(col["shape"])
+            df[!,col_name] = Float32.(col["data"])
         else
             df[!,:annotation] = string.(col["data"])
         end
     end
-    return df::DataFrame, frags_per_prec::Int64, knot_vec::Vector{Float32}
+    return df::DataFrame, frags_per_prec::Int64, Tuple(knot_vec)
 end
 
 """
@@ -483,14 +484,17 @@ function predictFragments(
         ) 
         precursor_idx = df[end,:precursor_idx] + one(UInt32)
         filterEachPrecursor!(df, model_type, intensity_threshold = intensity_threshold)
+        gqx, gqw = getSplineQuadrature(Float32, knot_vec[3], knot_vec[end - 3])
+        intensities = getSplineAreas(knot_vec, df[!,:coefficients], 3, gqx, gqw)
+        df[!,:intensities] = intensities
         sortEachPrecursor!(
                 df, 
                 :intensities,
                 )
         batch_dfs = vcat(batch_dfs, df)
         batch_counter += 1
-        if batch_counter > 500
-            println("Batch finished...")
+        if batch_counter > 10
+            #println("Batch finished...")
             Arrow.append(frags_out_path,
                     batch_dfs)
             batch_dfs = nothing

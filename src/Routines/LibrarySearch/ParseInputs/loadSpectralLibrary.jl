@@ -1,21 +1,40 @@
 function load_detailed_frags(filename::String)
     jldopen(filename, "r") do file
         data = read(file, "data")
-        return map(x -> DetailedFrag{Float32}(
-            x.prec_id,
-            x.mz,
-            x.intensity,
-            x.ion_type,
-            x.is_y,
-            x.is_b,
-            x.is_p,
-            x.is_isotope,
-            x.frag_charge,
-            x.ion_position,
-            x.prec_charge,
-            x.rank,
-            x.sulfur_count
-        ), data)
+        spline_type_name = eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
+        if eltype(data).name != spline_type_name
+            return map(x -> DetailedFrag{Float32}(
+                x.prec_id,
+                x.mz,
+                x.intensity,
+                x.ion_type,
+                x.is_y,
+                x.is_b,
+                x.is_p,
+                x.is_isotope,
+                x.frag_charge,
+                x.ion_position,
+                x.prec_charge,
+                x.rank,
+                x.sulfur_count
+            ), data)
+        else
+            return map(x -> eltype(data)(
+                x.prec_id,
+                x.mz,
+                x.intensity,
+                x.ion_type,
+                x.is_y,
+                x.is_b,
+                x.is_p,
+                x.is_isotope,
+                x.frag_charge,
+                x.ion_position,
+                x.prec_charge,
+                x.rank,
+                x.sulfur_count
+            ), data)
+        end
     end
 end
 
@@ -35,7 +54,21 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
     spec_lib = Dict{String, Any}()
     detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
     prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
-    library_fragment_lookup_table = LibraryFragmentLookup(detailed_frags, prec_frag_ranges)
+    library_fragment_lookup_table = nothing
+    if eltype(detailed_frags).name == eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
+        try
+        spl_knots = load(joinpath(SPEC_LIB_DIR,"spline_knots.jld2"))["spl_knots"]
+        library_fragment_lookup_table = SplineFragmentLookup(
+            detailed_frags, prec_frag_ranges, spl_knots, Ref(zero(last(eltype(detailed_frags).parameters)))
+        )
+        catch e
+            @warn "Could not load `spline_knots.jld2`"
+            throw(e)
+        end
+
+    else
+        library_fragment_lookup_table = StandardFragmentLookup(detailed_frags, prec_frag_ranges)
+    end
     #Is this still necessary?
     #last_range = library_fragment_lookup_table.prec_frag_ranges[end] #0x29004baf:(0x29004be8 - 1)
     #last_range = range(first(last_range), last(last_range) - 1)

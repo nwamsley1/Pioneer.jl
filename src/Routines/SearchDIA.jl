@@ -159,8 +159,8 @@ function SearchDIA(params_path::String)
         for (key, value) in pairs(frag_err_dist_dict)
             #quad_model_dict[key] = RazoQuadModel{Float32}(RazoQuadParams{Float32}(1.02502, 1.31851, 2.2912, 5.25838))#GeneralGaussModel(5.0f0, 0.0f0)
             #quad_model_dict[key] = RazoQuadModel{Float32}(RazoQuadParams{Float32}(1.02502, 1.31851, 5.2, 5.25838))#GeneralGaussModel(5.0f0, 0.0f0)
-            #quad_model_dict[key] = GeneralGaussModel(6.0f0, 0.0f0)
-            quad_model_dict[key] = NoQuadModel(0.0f0)
+            quad_model_dict[key] = GeneralGaussModel(6.0f0, 0.0f0)
+            #quad_model_dict[key] = NoQuadModel(0.0f0)
             #println("TEST TESTing")
         end
     end

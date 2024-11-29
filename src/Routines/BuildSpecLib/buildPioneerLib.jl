@@ -370,7 +370,8 @@ function getDetailedFrags(
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
     max_frag_rank::UInt8,
-    min_frag_intensity::AbstractFloat)
+    min_frag_intensity::AbstractFloat,
+    koina_model::KoinaModelType)
 
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         println("mistake")
@@ -496,6 +497,160 @@ function getDetailedFrags(
     return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new
 end
 
+function getDetailedFrags(
+    frag_mz::AbstractVector{Float32},
+    frag_coef::AbstractVector{NTuple{N, Float32}},
+    frag_intensity::AbstractVector{Float16},
+    frag_is_y::AbstractVector{Bool},
+    frag_is_b::AbstractVector{Bool},
+    frag_is_p::AbstractVector{Bool},
+    frag_index::AbstractVector{UInt8},
+    frag_charge::AbstractVector{UInt8},
+    frag_sulfur_count::AbstractVector{UInt8},
+    frag_ion_type::AbstractVector{UInt16},
+    frag_isotope::AbstractVector{UInt8},
+    frag_internal::AbstractVector{Bool},
+    frag_immonium::AbstractVector{Bool},
+    frag_neutral_diff::AbstractVector{Bool},
+    precursor_mz::AbstractVector{Float32},
+    precursor_charge::AbstractVector{UInt8},
+    prec_to_frag_idx::AbstractVector{UInt64},
+    y_start::UInt8,
+    b_start::UInt8,
+    include_p::Bool,
+    include_isotope::Bool,
+    include_immonium::Bool,
+    include_internal::Bool,
+    include_neutral_diff::Bool,
+    max_frag_charge::UInt8,
+    frag_bounds::FragBoundModel,
+    max_frag_rank::UInt8,
+    min_frag_intensity::AbstractFloat,
+    koina_model::SplineCoefficientModel) where {N}
+
+    println("TESTING")
+    if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
+        println("mistake")
+    end
+
+    #Maximum ranked fragment that can be included in the fragment index
+    max_frag_rank = UInt8(min(255, max_frag_rank))
+    #Number of precursors 
+    n_precursors = UInt32(length(precursor_mz))
+    #Keep track of number of fragments to allocate 
+    n_frags = zero(UInt64)
+    println("counting fragments...")
+    for pid in ProgressBar(range(one(UInt32), n_precursors))
+        prec_mz = precursor_mz[pid] #Filter on precursor mass
+        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
+        rank = 1
+        #count fragments for the current precursor
+        for frag_idx in range(frag_start_idx, frag_stop_idx)
+            #Filter on fragment properties
+            if !fragFilter(
+                    frag_is_y[frag_idx],
+                    frag_is_b[frag_idx],
+                    frag_is_p[frag_idx],
+                    frag_index[frag_idx],
+                    frag_charge[frag_idx],
+                    frag_isotope[frag_idx],
+                    frag_internal[frag_idx],
+                    frag_immonium[frag_idx],
+                    frag_neutral_diff[frag_idx],
+                    frag_mz[frag_idx],
+                    frag_bounds,
+                    prec_mz,
+                    y_start,
+                    b_start,
+                    include_p,
+                    include_isotope,
+                    include_immonium,
+                    include_internal,
+                    include_neutral_diff,
+                    max_frag_charge)
+                continue
+            end
+            #update counters 
+            n_frags += one(UInt64)
+            rank += 1
+            if rank > max_frag_rank
+                break
+            end
+        end
+    end
+    println("n_frags $n_frags")
+    n_tuple_p = typeof(first(frag_coef))
+    n_tuple_size = length(n_tuple_p.parameters)
+    n_tuple_type = eltype(n_tuple_p)
+    detailed_frags = Vector{SplineDetailedFrag{n_tuple_size, n_tuple_type}}(
+                                    undef, 
+                                    n_frags)   
+    prec_to_frag_idx_new = Vector{UInt64}(undef, n_precursors + 1)
+    detailed_frag_idx = 1
+    println("writing fragments...")
+    for pid in ProgressBar(range(one(UInt32), n_precursors))
+        prec_mz = precursor_mz[pid]
+        #Index of the first fragment for the precursor 
+        prec_to_frag_idx_new[pid] = UInt64(detailed_frag_idx)
+        frag_start_idx, frag_stop_idx = prec_to_frag_idx[pid], prec_to_frag_idx[pid+1] - 1
+        rank = 1
+        for frag_idx in range(frag_start_idx, frag_stop_idx)
+            if !fragFilter(
+                    frag_is_y[frag_idx],
+                    frag_is_b[frag_idx],
+                    frag_is_p[frag_idx],
+                    frag_index[frag_idx],
+                    frag_charge[frag_idx],
+                    frag_isotope[frag_idx],
+                    frag_internal[frag_idx],
+                    frag_immonium[frag_idx],
+                    frag_neutral_diff[frag_idx],
+                    frag_mz[frag_idx],
+                    frag_bounds,
+                    prec_mz,
+                    y_start,
+                    b_start,
+                    include_p,
+                    include_isotope,
+                    include_immonium,
+                    include_internal,
+                    include_neutral_diff,
+                    max_frag_charge)
+                continue
+            end
+            is_y, is_internal, is_immonium = frag_is_y[frag_idx], frag_internal[frag_idx], frag_immonium[frag_idx]
+            is_b, is_p = frag_is_b[frag_idx], frag_is_p[frag_idx]
+            detailed_frags[detailed_frag_idx] = SplineDetailedFrag(
+                UInt32(pid),
+
+                frag_mz[frag_idx],
+                frag_coef[frag_idx],
+
+                frag_ion_type[frag_idx],
+                is_y,
+                is_b,
+                is_p,
+                frag_isotope[frag_idx]>0,
+
+                frag_charge[frag_idx],
+                frag_index[frag_idx],
+                precursor_charge[pid],
+                UInt8(rank),
+                frag_sulfur_count[frag_idx]
+            )
+            detailed_frag_idx += 1
+            rank += 1
+            if rank > max_frag_rank
+                break
+            end
+        end
+
+    end
+    prec_to_frag_idx_new[end] = UInt64(detailed_frag_idx)
+    return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new
+end
+
+
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
                       y_start::UInt8,
@@ -513,7 +668,8 @@ function buildPionLib(spec_lib_path::String,
                       rank_to_score::Vector{UInt8},
                       frag_bounds::FragBoundModel,
                       frag_bin_tol_ppm::Float32,
-                      rt_bin_tol_ppm::Float32
+                      rt_bin_tol_ppm::Float32,
+                      model_type::KoinaModelType,
                       )
     fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
     try
@@ -580,6 +736,7 @@ function buildPionLib(spec_lib_path::String,
     println("Get full fragments list...")
     detailed_frags, pid_to_fid = getDetailedFrags(
     fragments_table[:mz],
+    fragments_table[:spl_coef],
     fragments_table[:intensity],
     fragments_table[:is_y],
     fragments_table[:is_b],
@@ -606,6 +763,7 @@ function buildPionLib(spec_lib_path::String,
     frag_bounds,
     max_frag_rank,
     min_frag_intensity,
+    model_type
     );
     
     save_detailed_frags(

@@ -100,7 +100,7 @@ function getPSMS(
                     precursors::Union{Arrow.Table, Missing},
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
                     precursors_passed_scoring::Vector{UInt32},
-                    ion_list::Union{LibraryFragmentLookup{Float32}, Missing},
+                    ion_list::Union{LibraryFragmentLookup, Missing},
                     rt_to_irt_spline::Any,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel,
@@ -249,7 +249,7 @@ function getPSMS(
 end
 function getMassErrors(
                     spectra::Arrow.Table,
-                    library_fragment_lookup::LibraryFragmentLookup{Float32},
+                    library_fragment_lookup::LibraryFragmentLookup,
                     thread_task::UnitRange{Int64},
                     scan_idxs::Vector{UInt32},
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
@@ -321,7 +321,7 @@ function huberTuningSearch(
                     prec_set::Set{Tuple{UInt32,UInt32}},
                     scan_idxs::Set{UInt32},
                     precursors::Union{Arrow.Table, Missing},
-                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup, Missing},
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
@@ -506,7 +506,7 @@ function QuadTransmissionSearch(
                     scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
                     scan_idxs::Set{UInt32},
                     precursors::Union{Arrow.Table, Missing},
-                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup, Missing},
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel,
                     δ::Float32,
@@ -653,7 +653,7 @@ function secondSearch(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
                     precursors::Union{Arrow.Table, Missing},
-                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup, Missing},
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
@@ -861,7 +861,7 @@ function getChromatograms(
                     thread_task::Vector{Int64},#UnitRange{Int64},
                     precursors::Union{Arrow.Table, Missing},
                     precursors_passing::Set{UInt32},
-                    library_fragment_lookup::Union{LibraryFragmentLookup{Float32}, Missing},
+                    library_fragment_lookup::Union{LibraryFragmentLookup, Missing},
                     ms_file_idx::UInt32,
                     rt_to_irt::UniformSpline,
                     mass_err_model::MassErrorModel,
@@ -1076,7 +1076,7 @@ function massErrorSearch(
                     spectra::Arrow.Table,
                     scan_idxs::Vector{UInt32},
                     precursors_passed_scoring::Vector{UInt32},
-                    library_fragment_lookup::LibraryFragmentLookup{Float32},
+                    library_fragment_lookup::LibraryFragmentLookup,
                     ms_file_idx::UInt32,
                     mass_err_model::MassErrorModel,
                     ionMatches::Vector{Vector{FragmentMatch{Float32}}},
@@ -1224,6 +1224,145 @@ function LibrarySearch(
     return tasks_out
 end
 
+function NceScanningSearch(
+    spectra::Arrow.Table,
+    params::NamedTuple,
+    nce_grid::LinRange{Float32, Int64};
+    kwargs...)
+    #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
+    thread_tasks, total_peaks = partitionScansToThreads(
+                                                            spectra[:mz_array],
+                                                            spectra[:retentionTime],
+                                                            spectra[:centerMz],
+                                                            spectra[:msOrder],
+                                                            Threads.nthreads(),
+                                                            1
+                                                        )
+
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    #println("start frag index search...")
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return searchFragmentIndex(
+                                spectra,
+                                last(thread_task),
+                                kwargs[:frag_index],
+                                scan_to_prec_idx,
+                                kwargs[:rt_to_irt_spline],
+                                kwargs[:mass_err_model],
+                                searchScan!,
+                                kwargs[:prec_to_score][thread_id],
+                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
+                                kwargs[:quad_transmission_model],
+                                UInt8(kwargs[:params]["min_index_search_score"]),
+                                Float64(kwargs[:irt_tol]),
+                                kwargs[:sample_rate],
+                                Set(2)
+                            )
+        end
+    end
+    precursors_passed_scoring = fetch.(tasks)
+    #println("Finished frag index search...")
+    #println("start psms thing...")
+    #=
+    kwargs[:fragment_lookup_table].nce[] = 30.0f0
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getPSMS(
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                kwargs[:precursors],
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                kwargs[:fragment_lookup_table], 
+                                kwargs[:rt_to_irt_spline],
+                                kwargs[:ms_file_idx],
+                                kwargs[:mass_err_model],
+                                kwargs[:quad_transmission_model],
+                                kwargs[:ion_matches][thread_id],
+                                kwargs[:ion_misses][thread_id],
+                                kwargs[:id_to_col][thread_id],
+                                kwargs[:ion_templates][thread_id],
+                                kwargs[:iso_splines],
+                                kwargs[:scored_psms][thread_id],
+                                kwargs[:unscored_psms][thread_id],
+                                kwargs[:spectral_scores][thread_id],
+                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
+                                kwargs[:params]["min_frag_count"],
+                                Float32(kwargs[:params]["min_spectral_contrast"]),
+                                Float32(kwargs[:params]["min_log2_matched_ratio"]),
+                                Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
+                                kwargs[:params]["max_best_rank"],
+                                Int64(kwargs[:params]["n_frag_isotopes"]),
+                                UInt8(kwargs[:params]["max_frag_rank"]),
+                                Bool(kwargs[:params]["abreviate_precursor_calc"]),
+                                Float32(kwargs[:irt_tol]),
+                                Set(2)
+                            )
+        end
+    end
+    tasks_out = vcat(fetch.(tasks)...)
+    tasks_out[!,:nce] .= 30.0f0
+    return tasks_out
+    =#
+    
+    all_results = []
+    for _nce_ in nce_grid
+        tasks = map(thread_tasks) do thread_task
+            Threads.@spawn begin
+                kwargs[:fragment_lookup_table].nce[] = _nce_
+                thread_id = first(thread_task)
+                return getPSMS(
+                    spectra,
+                    last(thread_task),
+                    kwargs[:precursors],
+                    scan_to_prec_idx,
+                    precursors_passed_scoring[thread_id],
+                    kwargs[:fragment_lookup_table],
+                    kwargs[:rt_to_irt_spline],
+                    kwargs[:ms_file_idx],
+                    kwargs[:mass_err_model],
+                    kwargs[:quad_transmission_model],
+                    kwargs[:ion_matches][thread_id],
+                    kwargs[:ion_misses][thread_id],
+                    kwargs[:id_to_col][thread_id],
+                    kwargs[:ion_templates][thread_id],
+                    kwargs[:iso_splines],
+                    kwargs[:scored_psms][thread_id],
+                    kwargs[:unscored_psms][thread_id],
+                    kwargs[:spectral_scores][thread_id],
+                    Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
+                    kwargs[:params]["min_frag_count"],
+                    Float32(kwargs[:params]["min_spectral_contrast"]),
+                    Float32(kwargs[:params]["min_log2_matched_ratio"]),
+                    Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
+                    kwargs[:params]["max_best_rank"],
+                    Int64(kwargs[:params]["n_frag_isotopes"]),
+                    UInt8(kwargs[:params]["max_frag_rank"]),
+                    Bool(kwargs[:params]["abreviate_precursor_calc"]),
+                    Float32(kwargs[:irt_tol]),
+                    Set(2)
+                )
+            end
+        end
+        
+        # Fetch results and add NCE column
+        results_for_nce = fetch.(tasks)
+        tasks_out = vcat(results_for_nce...)
+        println("[size(x) for x in results_for_nce] ", [size(x) for x in results_for_nce] )
+        println("size(tasks_out) ", size(tasks_out))
+        tasks_out[!, :nce] .= _nce_
+        
+        # Add to results array
+        push!(all_results, tasks_out)
+    end
+    final_results = vcat(all_results...)
+    return final_results
+
+end
+
 function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
     nmatches_all, nmisses_all = nmatches, nmisses
 
@@ -1336,7 +1475,7 @@ end
 
 function buildSubsetLibraryFragmentLookupTable!(
                                             precursors_passed_scoring::Vector{Vector{UInt32}},
-                                            lookup_table::LibraryFragmentLookup{Float32},
+                                            lookup_table::LibraryFragmentLookup,
                                             n_precursors::Int64
                                             )
     #prec_id_conversion = zeros(UInt32, n_precursors)

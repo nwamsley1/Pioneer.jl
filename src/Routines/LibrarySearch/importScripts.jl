@@ -119,6 +119,7 @@ function importScripts()
 
                                                                                                                                 
     [include(joinpath(package_root,"src","Routines","BuildSpecLib",jl_file)) for jl_file in [
+        "libraryBSpline.jl",
         "PioneerLib.jl",
         "buildPioneerLib.jl",  
         "buildUniSpecInput.jl",
