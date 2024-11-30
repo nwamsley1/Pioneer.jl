@@ -119,11 +119,12 @@ function SearchDIA(params_path::String)
 
     end
 
+    params_[:presearch_params]["min_spectral_contrast"] = 0.5
     test_out = nceTuningSearch(
     MS_TABLE_PATHS[1],
     params_,
     spec_lib,
-    LinRange(21.0f0, 40.0f0, 15),
+    LinRange(21.0f0, 40.0f0, 60),
     ionMatches,
     ionMisses,
     all_fmatches,
@@ -135,11 +136,89 @@ function SearchDIA(params_path::String)
     spectral_scores,
     precs);
 
+    spsms = DataFrame(map(pairs(groupby(test_out,[:precursor_idx,:scan_idx]))) do (key, psms)
+        max_arg = argmax(psms[!,:scribe])
+        #=
+        return (precursor_idx = psms[max_arg,:precursor_idx], 
+                target = psms[max_arg,:target], 
+                scribe = psms[max_arg,:scribe], 
+                spectral_contrast = psms[max_arg,:spectral_contrast])
+        =#
+        return psms[max_arg,:]
+    end)
+    
+    scorePresearch!(spsms)
+    getQvalues!(spsms[!,:prob], spsms[!,:target], spsms[!,:q_value])
+    filter!(x->(x.target)&(x.q_value<=0.01), spsms)
+    passing_precs = Set(spsms[!,:precursor_idx])
+    filter!(x->x.precursor_idx∈passing_precs, test_out)
+    test_out_old = copy(test_out)
+    #test_out = copy(test_out_old)
+    
+    n = 1
+    sort!(test_out,:nce)
+    gto = groupby(test_out,[:precursor_idx,:scan_idx]);
+    #gto[(precursor_idx =  796635, scan_idx =  131676)]
+    gto[n][!,[:precursor_idx,:charge,:q_value,:nce,:spectral_contrast,:b_count,:y_count,:matched_ratio,:scribe,:scan_idx]]
+    p = plot(gto[n][!,:nce], gto[n][!,:spectral_contrast],
+    ylabel="Spectral Contrast",
+    label="Spectral Contrast")
+    # Add second plot with right y-axis
+    plot!(twinx(), gto[n][!,:nce], gto[n][!,:scribe],
+        ylabel="Scribe",
+        label="Scribe",
+        color=:red)  # Different color to distinguish the lines
+    n += 1
+    #precursor_idx =  0x001c0298
+    test_out[!,:best_psms] .= false
+    test_out[!,:prec_mz] = [precursors[:mz][pid] for pid in test_out[!,:precursor_idx]]
+    gpsms = groupby(test_out,:precursor_idx)
+    for (key, psms) in pairs(gpsms)
+        psms[argmax(psms[!,:scribe]),:best_psms] = true
+    end
+    filter!(x->x.best_psms, test_out)
+
+    p = plot(size = (300, 300))
+    test_out2 = test_out[test_out[!,:charge].==2,:]
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
+    pwl_2 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)
+    plot!(p, LinRange(300, 1000, 100), pwl_2.(LinRange(300, 1000, 100)))
+    test_out2 = test_out[test_out[!,:charge].==3,:]
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
+    pwl_3 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)
+    plot!(p, LinRange(300, 1000, 100), pwl_3.(LinRange(300, 1000, 100)))
+    test_out2 = test_out[test_out[!,:charge].==4,:]
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
+    pwl_4 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)
+    plot!(p, LinRange(300, 1000, 100), pwl_4.(LinRange(300, 1000, 100)))
+
+    pwl_fits = (pwl_2, pwl_3,pwl_4)
+
+    test_out2 = test_out[test_out[!,:charge].==4,:]
+    #plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.2, xlim = (390,1000))
+    spl_test = UniformSpline(test_out2[!,:nce], test_out2[!,:prec_mz], 3, 3)
+    #plot!(p, LinRange(300, 1000, 100), spl_test.(LinRange(300, 1000, 100)))
+    test_out2[!,:spl_err] = abs.(test_out2[!,:nce] .- spl_test.(test_out2[!,:prec_mz]))
+    spl_err = mad(test_out2[!,:spl_err])
+    filter!(x->x.spl_err<spl_err, test_out2)
+    #p = plot(size = (300, 300))
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.2, xlim = (390,1000))
+    spl_test = UniformSpline(test_out2[!,:nce], test_out2[!,:prec_mz], 3,5)
+    plot!(p, LinRange(300, 1000, 100), spl_test.(LinRange(300, 1000, 100)))
+
+
+
     struct NceModel{N, T<:AbstractFloat}
         mz_bin::NTuple{N, T}
         slope::NTuple{N, T}
         intercept::NTuple{N, T}
     end
+
+    struct NceModel{N,M,T<:AbstractFloat}
+        mz_bin::NTuple{N, T}
+        nce_val::NTuple{N, NTuple{M, T}}
+    end
+
     
     function (nce::NceModel{N, T})(mz::T, charge::UInt8)where {N,T<:AbstractFloat}
         for i in range(1, N)
@@ -151,13 +230,22 @@ function SearchDIA(params_path::String)
         return T(charge*a[end]) + b[end]
     end
     function getOptimalNCE()
+        prec_charge_range = range(2, 4)
+        maximum_prc
+        bin_mzs = (500.0f0, 700.0f0, typemax(Float32))
+        sort!(test_out,:charge)
+        mz_bins = Float32[]
+        slopes = Float32[]
+        intercepts = Float32[]
+        for i in range(1, length(bin_mzs))
+            subdf = test_out[test_out[!,:prec_mz].<bin_mzs[i],:]
+            charge_states = groupby(subdf, :charge)
+            c2 = median(charge_states[(charge = 2,)][!,:nce])
+            c3 = median(charge_states[(charge = 3,)][!,:nce])
+            ((c3 - c2)/(3 - 2))  + c2
+        end
     end
-    test_out[!,:best_psms] .= false
-    gpsms = groupby(test_out,:precursor_idx)
-    for (key, psms) in pairs(gpsms)
-        psms[argmax(psms[!,:scribe]),:best_psms] = true
-    end
-    filter!(x->x.best_psms, test_out)
+
 
     p = plot()
     test_out[!,:prec_mz] = [precursors[:mz][pid] for pid in test_out[!,:precursor_idx]]
@@ -167,8 +255,45 @@ function SearchDIA(params_path::String)
 
     p = plot(size = (300, 300))
     test_out2 = test_out[test_out[!,:charge].==2,:]
-    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.2, xlim = (390, 500))
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.2, xlim = (390,1000))
+    spl_test = UniformSpline(test_out2[!,:nce], test_out2[!,:prec_mz], 3, 3)
+    plot!(p, LinRange(300, 1000, 100), spl_test.(LinRange(300, 1000, 100)))
+# Create the linear model
+fit = lm(@formula(nce ~ prec_mz), test_out2_float[test_out2[!,:prec_mz].<=550.0,:])
+x_fit = Float64.(collect(390:550))
+y_fit = GLM.predict(fit, DataFrame(prec_mz = x_fit))
+plot!(x_fit, y_fit, color=:red, linewidth=2)
+# Create the linear model
+fit = lm(@formula(nce ~ prec_mz), test_out2_float[test_out2[!,:prec_mz].>550.0,:])
+x_fit = Float64.(collect(550:900))
+y_fit = GLM.predict(fit, DataFrame(prec_mz = x_fit))
+plot!(x_fit, y_fit, color=:red, linewidth=2)
 
+
+
+    # Option 1: Using histogram2d
+plot(test_out2[!,:prec_mz], test_out2[!,:nce], 
+seriestype=:histogram2d,
+xlim=(390,1000),
+bins=50,  # Adjust this to control resolution
+colorbar=true)
+
+
+# Option 2: Using density plot (smoother)
+plot(test_out2[!,:prec_mz], test_out2[!,:nce], 
+    seriestype=:density2d,
+    xlim=(390,1000),
+    colorbar=true)
+
+
+
+# Option 3: hexbin plot for a hexagonal heatmap
+plot(test_out2[!,:prec_mz], test_out2[!,:nce], 
+    seriestype=:hexbin,
+    xlim=(390,1000),
+    bins=50,  # Adjust this to control resolution
+    colorbar=true)
+    
     using DataFrames
     using StatsPlots
     using Statistics
@@ -295,7 +420,7 @@ function assign_bins(x, bin_width)
 end
 
 # Create separate plots for each charge state
-bin_width = 100  # adjust this value based on your data distribution
+bin_width = 75  # adjust this value based on your data distribution
 plots = Plots.Plot[]  # Initialize as Plot array with proper namespace
 
 for charge_val in sort(unique(test_out.charge))
