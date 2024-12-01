@@ -1309,10 +1309,14 @@ function NceScanningSearch(
     =#
     
     all_results = []
+    flt = kwargs[:fragment_lookup_table] 
     for _nce_ in nce_grid
+        flt = updateNceModel(
+            flt,
+                PiecewiseNceModel(_nce_))
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn begin
-                kwargs[:fragment_lookup_table].nce[] = _nce_
+                #kwargs[:fragment_lookup_table] = _nce_
                 thread_id = first(thread_task)
                 return getPSMS(
                     spectra,
@@ -1320,7 +1324,7 @@ function NceScanningSearch(
                     kwargs[:precursors],
                     scan_to_prec_idx,
                     precursors_passed_scoring[thread_id],
-                    kwargs[:fragment_lookup_table],
+                    flt,
                     kwargs[:rt_to_irt_spline],
                     kwargs[:ms_file_idx],
                     kwargs[:mass_err_model],
@@ -1351,8 +1355,6 @@ function NceScanningSearch(
         # Fetch results and add NCE column
         results_for_nce = fetch.(tasks)
         tasks_out = vcat(results_for_nce...)
-        println("[size(x) for x in results_for_nce] ", [size(x) for x in results_for_nce] )
-        println("size(tasks_out) ", size(tasks_out))
         tasks_out[!, :nce] .= _nce_
         
         # Add to results array

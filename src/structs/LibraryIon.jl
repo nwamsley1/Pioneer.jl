@@ -132,6 +132,53 @@ ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
 ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
 getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
 
+"""
+   AltimeterFragment{T<:AbstractFloat} <: LibraryFragmentIon{T}
+
+Abstract supertype for fragments used in the Altimeter spectral library system.
+
+# Type Parameters
+- `T`: Floating point precision type 
+
+# Required Fields
+All concrete subtypes must implement:
+- `prec_id::UInt32`: Unique identifier of parent precursor
+- `mz::T`: Fragment m/z ratio
+- `ion_type::UInt16`: Numeric identifier for ion type
+- `is_y::Bool`: True if y-ion
+- `is_b::Bool`: True if b-ion 
+- `is_p::Bool`: True if precursor ion
+- `is_isotope::Bool`: True if isotope peak
+- `frag_charge::UInt8`: Fragment charge state
+- `ion_position::UInt8`: Position in peptide sequence
+- `prec_charge::UInt8`: Precursor charge state
+- `rank::UInt8`: Intensity rank among siblings
+- `sulfur_count::UInt8`: Number of sulfur atoms
+
+# Interface Methods
+Standard getters for required fields:
+- `getPID(f::AltimeterFragment)`: Get precursor ID
+- `getMz(f::AltimeterFragment)`: Get m/z ratio
+- `getIonType(f::AltimeterFragment)`: Get ion type
+- `isY(f::AltimeterFragment)`: Check if y-ion
+- `isB(f::AltimeterFragment)`: Check if b-ion
+- `isP(f::AltimeterFragment)`: Check if precursor ion
+- `isIso(f::AltimeterFragment)`: Check if isotope peak
+- `getFragCharge(f::AltimeterFragment)`: Get fragment charge
+- `getIonPosition(f::AltimeterFragment)`: Get sequence position
+- `getPrecCharge(f::AltimeterFragment)`: Get precursor charge
+- `getRank(f::AltimeterFragment)`: Get intensity rank
+- `sulfurCount(f::AltimeterFragment)`: Get sulfur count
+
+# Concrete Subtypes
+- `DetailedFrag`: Fragment with fixed intensity
+- `SplineDetailedFrag`: Fragment with intensity modeled via spline coefficients
+
+# Notes
+- Base type for spectral library fragment ions with detailed annotations
+- Subtypes differ primarily in how they handle intensity information
+- Used in fragment lookup systems for spectrum prediction
+"""
 abstract type AltimeterFragment{T} <: LibraryFragmentIon{T} end
 
 getPID(f::AltimeterFragment) = f.prec_id
@@ -147,6 +194,33 @@ getPrecCharge(f::AltimeterFragment) = f.prec_charge
 getRank(f::AltimeterFragment) = f.rank
 sulfurCount(f::AltimeterFragment) = f.sulfur_count
 
+"""
+    DetailedFrag{T<:AbstractFloat} <: AltimeterFragment{T}
+
+A detailed representation of a fragment ion with intensity information.
+
+# Type Parameters
+- `T`: Floating point precision type
+
+# Fields
+- `prec_id::UInt32`: Unique identifier of parent precursor
+- `mz::T`: Fragment m/z ratio
+- `intensity::Float16`: Observed or predicted intensity
+- `ion_type::UInt16`: Numeric identifier for ion type
+- `is_y::Bool`: True if y-ion
+- `is_b::Bool`: True if b-ion
+- `is_p::Bool`: True if precursor ion
+- `is_isotope::Bool`: True if isotope peak
+- `frag_charge::UInt8`: Fragment charge state
+- `ion_position::UInt8`: Position in peptide sequence
+- `prec_charge::UInt8`: Precursor charge state
+- `rank::UInt8`: Intensity rank among siblings
+- `sulfur_count::UInt8`: Number of sulfur atoms
+
+# Notes
+- Unlike SplineDetailedFrag, this type stores a single intensity value rather than spline coefficients
+- Used in standard library lookups where collision energy is fixed
+"""
 struct DetailedFrag{T<:AbstractFloat} <: AltimeterFragment{T}
     prec_id::UInt32
 
@@ -197,6 +271,32 @@ DetailedFrag{T}() where {T<:AbstractFloat} = DetailedFrag(
                 zero(UInt8)  #sulfur_count
  )
  
+
+"""
+    SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
+
+Fragment ion with spline coefficients for intensity prediction across collision energies.
+
+# Type Parameters
+- `N`: Number of spline coefficients
+- `T`: Floating point precision type
+
+# Fields
+- `prec_id::UInt32`: Unique identifier of parent precursor
+- `mz::T`: Fragment m/z ratio
+- `intensity::NTuple{N,T}`: Spline coefficients for intensity prediction
+- `ion_type::UInt16`: Numeric identifier for ion type
+- `is_y::Bool`: True if y-ion
+- `is_b::Bool`: True if b-ion
+- `is_p::Bool`: True if precursor ion
+- `is_isotope::Bool`: True if isotope peak
+- `frag_charge::UInt8`: Fragment charge state
+- `ion_position::UInt8`: Position in peptide sequence
+- `prec_charge::UInt8`: Precursor charge state
+- `rank::UInt8`: Intensity rank among siblings
+- `sulfur_count::UInt8`: Number of sulfur atoms
+"""
+
  struct SplineDetailedFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
     prec_id::UInt32
 
@@ -257,6 +357,27 @@ SplineDetailedFrag{N,T}() where {N,T<:AbstractFloat} = SplineDetailedFrag(
 
 abstract type LibraryFragmentLookup end
 
+"""
+    StandardFragmentLookup{T<:AbstractFloat} <: LibraryFragmentLookup
+
+A basic container for fragment ion data with fixed intensities.
+
+# Type Parameters
+- `T`: Floating point precision type
+
+# Fields
+- `frags::Vector{DetailedFrag{T}}`: Vector of fragment ions
+- `prec_frag_ranges::Vector{UInt64}`: Index ranges for fragments belonging to each precursor
+
+# Methods
+- `getFrag(lfp::StandardFragmentLookup, prec_idx::Integer)`: Get fragment at index
+- `getFragments(lfp::StandardFragmentLookup)`: Get full fragment vector
+- `getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)`: Get range of indices for precursor
+
+# Notes
+- Alternative to SplineFragmentLookup
+- Fragment intensities are stored directly rather than as spline coefficients
+"""
 struct StandardFragmentLookup{T<:AbstractFloat} <: LibraryFragmentLookup
     frags::Vector{DetailedFrag{T}}
     prec_frag_ranges::Vector{UInt64}
@@ -265,17 +386,117 @@ getFrag(lfp::StandardFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.f
 getFragments(lfp::StandardFragmentLookup{<:AbstractFloat}) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
+
+"""
+   abstract type NceModel{T<:AbstractFloat} end
+
+Abstract type for normalized collision energy prediction models.
+
+# Type Parameters
+- `T`: Floating point precision type used by the model
+
+# Interface Requirements
+All subtypes must implement:
+- Call operator: `(model::ConcreteModel)(x::AbstractFloat, charge::Integer)`
+- Vector call operator: `(model::ConcreteModel)(x::AbstractVector, charge::AbstractVector)`
+"""
+abstract type NceModel{T<:AbstractFloat} end
+
+"""
+   PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}
+
+A piecewise model for normalized collision energy prediction that includes charge dependence.
+
+# Type Parameters
+- `T`: Floating point precision type
+
+# Fields
+- `breakpoint::T`: x-value where model transitions from linear to constant
+- `left_slope::T`: Slope of linear component for x ≤ breakpoint
+- `left_intercept::T`: Intercept of linear component for x ≤ breakpoint
+- `right_value::T`: Constant value for x > breakpoint
+- `charge_slope::T`: Linear charge dependence coefficient
+
+# Model
+For a given mass-to-charge ratio x and charge state z:
+- When x ≤ breakpoint: f(x,z) = left_slope * x + left_intercept + charge_slope * z
+- When x > breakpoint: f(x,z) = right_value + charge_slope * z
+
+# Construction
+   PiecewiseNceModel(x::T) where {T<:AbstractFloat}
+
+Creates a PiecewiseNceModel that will return the input value x when evaluated at any point. 
+This is achieved by setting:
+- breakpoint = 0
+- left_slope = 1
+- left_intercept = 0
+- right_value = x
+- charge_slope = 0
+
+This ensures f(m,z) = x for any mass m and charge z.
+
+# Methods
+   (f::PiecewiseNceModel)(x::AbstractFloat, charge::Integer)
+   (f::PiecewiseNceModel)(x::AbstractVector, charge::AbstractVector)
+   fit_nce_model(pwlm::PiecewiseNceModel, x, y, charge, breakpoint)
+
+See also: [`fit_nce_model`](@ref), [`NceModel`](@ref)
+"""
+struct PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}
+    breakpoint::T
+    left_slope::T
+    left_intercept::T
+    right_value::T
+    charge_slope::T
+ end
+
+
+"""
+    SplineFragmentLookup{N,M,C,T<:AbstractFloat} <: LibraryFragmentLookup
+
+A container for fragment ion data that uses spline interpolation for intensity predictions.
+
+# Type Parameters
+- `N`: Number of spline coefficients per fragment
+- `M`: Number of spline knots
+- `C`: Number of NCE models (typically one per charge state)
+- `T`: Floating point precision type
+
+# Fields
+- `frags::Vector{SplineDetailedFrag{N,T}}`: Vector of fragment ions with spline coefficients
+- `prec_frag_ranges::Vector{UInt64}`: Index ranges for fragments belonging to each precursor
+- `knots::NTuple{M, T}`: Knot points for spline interpolation
+- `nce_models::NceModelContainer{C,T}`: Models for predicting collision energy by charge state
+"""
 struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
     frags::Vector{SplineDetailedFrag{N,T}}
     prec_frag_ranges::Vector{UInt64}
     knots::NTuple{M, T}
-    nce::Base.RefValue{T}
+    nce_model::NceModel{T}
 end
+
 getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
-getNCE(lfp::SplineFragmentLookup) = lfp.nce[]
+function getNCE(lfp::SplineFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
+    return lfp.nce_model(prec_mz, prec_charge)
+end
+function getNCE(lfp::SplineFragmentLookup)
+    return lfp.nce_model()
+end
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
+
+function updateNceModel(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,C,T}
+    SplineFragmentLookup{N,M,T}(
+        lookup.frags,  # This will share the reference to the original vector
+        lookup.prec_frag_ranges,
+        lookup.knots,
+        new_nce_model
+    )
+end
+#=
+    lft = updateNceModel(lft, nce_model_dict[ms_file_idx])
+=#
 """
     PrecursorBinItem{T<:AbstractFloat}
 

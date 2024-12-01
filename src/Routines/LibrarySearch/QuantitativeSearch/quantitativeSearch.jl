@@ -1,6 +1,7 @@
 
 function quantSearch(
     frag_err_dist_dict,
+    nce_model_dict,
     pid_to_cv_fold,
     precID_to_iRT,
     quant_psms_folder,
@@ -92,7 +93,9 @@ function quantSearch(
         return psms
     end
     ms_table_path_to_psms_path = Dict{String, String}()
+    lft = spec_lib["f_det"]
     quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+        lft = updateNceModel(lft, nce_model_dict[ms_file_idx])
         try
         parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
         rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
@@ -105,7 +108,7 @@ function quantSearch(
                 MS_TABLE, 
                 params_;
                 precursors = spec_lib["precursors"],
-                fragment_lookup_table = spec_lib["f_det"],
+                fragment_lookup_table = lft,
                 rt_index = rt_index,
                 ms_file_idx = UInt32(ms_file_idx), 
                 rt_to_irt_spline = rt_irt,

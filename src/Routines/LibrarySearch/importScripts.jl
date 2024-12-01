@@ -29,6 +29,7 @@ function importScripts()
     #Utilities
     [include(joinpath(package_root, "src","utils", "ML", jl_file)) for jl_file in [
         "percolatorSortOf.jl",
+        "piecewiseLinearFunction.jl",
         "probitRegression.jl",
         "spectralLinearRegression.jl",
         "uniformBasisCubicSpline.jl",

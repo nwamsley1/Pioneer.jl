@@ -95,15 +95,12 @@ function SearchDIA(params_path::String)
 
 
 
-    nce_ = Dict{String, Any}()
-    nce_median = Dict{String, Float32}()
-    nce_psms_01fdr = Dict{String, Int64}()
-    p = plot()
-    for nce in ProgressBar([21.0f0, 25.0f0, 29.0f0, 33.0f0, 37.0f0])
-    spec_lib["f_det"].nce[] = nce
-    test_out = nceTuningSearch(rt_alignment_folder, #ms_file_idx_to_remove, failed_ms_file_idxs
+   # using Profile 
+   # using PProf
+   # @profile begin
+        RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder, #ms_file_idx_to_remove, failed_ms_file_idxs
         mass_err_estimation_folder,
-        MS_TABLE_PATHS[1],
+        MS_TABLE_PATHS,
         params_,
         spec_lib,
         ionMatches,
@@ -116,26 +113,42 @@ function SearchDIA(params_path::String)
         unscored_PSMs,
         spectral_scores,
         precs);
-
     end
+   # pprof()
 
-    params_[:presearch_params]["min_spectral_contrast"] = 0.5
-    test_out = nceTuningSearch(
-    MS_TABLE_PATHS[1],
-    params_,
-    spec_lib,
-    LinRange(21.0f0, 40.0f0, 60),
-    ionMatches,
-    ionMisses,
-    all_fmatches,
-    IDtoCOL,
-    ionTemplates,
-    iso_splines,
-    scored_PSMs,
-    unscored_PSMs,
-    spectral_scores,
-    precs);
+   nce_model_dict = nceTuningSearch(
+        RT_to_iRT_map_dict,
+        frag_err_dist_dict,
+        irt_errs,
+        MS_TABLE_PATHS,
+        params_,
+        spec_lib,
+        LinRange(21.0f0, 40.0f0, 15),
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precs);
 
+    p = plot()
+    for i in range(1, 18)
+        model = nce_model_dict[i]
+        plot!(p, LinRange(300, 1000, 100), model.(LinRange(300, 1000, 100), 3), label = string(i));
+        #plot!(p, LinRange(300, 1000, 100), model.(LinRange(300, 1000, 100), 3), label = string(key));
+        #break
+    end
+    p
+
+    p = plot()
+    for (key, model) in pairs(nce_model_dict)
+        plot!(p, LinRange(300, 1000, 100), model.(LinRange(300, 1000, 100), 3), label = string(key));
+    end
+    p
     spsms = DataFrame(map(pairs(groupby(test_out,[:precursor_idx,:scan_idx]))) do (key, psms)
         max_arg = argmax(psms[!,:scribe])
         #=
@@ -159,34 +172,69 @@ function SearchDIA(params_path::String)
     sort!(test_out,:nce)
     gto = groupby(test_out,[:precursor_idx,:scan_idx]);
     #gto[(precursor_idx =  796635, scan_idx =  131676)]
-    gto[n][!,[:precursor_idx,:charge,:q_value,:nce,:spectral_contrast,:b_count,:y_count,:matched_ratio,:scribe,:scan_idx]]
-    p = plot(gto[n][!,:nce], gto[n][!,:spectral_contrast],
-    ylabel="Spectral Contrast",
-    label="Spectral Contrast")
-    # Add second plot with right y-axis
-    plot!(twinx(), gto[n][!,:nce], gto[n][!,:scribe],
-        ylabel="Scribe",
-        label="Scribe",
-        color=:red)  # Different color to distinguish the lines
+    #gto[n][!,[:precursor_idx,:charge,:q_value,:nce,:spectral_contrast,:b_count,:y_count,:matched_ratio,:scribe,:scan_idx]]
+    lib_path = "/Users/n.t.wamsley/Desktop/SplineLibTest/spline_examples"
+    for n in range(1, 100)
+        seq = precursors[:sequence][gto[n][1,:precursor_idx]]
+        charge = precursors[:prec_charge][gto[n][1,:precursor_idx]]
+        mz = precursors[:mz][gto[n][1,:precursor_idx]]
+        p = plot(gto[n][!,:nce], gto[n][!,:spectral_contrast],
+        xlabel = "Altimeter NCE",
+        ylabel="Spectral Contrast",
+        label="Spectral Contrast",
+        legend = :bottomleft,
+        title = "$seq^+$charge\n mz: $mz"
+        )
+        # Add second plot with right y-axis
+        plot!(twinx(), gto[n][!,:nce], gto[n][!,:scribe],
+            ylabel="Scribe",
+            label="Scribe",
+            legend = :bottomright,
+            color=:red)  # Different color to distinguish the lines
+        savefig(p, joinpath(lib_path, string(n)*".pdf"))
+    end
+    merge_pdfs([x for x in readdir(lib_path, join=true) if endswith(x, ".pdf")],
+    joinpath(lib_path, "spline_examples.pdf"), cleanup=true)
     n += 1
     #precursor_idx =  0x001c0298
     test_out[!,:best_psms] .= false
     test_out[!,:prec_mz] = [precursors[:mz][pid] for pid in test_out[!,:precursor_idx]]
     gpsms = groupby(test_out,:precursor_idx)
     for (key, psms) in pairs(gpsms)
-        psms[argmax(psms[!,:scribe]),:best_psms] = true
+        #if maximum(psms[!,:spectral_contrast]) > 0.95
+            psms[argmax(psms[!,:scribe]),:best_psms] = true
+        #end
     end
     filter!(x->x.best_psms, test_out)
 
     p = plot(size = (300, 300))
-    test_out2 = test_out[test_out[!,:charge].==2,:]
-    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
-    pwl_2 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)
-    plot!(p, LinRange(300, 1000, 100), pwl_2.(LinRange(300, 1000, 100)))
-    test_out2 = test_out[test_out[!,:charge].==3,:]
-    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
-    pwl_3 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)
-    plot!(p, LinRange(300, 1000, 100), pwl_3.(LinRange(300, 1000, 100)))
+
+    pwl = fit_nce_model(PiecewiseNceModel(0.0f0),
+    test_out[!,:prec_mz], test_out[!,:nce], test_out[!,:charge], NCE_MODEL_BREAKPOINT)
+    plot!(p, LinRange(300, 1000, 100), pwl.(LinRange(300, 1000, 100), 2));
+    plot!(p, LinRange(300, 1000, 100), pwl.(LinRange(300, 1000, 100), 3));
+    plot!(p, LinRange(300, 1000, 100), pwl.(LinRange(300, 1000, 100), 4));
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.1, xlim = (390,1000), bins = 100);
+  
+    #test_out2[!,:spl_err] = abs.(test_out2[!,:nce] .- pwl_2.(test_out2[!,:prec_mz]))
+    #spl_err = 2*mad(test_out2[!,:spl_err])
+    #filter!(x->x.spl_err<spl_err, test_out2)
+    #pwl_2 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0);
+    #plot!(p, LinRange(300, 1000, 100), pwl_2.(LinRange(300, 1000, 100)));
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.1, xlim = (390,1000), bins = 100);
+    p
+    
+    p = plot(size = (300, 300))
+    test_out2 = test_out[test_out[!,:charge].==3,:];
+    #plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.1, xlim = (390,1000), bins = 100);
+    pwl_2 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0);
+    plot!(p, LinRange(300, 1000, 100), pwl_2.(LinRange(300, 1000, 100)));
+    test_out2[!,:spl_err] = abs.(test_out2[!,:nce] .- pwl_2.(test_out2[!,:prec_mz]))
+    plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.1, xlim = (390,1000), bins = 100);
+    p
+
+
+
     test_out2 = test_out[test_out[!,:charge].==4,:]
     plot!(p, test_out2[!,:prec_mz], test_out2[!,:nce], seriestype=:scatter, alpha = 0.05, xlim = (390,1000), bins = 100)
     pwl_4 = fit_piecewise_linear(test_out2[!,:prec_mz], test_out2[!,:nce], 500.0f0)

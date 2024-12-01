@@ -6,6 +6,7 @@ function firstSearch(
                     frag_err_dist_dict,
                     irt_errs,
                     quad_model_dict,
+                    nce_model_dict,
                     file_id_to_parsed_name,
                     MS_TABLE_PATHS,
                     params_,
@@ -23,15 +24,17 @@ function firstSearch(
 
 peak_fwhms = Dictionary{String, @NamedTuple{median_fwhm::Float32, mad_fwhm::Float32}}()
 psms_paths = Dictionary{String, String}()
+lft = spec_lib["f_det"]
 main_search_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
     try
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)  
+    lft = updateNceModel(lft, nce_model_dict[ms_file_idx])
     psms = vcat(LibrarySearch(
         MS_TABLE,
         params_;
         frag_index = spec_lib["f_index"],
         precursors = spec_lib["precursors"],
-        fragment_lookup_table = spec_lib["f_det"],
+        fragment_lookup_table = lft,
         rt_to_irt_spline =  rt_to_irt_map_dict[ms_file_idx],
         ms_file_idx = UInt32(ms_file_idx),
         irt_tol = irt_errs[ms_file_idx],

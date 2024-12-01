@@ -132,6 +132,7 @@ function getHuberLossParam(
     gbpsms,
     MS_TABLE_PATHS,
     frag_err_dist_dict,
+    nce_model_dict,
     rt_index_paths,
     bin_rt_size,
     rt_irt,
@@ -156,6 +157,7 @@ function getHuberLossParam(
     for (key, sub_bpsms) in ProgressBar(pairs(gbpsms))
         ms_file_idx = key[:ms_file_idx]
         MS_TABLE_PATH = MS_TABLE_PATHS[ms_file_idx]
+        spec_lib["f_det"] = updateNceModel(spec_lib["f_det"], nce_model_dict[ms_file_idx])
         prec_set = Set(zip(sub_bpsms[!,:precursor_idx], sub_bpsms[!,:scan_idx]))
         scan_idxs = Set(sub_bpsms[!,:scan_idx])
 
@@ -301,6 +303,7 @@ function getHuberLossParam(
     MS_TABLE_PATHS::Vector{String},
     is_decoy::AbstractVector{Bool},
     frag_err_dist_dict,
+    nce_model_dict,
     rt_index_paths,
     bin_rt_size,
     rt_irt,
@@ -327,6 +330,7 @@ function getHuberLossParam(
         gbpsms,
         MS_TABLE_PATHS,
         frag_err_dist_dict,
+        nce_model_dict,
         rt_index_paths,
         bin_rt_size,
         rt_irt,

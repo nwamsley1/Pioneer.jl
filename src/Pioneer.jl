@@ -13,6 +13,7 @@ using JSON, JLD2
 using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
+using Optim
 using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars, Pkg
 using Tables, Test
 using StatsPlots
@@ -44,7 +45,7 @@ const prediction_model_to_model_type = Dict(
 const H2O::Float64 = Float64(18.010565)
 const PROTON::Float64 = Float64(1.0072764)
 const NEUTRON::Float64 = Float64(1.00335)
-
+const NCE_MODEL_BREAKPOINT::Float32 = Float32(500.0f0)
 
 
 export SearchDIA, ThreeProteomeAnalysis, BuildSpecLib

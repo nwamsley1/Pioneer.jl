@@ -1,7 +1,7 @@
 function SearchDIA(params_path::String)
     #println("JLD2 version is: ", Pkg.installed()["JLD2"])
     total_time = @timed begin
-    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/AlternatingWindows_CombineTraces.json"
+    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedAltimeterParamsAltimeter111824_SeperateTracesNoMax.json"
     if !isabspath(params_path)
         params_path = joinpath(@__DIR__, "../../", params_path)
     end
@@ -59,7 +59,8 @@ function SearchDIA(params_path::String)
     ###########
     #Load Spectral Libraries
     ###########
-    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR);
+    #params_[:presearch_params]["nce_guess"] = 30.0f0
+    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR, params_);
     precursors = spec_lib["precursors"];
     unique_proteins = unique(precursors[:accession_numbers]);
     accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
@@ -128,7 +129,24 @@ function SearchDIA(params_path::String)
                                                                             unscored_PSMs,
                                                                             spectral_scores,
                                                                             precs);
-
+    nce_model_dict = nceTuningSearch(
+        RT_to_iRT_map_dict,
+        frag_err_dist_dict,
+        irt_errs,
+        MS_TABLE_PATHS,
+        params_,
+        spec_lib,
+        LinRange(21.0f0, 40.0f0, 15),
+        ionMatches,
+        ionMisses,
+        all_fmatches,
+        IDtoCOL,
+        ionTemplates,
+        iso_splines,
+        scored_PSMs,
+        unscored_PSMs,
+        spectral_scores,
+        precs);
     println("Parameter Tuning Search...")
     #Otherwise use a default quad transmission model
     quad_model_dict = nothing
@@ -183,6 +201,7 @@ function SearchDIA(params_path::String)
         frag_err_dist_dict,
         irt_errs,
         quad_model_dict,
+        nce_model_dict,
         file_id_to_parsed_name,
         MS_TABLE_PATHS,
         params_,
@@ -259,6 +278,7 @@ function SearchDIA(params_path::String)
         MS_TABLE_PATHS,
         precursors[:is_decoy],
         frag_err_dist_dict,
+        nce_model_dict,
         rt_index_paths,
         bin_rt_size,
         rt_irt,
@@ -284,6 +304,7 @@ function SearchDIA(params_path::String)
     
 ms_table_path_to_psms_path = quantSearch(
         frag_err_dist_dict,
+        nce_model_dict,
         pid_to_cv_fold,
         prec_to_irt,
         quant_psms_folder,
@@ -312,30 +333,6 @@ ms_table_path_to_psms_path = quantSearch(
     println("Traning Target-Decoy Model...")
     best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
     models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
-    #=
-    best_psms = DataFrame(Tables.columntable(Arrow.Table(readdir(quant_psms_folder, join=true))))
-best_psms[(best_psms[!,:precursor_idx].==2326119).&(best_psms[!,:ms_file_idx].==1),[:isotopes_captured,:scan_idx,:precursor_idx]]
-
- ttable = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/ALTERNATING_WINDOW_TEST/NOV20_TEST_ECLIPSE/arrow_out/RESULTS/temp/quant_psms_folder/AlternatingV2_01.arrow"))
- ttable[ttable[!,:precursor_idx].==2326119,[:precursor_idx,:scan_idx,:isotopes_captured,:weight]]
-
-    sort!(best_psms[!,[:ms_file_idx,:precursor_idx,:isotopes_captured,:irt_obs,:weight,:prob]],[:precursor_idx,:ms_file_idx,:isotopes_captured])
-    gbpsms = groupby(best_psms, :precursor_idx)
-
-     gbpsms[N][!,[:precursor_idx,:ms_file_idx,:isotopes_captured,:scan_idx,:irt_obs,:prob,:weight]]
-     N += 1
-
-             parsed_fname = file_path_to_parsed_name[MS_TABLE_PATHS[1]]
-        rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
-        rt_index = buildRtIndex(rt_df,
-                                bin_rt_size = bin_rt_size)
-    unique_precursors = Set{UInt32}()
-    for rt_bin in rt_index.rt_bins
-        for prec in rt_bin.prec
-                push!(unique_precursors, first(prec))
-        end
-    end
-    =#
     #Wipe memory
     best_psms = nothing
     GC.gc()
@@ -395,6 +392,7 @@ best_psms[(best_psms[!,:precursor_idx].==2326119).&(best_psms[!,:ms_file_idx].==
                     passing_psms_folder,
                     second_quant_folder,
                     frag_err_dist_dict,
+                    nce_model_dict,
                     rt_index_paths,
                     bin_rt_size,
                     rt_irt,

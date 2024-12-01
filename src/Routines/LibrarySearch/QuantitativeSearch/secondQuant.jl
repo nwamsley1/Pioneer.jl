@@ -3,6 +3,7 @@ function secondQuantSearch!(
     passing_psms_folder,
     second_quant_folder,
     frag_err_dist_dict,
+    nce_model_dict,
     rt_index_paths,
     bin_rt_size,
     rt_irt,
@@ -86,8 +87,9 @@ function secondQuant(
     psms = fetch.(tasks)
     return psms
 end
-
+lft = spec_lib["f_det"]
 quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(collect(enumerate(MS_TABLE_PATHS)))
+    lft = updateNceModel(lft, nce_model_dict[ms_file_idx])
     try 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
@@ -110,7 +112,7 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
             MS_TABLE, 
             params_;
             precursors = spec_lib["precursors"],
-            fragment_lookup_table = spec_lib["f_det"],
+            fragment_lookup_table = lft,
             rt_index = rt_index,
             ms_file_idx = UInt32(ms_file_idx), 
             rt_to_irt_spline = rt_irt[parsed_fname],

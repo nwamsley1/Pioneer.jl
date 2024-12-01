@@ -39,7 +39,8 @@ function load_detailed_frags(filename::String)
 end
 
 
-function loadSpectralLibrary(SPEC_LIB_DIR::String)
+function loadSpectralLibrary(SPEC_LIB_DIR::String,
+                             params::Any)
     f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
     f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
     f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
@@ -57,10 +58,16 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String)
     library_fragment_lookup_table = nothing
     if eltype(detailed_frags).name == eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
         try
-        spl_knots = load(joinpath(SPEC_LIB_DIR,"spline_knots.jld2"))["spl_knots"]
-        library_fragment_lookup_table = SplineFragmentLookup(
-            detailed_frags, prec_frag_ranges, spl_knots, Ref(zero(last(eltype(detailed_frags).parameters)))
-        )
+            #Model that encodes initial nce guess. 
+            nmc = PiecewiseNceModel(Float32(params[:presearch_params]["nce_guess"]))
+
+            spl_knots = load(joinpath(SPEC_LIB_DIR,"spline_knots.jld2"))["spl_knots"]
+            library_fragment_lookup_table = SplineFragmentLookup(
+                detailed_frags, 
+                prec_frag_ranges, 
+                spl_knots, 
+                nmc
+            )
         catch e
             @warn "Could not load `spline_knots.jld2`"
             throw(e)
