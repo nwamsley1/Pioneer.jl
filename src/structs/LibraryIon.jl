@@ -355,6 +355,49 @@ SplineDetailedFrag{N,T}() where {N,T<:AbstractFloat} = SplineDetailedFrag(
                 zero(UInt8)  #sulfur_count
  )
 
+# Generic conversion for any AltimeterFragment to DetailedFrag
+function convert_to_detailed(frag::T) where {T <: AltimeterFragment}
+    DetailedFrag(
+        getPID(frag),
+        getMz(frag),
+        zero(Float16),  # Default intensity
+        getIonType(frag),
+        isY(frag),
+        isB(frag),
+        isP(frag),
+        isIso(frag),
+        getFragCharge(frag),
+        getIonPosition(frag),
+        getPrecCharge(frag),
+        getRank(frag),
+        sulfurCount(frag)
+    )
+end
+
+# Specialized version for SplineDetailedFrag that handles intensity calculation
+function convert_to_detailed(
+    frag::SplineDetailedFrag{N,T}, 
+    knots::NTuple{M,Float32}, 
+    nce::Float32
+) where {N,M,T}
+    DetailedFrag(
+        getPID(frag),
+        getMz(frag),
+        Float16(getIntensity(frag, knots, 3, nce)),
+        getIonType(frag),
+        isY(frag),
+        isB(frag),
+        isP(frag),
+        isIso(frag),
+        getFragCharge(frag),
+        getIonPosition(frag),
+        getPrecCharge(frag),
+        getRank(frag),
+        sulfurCount(frag)
+    )
+end
+
+
 abstract type LibraryFragmentLookup end
 
 """

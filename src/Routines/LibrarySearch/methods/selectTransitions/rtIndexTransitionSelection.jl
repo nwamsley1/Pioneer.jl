@@ -34,13 +34,13 @@ function _select_transitions_impl!(
     block_size::Int64 = 10000
 )
     n = 0
-    min_prec_mz, max_prec_mz = get_quadrupole_bounds(quad_transmission_func)
+    min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
         
         # Get precursor range within isolation window
-        start, stop = get_precursor_window_range(
+        start, stop = getPrecursorWindowRange(
             precs, min_prec_mz, max_prec_mz, isotope_err_bounds
         )
 
@@ -53,12 +53,12 @@ function _select_transitions_impl!(
             end
 
             # Get and validate precursor properties
-            prec_props = get_precursor_properties(
+            prec_props = getPrecursorProperties(
                 prec_idx, prec_mzs, prec_charges, prec_sulfur_counts
             )
             
             # Check quadrupole bounds
-            if !within_quadrupole_bounds(
+            if !withinQuadrupoleBounds(
                 prec_props.mz, prec_props.charge, 
                 min_prec_mz, max_prec_mz, isotope_err_bounds
             )
@@ -87,11 +87,11 @@ end
 
 
 # Helper functions to improve readability and maintainability
-function get_quadrupole_bounds(quad_func::QuadTransmissionFunction)
+function getQuadrupoleBounds(quad_func::QuadTransmissionFunction)
     return getPrecMinBound(quad_func), getPrecMaxBound(quad_func)
 end
 
-function get_precursor_window_range(
+function getPrecursorWindowRange(
     precs, min_prec_mz::Float32, max_prec_mz::Float32, 
     isotope_err_bounds::Tuple{Int64, Int64}
 )
@@ -102,20 +102,7 @@ function get_precursor_window_range(
     return start, stop
 end
 
-function get_precursor_properties(
-    prec_idx::UInt32,
-    prec_mzs::AbstractArray{Float32},
-    prec_charges::AbstractArray{UInt8},
-    prec_sulfur_counts::AbstractArray{UInt8}
-)
-    return (
-        mz = prec_mzs[prec_idx],
-        charge = prec_charges[prec_idx],
-        sulfur_count = prec_sulfur_counts[prec_idx]
-    )
-end
-
-function within_quadrupole_bounds(
+function withinQuadrupoleBounds(
     prec_mz::Float32, prec_charge::UInt8,
     min_prec_mz::Float32, max_prec_mz::Float32,
     isotope_err_bounds::Tuple{Int64, Int64}

@@ -208,8 +208,6 @@ function selectRTIndexedTransitions!(
             transition_idx = @inline fillTransitionList!(transitions, 
                                             library_fragment_lookup,
                                             prec_idx,
-                                            #getPrecFragRange(library_fragment_lookup, prec_idx),
-                                            #getFragments(library_fragment_lookup),
                                             prec_mz,
                                             prec_charge,
                                             prec_sulfur_count,
@@ -283,8 +281,6 @@ function selectRTIndexedTransitions!(
             transition_idx = @inline fillTransitionList!(transitions, 
                                             library_fragment_lookup,
                                             prec_idx,
-                                            #getPrecFragRange(library_fragment_lookup, prec_idx),
-                                            #getFragments(library_fragment_lookup),
                                             prec_mz,
                                             prec_charge,
                                             prec_sulfur_count,
@@ -353,7 +349,6 @@ function selectTransitionsForQuadEstimation!(
     #return sort!(transitions, by = x->getFragMZ(x)), prec_ids, transition_idx, prec_idx #Sort transitions by their fragment m/z. 
     return transition_idx, n
 end
-
 
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
     library_fragment_lookup::SplineFragmentLookup,
@@ -520,9 +515,6 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             frag_mz_bounds::Tuple{Float32, Float32},
                             block_size::Int64)::Int64 where {M,N}#where {T,U,V,W<:AbstractFloat,I<:Integer}
 
-    #NEUTRON = Float64(1.00335)
-
-    #precursor_transmission = zeros(Float32, 5)
     getPrecursorIsotopeTransmission!(
         precursor_transmission,
         prec_mz,
@@ -591,6 +583,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
     end
     return transition_idx
 end
+
 function fillPrecursorFragments!(
     prec_isotope_set::Tuple{Int64, Int64},
     transitions::Vector{DetailedFrag{Float32}}, 

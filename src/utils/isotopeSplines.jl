@@ -347,8 +347,10 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
     end
 end
 
-function getFragIsotopes!(frag_isotopes::Vector{Float32}, 
-                          precursor_transmition::Vector{Float32},
+function getFragIsotopes!(
+                            ::PartialPrec,
+                            frag_isotopes::Vector{Float32}, 
+                            precursor_transmition::Vector{Float32},
                             iso_splines::IsotopeSplineModel, 
                             prec_mz::Float32,
                             prec_charge::UInt8,

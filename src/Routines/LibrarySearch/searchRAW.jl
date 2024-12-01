@@ -94,6 +94,7 @@ function searchFragmentIndex(
     end
     return precursors_passed_scoring[1:prec_id]
 end
+
 function getPSMS(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},
@@ -154,29 +155,21 @@ function getPSMS(
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
-        ion_idx, prec_idx = selectTransitions!(
-                                        ionTemplates,
-                                        scan_to_prec_idx[i],
-                                        precursors_passed_scoring,
-                                        precursors[:mz],
-                                        precursors[:prec_charge],
-                                        precursors[:irt],
-                                        precursors[:sulfur_count],
-                                        iso_splines,
-                                        getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][i], spectra[:isolationWidthMz][i]),  
-                                        precursor_transmission,
-                                        isotopes,
-                                        n_frag_isotopes,
-                                        max_frag_rank,
-                                        abreviate_precursor_calc,
-                                        ion_list,
-                                        Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
-                                        Float32(irt_tol),                                  
-                                        ( 
-                                            spectra[:lowMz][i], spectra[:highMz][i]
-                                        ),
-                                        isotope_err_bounds = isotope_err_bounds
-                                        )
+        ion_idx = selectTransitions!(
+            transitions, StandardTransitionSelection(), ion_list,
+            scan_to_prec_idx[i], precursors_passed_scoring,
+            precursors[:mz], precursors[:prec_charge], precursors[:irt],
+            precursors[:sulfur_count], iso_splines,
+            getQuadTransmissionFunction(quad_transmission_model, 
+                                       spectra[:centerMz][i], 
+                                       spectra[:isolationWidthMz][i]),
+            precursor_transmission, isotopes, n_frag_isotopes,
+            max_frag_rank, abreviate_precursor_calc,
+            Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
+            Float32(irt_tol), (spectra[:lowMz][i], spectra[:highMz][i]);
+            isotope_err_bounds = isotope_err_bounds
+        )
+
         if ion_idx < 2
             continue
         end 
@@ -247,6 +240,7 @@ function getPSMS(
     end
     return DataFrame(@view(scored_PSMs[1:last_val]))
 end
+
 function getMassErrors(
                     spectra::Arrow.Table,
                     library_fragment_lookup::LibraryFragmentLookup,
@@ -288,12 +282,9 @@ function getMassErrors(
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
-        ion_idx, prec_idx = selectTransitions!(
-                                        ionTemplates,
-                                        library_fragment_lookup,
-                                        scan_to_prec_idx[i],
-                                        precursors_passed_scoring,
-                                        max_rank = max_rank
+        ion_idx = selectTransitions!(ionTemplates, MassErrEstimationStrategy(),
+                                        library_fragment_lookup, scan_to_prec_idx[i],
+                                        precursors_passed_scoring, max_rank = max_rank
                                         )
         ##########
         #Match sorted list of plausible ions to the observed spectra
@@ -313,7 +304,6 @@ function getMassErrors(
     end
     return @view(all_fmatches[1:frag_err_idx])
 end
-
 
 function huberTuningSearch(
                     spectra::Arrow.Table,
@@ -404,28 +394,18 @@ function huberTuningSearch(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             precs_temp_size = 0
-            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
-                ionTemplates,
-                precs_temp,
-                precs_temp_size,
-                library_fragment_lookup,
-                precursors[:mz],
-                precursors[:prec_charge],
-                precursors[:sulfur_count],
-                iso_splines,
-                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
-                precursor_transmission,
-                isotopes,
-                n_frag_isotopes,
-                max_frag_rank,
-                rt_index,
-                irt_start,
-                irt_stop,
-                (
-                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
-                ),
-                isotope_err_bounds,
-                10000)
+            ion_idx, _, prec_temp_size = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
+                precs_temp, precs_temp_size, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines, quad_transmission_func, precursor_transmission,
+                isotopes, n_frag_isotopes, max_frag_rank, rt_index,
+                irt_start, irt_stop, 
+                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                precursors_passing = nothing,
+                isotope_err_bounds = isotope_err_bounds,
+                block_size = 10000
+            )
+
         end
         ##########
         #Match sorted list of plausible ions to the observed spectra
@@ -562,20 +542,15 @@ function QuadTransmissionSearch(
 
         #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-        ion_idx, prec_idx = selectTransitionsForQuadEstimation!(
-            scan_idx_to_prec_idx[scan_idx],
-            ionTemplates,
-            library_fragment_lookup,
-            precursors[:mz],
-            precursors[:prec_charge],
-            precursors[:sulfur_count],
-            iso_splines,
-            precursor_transmission,
-            isotopes,
-            (
-                spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
-            ),
-            10000)
+
+        ion_idx, n = selectTransitions!(
+            ionTemplates, QuadEstimationTransitionSelection(), library_fragment_lookup,
+            scan_idx_to_prec_idx[scan_idx], precursors[:mz],precursors[:prec_charge],
+            precursors[:sulfur_count], iso_splines, precursor_transmission, isotopes,
+            (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+            block_size = 10000
+        )
+
         ##########
         #Match sorted list of plausible ions to the observed spectra
         nmatches, nmisses = matchPeaks!(ionMatches, 
@@ -649,6 +624,7 @@ function QuadTransmissionSearch(
     end
     return DataFrame(tuning_results)
 end
+
 function secondSearch(
                     spectra::Arrow.Table,
                     thread_task::Vector{Int64},#UnitRange{Int64},
@@ -740,28 +716,17 @@ function secondSearch(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             precs_temp_size = 0
-            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
-                ionTemplates,
-                precs_temp,
-                precs_temp_size,
-                library_fragment_lookup,
-                precursors[:mz],
-                precursors[:prec_charge],
-                precursors[:sulfur_count],
-                iso_splines,
-                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),  
-                precursor_transmission,
-                isotopes,
-                n_frag_isotopes,
-                max_frag_rank,
-                rt_index,
-                irt_start,
-                irt_stop, 
-                (
-                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
-                ),
-                isotope_err_bounds,
-                10000)
+            ion_idx, _, prec_temp_size = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
+                precs_temp, precs_temp_size, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines, quad_transmission_func, precursor_transmission,
+                isotopes, n_frag_isotopes, max_frag_rank, rt_index,
+                irt_start, irt_stop, 
+                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                precursors_passing = nothing,
+                isotope_err_bounds = isotope_err_bounds,
+                block_size = 10000
+            )
         end
         ##########
         #Match sorted list of plausible ions to the observed spectra
@@ -941,29 +906,17 @@ function getChromatograms(
             #the retention time and m/z tolerance constraints
             precs_temp_size = 0
             quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx])
-            ion_idx, prec_idx, prec_temp_size = selectRTIndexedTransitions!(
-                ionTemplates,
-                precs_temp,
-                precs_temp_size,
-                precursors_passing,
-                library_fragment_lookup,
-                precursors[:mz],
-                precursors[:prec_charge],
-                precursors[:sulfur_count],
-                iso_splines,
-                quad_transmission_function,  
-                precursor_transmission,
-                isotopes,
-                n_frag_isotopes,
-                max_frag_rank,
-                rt_index,
-                irt_start,
-                irt_stop,
-                (
-                    spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]
-                ),
-                isotope_err_bounds,
-                10000)
+            ion_idx, _, prec_temp_size = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
+                precs_temp, precs_temp_size, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines, quad_transmission_func, precursor_transmission,
+                isotopes, n_frag_isotopes, max_frag_rank, rt_index,
+                irt_start, irt_stop, 
+                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                precursors_passing = precursors_passing,
+                isotope_err_bounds = isotope_err_bounds,
+                block_size = 10000
+            )
         end
         ##########
         #Match sorted list of plausible ions to the observed spectra
@@ -1144,6 +1097,7 @@ function massErrorSearch(
     psms = fetch.(tasks)
     return psms
 end
+
 function LibrarySearch(
     spectra::Arrow.Table,
     params::NamedTuple;

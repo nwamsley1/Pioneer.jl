@@ -377,12 +377,12 @@ ms_table_path_to_psms_path = quantSearch(
             temp_folder,
             precursors[:accession_numbers],
             accession_number_to_id,
-            precursors[:sequence])
+            precursors[:sequence]);
     #value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
 
     pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
                                     :max_pg_score, 
-                                    min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3))
+                                    min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3));
 
     ###########
     #Re-quantify with 1% fdr precursors 
