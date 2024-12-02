@@ -1,26 +1,3 @@
-"""
-Abstract type to specify precursor isotopes estimation strategy.
-Used to determine how fragment ion isotope patterns are calculated.
-"""
-abstract type PrecEstimation end
-
-"""
-    PartialPrecCapture <: PrecEstimation
-
-Strategy for calculating fragment isotope patterns when only a portion of the precursor 
-isotope pattern is captured in the isolation window. Uses a more detailed calculation
-that accounts for the partial capture of precursor isotopologues.
-"""
-struct PartialPrecCapture <: PrecEstimation end
-
-"""
-    FullPrecCapture <: PrecEstimation
-
-Strategy for calculating fragment isotope patterns when the full precursor isotope pattern
-is captured in the isolation window. Uses a simplified calculation that assumes complete
-capture of relevant precursor isotopologues.
-"""
-struct FullPrecCapture <: PrecEstimation end
 
 
 """
@@ -56,8 +33,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             prec_estimation_type::PrecEstimation,
                             precursor_fragment_range::UnitRange{UInt64},
                             fragment_ions::Vector{F},
-                            nce::Union{Missing, Float32},
-                            knots::Union{Missing, NTuple{M, Float32}},
+                            spline_data::G,
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
@@ -69,7 +45,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             max_frag_rank::UInt8,
                             iso_splines::IsotopeSplineModel, 
                             frag_mz_bounds::Tuple{Float32, Float32},
-                            block_size::Int64)::Int64 where {M, F <: AltimeterFragment}#where {T,U,V,W<:AbstractFloat,I<:Integer}
+                            block_size::Int64)::Int64 where {G<:IntensityDataType, F <: AltimeterFragment}#where {T,U,V,W<:AbstractFloat,I<:Integer}
 
     # Calculate precursor isotope transmission and range
     getPrecursorIsotopeTransmission!(precursor_transmission, prec_mz, prec_charge, quad_transmission_func)
@@ -82,7 +58,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
         # Calculate isotope pattern based on estimation strategy
         getFragIsotopes!(prec_estimation_type, isotopes, precursor_transmission,
         prec_isotope_set, frag_iso_idx_range, iso_splines,
-        prec_mz, prec_charge, prec_sulfur_count, frag, knots, nce)
+        prec_mz, prec_charge, prec_sulfur_count, frag, spline_data)
         # Create transitions for each isotope
         transition_idx = addTransitionIsotopes!(transitions, transition_idx, 
                                                 frag, isotopes, frag_iso_idx_range,
@@ -131,13 +107,12 @@ function getFragIsotopes!(
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
-                            frag::SplineDetailedFrag{N, Float32}, 
-                            knots::NTuple{M, Float32},
-                            nce::Float32) where {M, N}
+                            frag::F, 
+                            spline_data::G) where {F<:AltimeterFragment, G<:IntensityDataType}
     #Reset relative abundances of isotopes to zero 
     fill!(frag_isotopes, zero(eltype(frag_isotopes)))
     #Predicted total fragment ion intensity (sum of fragment isotopes)
-    total_fragment_intensity =  getIntensity(frag, knots, 3, nce)
+    total_fragment_intensity =  getIntensity(frag, spline_data)
 
     getFragAbundance!(
                     frag_isotopes, 
@@ -165,12 +140,11 @@ function getFragIsotopes!(
                             prec_mz::Float32,
                             prec_charge::UInt8,
                             prec_sulfur_count::UInt8,
-                            frag::SplineDetailedFrag{N, Float32}, 
-                            knots::NTuple{M, Float32},
-                            nce::Float32) where {M, N}
+                            frag::F, 
+                            spline_data::G) where {F<:AltimeterFragment, G<:IntensityDataType}
 
     #Predicted total fragment ion intensity (sum of fragment isotopes)
-    total_fragment_intensity = getIntensity(frag, knots, 3, nce)
+    total_fragment_intensity = getIntensity(frag, spline_data)
     frag_mz = getMz(frag)
     frag_charge = getCharge(frag)
     frag_nsulfur = Int64(getSulfurCount(frag))

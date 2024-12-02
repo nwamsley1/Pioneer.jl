@@ -2,12 +2,13 @@
 function _select_transitions_impl!(
     transitions::Vector{DetailedFrag{Float32}},
     ::MassErrEstimationStrategy,
+    prec_estimation_type::PrecEstimation,
     transition_idx::Int64,
-    library_fragment_lookup::T,  # Generic type parameter
+    library_fragment_lookup::L,  # Generic type parameter
     scan_to_prec_idx::UnitRange{Int64},
     precursors_passed_scoring::Vector{UInt32};
     max_rank::Int64 = 5,
-    block_size::Int64 = 10000) where {T <: LibraryFragmentLookup}
+    block_size::Int64 = 10000) where {L <: LibraryFragmentLookup}
 
     for i in scan_to_prec_idx
         prec_idx = precursors_passed_scoring[i]
@@ -36,7 +37,7 @@ function process_fragment!(
     frag = getFrag(lookup, frag_idx)
     if getRank(frag) <= max_rank
         transition_idx += 1
-        transitions[transition_idx] = convert_to_detailed(frag, getKnots(lookup), getNCE(lookup))
+        transitions[transition_idx] = convert_to_detailed(frag, getSplineData(lookup))
         ensureTransitionCapacity!(transitions, transition_idx, block_size)
     end
     return transition_idx

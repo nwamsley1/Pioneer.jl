@@ -66,7 +66,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                 detailed_frags, 
                 prec_frag_ranges, 
                 spl_knots, 
-                nmc
+                nmc,
+                3
             )
         catch e
             @warn "Could not load `spline_knots.jld2`"

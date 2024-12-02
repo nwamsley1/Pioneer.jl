@@ -46,8 +46,7 @@ function _select_transitions_impl!(
                 isotopes,
                 iso_splines,
                 frag_mz_bounds,
-                getKnots(lookup), 
-                getNCE(lookup),
+                getSplineData(lookup, prec_charge, prec_mz),
                 block_size
             )
         end
@@ -70,10 +69,9 @@ function fill_quad_transitions!(
     isotopes::Vector{Float32},
     iso_splines::IsotopeSplineModel,
     frag_mz_bounds::Tuple{Float32, Float32},
-    knots::Union{Missing, NTuple{M, Float32}},
-    nce::Union{Missing, Float32},
+    spline_data::G,
     block_size::Int64,
-) where {M}
+) where {G<:IntensityDataType}
     # Reset and set up precursor transmission
     fill!(precursor_transmission, zero(Float32))
     precursor_transmission[prec_iso_idx + 1] = one(Float32)
@@ -104,8 +102,7 @@ function fill_quad_transitions!(
             prec_charge,
             prec_sulfur_count,
             frag,
-            knots,
-            nce
+            spline_data
         )
 
         # Add transitions for mono and mono+1 isotopes

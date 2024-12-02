@@ -289,7 +289,7 @@ function getMassErrors(
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
-        ion_idx = selectTransitions!(ionTemplates, MassErrEstimationStrategy(),
+        ion_idx = selectTransitions!(ionTemplates, MassErrEstimationStrategy(), FullPrecCapture(),
                                         library_fragment_lookup, scan_to_prec_idx[i],
                                         precursors_passed_scoring, max_rank = max_rank
                                         )

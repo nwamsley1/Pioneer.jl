@@ -194,6 +194,20 @@ getPrecCharge(f::AltimeterFragment) = f.prec_charge
 getRank(f::AltimeterFragment) = f.rank
 sulfurCount(f::AltimeterFragment) = f.sulfur_count
 
+abstract type IntensityDataType end
+
+struct SplineType{M,T<:AbstractFloat} <: IntensityDataType
+    knots::NTuple{M, T}
+    nce::T
+    degree::Int64
+end
+
+getNCE(st::SplineType) = st.nce
+getKnots(st::SplineType) = st.knots
+getDegree(st::SplineType) = st.degree
+
+struct ConstantType <: IntensityDataType end
+
 """
     DetailedFrag{T<:AbstractFloat} <: AltimeterFragment{T}
 
@@ -239,6 +253,14 @@ struct DetailedFrag{T<:AbstractFloat} <: AltimeterFragment{T}
     rank::UInt8
     sulfur_count::UInt8
 end
+
+function getIntensity(
+    pf::DetailedFrag{T},
+    intensity_type::ConstantType
+    ) where {T<:AbstractFloat}
+    return pf.intensity
+end
+
 # Example usage
 function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
     jldsave(filename; data)
@@ -326,12 +348,10 @@ ArrowTypes.arrowname(::Type{SplineDetailedFrag{4, Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:SplineDetailedFrag}) = DetailedFrag
 #This needs to be eddited for the splines
 function getIntensity(
-    pf::SplineDetailedFrag{N, T},
-    knots::NTuple{M, T},
-    degree::Int64,
-    nce::T
-    ) where {N,M,T<:AbstractFloat}
-    return splevl(nce, knots, pf.intensity, degree)::T
+                    pf::SplineDetailedFrag{N, T},
+                    intensity_type::SplineType{M, T}
+                    ) where {M, N, T<:AbstractFloat}
+   return splevl(getNCE(intensity_type), getKnots(intensity_type), pf.intensity, getDegree(intensity_type))::T
 end
 
 #LibraryFragment{T}() where {T<:AbstractFloat} = LibraryFragment(zero(T), zero(UInt8), false, zero(UInt8), zero(UInt8), zero(Float32), zero(UInt8), zero(UInt32), zero(UInt8), zero(UInt8))
@@ -356,11 +376,11 @@ SplineDetailedFrag{N,T}() where {N,T<:AbstractFloat} = SplineDetailedFrag(
  )
 
 # Generic conversion for any AltimeterFragment to DetailedFrag
-function convert_to_detailed(frag::T) where {T <: AltimeterFragment}
+function convert_to_detailed(frag::DetailedFrag{T}) where {T <: AbstractFloat}
     DetailedFrag(
         getPID(frag),
         getMz(frag),
-        zero(Float16),  # Default intensity
+        Float16(frag.intensity),  # Default intensity
         getIonType(frag),
         isY(frag),
         isB(frag),
@@ -377,13 +397,12 @@ end
 # Specialized version for SplineDetailedFrag that handles intensity calculation
 function convert_to_detailed(
     frag::SplineDetailedFrag{N,T}, 
-    knots::NTuple{M,Float32}, 
-    nce::Float32
+    spline_data::SplineType{M, T},
 ) where {N,M,T}
     DetailedFrag(
         getPID(frag),
         getMz(frag),
-        Float16(getIntensity(frag, knots, 3, nce)),
+        Float16(getIntensity(frag, spline_data)),
         getIonType(frag),
         isY(frag),
         isB(frag),
@@ -429,6 +448,9 @@ getFrag(lfp::StandardFragmentLookup{<:AbstractFloat}, prec_idx::Integer) = lfp.f
 getFragments(lfp::StandardFragmentLookup{<:AbstractFloat}) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
 
+function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
+    return ConstantType()
+end
 
 """
    abstract type NceModel{T<:AbstractFloat} end
@@ -516,11 +538,31 @@ struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
     prec_frag_ranges::Vector{UInt64}
     knots::NTuple{M, T}
     nce_model::NceModel{T}
+    degree::Int64
 end
 
+getDegree(lfp::SplineFragmentLookup) = lfp.degree
+getKnots(lfp::SplineFragmentLookup) = lfp.knots
 getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
+
+function getSplineData(lfp::SplineFragmentLookup{N,M,T}, prec_charge::UInt8, prec_mz::T) where {N,M,T<:AbstractFloat}
+    return SplineType(
+        getKnots(lfp),
+        getNCE(lfp, prec_charge, prec_mz),
+        getDegree(lfp)
+    )
+end
+
+function getSplineData(lfp::SplineFragmentLookup{N,M,T}) where {N,M,T<:AbstractFloat}
+    return SplineType(
+        getKnots(lfp),
+        getNCE(lfp),
+        getDegree(lfp)
+    )
+end
+
 function getNCE(lfp::SplineFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
     return lfp.nce_model(prec_mz, prec_charge)
 end
@@ -534,7 +576,8 @@ function updateNceModel(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceM
         lookup.frags,  # This will share the reference to the original vector
         lookup.prec_frag_ranges,
         lookup.knots,
-        new_nce_model
+        new_nce_model,
+        lookup.degree
     )
 end
 #=

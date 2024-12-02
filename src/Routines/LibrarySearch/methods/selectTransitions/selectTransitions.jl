@@ -4,6 +4,29 @@ struct StandardTransitionSelection <: TransitionSelectionStrategy end
 struct MassErrEstimationStrategy <: TransitionSelectionStrategy end
 struct RTIndexedTransitionSelection <: TransitionSelectionStrategy end
 struct QuadEstimationTransitionSelection <: TransitionSelectionStrategy end
+"""
+Abstract type to specify precursor isotopes estimation strategy.
+Used to determine how fragment ion isotope patterns are calculated.
+"""
+abstract type PrecEstimation end
+
+"""
+    PartialPrecCapture <: PrecEstimation
+
+Strategy for calculating fragment isotope patterns when only a portion of the precursor 
+isotope pattern is captured in the isolation window. Uses a more detailed calculation
+that accounts for the partial capture of precursor isotopologues.
+"""
+struct PartialPrecCapture <: PrecEstimation end
+
+"""
+    FullPrecCapture <: PrecEstimation
+
+Strategy for calculating fragment isotope patterns when the full precursor isotope pattern
+is captured in the isolation window. Uses a simplified calculation that assumes complete
+capture of relevant precursor isotopologues.
+"""
+struct FullPrecCapture <: PrecEstimation end
 
 
 # Helper function to ensure capacity

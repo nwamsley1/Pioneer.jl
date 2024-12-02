@@ -43,16 +43,13 @@ function _select_transitions_impl!(
         end
         
         prec_sulfur_count = prec_sulfur_counts[prec_idx]
-        nce = getNCE(lookup, prec_charge, prec_mz)
-        
         # Fill transition list using spline-specific implementation
         transition_idx = @inline fillTransitionList!(
             transitions,
             prec_estimation_type,
             getPrecFragRange(lookup, prec_idx),
             getFragments(lookup),
-            nce,
-            getKnots(lookup),
+            getSplineData(lookup, prec_charge, prec_mz),
             prec_mz,
             prec_charge,
             prec_sulfur_count,
