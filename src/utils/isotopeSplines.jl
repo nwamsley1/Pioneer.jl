@@ -454,6 +454,15 @@ function getPrecursorIsotopeTransmission!(
         prec_iso_mz += Float32(NEUTRON/prec_charge)
     end
 end
+
+function getPrecursorIsotopeTransmission!(
+    prec_isotope_transmission::Vector{Float32},
+    prec_mono_mz::Float32,
+    prec_charge::UInt8,
+    ::NullQuadTransmission)
+    return prec_isotope_transmission
+end
+
 #=
 function correctPrecursorAbundance(
     abundance::Float32,

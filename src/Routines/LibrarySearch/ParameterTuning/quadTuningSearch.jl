@@ -350,7 +350,8 @@ function quadTuningSearch(    rt_to_irt_map_dict,
                 ϵ3 = 1e-5 #Conergence in squared error
                 )
             quad_model_dict[ms_file_idx] = RazoQuadModel(fitted_rqm)
-        catch
+        catch e
+            throw(e)
             @warn "Quad transmission function fit failed for $MS_TABLE_PATH. Resorting to default"
             quad_model_dict[ms_file_idx] = GeneralGaussModel(5.0f0, 0.0f0)
         end

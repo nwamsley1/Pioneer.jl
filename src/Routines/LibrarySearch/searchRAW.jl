@@ -550,13 +550,28 @@ function QuadTransmissionSearch(
         #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
 
-        ion_idx, n = selectTransitions!(
-            ionTemplates, QuadEstimationTransitionSelection(), library_fragment_lookup,
+        ion_idx = selectTransitions!(
+            ionTemplates, QuadEstimationTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
             scan_idx_to_prec_idx[scan_idx], precursors[:mz],precursors[:prec_charge],
-            precursors[:sulfur_count], iso_splines, precursor_transmission, isotopes,
+            precursors[:sulfur_count], iso_splines,
+            precursor_transmission, isotopes,
             (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
             block_size = 10000
         )
+        #=
+        ion_idx = selectTransitions!(
+            ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
+            precs_temp, precursors[:mz], precursors[:prec_charge],
+            precursors[:sulfur_count], iso_splines, getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+            precursor_transmission,
+            isotopes, n_frag_isotopes, max_frag_rank, rt_index,
+            irt_start, irt_stop, 
+            (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+            precursors_passing = precursors_passing,
+            isotope_err_bounds = isotope_err_bounds,
+            block_size = 10000
+        )
+        =#
 
         ##########
         #Match sorted list of plausible ions to the observed spectra

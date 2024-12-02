@@ -73,18 +73,7 @@ function _select_transitions_impl!(
             precs_temp_size += 1
             n += 1
             precs_temp[precs_temp_size] = prec_idx
-            #=
-            # Fill transitions for this precursor
-            transition_idx = @inline fillTransitionList!(
-                transitions, prec_estimation_type, library_fragment_lookup,
-                prec_idx, prec_props.mz, prec_props.charge, prec_props.sulfur_count,
-                transition_idx, quad_transmission_func,
-                precursor_transmission, isotopes,
-                n_frag_isotopes, max_frag_rank, false,
-                iso_splines, frag_mz_bounds, block_size
-            )
-            =#
-            #prec_sulfur_count = prec_sulfur_counts[prec_idx]
+
             nce = getNCE(lookup, prec_charge, prec_mz)
         
             
