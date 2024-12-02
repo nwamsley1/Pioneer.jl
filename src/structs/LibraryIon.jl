@@ -529,7 +529,7 @@ function getNCE(lfp::SplineFragmentLookup)
 end
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
 
-function updateNceModel(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,C,T}
+function updateNceModel(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
     SplineFragmentLookup{N,M,T}(
         lookup.frags,  # This will share the reference to the original vector
         lookup.prec_frag_ranges,

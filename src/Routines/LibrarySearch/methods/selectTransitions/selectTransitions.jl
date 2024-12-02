@@ -35,6 +35,7 @@ end
 function selectTransitions!(
     transitions::Vector{DetailedFrag{Float32}},
     strategy::TransitionSelectionStrategy,
+    prec_estimation_type::PrecEstimation,
     common_args...;
     kwargs...)
     
@@ -42,7 +43,7 @@ function selectTransitions!(
     transition_idx = 0
     
     # Delegate to specific implementation
-    transition_idx = _select_transitions_impl!(transitions, strategy, transition_idx, common_args...; kwargs...)
+    transition_idx = _select_transitions_impl!(transitions, strategy, prec_estimation_type, transition_idx, common_args...; kwargs...)
     
     # Common cleanup/sorting code
     sort!(@view(transitions[1:transition_idx]), 

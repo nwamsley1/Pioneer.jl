@@ -1,7 +1,7 @@
-# Core implementation for MassErrEstimationTransitionSelection
+# Core implementation for MassErrEstimationStrategy
 function _select_transitions_impl!(
     transitions::Vector{DetailedFrag{Float32}},
-    ::MassErrEstimationTransitionSelection,
+    ::MassErrEstimationStrategy,
     transition_idx::Int64,
     library_fragment_lookup::T,  # Generic type parameter
     scan_to_prec_idx::UnitRange{Int64},

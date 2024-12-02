@@ -62,8 +62,17 @@ function importScripts()
                                                                                     "matchPeaks.jl",
                                                                                     "buildDesignMatrix.jl",
                                                                                     "normalizeQuant.jl",
-                                                                                    "selectTransitions.jl",
-                                                                                    "queryFragmentIndex.jl"]];
+                                                                                    #"selectTransitions.jl",
+                                                                                   "queryFragmentIndex.jl"]];
+    #Files needed for PRM routines
+    [include(joinpath(package_root,"src","Routines","LibrarySearch","methods","selectTransitions", jl_file)) for jl_file in [
+    "selectTransitions.jl",  
+    "fillTransitionList.jl",
+    "standardTransitionSelection.jl", 
+    "massErrEstimationStrategy.jl",
+        "quadEstimationSelection.jl",
+        "rtIndexTransitionSelection.jl",
+                    ]];                                                                                
     #Files needed for PRM routines
     [include(joinpath(package_root,"src","Routines","LibrarySearch","ParameterTuning",jl_file)) for jl_file in [
             "addPreSearchColumns.jl",

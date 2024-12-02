@@ -55,7 +55,7 @@ precursor estimation strategy.
 function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}}, 
                             prec_estimation_type::PrecEstimation,
                             precursor_fragment_range::UnitRange{UInt64},
-                            fragment_ions::Vector{AltimeterFragment},
+                            fragment_ions::Vector{F},
                             nce::Union{Missing, Float32},
                             knots::Union{Missing, NTuple{M, Float32}},
                             prec_mz::Float32,
@@ -69,7 +69,7 @@ function fillTransitionList!(transitions::Vector{DetailedFrag{Float32}},
                             max_frag_rank::UInt8,
                             iso_splines::IsotopeSplineModel, 
                             frag_mz_bounds::Tuple{Float32, Float32},
-                            block_size::Int64)::Int64 where {M}#where {T,U,V,W<:AbstractFloat,I<:Integer}
+                            block_size::Int64)::Int64 where {M, F <: AltimeterFragment}#where {T,U,V,W<:AbstractFloat,I<:Integer}
 
     # Calculate precursor isotope transmission and range
     getPrecursorIsotopeTransmission!(precursor_transmission, prec_mz, prec_charge, quad_transmission_func)
@@ -95,7 +95,7 @@ end
 """
 Helper function to add transitions for each isotope of a fragment.
 """
-function addTransitionIsosoptes!(transitions::Vector{DetailedFrag{Float32}},
+function addTransitionIsotopes!(transitions::Vector{DetailedFrag{Float32}},
                                 transition_idx::Int64,
                                 frag::AltimeterFragment,
                                 isotopes::Vector{Float32},

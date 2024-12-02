@@ -122,7 +122,7 @@ function getPSMS(
                     max_best_rank::Int64,
                     n_frag_isotopes::Int64,
                     max_frag_rank::UInt8,
-                    abreviate_precursor_calc::Bool,
+                    prec_estimation::PrecEstimation,
                     irt_tol::AbstractFloat,
                     spec_order::Set{Int64},
                     ) where {L<:LibraryIon{Float32}}
@@ -156,15 +156,22 @@ function getPSMS(
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
         ion_idx = selectTransitions!(
-            transitions, StandardTransitionSelection(), ion_list,
+            ionTemplates, 
+            StandardTransitionSelection(), 
+            prec_estimation,
+            ion_list,
             scan_to_prec_idx[i], precursors_passed_scoring,
-            precursors[:mz], precursors[:prec_charge], precursors[:irt],
-            precursors[:sulfur_count], iso_splines,
+            precursors[:mz], 
+            precursors[:prec_charge], 
+            precursors[:sulfur_count],
+            precursors[:irt],
+            #precursors[:sulfur_count], 
+            iso_splines,
             getQuadTransmissionFunction(quad_transmission_model, 
                                        spectra[:centerMz][i], 
                                        spectra[:isolationWidthMz][i]),
             precursor_transmission, isotopes, n_frag_isotopes,
-            max_frag_rank, abreviate_precursor_calc,
+            max_frag_rank,
             Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
             Float32(irt_tol), (spectra[:lowMz][i], spectra[:highMz][i]);
             isotope_err_bounds = isotope_err_bounds
@@ -362,7 +369,6 @@ function huberTuningSearch(
     prec_mz_string = ""
 
     rt_idx = 0
-    prec_temp_size = 0
     precs_temp = Vector{UInt32}(undef, 50000)
 
     
@@ -393,11 +399,12 @@ function huberTuningSearch(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
-            precs_temp_size = 0
-            ion_idx, _, prec_temp_size = selectTransitions!(
-                ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
-                precs_temp, precs_temp_size, precursors[:mz], precursors[:prec_charge],
-                precursors[:sulfur_count], iso_splines, quad_transmission_func, precursor_transmission,
+            ion_idx = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
+                precs_temp, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines,
+                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]), 
+                precursor_transmission,
                 isotopes, n_frag_isotopes, max_frag_rank, rt_index,
                 irt_start, irt_stop, 
                 (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
@@ -680,7 +687,7 @@ function secondSearch(
     prec_mz_string = ""
 
     rt_idx = 0
-    prec_temp_size = 0
+    #prec_temp_size = 0
     precs_temp = Vector{UInt32}(undef, 50000)
 
     
@@ -715,6 +722,7 @@ function secondSearch(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
+            #=
             precs_temp_size = 0
             ion_idx, _, prec_temp_size = selectTransitions!(
                 ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
@@ -727,6 +735,21 @@ function secondSearch(
                 isotope_err_bounds = isotope_err_bounds,
                 block_size = 10000
             )
+            =#
+            ion_idx = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
+                precs_temp, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines,
+                getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]), 
+                precursor_transmission,
+                isotopes, n_frag_isotopes, max_frag_rank, rt_index,
+                irt_start, irt_stop, 
+                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                precursors_passing = nothing,
+                isotope_err_bounds = isotope_err_bounds,
+                block_size = 10000
+            )
+
         end
         ##########
         #Match sorted list of plausible ions to the observed spectra
@@ -904,12 +927,12 @@ function getChromatograms(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
-            precs_temp_size = 0
             quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx])
-            ion_idx, _, prec_temp_size = selectTransitions!(
-                ionTemplates, RTIndexedTransitionSelection(), library_fragment_lookup,
-                precs_temp, precs_temp_size, precursors[:mz], precursors[:prec_charge],
-                precursors[:sulfur_count], iso_splines, quad_transmission_func, precursor_transmission,
+            ion_idx = selectTransitions!(
+                ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
+                precs_temp, precursors[:mz], precursors[:prec_charge],
+                precursors[:sulfur_count], iso_splines, getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+                precursor_transmission,
                 isotopes, n_frag_isotopes, max_frag_rank, rt_index,
                 irt_start, irt_stop, 
                 (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
@@ -1138,6 +1161,7 @@ function LibrarySearch(
     precursors_passed_scoring = fetch.(tasks)
     #println("Finished frag index search...")
     #println("start psms thing...")
+    prec_estimation = Bool(kwargs[:params]["abreviate_precursor_calc"]) ? PartialPrecCapture() : FullPrecCapture()
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -1168,7 +1192,7 @@ function LibrarySearch(
                                 kwargs[:params]["max_best_rank"],
                                 Int64(kwargs[:params]["n_frag_isotopes"]),
                                 UInt8(kwargs[:params]["max_frag_rank"]),
-                                Bool(kwargs[:params]["abreviate_precursor_calc"]),
+                                prec_estimation,#Bool(kwargs[:params]["abreviate_precursor_calc"]),
                                 Float32(kwargs[:irt_tol]),
                                 Set(2)
                             )
@@ -1264,6 +1288,7 @@ function NceScanningSearch(
     
     all_results = []
     flt = kwargs[:fragment_lookup_table] 
+    prec_estimation = Bool(kwargs[:params]["abreviate_precursor_calc"]) ? PartialPrecCapture() : FullPrecCapture()
     for _nce_ in nce_grid
         flt = updateNceModel(
             flt,
@@ -1299,7 +1324,7 @@ function NceScanningSearch(
                     kwargs[:params]["max_best_rank"],
                     Int64(kwargs[:params]["n_frag_isotopes"]),
                     UInt8(kwargs[:params]["max_frag_rank"]),
-                    Bool(kwargs[:params]["abreviate_precursor_calc"]),
+                    prec_estimation,
                     Float32(kwargs[:irt_tol]),
                     Set(2)
                 )

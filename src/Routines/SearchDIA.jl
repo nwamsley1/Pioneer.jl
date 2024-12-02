@@ -194,7 +194,6 @@ function SearchDIA(params_path::String)
     mkdir(joinpath(qc_plot_folder, "quad_model"))
     savefig(p, joinpath(qc_plot_folder, "quad_model", "quad.pdf"))
 
-
     peak_fwhms, psms_paths = firstSearch(
         first_search_psms_folder,
         RT_to_iRT_map_dict,

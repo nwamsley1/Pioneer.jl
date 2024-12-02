@@ -1,6 +1,7 @@
 function _select_transitions_impl!(
     transitions::Vector{DetailedFrag{Float32}},
     ::StandardTransitionSelection,
+    prec_estimation_type::PrecEstimation,
     transition_idx::Int64,
     lookup::LibraryFragmentLookup,
     scan_to_prec_idx::UnitRange{Int64},
@@ -8,13 +9,13 @@ function _select_transitions_impl!(
     prec_mzs::AbstractArray{Float32},
     prec_charges::AbstractArray{UInt8},
     prec_sulfur_counts::AbstractArray{UInt8},
+    prec_irts::AbstractArray{Float32},
     iso_splines::IsotopeSplineModel,
     quad_transmission_func::QuadTransmissionFunction,
     precursor_transmission::Vector{Float32},
     isotopes::Vector{Float32},
     n_frag_isotopes::Int64,
     max_frag_rank::UInt8,
-    abreviate_precursor_calc::Bool,
     iRT::Float32,
     iRT_tol::Float32,
     frag_mz_bounds::Tuple{Float32, Float32};
@@ -47,6 +48,7 @@ function _select_transitions_impl!(
         # Fill transition list using spline-specific implementation
         transition_idx = @inline fillTransitionList!(
             transitions,
+            prec_estimation_type,
             getPrecFragRange(lookup, prec_idx),
             getFragments(lookup),
             nce,
@@ -60,7 +62,6 @@ function _select_transitions_impl!(
             isotopes,
             n_frag_isotopes,
             max_frag_rank,
-            abreviate_precursor_calc,
             iso_splines,
             frag_mz_bounds,
             block_size

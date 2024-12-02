@@ -346,7 +346,7 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end
 end
-
+#=
 function getFragIsotopes!(
                             ::PartialPrec,
                             frag_isotopes::Vector{Float32}, 
@@ -378,6 +378,7 @@ function getFragIsotopes!(
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end
 end
+=#
 """
     getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
 

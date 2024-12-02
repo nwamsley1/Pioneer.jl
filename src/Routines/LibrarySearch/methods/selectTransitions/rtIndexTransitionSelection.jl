@@ -12,10 +12,10 @@ Returns (transition_idx, n, precs_temp_size) where:
 function _select_transitions_impl!(
     transitions::Vector{DetailedFrag{Float32}},
     ::RTIndexedTransitionSelection,
+    prec_estimation_type::PrecEstimation,
     transition_idx::Int64,
-    library_fragment_lookup::LibraryFragmentLookup,
+    lookup::LibraryFragmentLookup,
     precs_temp::Vector{UInt32},
-    precs_temp_size::Int64,
     prec_mzs::AbstractArray{Float32},
     prec_charges::AbstractArray{UInt8},
     prec_sulfur_counts::AbstractArray{UInt8},
@@ -35,7 +35,7 @@ function _select_transitions_impl!(
 )
     n = 0
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
-    
+    precs_temp_size = 0
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
         
@@ -53,13 +53,17 @@ function _select_transitions_impl!(
             end
 
             # Get and validate precursor properties
-            prec_props = getPrecursorProperties(
-                prec_idx, prec_mzs, prec_charges, prec_sulfur_counts
-            )
             
+            #prec_props = getPrecursorProperties(
+            #    prec_idx, prec_mzs, prec_charges, prec_sulfur_counts
+            #)
+            prec_charge = prec_charges[prec_idx]
+            prec_mz = prec_mzs[prec_idx] 
+            prec_sulfur_count = prec_sulfur_counts[prec_idx]
+   
             # Check quadrupole bounds
             if !withinQuadrupoleBounds(
-                prec_props.mz, prec_props.charge, 
+                prec_mz, prec_charge, 
                 min_prec_mz, max_prec_mz, isotope_err_bounds
             )
                 continue
@@ -69,20 +73,45 @@ function _select_transitions_impl!(
             precs_temp_size += 1
             n += 1
             precs_temp[precs_temp_size] = prec_idx
-
+            #=
             # Fill transitions for this precursor
             transition_idx = @inline fillTransitionList!(
-                transitions, library_fragment_lookup,
+                transitions, prec_estimation_type, library_fragment_lookup,
                 prec_idx, prec_props.mz, prec_props.charge, prec_props.sulfur_count,
                 transition_idx, quad_transmission_func,
                 precursor_transmission, isotopes,
                 n_frag_isotopes, max_frag_rank, false,
                 iso_splines, frag_mz_bounds, block_size
             )
+            =#
+            #prec_sulfur_count = prec_sulfur_counts[prec_idx]
+            nce = getNCE(lookup, prec_charge, prec_mz)
+        
+            
+            transition_idx = @inline fillTransitionList!(
+                transitions,
+                prec_estimation_type,
+                getPrecFragRange(lookup, prec_idx),
+                getFragments(lookup),
+                nce,
+                getKnots(lookup),
+                prec_mz,
+                prec_charge,
+                prec_sulfur_count,
+                transition_idx,
+                quad_transmission_func,
+                precursor_transmission,
+                isotopes,
+                n_frag_isotopes,
+                max_frag_rank,
+                iso_splines,
+                frag_mz_bounds,
+                block_size
+            )
         end
     end
 
-    return transition_idx, n, precs_temp_size
+    return transition_idx
 end
 
 
