@@ -30,9 +30,9 @@ function _select_transitions_impl!(
     rt_stop_idx::Int64,
     frag_mz_bounds::Tuple{Float32, Float32};
     precursors_passing::Union{Set{UInt32}, Nothing} = nothing,
-    isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
+    isotope_err_bounds::Tuple{I, I} = (3, 1),
     block_size::Int64 = 10000
-)
+) where {I<:Integer}
     n = 0
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     precs_temp_size = 0

@@ -1,251 +1,184 @@
 function searchFragmentIndex(
-                    spectra::Arrow.Table,
-                    thread_task::Vector{Int64},#UnitRange{Int64},
-                    frag_index::Union{FragmentIndex{Float32}, Missing},
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+                    frag_index::FragmentIndex{Float32},
+                    spectra::Arrow.Table,
+                    thread_task::Vector{Int64},
+                    search_data::S,
+                    params::P,
+                    qtm::Q,
+                    mem::M,
                     rt_to_irt_spline::Any,
-                    mass_err_model::MassErrorModel,
-                    searchScan!::Union{Function, Missing},
-                    precs::Union{Missing, Counter{UInt32, UInt8}},
-                    isotope_err_bounds::Tuple{Int64, Int64},
-                    quad_transmission_model::QuadTransmissionModel,
-                    min_index_search_score::UInt8,
-                    irt_tol::Float64,
-                    sample_rate::Float64,
-                    spec_order::Set{Int64},
-                    )
-    thread_peaks = 0
-    ##########
-    #Initialize 
-    msms_counts = Dict{Int64, Int64}()
+                    ) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:FragmentIndexSearchParameters}
+
     prec_id = 0
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     rt_bin_idx = 1
-    ##########
-    #Iterate through spectra
-    for i in thread_task
-        if i == 0 
-            continue
-        end
-        if i > length(spectra[:mz_array])
-            continue
-        end
-        thread_peaks += length(spectra[:mz_array][i])
-        if thread_peaks > 100000
 
-            thread_peaks = 0
-        end
-        ###########
-        #Scan Filtering
-        msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
-        msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-        msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-        
-        first(rand(1)) <= sample_rate ? nothing : continue #coin flip. Usefull for random sampling of scans. 
-        iRT_low, iRT_high = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][i])::Union{Float64,Float32}, irt_tol) #Convert RT to expected iRT window
-        
-        #Get correct rt_bin_idx 
-        while getHigh(getRTBin(frag_index, rt_bin_idx)) < iRT_low
+    for scan_idx in thread_task
+        # Skip invalid indices
+        (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
+        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
+       
+        # Update RT bin index based on iRT window
+        irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), getIRTTol(params))
+        while rt_bin_idx <= length(getRTBins(frag_index)) && getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
             rt_bin_idx += 1
-            if rt_bin_idx >length(getRTBins(frag_index))
-                rt_bin_idx = length(getRTBins(frag_index))
-                break
-            end 
         end
-        ##########
-        #Ion Template Selection
-        #searchScan! is the MsFragger style fragment index search
-        #Loads `precs` with scores for each potential precursor matching the spectrum
-        quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][i], spectra[:isolationWidthMz][i])
+        rt_bin_idx = min(rt_bin_idx, length(getRTBins(frag_index)))
+        
+        # Fragment index search for matching precursors
         searchScan!(
-                    precs, #counter which keeps track of plausible matches 
-                    getRTBins(frag_index),
-                    getFragBins(frag_index),
-                    getFragments(frag_index), 
-                    spectra[:mz_array][i], spectra[:intensity_array][i],
-                    rt_bin_idx, 
-                    iRT_high,
-                    mass_err_model,
-                    quad_transmission_function,
-                    isotope_err_bounds
-                    )
+            getPrecursorScores(search_data),
+            getRTBins(frag_index),
+            getFragBins(frag_index),
+            getFragments(frag_index),
+            spectra[:mz_array][scan_idx],
+            spectra[:intensity_array][scan_idx],
+            rt_bin_idx,
+            irt_hi,
+            mem,
+            getQuadTransmissionFunction(qtm, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+            getIsotopeErrBounds(params)
+        )
         
-        match_count, prec_count = filterPrecursorMatches!(precs, min_index_search_score)
-        
-        if getID(precs, 1)>0
+        # Filter precursor matches based on score
+        #println("getMinIndexSearchScore(params) ", getMinIndexSearchScore(params))
+        match_count, prec_count = filterPrecursorMatches!(getPrecursorScores(search_data), getMinIndexSearchScore(params))
+
+        if getID(getPrecursorScores(search_data), 1) > 0
             start_idx = prec_id + 1
-            n = 1
-            while n <= precs.matches
+            for n in 1:getPrecursorScores(search_data).matches
                 prec_id += 1
                 if prec_id > length(precursors_passed_scoring)
-                    append!(precursors_passed_scoring, 
-                            Vector{eltype(precursors_passed_scoring)}(undef, length(precursors_passed_scoring))
-                            )
+                    append!(precursors_passed_scoring, similar(precursors_passed_scoring))
                 end
-                precursors_passed_scoring[prec_id] = getID(precs, n)
-                n += 1
+                precursors_passed_scoring[prec_id] = getID(getPrecursorScores(search_data), n)
             end
-            scan_to_prec_idx[i] = start_idx:prec_id#stop_idx
+            scan_to_prec_idx[scan_idx] = start_idx:prec_id
         else
-            scan_to_prec_idx[i] = missing
+            scan_to_prec_idx[scan_idx] = missing
         end
-        reset!(precs)
-        continue
+        
+        reset!(getPrecursorScores(search_data))
     end
     return precursors_passed_scoring[1:prec_id]
 end
-
 function getPSMS(
-                    spectra::Arrow.Table,
-                    thread_task::Vector{Int64},
-                    precursors::Union{Arrow.Table, Missing},
-                    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
-                    precursors_passed_scoring::Vector{UInt32},
-                    ion_list::Union{LibraryFragmentLookup, Missing},
-                    rt_to_irt_spline::Any,
-                    ms_file_idx::UInt32,
-                    mass_err_model::MassErrorModel,
-                    quad_transmission_model::QuadTransmissionModel,
-                    ionMatches::Vector{FragmentMatch{Float32}},
-                    ionMisses::Vector{FragmentMatch{Float32}},
-                    IDtoCOL::ArrayDict{UInt32, UInt16},
-                    ionTemplates::Vector{L},
-                    iso_splines::IsotopeSplineModel,
-                    scored_PSMs::Vector{<:ScoredPSM},
-                    unscored_PSMs::Vector{<:UnscoredPSM},
-                    spectral_scores::Vector{<:SpectralScores},
-                    isotope_err_bounds::Tuple{Int64, Int64},
-                    min_frag_count::Int64,
-                    min_spectral_contrast::AbstractFloat,
-                    min_log2_matched_ratio::AbstractFloat,
-                    min_topn_of_m::Tuple{Int64, Int64},
-                    max_best_rank::Int64,
-                    n_frag_isotopes::Int64,
-                    max_frag_rank::UInt8,
-                    prec_estimation::PrecEstimation,
-                    irt_tol::AbstractFloat,
-                    spec_order::Set{Int64},
-                    ) where {L<:LibraryIon{Float32}}
-    ##########
-    #Initialize 
+    ms_file_idx::UInt32,
+    spectra::Arrow.Table,
+    thread_task::Vector{Int64},
+    precursors::Arrow.Table,
+    ion_list::LibraryFragmentLookup,
+    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}}, 
+    precursors_passed_scoring::Vector{UInt32},
+    search_data::S,
+    params::P,
+    qtm::Q,
+    mem::M,
+    rt_to_irt_spline::Any) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:SearchParameters}
+
     msms_counts = Dict{Int64, Int64}()
-    prec_idx, ion_idx, last_val = 0, 0, 0
-    Hs = SparseArray(UInt32(5000));
-    isotopes = zeros(Float32, 5)#n_frag_isotopes);
+    last_val = 0
+    Hs = SparseArray(UInt32(5000))
+    isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
-    ##########
-    #Iterate through spectra
-    for i in thread_task
-        if i == 0 
-            continue
-        end
-        if i > length(spectra[:mz_array])
-            continue
-        end
-        if ismissing(scan_to_prec_idx[i])
-            continue
-        end
-        ###########
-        #Scan Filtering
-        msn = spectra[:msOrder][i] #An integer 1, 2, 3.. for MS1, MS2, MS3 ...
-        msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
-        msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1 #Update counter for each MSN scan type
-        ##########
-        #Ion Template Selection
-        #Candidate precursors and their retention time estimates have already been determined from
-        #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
-        #the retention time and m/z tolerance constraints
+
+    for scan_idx in thread_task
+        (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
+        ismissing(scan_to_prec_idx[scan_idx]) && continue
+        
+        # Scan Filtering
+        msn = spectra[:msOrder][scan_idx]
+        msn ∉ getSpecOrder(params) && continue
+        msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1
+
+        # Ion Template Selection
         ion_idx = selectTransitions!(
-            ionTemplates, 
+            getIonTemplates(search_data), 
             StandardTransitionSelection(), 
-            prec_estimation,
+            getPrecEstimation(params),
             ion_list,
-            scan_to_prec_idx[i], precursors_passed_scoring,
+            scan_to_prec_idx[scan_idx], precursors_passed_scoring,
             precursors[:mz], 
             precursors[:prec_charge], 
             precursors[:sulfur_count],
             precursors[:irt],
-            #precursors[:sulfur_count], 
-            iso_splines,
-            getQuadTransmissionFunction(quad_transmission_model, 
-                                       spectra[:centerMz][i], 
-                                       spectra[:isolationWidthMz][i]),
-            precursor_transmission, isotopes, n_frag_isotopes,
-            max_frag_rank,
-            Float32(rt_to_irt_spline(spectra[:retentionTime][i])),
-            Float32(irt_tol), (spectra[:lowMz][i], spectra[:highMz][i]);
-            isotope_err_bounds = isotope_err_bounds
+            getIsoSplines(search_data),
+            getQuadTransmissionFunction(qtm, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+            precursor_transmission, isotopes, getNFragIsotopes(params),
+            getMaxFragRank(params),
+            Float32(rt_to_irt_spline(spectra[:retentionTime][scan_idx])),
+            Float32(getIRTTol(params)), 
+            (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+            isotope_err_bounds = getIsotopeErrBounds(params)
         )
+        ion_idx < 2 && continue
 
-        if ion_idx < 2
-            continue
-        end 
-        ##########
-        #Match sorted list of plausible ions to the observed spectra
-        nmatches, nmisses = matchPeaks!(ionMatches, 
-                                        ionMisses, 
-                                        ionTemplates, 
-                                        ion_idx, 
-                                        spectra[:mz_array][i], 
-                                        spectra[:intensity_array][i], 
-                                        mass_err_model,
-                                        spectra[:highMz][i],
-                                        UInt32(i), 
-                                        ms_file_idx)
-        sort!(@view(ionMatches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
-        ##########
-        #Spectral Deconvolution and Distance Metrics 
-        if nmatches > 2 #Few matches to do not perform de-convolution 
-            #Spectral deconvolution. Build sparse design/template matrix for regression 
-            #Sparse matrix representation of templates written to Hs. 
-            #IDtoCOL maps precursor ids to their corresponding columns. 
-            buildDesignMatrix!(Hs, ionMatches, ionMisses, nmatches, nmisses, IDtoCOL)
-            #Adjuste size of pre-allocated arrays if needed 
-            if IDtoCOL.size > length(spectral_scores)
-                new_entries = IDtoCOL.size - length(spectral_scores) + 1000 
-                append!(spectral_scores, Vector{eltype(spectral_scores)}(undef, new_entries))
-                append!(unscored_PSMs, [eltype(unscored_PSMs)() for _ in 1:new_entries]);
+
+        # Match peaks
+        nmatches, nmisses = matchPeaks!(
+            getIonMatches(search_data), 
+            getIonMisses(search_data), 
+            getIonTemplates(search_data), 
+            ion_idx, 
+            spectra[:mz_array][scan_idx], 
+            spectra[:intensity_array][scan_idx], 
+            mem,
+            spectra[:highMz][scan_idx],
+            UInt32(scan_idx), 
+            ms_file_idx
+        )
+        
+        sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+
+        # Process matches
+        if nmatches > 2
+            buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data), 
+                             nmatches, nmisses, getIdToCol(search_data))
+
+            if getIdToCol(search_data).size > length(getSpectralScores(search_data))
+                new_entries = getIdToCol(search_data).size - length(getSpectralScores(search_data)) + 1000 
+                append!(getSpectralScores(search_data), Vector{eltype(getSpectralScores(search_data))}(undef, new_entries))
+                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
             end 
 
-            getDistanceMetrics(Hs, spectral_scores)
+            getDistanceMetrics(Hs, getSpectralScores(search_data))
 
-            ##########
-            #Scoring and recording data
-            ScoreFragmentMatches!(unscored_PSMs,
-                                IDtoCOL,
-                                ionMatches, 
-                                nmatches, 
-                                mass_err_model,
-                                last(min_topn_of_m)
-                                )
+            ScoreFragmentMatches!(
+                getUnscoredPsms(search_data),
+                getIdToCol(search_data),
+                getIonMatches(search_data), 
+                nmatches, 
+                mem,
+                last(getMinTopNofM(params))
+            )
 
-            last_val = Score!(scored_PSMs, 
-                unscored_PSMs,
-                spectral_scores,
-                IDtoCOL,
+            last_val = Score!(
+                getScoredPsms(search_data), 
+                getUnscoredPsms(search_data),
+                getSpectralScores(search_data),
+                getIdToCol(search_data),
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(spectra[:intensity_array][i])), 
-                i,
-                min_spectral_contrast = min_spectral_contrast,
-                min_log2_matched_ratio = min_log2_matched_ratio,
-                min_frag_count = min_frag_count, #Remove precursors with fewer fragments 
-                max_best_rank = max_best_rank,
-                min_topn = first(min_topn_of_m),
-                block_size = 500000,
-                )
+                Float32(sum(spectra[:intensity_array][scan_idx])), 
+                scan_idx,
+                min_spectral_contrast = getMinSpectralContrast(params),
+                min_log2_matched_ratio = getMinLog2MatchedRatio(params),
+                min_frag_count = getMinFragCount(params),
+                max_best_rank = getMaxBestRank(params),
+                min_topn = first(getMinTopNofM(params)),
+                block_size = 500000
+            )
         end
-        #Add fragment matches to all_fmatches 
-        ##########
-        #Reset pre-allocated arrays 
-        for i in range(1, Hs.n)
-            unscored_PSMs[i] = eltype(unscored_PSMs)()
+        # Reset arrays
+        for scan_idx in range(1, Hs.n)
+            getUnscoredPsms(search_data)[scan_idx] = eltype(getUnscoredPsms(search_data))()
         end
-        reset!(IDtoCOL);
-        reset!(Hs);
+        reset!(getIdToCol(search_data))
+        reset!(Hs)
     end
-    return DataFrame(@view(scored_PSMs[1:last_val]))
+    return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
 
 function getMassErrors(
@@ -1138,8 +1071,18 @@ end
 
 function LibrarySearch(
     spectra::Arrow.Table,
-    params::NamedTuple;
-    kwargs...)
+    ms_file_idx::UInt32,
+    fragment_index::FragmentIndex{Float32},
+    spec_lib::SpectralLibrary,
+    search_data::NTuple{N, S},
+    params::P,
+    qtm::Q,
+    mem::M,
+    rt_to_irt_spline::Any) where {N,
+        M<:MassErrorModel, 
+        Q<:QuadTransmissionModel,
+        S<:SearchDataStructures, 
+        P<:FragmentIndexSearchParameters}
     #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
     thread_tasks, total_peaks = partitionScansToThreads(
                                                             spectra[:mz_array],
@@ -1149,68 +1092,47 @@ function LibrarySearch(
                                                             Threads.nthreads(),
                                                             1
                                                         )
-
+    println("TEST")
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
     #println("start frag index search...")
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
+            try
             return searchFragmentIndex(
-                                spectra,
-                                last(thread_task),
-                                kwargs[:frag_index],
-                                scan_to_prec_idx,
-                                kwargs[:rt_to_irt_spline],
-                                kwargs[:mass_err_model],
-                                searchScan!,
-                                kwargs[:prec_to_score][thread_id],
-                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
-                                kwargs[:quad_transmission_model],
-                                UInt8(kwargs[:params]["min_index_search_score"]),
-                                Float64(kwargs[:irt_tol]),
-                                kwargs[:sample_rate],
-                                Set(2)
-                            )
+                    scan_to_prec_idx,
+                    fragment_index,
+                    spectra,
+                    last(thread_task),
+                    search_data[thread_id],
+                    params,
+                    qtm,
+                    mem,
+                    rt_to_irt_spline
+                )
+            catch e
+                println("thread_id $thread_id")
+                throw(e)
+            end
         end
     end
     precursors_passed_scoring = fetch.(tasks)
-    #println("Finished frag index search...")
-    #println("start psms thing...")
-    prec_estimation = Bool(kwargs[:params]["abreviate_precursor_calc"]) ? PartialPrecCapture() : FullPrecCapture()
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
             return getPSMS(
+                                ms_file_idx,
                                 spectra,
                                 last(thread_task), #getRange(thread_task),
-                                kwargs[:precursors],
+                                getPrecursors(spec_lib),
+                                getFragmentLookupTable(spec_lib),
                                 scan_to_prec_idx,
                                 precursors_passed_scoring[thread_id],
-                                kwargs[:fragment_lookup_table], 
-                                kwargs[:rt_to_irt_spline],
-                                kwargs[:ms_file_idx],
-                                kwargs[:mass_err_model],
-                                kwargs[:quad_transmission_model],
-                                kwargs[:ion_matches][thread_id],
-                                kwargs[:ion_misses][thread_id],
-                                kwargs[:id_to_col][thread_id],
-                                kwargs[:ion_templates][thread_id],
-                                kwargs[:iso_splines],
-                                kwargs[:scored_psms][thread_id],
-                                kwargs[:unscored_psms][thread_id],
-                                kwargs[:spectral_scores][thread_id],
-                                Tuple([Int64(x) for x in kwargs[:isotope_err_bounds]]),
-                                kwargs[:params]["min_frag_count"],
-                                Float32(kwargs[:params]["min_spectral_contrast"]),
-                                Float32(kwargs[:params]["min_log2_matched_ratio"]),
-                                Tuple([Int64(x) for x in kwargs[:params]["min_topn_of_m"]]),
-                                kwargs[:params]["max_best_rank"],
-                                Int64(kwargs[:params]["n_frag_isotopes"]),
-                                UInt8(kwargs[:params]["max_frag_rank"]),
-                                prec_estimation,#Bool(kwargs[:params]["abreviate_precursor_calc"]),
-                                Float32(kwargs[:irt_tol]),
-                                Set(2)
-                            )
+                                search_data[thread_id],
+                                params,
+                                qtm,
+                                mem,
+                                rt_to_irt_spline)
         end
     end
     tasks_out = fetch.(tasks)

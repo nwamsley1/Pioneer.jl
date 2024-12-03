@@ -192,7 +192,7 @@ getFragCharge(f::AltimeterFragment) = f.frag_charge
 getIonPosition(f::AltimeterFragment) = f.ion_position
 getPrecCharge(f::AltimeterFragment) = f.prec_charge
 getRank(f::AltimeterFragment) = f.rank
-sulfurCount(f::AltimeterFragment) = f.sulfur_count
+getSulfurCount(f::AltimeterFragment) = f.sulfur_count
 
 abstract type IntensityDataType end
 

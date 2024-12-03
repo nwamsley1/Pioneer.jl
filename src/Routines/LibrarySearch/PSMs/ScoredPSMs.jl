@@ -90,7 +90,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
                 min_spectral_contrast::H = 0f0,
                 min_log2_matched_ratio::H = -Inf32,
                 min_frag_count::Int64 = 1,
-                max_best_rank::Int64 = 1,
+                max_best_rank::UInt8 = one(UInt8),
                 min_topn::Int64 = 1,
                 block_size::Int64 = 10000
                 ) where {L,H<:AbstractFloat}

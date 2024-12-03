@@ -146,10 +146,10 @@ function getFragIsotopes!(
     #Predicted total fragment ion intensity (sum of fragment isotopes)
     total_fragment_intensity = getIntensity(frag, spline_data)
     frag_mz = getMz(frag)
-    frag_charge = getCharge(frag)
+    frag_charge = getPrecCharge(frag)
     frag_nsulfur = Int64(getSulfurCount(frag))
-    for i in frag_iso_idx_range
-        frag_isotopes[i+1] = iso_splines(
+    for iso_idx in frag_iso_idx_range
+        frag_isotopes[iso_idx+1] = iso_splines(
                                 min(frag_nsulfur, 5), 
                                 iso_idx, 
                                 frag_mz*frag_charge

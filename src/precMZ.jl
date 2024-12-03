@@ -68,18 +68,56 @@ wcb = x_bin_boundaries[1:4:end]
 series_a = wcb[[n*2+1 for n in range(0, length(wcb)÷2-1)]]
 series_b = wcb[[n*2+2 for n in range(0, length(wcb)÷2-1)]]
 df = DataFrame((center_mz = vcat(series_a, series_b)))
-filter!(x->(x.center_mz>499.0)&(x.center_mz<601.0), df)
-CSV.write("../data/AstralAlternatingMethod2.csv", df)
+df[!,:width_mz].=2
+filter!(x->(x.center_mz>390.0)&(x.center_mz<950.0), df)
+
+CSV.write("../data/AstralAlternatingWindows.csv", df)
+
+
 ############
-#Alternating method 5/4 (25%) improvement for 100%
+#StaggerGapped
+wcb = x_bin_boundaries[1:2:end]
+series_a = wcb[[n*3-1 for n in range(1, length(wcb)÷3)]]
+series_b = wcb[[n*3 for n in range(1, length(wcb)÷3)]]
+series_c = wcb[[n*3+1 for n in range(0, length(wcb)÷3)]]
+df = DataFrame((center_mz = vcat(series_a, series_b, series_c)))
+df[!,:width_mz].=2
+filter!(x->(x.center_mz>390.0)&(x.center_mz<950.0), df)
+
+CSV.write("../data/AstralStaggerGapped.csv", df)
+
+
+############
+#Standard Method
+df = DataFrame((center_mz = x_bin_boundaries[1:4:end]))
+df[!,:width_mz].=2
+filter!(x->(x.center_mz>390.0)&(x.center_mz<950.0), df)
+CSV.write("../data/AstralStandardMethod.csv", df)
+
+
+
+
+############
+#Alternating method 3/2 (50%) improvement for 50%
 wcb = x_bin_boundaries[1:end]
 mz_sequence = vcat([wcb[[n*10+k for n in range(0, length(wcb)÷10-1)]] for k in range(1, 10)]...)
 df = DataFrame((center_mz = mz_sequence))
 filter!(x->(x.center_mz>499.0)&(x.center_mz<601.0), df)
 CSV.write("../data/AstralAlternatingMethod5.csv", df)
+
+############
+#Alternating method 5/4 (25%) improvement for 100%
+#wcb = x_bin_boundaries[1:end]
+#mz_sequence = vcat([wcb[[n*10+k for n in range(0, length(wcb)÷10-1)]] for k in range(1, 10)]...)
+#df = DataFrame((center_mz = mz_sequence))
+#filter!(x->(x.center_mz>499.0)&(x.center_mz<601.0), df)
+#CSV.write("../data/AstralAlternatingMethod5.csv", df)
 ############
 #Standard Method
-CSV.write("../data/AstralStandardMethod.csv", DataFrame((center_mz = x_bin_boundaries[1:4:end])))
+df = DataFrame((center_mz = x_bin_boundaries[1:4:end]))
+df[!,:width_mz].=2
+filter!(x->(x.center_mz>390.0)&(x.center_mz<950.0), df)
+CSV.write("../data/AstralStandardMethod.csv", df)
 
 
 CSV.write("/Users/n.t.wamsley/Desktop/AstralAlternatingMethod.csv", DataFrame((center_mz = vcat(window_center_mzs_a, window_center_mzs_b))))

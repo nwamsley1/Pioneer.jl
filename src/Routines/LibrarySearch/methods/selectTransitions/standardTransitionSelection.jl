@@ -19,9 +19,9 @@ function _select_transitions_impl!(
     iRT::Float32,
     iRT_tol::Float32,
     frag_mz_bounds::Tuple{Float32, Float32};
-    isotope_err_bounds::Tuple{Int64, Int64} = (3, 1),
+    isotope_err_bounds::Tuple{I, I} = (3, 1),
     block_size::Int64 = 10000
-    )
+    ) where {I<:Integer}
 
     for i in scan_to_prec_idx
         # Get precursor properties

@@ -61,6 +61,7 @@ function SearchDIA(params_path::String)
     ###########
     #params_[:presearch_params]["nce_guess"] = 30.0f0
     spec_lib = loadSpectralLibrary(SPEC_LIB_DIR, params_);
+    SPEC_LIB = FragmentIndexLibrary(spec_lib["presearch_f_index"], spec_lib["f_index"], spec_lib["precursors"], spec_lib["f_det"])
     precursors = spec_lib["precursors"];
     unique_proteins = unique(precursors[:accession_numbers]);
     accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
@@ -77,6 +78,7 @@ function SearchDIA(params_path::String)
     N = Threads.nthreads()
     M = 250000
     n_precursors = length(spec_lib["precursors"][:mz])
+    #=
     ionMatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     ionMisses = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
     all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
@@ -93,10 +95,20 @@ function SearchDIA(params_path::String)
     complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
     complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
     complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
+    =#
     ###########
     #File Names parsing
     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
+    MS_SEARCH_DATA = initSimpleSearchContexts(
+    parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+    n_precursors,
+    Threads.nthreads(),
+    250000);
 
+    MASS_SPEC_DATA_REFERENCE = ArrowTableReference(MS_TABLE_PATHS);
+    execute_search(
+        ParameterTuningSearch(), MASS_SPEC_DATA_REFERENCE, SPEC_LIB, MS_SEARCH_DATA, params_
+    )
     ##########
     #Isotope Trace Type
     if params_[:quant_search_params]["combine_isotope_traces"]
@@ -109,6 +121,7 @@ function SearchDIA(params_path::String)
         @warn "Seperate Traces"
     end
         
+
 
     ###########
     #Tune Parameters
