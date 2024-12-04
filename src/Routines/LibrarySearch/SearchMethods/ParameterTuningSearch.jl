@@ -99,8 +99,8 @@ function process_file!(
         #Model conversion between library (irt) and empirical (rt) retention times
         set_irt_to_rt_model!(results, fit_irt_model(search_parameters, psms))
 
-        fragments = get_matched_fragments!(search_parameters, psms)
-
+        fragments = get_matched_fragments(spectra, search_context, search_parameters, ms_file_idx)
+        
 
 
     catch e 

@@ -285,6 +285,106 @@ function LibrarySearch(
     tasks_out = fetch.(tasks)
     return tasks_out
 end
+function get_matched_fragments(spectra::Arrow.Table, psms::DataFrame, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FragmentIndexSearchParameters}
+    return vcat(massErrorSearch(
+        spectra,
+        psms[!,:scan_idx],
+        psms[!,:precursor_idx],
+        UInt32(ms_file_idx),
+        spec_lib,
+        getSearchData(search_context),
+        getMassErrorModel(search_context, ms_file_idx),
+        search_parameters,
+    ))
+end
+
+function massErrorSearch(
+    spectra::Arrow.Table,
+    scan_idxs::Vector{UInt32},
+    precursor_idxs::Vector{UInt32},
+    ms_file_idx::UInt32,
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    mem::M,
+    params::P) where {
+        M<:MassErrorModel, 
+        S<:SearchDataStructures, 
+        P<:SearchParameters
+        }
+
+    function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
+        scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
+        start_idx = stop_idx = 1
+        
+        for i in 1:length(scan_idxs)
+            stop_idx = i
+            if scan_idxs[start_idx] == scan_idxs[stop_idx]
+                scan_to_prec_idx[scan_idxs[i]] = start_idx:stop_idx
+            else
+                scan_to_prec_idx[scan_idxs[i]] = i:i
+                start_idx = i
+            end
+        end
+        scan_to_prec_idx
+    end
+
+    # Sort scans and setup thread tasks
+    sorted_indices = sortperm(scan_idxs)
+    scan_idxs = scan_idxs[sorted_indices]
+    precursor_idxs = precursor_idxs[sorted_indices]
+    
+    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra[:mz_array]))
+    thread_tasks = partition_scans(spectra, Threads.nthreads())
+
+    # Process mass errors in parallel
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            frag_err_idx = 0
+            
+            for scan_idx in last(thread_task)
+                (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
+                ismissing(scan_to_prec_idx[scan_idx]) && continue
+
+                # Select transitions for mass error estimation
+                ion_idx = selectTransitions!(
+                    getIonTemplates(search_data[thread_id]),
+                    MassErrEstimationStrategy(),
+                    getPrecEstimation(params),
+                    getFragmentLookupTable(spec_lib),
+                    scan_to_prec_idx[scan_idx],
+                    precursor_idxs,
+                    max_rank = 5#getMaxBestRank(params)
+                )
+
+                # Match peaks and collect errors
+                nmatches, nmisses = matchPeaks!(
+                    getIonMatches(search_data[thread_id]),
+                    getIonMisses(search_data[thread_id]),
+                    getIonTemplates(search_data[thread_id]),
+                    ion_idx,
+                    spectra[:mz_array][scan_idx],
+                    spectra[:intensity_array][scan_idx],
+                    mem,
+                    spectra[:highMz][scan_idx],
+                    UInt32(scan_idx),
+                    ms_file_idx
+                )
+
+                frag_err_idx = collectFragErrs(
+                    getAllFragmentMatches(search_data[thread_id]),
+                    getIonMatches(search_data[thread_id]),
+                    nmatches,
+                    frag_err_idx
+                )
+            end
+
+            @view(getAllFragmentMatches(search_data[thread_id])[1:frag_err_idx])
+        end
+    end
+
+    fetch.(tasks)
+end
 function getMassErrors(
                     spectra::Arrow.Table,
                     library_fragment_lookup::LibraryFragmentLookup,
@@ -1316,99 +1416,6 @@ function NceScanningSearch(
 
 end
 
-function filterMatchedIonsTop!(IDtoNMatches::ArrayDict{UInt32, UInt16}, ionMatches::Vector{FragmentMatch{Float32}}, ionMisses::Vector{FragmentMatch{Float32}}, nmatches::Int64, nmisses::Int64, max_rank::Int64, min_matched_ions::Int64)
-    nmatches_all, nmisses_all = nmatches, nmisses
-
-    @inbounds for i in range(1, nmatches_all)
-        match = ionMatches[i]
-        prec_id = getPrecID(match)
-        if match.is_isotope 
-            continue
-        end
-            if (getRank(match) <= max_rank) .& (match.is_isotope==false)
-                #if getIonType(match) == 'y' #| (filter_y==false)
-                    if iszero(IDtoNMatches[prec_id])
-                        update!(IDtoNMatches, prec_id, one(UInt16))
-                    else
-                        IDtoNMatches.vals[prec_id] += one(UInt16)
-                    end
-                #end
-            end
-    end
-    nmatches, nmisses = 0, 0
-    @inbounds for i in range(1, nmatches_all)
-        if IDtoNMatches[getPrecID(ionMatches[i])] <= min_matched_ions
-
-            continue
-        else
-            nmatches += 1
-            ionMatches[nmatches] = ionMatches[i]
-        end
-    end
-
-    @inbounds for i in range(1, nmisses_all)
-        if IDtoNMatches[getPrecID(ionMisses[i])] <= min_matched_ions
-            continue
-        else
-            nmisses += 1
-            ionMisses[nmisses] = ionMisses[i]
-        end
-    end
-
-    reset!(IDtoNMatches)
-
-    return nmatches_all, nmisses_all, nmatches, nmisses
-end
-
-function filterMatchedIons!(IDtoNMatches::ArrayDict{UInt32, UInt16}, 
-                                ionMatches::Vector{FragmentMatch{Float32}}, 
-                                ionMisses::Vector{FragmentMatch{Float32}}, 
-                                nmatches::Int64, 
-                                nmisses::Int64, 
-                                min_matched_ions::Int64
-                                )
-    nmatches_all, nmisses_all = nmatches, nmisses
-
-    @inbounds for i in range(1, nmatches_all)
-        match = ionMatches[i]
-        prec_id = getPrecID(match)
-        if match.is_isotope 
-            continue
-        end
-            #if getRank(match) <= max_rank
-                #if ((getIonType(match) == 'y') | (filter_on_y==false)) & ((match.is_isotope==false) | (filter_on_mono == false))
-                    if iszero(IDtoNMatches[prec_id])
-                        update!(IDtoNMatches, prec_id, one(UInt16))
-                    else
-                        IDtoNMatches.vals[prec_id] += one(UInt16)
-                    end
-            #end
-    end
-    nmatches, nmisses = 0, 0
-    @inbounds for i in range(1, nmatches_all)
-        if IDtoNMatches[getPrecID(ionMatches[i])] < min_matched_ions
-
-            continue
-        else
-            nmatches += 1
-            ionMatches[nmatches] = ionMatches[i]
-        end
-    end
-
-    @inbounds for i in range(1, nmisses_all)
-        if IDtoNMatches[getPrecID(ionMisses[i])] < min_matched_ions
-            continue
-        else
-            nmisses += 1
-            ionMisses[nmisses] = ionMisses[i]
-        end
-    end
-
-    reset!(IDtoNMatches)
-
-    return nmatches_all, nmisses_all, nmatches, nmisses
-end
-
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
     for match in range(1, nmatches)
         if n < length(all_fmatches)
@@ -1425,35 +1432,4 @@ function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end
 
-
-function buildSubsetLibraryFragmentLookupTable!(
-                                            precursors_passed_scoring::Vector{Vector{UInt32}},
-                                            lookup_table::LibraryFragmentLookup,
-                                            n_precursors::Int64
-                                            )
-    #prec_id_conversion = zeros(UInt32, n_precursors)
-    @time begin
-        precursors = sort(unique(vcat(precursors_passed_scoring...)))
-        prec_frag_ranges = Vector{UnitRange{UInt32}}(undef, n_precursors)
-    end
-    fragment_count = 0
-    n = 0
-    @time for prec_idx in precursors
-        n += 1
-        prec_size = length(getPrecFragRange(lookup_table, prec_idx))
-        prec_frag_ranges[prec_idx] = UInt32(fragment_count + 1):UInt32(fragment_count + prec_size)
-        fragment_count += prec_size
-    end
-    #println("fragment_count $fragment_count")
-    fragments = Vector{DetailedFrag{Float32}}(undef, fragment_count)
-    n = 0
-    @time for prec_idx in precursors
-        for i in getPrecFragRange(lookup_table, prec_idx)
-            n+=1
-            fragments[n] = lookup_table.frags[i]
-        end
-    end
-
-    return LibraryFragmentLookup(fragments, prec_frag_ranges)
-end
 
