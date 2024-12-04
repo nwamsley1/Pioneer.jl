@@ -105,16 +105,20 @@ function SearchDIA(params_path::String)
     Threads.nthreads(),
     250000);
 
-    MASS_SPEC_DATA_REFERENCE = ArrowTableReference(MS_TABLE_PATHS);
+    MASS_SPEC_DATA_REFERENCE = ArrowTableReference(MS_TABLE_PATHS, file_id_to_parsed_name);
 
     SEARCH_CONTEXT = SearchContext(
         SPEC_LIB, 
         MS_SEARCH_DATA, MASS_SPEC_DATA_REFERENCE
     );
+    setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"])
 
-    test=vcat(execute_search(
+    test=execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
-    )...)
+    )
+    execute_search(
+        FirstPassSearch(), SEARCH_CONTEXT, params_
+    )
     ##########
     #Isotope Trace Type
     if params_[:quant_search_params]["combine_isotope_traces"]

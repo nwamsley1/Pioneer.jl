@@ -412,7 +412,7 @@ function convert_to_detailed(
         getIonPosition(frag),
         getPrecCharge(frag),
         getRank(frag),
-        sulfurCount(frag)
+        getSulfurCount(frag)
     )
 end
 
@@ -610,3 +610,14 @@ end
 
 getScore(pbi::PrecursorBinFragment{T}) where {T<:AbstractFloat} = pbi.score
 
+abstract type SpectralLibrary end
+struct FragmentIndexLibrary <: SpectralLibrary
+    presearch_fragment_index::FragmentIndex{Float32}
+    fragment_index::FragmentIndex{Float32}
+    precursors::Arrow.Table
+    fragment_lookup_table::SplineFragmentLookup
+end
+getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
+getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
+getPrecursors(sl::SpectralLibrary) = sl.precursors
+getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 

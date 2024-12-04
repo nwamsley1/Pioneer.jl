@@ -16,11 +16,11 @@ function searchFragmentIndex(
     for scan_idx in thread_task
         # Skip invalid indices
         (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
-        #(spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
-        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || false) && continue
-        if scan_idx % 50 != 0
-            continue
-        end
+        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
+        #(spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || false) && continue
+        #if scan_idx % 50 != 0
+        #    continue
+        #end
 
         # Update RT bin index based on iRT window
         irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), getIRTTol(params))
@@ -214,7 +214,8 @@ function getPSMS(
     end
     return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
-function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FragmentIndexSearchParameters}
+
+function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
@@ -227,6 +228,22 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                     search_parameters,
                 )...)
 end
+
+function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FirstPassSearchParameters}
+    return vcat(LibrarySearch(
+                    spectra,
+                    UInt32(ms_file_idx),
+                    getFragmentIndex(getSpecLib(search_context)),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    getMassErrorModel(search_context, ms_file_idx),
+                    getRtIrtModel(search_context, ms_file_idx),
+                    search_parameters,
+                )...)
+end
+
+
 function LibrarySearch(
     spectra::Arrow.Table,
     ms_file_idx::UInt32,
@@ -285,18 +302,7 @@ function LibrarySearch(
     tasks_out = fetch.(tasks)
     return tasks_out
 end
-function get_matched_fragments(spectra::Arrow.Table, psms::DataFrame, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FragmentIndexSearchParameters}
-    return vcat(massErrorSearch(
-        spectra,
-        psms[!,:scan_idx],
-        psms[!,:precursor_idx],
-        UInt32(ms_file_idx),
-        spec_lib,
-        getSearchData(search_context),
-        getMassErrorModel(search_context, ms_file_idx),
-        search_parameters,
-    ))
-end
+
 
 function massErrorSearch(
     spectra::Arrow.Table,
@@ -326,6 +332,18 @@ function massErrorSearch(
             end
         end
         scan_to_prec_idx
+    end
+
+    function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
+        for match in range(1, nmatches)
+            if n < length(fmatches)
+                n += 1
+                fmatches[n] = new_fmatches[match]
+            else
+                fmatches = append!(fmatches, [M() for x in range(1, length(fmatches))])
+            end
+        end
+        return n
     end
 
     # Sort scans and setup thread tasks
@@ -372,17 +390,16 @@ function massErrorSearch(
                 )
 
                 frag_err_idx = collectFragErrs(
-                    getAllFragmentMatches(search_data[thread_id]),
+                    getMassErrMatches(search_data[thread_id]),
                     getIonMatches(search_data[thread_id]),
                     nmatches,
                     frag_err_idx
                 )
             end
-
-            @view(getAllFragmentMatches(search_data[thread_id])[1:frag_err_idx])
+            
+            @view(getMassErrMatches(search_data[thread_id])[1:frag_err_idx])
         end
     end
-
     fetch.(tasks)
 end
 function getMassErrors(
