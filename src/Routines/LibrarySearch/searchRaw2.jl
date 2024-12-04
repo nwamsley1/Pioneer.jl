@@ -1,21 +1,16 @@
 # Define abstract types and traits
 abstract type SearchMethod end
 abstract type TuningMethod <: SearchMethod end
+
+abstract type SearchResults end 
 include("src/Routines/LibrarySearch/selectTransitions/selectTransitions.jl")
-# Concrete strategies
-struct ParameterTuningSearch <: TuningMethod end
-struct NCETuningSearch <: TuningMethod end
-struct QuadTuningSearch <: TuningMethod end
-struct FirstSearch <: SearchMethod end
-struct SecondSearch <: SearchMethod end
-struct ChromatogramSearch <: SearchMethod end
 
 # Common interface for containers of pre-allocated
 # data structures used for conducting searches. Does not hold
-# the search results, rather, intermediate date used during the search. 
+# the search results, rather, intermediate data used during the search. 
 abstract type SearchDataStructures end
 getIonMatches(s::SearchDataStructures) = s.ion_matches
-getIonMisses(s::SearchDataStructures) = s.ion_matches
+getIonMisses(s::SearchDataStructures) = s.ion_misses
 getIdToCol(s::SearchDataStructures) = s.id_to_col
 getPrecursorScores(s::SearchDataStructures) = s.prec_count
 getIonTemplates(s::SearchDataStructures) = s.ion_templates
@@ -36,7 +31,7 @@ struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
     spectral_scores::Vector{SpectralScoresSimple{Float16}}
 end
 
-#Common interface for references to mass spec data used in seraches
+#Common interface for references to mass spec data used in searches
 abstract type MassSpecDataReference end
 getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = Arrow.Table(msdr.file_paths[ms_file_idx])
 struct ArrowTableReference <: MassSpecDataReference
@@ -47,36 +42,98 @@ function enumerate(msdr::ArrowTableReference)
     return zip(1:length(msdr.file_paths), (getMSData(msdr, i) for i in 1:length(msdr.file_paths)))
 end
 
-abstract type SearchParameters end 
+# Common interface for containers for search data
+struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
+    spec_lib::L
+    temp_structures::AbstractVector{S}
+    mass_spec_data_reference::M
+    data_out_dir::Base.Ref{String}
+    quad_transmission_model::Dict{Int64, QuadTransmissionModel}
+    mass_error_model::Dict{Int64, MassErrorModel}
+    rt_to_irt_model::Dict{Int64, Any}
 
-struct FragmentIndexSearchParameters{P<:PrecEstimation} <: SearchParameters
-    isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
-    n_frag_isotopes::Int64
-    max_frag_rank::UInt8
-    sample_rate::Float32
-    irt_tol::Float32
-    spec_order::Set{Int64}
-    prec_estimation::P
-end 
-getIsotopeErrBounds(fsp::FragmentIndexSearchParameters) = fsp.isotope_err_bounds
-getMinIndexSearchScore(fsp::FragmentIndexSearchParameters) = fsp.min_index_search_score
-getMinFragCount(fsp::FragmentIndexSearchParameters) = fsp.min_frag_count
-getMinSpectralContrast(fsp::FragmentIndexSearchParameters) = fsp.min_spectral_contrast
-getMinLog2MatchedRatio(fsp::FragmentIndexSearchParameters) = fsp.min_log2_matched_ratio
-getMinTopNofM(fsp::FragmentIndexSearchParameters) = fsp.min_topn_of_m
-getMaxBestRank(fsp::FragmentIndexSearchParameters) = fsp.max_best_rank 
-getNFragIsotopes(fsp::FragmentIndexSearchParameters) = fsp.n_frag_isotopes
-getMaxFragRank(fsp::FragmentIndexSearchParameters) = fsp.max_frag_rank
-getSampleRate(fsp::FragmentIndexSearchParameters) = fsp.sample_rate
-getIRTTol(fsp::FragmentIndexSearchParameters) = fsp.irt_tol
-getSpecOrder(fsp::FragmentIndexSearchParameters) = fsp.spec_order
-getPrecEstimation(fsp::FragmentIndexSearchParameters) = fsp.prec_estimation
+    function SearchContext(
+        spec_lib::L,
+        temp_structures::AbstractVector{S},
+        mass_spec_data_reference::M
+    ) where {L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
+        N = length(temp_structures)
+        new{N,L,S,M}(
+            spec_lib,
+            temp_structures,
+            mass_spec_data_reference,
+            Ref{Sring}()
+            Dict{Int64, QuadTransmissionModel}(),
+            Dict{Int64, MassErrorModel}(),
+            Dict{Int64, Any}()
+        )
+    end
+
+end
+
+getMassSpecData(s::SearchContext) = s.mass_spec_data_reference
+getSpecLib(s::SearchContext) = s.spec_lib
+getSearchData(s::SearchContext) = s.temp_structures
+
+function getQuadTransmissionModel(s::SearchContext, index::Int64) 
+    if haskey(s.quad_transmission_model, index)
+        return s.quad_transmission_model[index]
+    else
+        #Return a sensible default 
+        return GeneralGaussModel(5.0f0, 0.0f0)
+    end
+end
+
+function setQuadTransmissionModel!(s::SearchContext, index::Int64, model::QuadTransmissionModel)
+    s.quad_transmission_model[index] = model
+end
+
+function getMassErrorModel(s::SearchContext, index::Int64) 
+    if haskey(s.quad_transmission_model, index)
+        return s.quad_transmission_model[index]
+    else
+        #Return a sensible default 
+        return MassErrorModel(zero(Float32), #(getFragTolPpm(params), getFragTolPpm(params)),
+        (30.0f0, 30.0f0))
+    end
+end
+
+function setMassErrorModel!(s::SearchContext, index::Int64, model::MassErrorModel)
+    s.mass_error_model[index] = model
+end
+
+function getRtIrtModel(s::SearchContext, index::Int64) 
+    if haskey(s.rt_to_irt_model, index)
+        return s.rt_to_irt_model[index]
+    else
+        #Return a sensible default 
+        return x::Float32->x::Float32
+    end
+end
+
+function setRtIrtModel!(s::SearchContext, index::Int64, model::Any)
+    s.rt_to_irt_model[index] = model
+end
+
+#Common interface for tunable search parameters
+abstract type SearchParameters end 
+getIsotopeErrBounds(fsp::SearchParameters) = fsp.isotope_err_bounds
+getMinIndexSearchScore(fsp::SearchParameters) = fsp.min_index_search_score
+getMinFragCount(fsp::SearchParameters) = fsp.min_frag_count
+getMinSpectralContrast(fsp::SearchParameters) = fsp.min_spectral_contrast
+getMinLog2MatchedRatio(fsp::SearchParameters) = fsp.min_log2_matched_ratio
+getMinTopNofM(fsp::SearchParameters) = fsp.min_topn_of_m
+getMaxBestRank(fsp::SearchParameters) = fsp.max_best_rank
+getNFragIsotopes(fsp::SearchParameters) = fsp.n_frag_isotopes
+getMaxFragRank(fsp::SearchParameters) = fsp.max_frag_rank
+getSampleRate(fsp::SearchParameters) = fsp.sample_rate
+getIRTTol(fsp::SearchParameters) = fsp.irt_tol
+getSpecOrder(fsp::SearchParameters) = fsp.spec_order
+getPrecEstimation(fsp::SearchParameters) = fsp.prec_estimation
+getFragTolPpm(fsp::SearchParameters) = fsp.prec_estimation
+getSplineDegree(fsp::SearchParameters) = fsp.spline_degree
+getSplineNKnots(fsp::SearchParameters) = fsp.spline_n_knots
+getOutlierThreshold(fsp::SearchParameters) = fsp.spline_n_knots
 
 abstract type SpectralLibrary end
 struct FragmentIndexLibrary <: SpectralLibrary
@@ -85,33 +142,12 @@ struct FragmentIndexLibrary <: SpectralLibrary
     precursors::Arrow.Table
     fragment_lookup_table::SplineFragmentLookup
 end
-getPresearchFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
+getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
 getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
 getPrecursors(sl::SpectralLibrary) = sl.precursors
 getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 
 
-function getParameters(s::ParameterTuningSearch, params::Any)
-    pp = params[:presearch_params]
-    prec_estimation = pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
-    return FragmentIndexSearchParameters(
-        (zero(UInt8), zero(UInt8)),
-        UInt8(pp["min_index_search_score"]),
-        Int64(pp["min_frag_count"]),
-        Float32(pp["min_spectral_contrast"]),
-        Float32(pp["min_log2_matched_ratio"]),
-        (
-            Int64(first(pp["min_topn_of_m"])),
-            Int64(last(pp["min_topn_of_m"]))
-        ),
-        UInt8(pp["max_best_rank"]),
-        Int64(pp["n_frag_isotopes"]),
-        UInt8(pp["max_frag_rank"]),
-        Float32(pp["sample_rate"]),
-        typemax(Float32),
-        Set(2),
-        prec_estimation
-    )
-end
+
 #=
 struct FileSpecificModels{Q<:QuadTransmissionModel, M<:MassErrorModel, N<:NceModel, U<:UniformBasisCubicSpline}
     quad_transmission_model::Dict{Int64, Q}
@@ -142,47 +178,72 @@ function initSimpleSearchContexts(
     n_precursors::Int64,
     N::Int64,
     M::Int64)
-    Tuple([initSimpleSearchContext(iso_splines, n_precursors, M) for _ in 1:N])
+    [initSimpleSearchContext(iso_splines, n_precursors, M) for _ in 1:N]
 end
 
-# Trait functions
-#=
-function prepare_search(
-        search_type::ParameterTuningSearch, 
-        context::Vector{SearchContext},
-        params::Any) where {S<:SearchContext}
-    search_parameters = getParameters(search_type, params)
-    error("prepare_search not implemented for $(typeof(strategy))")
-end
-=#
+#This method should be generic 
 function execute_search(
-        search_type::ParameterTuningSearch, 
-        msdr::MassSpecDataReference,
-        spec_lib::SpectralLibrary,
-        search_data::NTuple{N, S},
-        params::Any) where {N, S<:SearchDataStructures}
-        search_parameters = getParameters(search_type, params)
-        mem = MassErrorModel(
-                zero(Float32),
-                #(getFragTolPpm(params), getFragTolPpm(params)),
-                (30.0f0, 30.0f0)
-        )
+        search_type::SearchMethod, 
+        search_context::SearchContext,
+        params::Any)
+
+        msdr = getMassSpecData(search_context)
+
+        @info "Starting parameter tuning search" n_files=length(msdr.file_paths)
+    
+        search_parameters = get_parameters(search_type, params)
+
         for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
-            #println("ms_file_io")
-            return LibrarySearch(
-                spectra,
-                UInt32(ms_file_idx),
-                getFragmentIndex(spec_lib),
-                spec_lib,
-                search_data,
-                search_parameters,
-                GeneralGaussModel(5.0f0, 0.0f0),
-                mem,
-                x::Float32->x::Float32,
-            )
+
+            #Initialize results that will be returned. 
+            #Some results are instaed written to a file specified in `search_context``: SearchContext.data_out_dir::Base.Ref{String}
+            #And some results are simply modification of `search_context` data. 
+            search_results = init_search_results(search_parameters, search_context, ms_file_idx)
+
+            #Analysis of MS data 
+            process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
+
+            #Modifies `search_results` and/or `search_context` in place 
+            process_search_results!(search_results, search_parameters, search_context, ms_file_idx)
+
         end
+
+    return search_results
     #error("execute_search not implemented for $(typeof(strategy))")
 end
+
+
+
+
+function execute_presearch!(
+    search_type::ParameterTuningSearch, 
+    ms_file_idx::Int64,
+    spectra::Arrow.Table,
+    spec_lib::SpectralLibrary,
+    search_data::NTuple{N, S},
+    qtm::Q,
+    mem::M,
+    rt_to_irt_spline::Any,
+    params::P) where {N,  M<:MassErrorModel, 
+    Q<:QuadTransmissionModel,
+    S<:SearchDataStructures,
+    P<:FragmentIndexSearchParameters}
+        
+        LibrarySearch(
+            spectra,
+            UInt32(ms_file_idx),
+            getPresearchFragmentIndex(spec_lib),
+            spec_lib,
+            search_data,
+            qtm,
+            mem,
+            rt_to_irt_spline,
+            params,
+        )
+end
+
+
+
 
 function process_results(strategy::SearchStrategy, context::SearchContext, results::Any)
     error("process_results not implemented for $(typeof(strategy))")

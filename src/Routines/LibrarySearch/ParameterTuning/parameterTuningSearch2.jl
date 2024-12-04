@@ -74,28 +74,28 @@ struct ParameterTuningSearch <: TuningStrategy
 end
 
 # Core algorithm implementations using multiple dispatch
-function fit_irt_model(::Type{ParameterTuningSearch}, psms::DataFrame, config::IRTConfig)
+function fit_irt_model(params::P, psms::DataFrame) where {P<:PresearchParameters}
     # Initial fit
     rt_to_irt_map = UniformSpline(
-        psms.irt_predicted,
-        psms.rt,
-        config.spline_degree,
-        config.spline_knots
+        psms[!,:irt_predicted],
+        psms[!,:rt],
+        getSplineDegree(params),
+        getSplineNKnots(spline_knots),
     )
     
     # Calculate residuals
-    psms.irt_observed = rt_to_irt_map.(psms.rt)
-    residuals = psms.irt_observed .- psms.irt_predicted
-    irt_mad = mad(residuals)
+    psms.irt_observed = rt_to_irt_map.(psms.rt::Vector{Float32})
+    residuals::Vector{Float32} = psms[!,:irt_observed]::Vector{Float32} .- psms[!,:irt_predicted]::Vector{Float32}
+    irt_mad = mad(residuals)::Float32
     
     # Remove outliers and refit
-    valid_psms = psms[abs.(residuals) .< (irt_mad * config.outlier_threshold), :]
+    valid_psms = @view(psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :])
     
     final_map = UniformSpline(
-        valid_psms.irt_predicted,
-        valid_psms.rt,
-        config.spline_degree,
-        config.spline_knots
+        valid_psms[!,:irt_predicted],
+        valid_psms[!,:rt],
+        getSplineDegree(params),
+        getSplineNKnots(spline_knots),
     )
     
     return final_map, irt_mad
@@ -105,8 +105,7 @@ function execute_presearch!(
     strategy::ParameterTuningSearch,
     context::SearchContext,
     ms_file_idx::Int,
-    ms_table::Arrow.Table
-)::DataFrame
+    ms_table::Arrow.Table)::DataFrame
     
     mass_err_model = MassErrorModel(
         0.0f0,

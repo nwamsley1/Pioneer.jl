@@ -106,9 +106,15 @@ function SearchDIA(params_path::String)
     250000);
 
     MASS_SPEC_DATA_REFERENCE = ArrowTableReference(MS_TABLE_PATHS);
-    execute_search(
-        ParameterTuningSearch(), MASS_SPEC_DATA_REFERENCE, SPEC_LIB, MS_SEARCH_DATA, params_
-    )
+
+    SEARCH_CONTEXT = SearchContext(
+        SPEC_LIB, 
+        MS_SEARCH_DATA, MASS_SPEC_DATA_REFERENCE
+    );
+
+    test=vcat(execute_search(
+        ParameterTuningSearch(),SEARCH_CONTEXT , params_
+    )...)
     ##########
     #Isotope Trace Type
     if params_[:quant_search_params]["combine_isotope_traces"]

@@ -13,19 +13,32 @@ function searchFragmentIndex(
     prec_id = 0
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     rt_bin_idx = 1
-
     for scan_idx in thread_task
         # Skip invalid indices
         (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
-        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
-       
+        #(spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
+        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || false) && continue
+        if scan_idx % 50 != 0
+            continue
+        end
+
         # Update RT bin index based on iRT window
         irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), getIRTTol(params))
+
+        #=
         while rt_bin_idx <= length(getRTBins(frag_index)) && getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
             rt_bin_idx += 1
         end
         rt_bin_idx = min(rt_bin_idx, length(getRTBins(frag_index)))
-        
+        =#
+        while getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
+            rt_bin_idx += 1
+            if rt_bin_idx >length(getRTBins(frag_index))
+                rt_bin_idx = length(getRTBins(frag_index))
+                break
+            end 
+        end
+
         # Fragment index search for matching precursors
         searchScan!(
             getPrecursorScores(search_data),
@@ -44,7 +57,7 @@ function searchFragmentIndex(
         # Filter precursor matches based on score
         #println("getMinIndexSearchScore(params) ", getMinIndexSearchScore(params))
         match_count, prec_count = filterPrecursorMatches!(getPrecursorScores(search_data), getMinIndexSearchScore(params))
-
+        #=
         if getID(getPrecursorScores(search_data), 1) > 0
             start_idx = prec_id + 1
             for n in 1:getPrecursorScores(search_data).matches
@@ -60,7 +73,28 @@ function searchFragmentIndex(
         end
         
         reset!(getPrecursorScores(search_data))
+        =#
+        if getID(getPrecursorScores(search_data), 1)>0
+            start_idx = prec_id + 1
+            n = 1
+            while n <= getPrecursorScores(search_data).matches
+                prec_id += 1
+                if prec_id > length(precursors_passed_scoring)
+                    append!(precursors_passed_scoring, 
+                            Vector{eltype(precursors_passed_scoring)}(undef, length(precursors_passed_scoring))
+                            )
+                end
+                precursors_passed_scoring[prec_id] = getID(getPrecursorScores(search_data), n)
+                n += 1
+            end
+            scan_to_prec_idx[scan_idx] = start_idx:prec_id#stop_idx
+        else
+            scan_to_prec_idx[scan_idx] = missing
+        end
+        reset!(getPrecursorScores(search_data))
+
     end
+
     return precursors_passed_scoring[1:prec_id]
 end
 function getPSMS(
@@ -82,7 +116,7 @@ function getPSMS(
     Hs = SparseArray(UInt32(5000))
     isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
-
+    k = 0
     for scan_idx in thread_task
         (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
         ismissing(scan_to_prec_idx[scan_idx]) && continue
@@ -112,6 +146,7 @@ function getPSMS(
             (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
             isotope_err_bounds = getIsotopeErrBounds(params)
         )
+
         ion_idx < 2 && continue
 
 
@@ -130,7 +165,6 @@ function getPSMS(
         )
         
         sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
-
         # Process matches
         if nmatches > 2
             buildDesignMatrix!(Hs, getIonMatches(search_data), getIonMisses(search_data), 
@@ -1074,11 +1108,11 @@ function LibrarySearch(
     ms_file_idx::UInt32,
     fragment_index::FragmentIndex{Float32},
     spec_lib::SpectralLibrary,
-    search_data::NTuple{N, S},
-    params::P,
+    search_data::AbstractVector{S},
     qtm::Q,
     mem::M,
-    rt_to_irt_spline::Any) where {N,
+    rt_to_irt_spline::Any,
+    params::P) where {N,
         M<:MassErrorModel, 
         Q<:QuadTransmissionModel,
         S<:SearchDataStructures, 
@@ -1092,30 +1126,26 @@ function LibrarySearch(
                                                             Threads.nthreads(),
                                                             1
                                                         )
-    println("TEST")
+
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
     #println("start frag index search...")
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
-            try
-            return searchFragmentIndex(
-                    scan_to_prec_idx,
-                    fragment_index,
-                    spectra,
-                    last(thread_task),
-                    search_data[thread_id],
-                    params,
-                    qtm,
-                    mem,
-                    rt_to_irt_spline
-                )
-            catch e
-                println("thread_id $thread_id")
-                throw(e)
-            end
+                return searchFragmentIndex(
+                        scan_to_prec_idx,
+                        fragment_index,
+                        spectra,
+                        last(thread_task),
+                        search_data[thread_id],
+                        params,
+                        qtm,
+                        mem,
+                        rt_to_irt_spline
+                    )
         end
     end
+    
     precursors_passed_scoring = fetch.(tasks)
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 

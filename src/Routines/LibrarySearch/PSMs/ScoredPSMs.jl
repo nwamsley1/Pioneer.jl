@@ -99,7 +99,6 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
     skipped = 0
     n = 0
 
-
     function getPoisson(lam::T, observed::Int64) where {T<:AbstractFloat}
         function logfac(N)
             N*log(N) - N + (log(N*(1 + 4*N*(1 + 2*N))))/6 + log(π)/2
@@ -125,7 +124,7 @@ function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}},
             skipped += 1
             continue
         end
-
+        
         if start_idx + i - skipped > length(scored_psms)
             growScoredPSMs!(scored_psms, block_size);
         end
@@ -202,7 +201,6 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         end
         log((lam^observed)*exp(-lam)) - logfac(observed)
     end
-
     start_idx = last_val
     skipped = 0
     for i in range(1, n_vals)
