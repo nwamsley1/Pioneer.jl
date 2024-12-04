@@ -214,7 +214,77 @@ function getPSMS(
     end
     return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
+function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FragmentIndexSearchParameters}
+    return vcat(LibrarySearch(
+                    spectra,
+                    UInt32(ms_file_idx),
+                    getPresearchFragmentIndex(getSpecLib(search_context)),
+                    getSpecLib(search_context),
+                    getSearchData(search_context),
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    getMassErrorModel(search_context, ms_file_idx),
+                    getRtIrtModel(search_context, ms_file_idx),
+                    search_parameters,
+                )...)
+end
+function LibrarySearch(
+    spectra::Arrow.Table,
+    ms_file_idx::UInt32,
+    fragment_index::FragmentIndex{Float32},
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    qtm::Q,
+    mem::M,
+    rt_to_irt_spline::Any,
+    params::P) where {
+        M<:MassErrorModel, 
+        Q<:QuadTransmissionModel,
+        S<:SearchDataStructures, 
+        P<:FragmentIndexSearchParameters}
+    #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
+    thread_tasks = partition_scans(spectra, Threads.nthreads())
 
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    #println("start frag index search...")
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+                return searchFragmentIndex(
+                        scan_to_prec_idx,
+                        fragment_index,
+                        spectra,
+                        last(thread_task),
+                        search_data[thread_id],
+                        params,
+                        qtm,
+                        mem,
+                        rt_to_irt_spline
+                    )
+        end
+    end
+    
+    precursors_passed_scoring = fetch.(tasks)
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin 
+            thread_id = first(thread_task)
+            return getPSMS(
+                                ms_file_idx,
+                                spectra,
+                                last(thread_task), #getRange(thread_task),
+                                getPrecursors(spec_lib),
+                                getFragmentLookupTable(spec_lib),
+                                scan_to_prec_idx,
+                                precursors_passed_scoring[thread_id],
+                                search_data[thread_id],
+                                params,
+                                qtm,
+                                mem,
+                                rt_to_irt_spline)
+        end
+    end
+    tasks_out = fetch.(tasks)
+    return tasks_out
+end
 function getMassErrors(
                     spectra::Arrow.Table,
                     library_fragment_lookup::LibraryFragmentLookup,
@@ -1103,71 +1173,6 @@ function massErrorSearch(
     return psms
 end
 
-function LibrarySearch(
-    spectra::Arrow.Table,
-    ms_file_idx::UInt32,
-    fragment_index::FragmentIndex{Float32},
-    spec_lib::SpectralLibrary,
-    search_data::AbstractVector{S},
-    qtm::Q,
-    mem::M,
-    rt_to_irt_spline::Any,
-    params::P) where {N,
-        M<:MassErrorModel, 
-        Q<:QuadTransmissionModel,
-        S<:SearchDataStructures, 
-        P<:FragmentIndexSearchParameters}
-    #println("TEST $sample_rate masserrmodel ", kwargs[:mass_err_model])
-    thread_tasks, total_peaks = partitionScansToThreads(
-                                                            spectra[:mz_array],
-                                                            spectra[:retentionTime],
-                                                            spectra[:centerMz],
-                                                            spectra[:msOrder],
-                                                            Threads.nthreads(),
-                                                            1
-                                                        )
-
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
-    #println("start frag index search...")
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
-            thread_id = first(thread_task)
-                return searchFragmentIndex(
-                        scan_to_prec_idx,
-                        fragment_index,
-                        spectra,
-                        last(thread_task),
-                        search_data[thread_id],
-                        params,
-                        qtm,
-                        mem,
-                        rt_to_irt_spline
-                    )
-        end
-    end
-    
-    precursors_passed_scoring = fetch.(tasks)
-    tasks = map(thread_tasks) do thread_task
-        Threads.@spawn begin 
-            thread_id = first(thread_task)
-            return getPSMS(
-                                ms_file_idx,
-                                spectra,
-                                last(thread_task), #getRange(thread_task),
-                                getPrecursors(spec_lib),
-                                getFragmentLookupTable(spec_lib),
-                                scan_to_prec_idx,
-                                precursors_passed_scoring[thread_id],
-                                search_data[thread_id],
-                                params,
-                                qtm,
-                                mem,
-                                rt_to_irt_spline)
-        end
-    end
-    tasks_out = fetch.(tasks)
-    return tasks_out
-end
 
 function NceScanningSearch(
     spectra::Arrow.Table,
