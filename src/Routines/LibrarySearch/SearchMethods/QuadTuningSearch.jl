@@ -79,23 +79,19 @@ function initQuadTuningSearchContexts(
 end
 
 # Then to modify existing search context:
+# Update conversion function
 function convertToQuadTuningContext!(search_context::SearchContext)
-    iso_splines = getIsoSplines(search_context.temp_structures[1])  # Get existing iso_splines
-    n_precursors = length(getIdToCol(search_context.temp_structures[1]))
-    N = length(search_context.temp_structures)
-    M = length(getIonMatches(search_context.temp_structures[1]))
-    
-    # Create new quad tuning structures
+    resize!(search_context.temp_structures, 0)
+    search_context.temp_structures = Vector{QuadTuningDataStructures{Float32}}()
     search_context.temp_structures = initQuadTuningSearchContexts(
-        iso_splines,
-        n_precursors,
-        N,
-        M
+        getIsoSplines(search_context.temp_structures[1]),
+        getNPrecursors(search_context),
+        getNThreads(search_context),
+        getBufferSize(search_context)
     )
-    
+    GC.gc()
     return search_context
 end
-
 
 # Main search types
 struct QuadTuningSearch <: TuningMethod end
@@ -104,15 +100,6 @@ struct QuadTuningSearchResults <: SearchResults
     quad_models::Base.Ref{Dict{Int64, QuadTransmissionModel}}
     tuning_psms::Base.Ref{DataFrame}
     window_widths::Base.Ref{Set{String}}
-end
-
-# And modify the constructor to:
-function init_search_results(search_parameters::QuadTuningSearchParameters, search_context::SearchContext, ms_file_idx::Int64)
-    return QuadTuningSearchResults(
-        Ref(Dict{Int64, QuadTransmissionModel}()),
-        Ref(DataFrame()),
-        Ref(Set{String}())
-    )
 end
 
 struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
@@ -176,6 +163,14 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         )
     end
 end
+# And modify the constructor to:
+function init_search_results(search_parameters::QuadTuningSearchParameters, search_context::SearchContext, ms_file_idx::Int64)
+    return QuadTuningSearchResults(
+        Ref(Dict{Int64, QuadTransmissionModel}()),
+        Ref(DataFrame()),
+        Ref(Set{String}())
+    )
+end
 
 # Interface implementations
 get_parameters(search_type::QuadTuningSearch, params::Any) = QuadTuningSearchParameters(params)
@@ -189,8 +184,10 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::Arrow.Table) where {P<:QuadTuningSearchParameters}
 
-    convertToQuadTuningContext!(search_context)
+    #convertToQuadTuningContext!(search_context)
+
     try
+        convertToQuadTuningContext!(search_context)
         # Check for multiple window widths
         window_widths = Set{String}()
         for i in 1:length(spectra[:isolationWidthMz])

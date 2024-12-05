@@ -90,7 +90,7 @@ function set_irt_to_rt_model!(ptsr::ParameterTuningSearchResults, search_context
     append!(ptsr.rt, model[2])
     append!(ptsr.irt, model[3])
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    getIrtErrs(search_context)[parsed_fname] =  model[4]*params.irt_tol_sd
+    getIrtErrors(search_context)[parsed_fname] =  model[4]*params.irt_tol_sd
 end
 
 get_parameters(search_type::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)

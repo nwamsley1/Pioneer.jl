@@ -99,6 +99,7 @@ function SearchDIA(params_path::String)
     ###########
     #File Names parsing
     file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
+    #=
     MS_SEARCH_DATA = initSimpleSearchContexts(
     parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
     n_precursors,
@@ -111,6 +112,19 @@ function SearchDIA(params_path::String)
         SPEC_LIB, 
         MS_SEARCH_DATA, MASS_SPEC_DATA_REFERENCE
     );
+    =#
+    MASS_SPEC_DATA_REFERENCE = ArrowTableReference(MS_TABLE_PATHS, file_id_to_parsed_name);
+
+    MS_TABLE_PATHS = MS_TABLE_PATHS[1:3]
+    SEARCH_CONTEXT = initSearchContext(
+    SPEC_LIB,
+    parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+    ArrowTableReference(MS_TABLE_PATHS, file_id_to_parsed_name),
+    Threads.nthreads(),
+    n_precursors,
+    250000  # buffer size
+);
+
     setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"])
 
     @time execute_search(
@@ -120,6 +134,10 @@ function SearchDIA(params_path::String)
     @time execute_search(
         NceTuningSearch(), SEARCH_CONTEXT, params_
     ) 
+
+    @time execute_search(
+        QuadTuningSearch(), SEARCH_CONTEXT, params_
+    )
 
     @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_

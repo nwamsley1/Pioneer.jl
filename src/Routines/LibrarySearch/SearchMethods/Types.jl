@@ -13,6 +13,7 @@ include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
 importScripts()
 include("Routines/LibrarySearch/SearchMethods/Types.jl")
 importScripts()
+include("Routines/LibrarySearch/SearchMethods/NceTuningSearch.jl")
 include("Routines/LibrarySearch/SearchMethods/SearchMethod.jl")
 include("Routines/LibrarySearch/SearchMethods/ParameterTuningSearch.jl")
 include("Routines/LibrarySearch/SearchMethods/FirstPassSearch.jl")
@@ -85,7 +86,7 @@ end
 
 
 # Common interface for containers for search data
-struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
+mutable struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
     spec_lib::L
     temp_structures::AbstractVector{S}
     mass_spec_data_reference::M
@@ -97,16 +98,23 @@ struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSp
     mass_error_model::Dict{Int64, MassErrorModel}
     rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
-    # New fields for summarization results
-    irt_errs::Dict{String, Float32}
     irt_rt_map::Base.Ref{Any}
     rt_irt_map::Base.Ref{Any}
     precursor_dict::Base.Ref{Dict}
     rt_index_paths::Base.Ref{Vector{String}}
+    irt_errors::Dict{String, Float32}
+    # New fields
+    n_threads::Int64
+    n_precursors::Int64
+    buffer_size::Int64  # This is M in your notation
+
     function SearchContext(
         spec_lib::L,
         temp_structures::AbstractVector{S},
-        mass_spec_data_reference::M
+        mass_spec_data_reference::M,
+        n_threads::Int64,
+        n_precursors::Int64,
+        buffer_size::Int64
     ) where {L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
         N = length(temp_structures)
         new{N,L,S,M}(
@@ -121,14 +129,22 @@ struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSp
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, RtConversionModel}(),
             Dict{Int64, NceModel}(),
-            Dict{String, Float32}(),
             Ref{Any}(),
             Ref{Any}(),
             Ref{Dict}(),
-            Ref{Vector{String}}()
+            Ref{Vector{String}}(),
+            Dict{String, Float32}(),
+            n_threads,
+            n_precursors,
+            buffer_size
         )
     end
 end
+
+# Add getters for new fields
+getNThreads(s::SearchContext) = s.n_threads
+getNPrecursors(s::SearchContext) = s.n_precursors
+getBufferSize(s::SearchContext) = s.buffer_size
 getMassSpecData(s::SearchContext) = s.mass_spec_data_reference
 getSpecLib(s::SearchContext) = s.spec_lib
 getSearchData(s::SearchContext) = s.temp_structures
@@ -232,12 +248,10 @@ function setIrtErrors!(s::SearchContext, errors::Dict{String, Float32})
 end
 
 # Add getter/setter for irt_errs
-getIrtErrs(s::SearchContext) = s.irt_errs
+getIrtErrs(s::SearchContext) = s.irt_errors
 function setIrtErrs!(s::SearchContext, errs::Dict{String, Float32})
-    println("errs $errs")
-    println("s.irt_errs ", s.irt_errs)
     for (k,v) in pairs(errs)
-        s.irt_errs[k] = v
+        s.irt_errors[k] = v
     end
 end
 
@@ -293,19 +307,40 @@ function initSimpleSearchContexts(
     [initSimpleSearchContext(iso_splines, n_precursors, M) for _ in 1:N]
 end
 
+# Update conversion back to simple search
 function convertToSimpleContext!(search_context::SearchContext)
-    iso_splines = getIsoSplines(search_context.temp_structures[1])  # Get existing iso_splines
-    n_precursors = length(getIdToCol(search_context.temp_structures[1]))
-    N = length(search_context.temp_structures)
-    M = length(getIonMatches(search_context.temp_structures[1]))
-
-    # Create new simple search structures
     search_context.temp_structures = initSimpleSearchContexts(
+        getIsoSplines(search_context.temp_structures[1]),
+        getNPrecursors(search_context),
+        getNThreads(search_context),
+        getBufferSize(search_context)
+    )
+    return search_context
+end
+
+
+# Update the initialization of SearchContext
+function initSearchContext(
+    spec_lib::FragmentIndexLibrary,
+    iso_splines::IsotopeSplineModel,
+    ms_data_reference::MassSpecDataReference,
+    n_threads::Int64,
+    n_precursors::Int64,
+    buffer_size::Int64
+)
+    temp_structures = initSimpleSearchContexts(
         iso_splines,
         n_precursors,
-        N,
-        M
+        n_threads,
+        buffer_size
     )
-
-    return search_context
+    
+    return SearchContext(
+        spec_lib,
+        temp_structures,
+        ms_data_reference,
+        n_threads,
+        n_precursors,
+        buffer_size
+    )
 end
