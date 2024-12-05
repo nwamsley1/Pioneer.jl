@@ -113,16 +113,24 @@ function SearchDIA(params_path::String)
     );
     setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"])
 
-    execute_search(
+    @time execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
     )
-    using Profile, PProf
-    Profile.clear()
-    @profile begin
-        Profile.clear()
-    execute_search(
+
+    @time execute_search(
+        NceTuningSearch(), SEARCH_CONTEXT, params_
+    ) 
+
+    @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
     )
+    @time execute_search(
+        QuadTuningSearch(), SEARCH_CONTEXT, params_
+    )
+ n
+
+
+
 end
     pprof()
     ##########

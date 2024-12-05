@@ -25,6 +25,10 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_precursors_passing::Int64
     min_inference_points::Int64
     max_q_val_for_irt::Float32
+    min_prob_for_irt_mapping::Float32
+    max_precursors::Int64
+    max_irt_bin_size::Float32
+    max_prob_to_impute::Float32
     prec_estimation::P
 
     function FirstPassSearchParameters(params::Any)
@@ -51,6 +55,10 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(fp["max_precursors_passing"]),
             Int64(sp["min_inference_points"]),
             Float32(sp["max_q_val_for_irt"]),
+            Float32(params[:irt_mapping_params]["min_prob"]),
+            Int64(sp["max_precursors"]),
+            Float32(sp["max_irt_bin_size"]),
+            Float32(sp["max_prob_to_impute"]),
             prec_estimation
         )
     end
@@ -82,20 +90,17 @@ function process_file!(
     try
         # Get models from context
         rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-        quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
-        nce_model = getNceModelModel(search_context, ms_file_idx)
-        
+
         # Update fragment lookup table with NCE model
-        fragment_lookup_table = updateNceModel(
+        setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
-            nce_model
+            getNceModelModel(search_context, ms_file_idx)
         )
         # Get file name for looking up irt_err
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
         
         # Perform library search
         psms = library_search(spectra, search_context, params, ms_file_idx)
-        
         # Add columns and process results
         addMainSearchColumns!(
             psms,
@@ -109,7 +114,6 @@ function process_file!(
             spectra[:TIC],
             spectra[:mz_array]
         )
-
         # Calculate iRT values
         psms[!, :irt_observed] = rt_to_irt_model.(psms[!, :rt])
         psms[!, :irt_error] = Float16.(abs.(psms[!, :irt_observed] .- psms[!, :irt_predicted]))
@@ -217,19 +221,22 @@ function summarize_results!(results::FirstPassSearchResults, params::P, search_c
     @info "Summarizing search results..."
 
     # Write PSM counts
+    #=
     first_psms = DataFrame(Arrow.Table(collect(values(results.psms_paths))))
     filter!(:q_value => x -> x <= 0.01, first_psms)
     psms_counts = combine(groupby(first_psms, :ms_file_idx), nrow)
-
+    println("psms_counts ", psms_counts)
+    println("typeof(psms_counts) ", typeof(psms_counts))
     csv_path = joinpath(getDataOutDir(search_context), "first_search_psms_counts.csv")
     CSV.write(csv_path, psms_counts)
-
+    println("passed?")
+    =#
     # Map library retention times to empirical retention times
     @info "Mapping library to empirical retention times..."
     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
         collect(values(results.psms_paths)),
         search_context.rt_to_irt_model,
-        min_prob=params.min_prob_for_rt_mapping
+        min_prob=params.min_prob_for_irt_mapping
     )
     setIrtRtMap!(search_context, irt_rt)
     setRtIrtMap!(search_context, rt_irt)

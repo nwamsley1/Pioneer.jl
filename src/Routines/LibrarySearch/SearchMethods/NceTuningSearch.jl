@@ -17,7 +17,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
-    irt_tol::Float32
     spec_order::Set{Int64}
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
@@ -40,7 +39,6 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(pp["n_frag_isotopes"]),
             UInt8(pp["max_frag_rank"]),
             Float32(pp["sample_rate"]),
-            typemax(Float32),
             Set(2),
             LinRange(21.0f0, 40.0f0, 15),  # Default NCE grid
             NCE_MODEL_BREAKPOINT,  # Global constant for NCE model
@@ -68,34 +66,13 @@ function process_file!(
 
     try
         # Get models from context
-        rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-        mass_error_model = getMassErrorModel(search_context, ms_file_idx)
-        irt_err = getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
-        quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
+        #rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
+        ##mass_error_model = getMassErrorModel(search_context, ms_file_idx)
+        #irt_err = getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
+        #quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
 
-        # NCE grid search
-        psms = vcat([begin
-            # Update fragment lookup table with current NCE
-            flt = updateNceModel(
-                getFragmentLookupTable(getSpecLib(search_context)),
-                PiecewiseNceModel(nce)
-            )
             
-            # Perform library search with current NCE
-            psm_results = library_search(
-                spectra,
-                search_context,
-                params,
-                ms_file_idx,
-                fragment_lookup_table=flt,
-                irt_tol=irt_err
-            )
-            
-            if !isempty(psm_results)
-                psm_results[!, :nce] .= nce
-            end
-            psm_results
-        end for nce in params.nce_grid]...)
+        psms = library_search(spectra, search_context, params, ms_file_idx)
 
         # Add necessary columns
         addPreSearchColumns!(

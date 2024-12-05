@@ -66,7 +66,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
                 detailed_frags, 
                 prec_frag_ranges, 
                 spl_knots, 
-                nmc,
+                Ref(nmc),
                 3
             )
         catch e

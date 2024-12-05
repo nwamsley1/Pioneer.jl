@@ -1,6 +1,6 @@
 #This method should be generic 
 function execute_search(
-    search_type::FirstPassSearch, 
+    search_type::SearchMethod, 
     search_context::SearchContext,
     params::Any)
 
@@ -22,7 +22,7 @@ function execute_search(
 
         #Reset search results for the next file
         reset_results!(search_results)
-        return 
+
     end
     summarize_results!(search_results, search_parameters, search_context)
 

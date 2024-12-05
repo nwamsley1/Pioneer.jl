@@ -3,6 +3,8 @@
 include("structs/Ion.jl")
 include("structs/LibraryFragmentIndex.jl")
 include("structs/LibraryIon.jl")
+include("structs/LibraryFragmentIndex.jl")
+include("structs/LibraryIon.jl")
 include("utils/ML/uniformBasisCubicSpline.jl")
  include("structs/RetentionTimeConversionModel.jl")
 include("utils/quadTransmissionModeling/quadTransmissionModel.jl")
@@ -155,10 +157,11 @@ function setQuadTransmissionModel!(s::SearchContext, index::Int64, model::QuadTr
 end
 
 function getMassErrorModel(s::SearchContext, index::Int64) 
-    if haskey(s.quad_transmission_model, index)
-        return s.quad_transmission_model[index]
+    if haskey(s.mass_error_model, index)
+        return s.mass_error_model[index]
     else
         #Return a sensible default 
+        @warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
         return MassErrorModel(zero(Float32), #(getFragTolPpm(params), getFragTolPpm(params)),
         (30.0f0, 30.0f0))
     end
@@ -288,4 +291,21 @@ function initSimpleSearchContexts(
     N::Int64,
     M::Int64)
     [initSimpleSearchContext(iso_splines, n_precursors, M) for _ in 1:N]
+end
+
+function convertToSimpleContext!(search_context::SearchContext)
+    iso_splines = getIsoSplines(search_context.temp_structures[1])  # Get existing iso_splines
+    n_precursors = length(getIdToCol(search_context.temp_structures[1]))
+    N = length(search_context.temp_structures)
+    M = length(getIonMatches(search_context.temp_structures[1]))
+
+    # Create new simple search structures
+    search_context.temp_structures = initSimpleSearchContexts(
+        iso_splines,
+        n_precursors,
+        N,
+        M
+    )
+
+    return search_context
 end

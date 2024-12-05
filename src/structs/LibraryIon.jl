@@ -516,6 +516,8 @@ struct PiecewiseNceModel{T<:AbstractFloat} <: NceModel{T}
  end
 
 
+
+if !@isdefined(SplineFragmentLookup)
 """
     SplineFragmentLookup{N,M,C,T<:AbstractFloat} <: LibraryFragmentLookup
 
@@ -537,15 +539,20 @@ struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
     frags::Vector{SplineDetailedFrag{N,T}}
     prec_frag_ranges::Vector{UInt64}
     knots::NTuple{M, T}
-    nce_model::NceModel{T}
+    nce_model::Base.Ref{<:NceModel{T}}
     degree::Int64
 end
-
+end
 getDegree(lfp::SplineFragmentLookup) = lfp.degree
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
 getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
+
+# Add a setter for the NCE model in SplineFragmentLookup
+function setNceModel!(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
+    lookup.nce_model[] = new_nce_model
+end
 
 function getSplineData(lfp::SplineFragmentLookup{N,M,T}, prec_charge::UInt8, prec_mz::T) where {N,M,T<:AbstractFloat}
     return SplineType(
@@ -564,10 +571,10 @@ function getSplineData(lfp::SplineFragmentLookup{N,M,T}) where {N,M,T<:AbstractF
 end
 
 function getNCE(lfp::SplineFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
-    return lfp.nce_model(prec_mz, prec_charge)
+    return lfp.nce_model[](prec_mz, prec_charge)
 end
 function getNCE(lfp::SplineFragmentLookup)
-    return lfp.nce_model()
+    return lfp.nce_model[]()
 end
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
 
@@ -621,3 +628,4 @@ getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
 getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
 getPrecursors(sl::SpectralLibrary) = sl.precursors
 getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 
+
