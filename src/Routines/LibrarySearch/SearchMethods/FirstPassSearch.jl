@@ -21,7 +21,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
-    irt_tol::Float32
     spec_order::Set{Int64}
     max_precursors_passing::Int64
     min_inference_points::Int64
@@ -48,7 +47,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(fp["n_frag_isotopes"]),
             UInt8(fp["max_frag_rank"]),
             1.0f0,#Float32(fp["sample_rate"]),
-            typemax(Float32),
             Set(2),
             Int64(fp["max_precursors_passing"]),
             Int64(sp["min_inference_points"]),
@@ -92,7 +90,9 @@ function process_file!(
             getFragmentLookupTable(getSpecLib(search_context)), 
             nce_model
         )
-
+        # Get file name for looking up irt_err
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        
         # Perform library search
         psms = library_search(spectra, search_context, params, ms_file_idx)
         
@@ -204,14 +204,76 @@ function reset_results!(results::FirstPassSearchResults)
 end
 
 
-struct FirstPassSearchResults <: SearchResults
-    peak_fwhms::Dict{String, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}
-    psms_paths::Dict{String, String}
-    model_updates::Dict{Int64, Any}  # Store any model updates from the search
-end
 
 
+#need to implement
+function summarize_results!(results::FirstPassSearchResults, params::P, search_context::SearchContext) where {P<:FirstPassSearchParameters}
+    # First validate that we have results to process
+    if isempty(results.psms_paths)
+        @warn "No PSM results found to summarize"
+        return nothing
+    end
 
-function summarize_results!(results::FirstPassSeachResults, params::P, search_context::SearchContext) where {P<:FirstPassSearchParameters}
-    
+    @info "Summarizing search results..."
+
+    # Write PSM counts
+    first_psms = DataFrame(Arrow.Table(collect(values(results.psms_paths))))
+    filter!(:q_value => x -> x <= 0.01, first_psms)
+    psms_counts = combine(groupby(first_psms, :ms_file_idx), nrow)
+
+    csv_path = joinpath(getDataOutDir(search_context), "first_search_psms_counts.csv")
+    CSV.write(csv_path, psms_counts)
+
+    # Map library retention times to empirical retention times
+    @info "Mapping library to empirical retention times..."
+    irt_rt, rt_irt = mapLibraryToEmpiricalRT(
+        collect(values(results.psms_paths)),
+        search_context.rt_to_irt_model,
+        min_prob=params.min_prob_for_rt_mapping
+    )
+    setIrtRtMap!(search_context, irt_rt)
+    setRtIrtMap!(search_context, rt_irt)
+
+    # Get best precursors across runs
+    @info "Finding best precursors across runs..."
+    precursor_dict = getBestPrecursorsAccrossRuns(
+        collect(values(results.psms_paths)),
+        getPrecursors(getSpecLib(search_context))[:mz],
+        rt_irt,
+        max_q_val=params.max_q_val_for_irt,
+        max_precursors=params.max_precursors
+    )
+    setPrecursorDict!(search_context, precursor_dict)
+
+    # Calculate iRT errors
+    @info "Calculating iRT errors..."
+    if length(keys(results.peak_fwhms)) > 1
+        irt_errs = getIrtErrs(
+            results.peak_fwhms,
+            precursor_dict,
+            params
+        )
+    else
+        irt_errs = Dict(zip(keys(results.peak_fwhms), zeros(Float32, length(keys(results.peak_fwhms)))))
+    end
+    setIrtErrors!(search_context, irt_errs)
+
+    # Create RT indices
+    @info "Creating RT indices..."
+    prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), precursor_dict)
+
+    rt_indices_folder = joinpath(getDataOutDir(search_context), "rt_indices")
+    !isdir(rt_indices_folder) && mkdir(rt_indices_folder)
+
+    rt_index_paths = makeRTIndices(
+        rt_indices_folder,
+        collect(values(results.psms_paths)),
+        prec_to_irt,
+        rt_irt,
+        min_prob=params.max_prob_to_impute
+    )
+    setRtIndexPaths!(search_context, rt_index_paths)
+
+    @info "Search results summarization complete"
+    return nothing
 end

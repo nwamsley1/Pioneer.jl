@@ -113,12 +113,18 @@ function SearchDIA(params_path::String)
     );
     setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"])
 
-    test=execute_search(
+    execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
     )
+    using Profile, PProf
+    Profile.clear()
+    @profile begin
+        Profile.clear()
     execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
     )
+end
+    pprof()
     ##########
     #Isotope Trace Type
     if params_[:quant_search_params]["combine_isotope_traces"]

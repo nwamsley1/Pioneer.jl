@@ -8,22 +8,22 @@ function searchFragmentIndex(
                     qtm::Q,
                     mem::M,
                     rt_to_irt_spline::Any,
+                    irt_tol::AbstractFloat,
                     ) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:FragmentIndexSearchParameters}
 
     prec_id = 0
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     rt_bin_idx = 1
     for scan_idx in thread_task
+        #if scan_idx != 200000
+        #    continue
+        #end
         # Skip invalid indices
         (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
         (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
-        #(spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || false) && continue
-        #if scan_idx % 50 != 0
-        #    continue
-        #end
 
         # Update RT bin index based on iRT window
-        irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), getIRTTol(params))
+        irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), irt_tol)
 
         #=
         while rt_bin_idx <= length(getRTBins(frag_index)) && getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
@@ -97,6 +97,7 @@ function searchFragmentIndex(
 
     return precursors_passed_scoring[1:prec_id]
 end
+
 function getPSMS(
     ms_file_idx::UInt32,
     spectra::Arrow.Table,
@@ -109,18 +110,23 @@ function getPSMS(
     params::P,
     qtm::Q,
     mem::M,
-    rt_to_irt_spline::Any) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:SearchParameters}
+    rt_to_irt_spline::Any,
+    irt_tol::AbstractFloat) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:SearchParameters}
 
     msms_counts = Dict{Int64, Int64}()
     last_val = 0
     Hs = SparseArray(UInt32(5000))
     isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
-    k = 0
     for scan_idx in thread_task
         (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
         ismissing(scan_to_prec_idx[scan_idx]) && continue
-        
+        #if scan_idx % 50 != 0
+        #    continue
+        #end
+        if scan_idx != 200000
+            continue
+        end
         # Scan Filtering
         msn = spectra[:msOrder][scan_idx]
         msn ∉ getSpecOrder(params) && continue
@@ -142,11 +148,16 @@ function getPSMS(
             precursor_transmission, isotopes, getNFragIsotopes(params),
             getMaxFragRank(params),
             Float32(rt_to_irt_spline(spectra[:retentionTime][scan_idx])),
-            Float32(getIRTTol(params)), 
+            Float32(irt_tol), 
             (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
             isotope_err_bounds = getIsotopeErrBounds(params)
         )
-
+        println("scan_to_prec_idx[scan_idx] ", scan_to_prec_idx[scan_idx])
+        println("ion_idx $ion_idx")
+        for i in scan_to_prec_idx[scan_idx]
+            println("mz ", precursors[:mz][precursors_passed_scoring[i]])
+            println("ift ", precursors[:irt][precursors_passed_scoring[i]])
+        end
         ion_idx < 2 && continue
 
 
@@ -177,7 +188,7 @@ function getPSMS(
             end 
 
             getDistanceMetrics(Hs, getSpectralScores(search_data))
-
+            println("Hs.m Hs.n", Hs.m, " ", Hs.n)
             ScoreFragmentMatches!(
                 getUnscoredPsms(search_data),
                 getIdToCol(search_data),
@@ -226,10 +237,18 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
+                    getIRTTol(search_parameters),
                 )...)
 end
 
 function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:FirstPassSearchParameters}
+    
+    irt_err = getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
+    println("parameters")
+    for name in fieldnames(typeof(search_parameters))
+        value = getfield(search_parameters, name)
+        println("$name: $value")
+    end
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
@@ -240,6 +259,7 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
+                    irt_err
                 )...)
 end
 
@@ -253,7 +273,8 @@ function LibrarySearch(
     qtm::Q,
     mem::M,
     rt_to_irt_spline::Any,
-    params::P) where {
+    params::P,
+    irt_tol::AbstractFloat) where {
         M<:MassErrorModel, 
         Q<:QuadTransmissionModel,
         S<:SearchDataStructures, 
@@ -275,12 +296,14 @@ function LibrarySearch(
                         params,
                         qtm,
                         mem,
-                        rt_to_irt_spline
+                        rt_to_irt_spline,
+                        irt_tol,
                     )
         end
     end
     
     precursors_passed_scoring = fetch.(tasks)
+    println("precursors_passed_scoring ", [length(x) for x in precursors_passed_scoring])
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -296,10 +319,13 @@ function LibrarySearch(
                                 params,
                                 qtm,
                                 mem,
-                                rt_to_irt_spline)
+                                rt_to_irt_spline,
+                                irt_tol)
         end
     end
+    @profile begin
     tasks_out = fetch.(tasks)
+    end
     return tasks_out
 end
 

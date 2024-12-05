@@ -20,18 +20,6 @@ function set_mass_err_model!(ptsr::ParameterTuningSearchResults, model::Tuple{Ma
 
 end
 
-function set_irt_to_rt_model!(ptsr::ParameterTuningSearchResults, model::Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}})
-    ptsr.irt_to_rt_model[] = model[1]
-    if length(ptsr.irt) > 0
-        resize!(ptsr.irt, 0)
-    end 
-    if length(ptsr.rt) > 0
-        resize!(ptsr.rt, 0)
-    end 
-    append!(ptsr.rt, model[2])
-    append!(ptsr.irt, model[3])
-end
-
 function reset_results!(ptsr::ParameterTuningSearchResults)
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
@@ -58,6 +46,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     spline_degree::Int64
     spline_n_knots::Int64
     spline_fit_outlier_sd::Int64
+    irt_tol_sd::Int64
     prec_estimation::P
 
     function ParameterTuningSearchParameters(params::Any)
@@ -85,13 +74,26 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             3,
             5,
             10,
+            Int64(params[:irt_mapping_params]["n_sigma_tol"]),
             prec_estimation
         )
     end
 end
+function set_irt_to_rt_model!(ptsr::ParameterTuningSearchResults, search_context::SearchContext, params::P, ms_file_idx::Int64, model::Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}) where {P<:ParameterTuningSearchParameters}
+    ptsr.irt_to_rt_model[] = model[1]
+    if length(ptsr.irt) > 0
+        resize!(ptsr.irt, 0)
+    end 
+    if length(ptsr.rt) > 0
+        resize!(ptsr.rt, 0)
+    end 
+    append!(ptsr.rt, model[2])
+    append!(ptsr.irt, model[3])
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    getIrtErrs(search_context)[parsed_fname] =  model[4]*params.irt_tol_sd
+end
 
 get_parameters(search_type::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)
-
 function init_search_results(search_parameters::ParameterTuningSearchParameters, search_context::SearchContext, ms_file_idx::Int64)
     out_dir = getDataOutDir(search_context)
     qc_dir = joinpath(out_dir, "qc_plots")
@@ -107,7 +109,6 @@ function init_search_results(search_parameters::ParameterTuningSearchParameters,
         qc_dir,
     )
 end
-
 function process_file!(
     results::ParameterTuningSearchResults,
     params::P, 
@@ -134,7 +135,7 @@ function process_file!(
             end
         end
         #Model conversion between library (irt) and empirical (rt) retention times
-        set_irt_to_rt_model!(results, fit_irt_model(params, psms))
+        set_irt_to_rt_model!(results, search_context, params, ms_file_idx, fit_irt_model(params, psms))
 
         fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
 
@@ -268,11 +269,37 @@ function fit_irt_model(params::P, psms::DataFrame) where {P<:ParameterTuningSear
     
     # Remove extreme outliers and refit
     valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]
-
     return (SplineRtConversionModel(UniformSpline(
         valid_psms[!,:irt_predicted],
         valid_psms[!,:rt],
         getSplineDegree(params),
         getSplineNKnots(params),
-    )), valid_psms[!,:rt], valid_psms[!,:irt_predicted])
+    )), valid_psms[!,:rt], valid_psms[!,:irt_predicted], irt_mad)
+end
+
+function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
+    @info "Merging QC plots..."
+    
+    # Get plot folders from search context
+    rt_alignment_folder = getRtAlignPlotFolder(search_context)
+    mass_error_folder = getMassErrPlotFolder(search_context)
+    
+    # Merge retention time alignment plots
+    rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) if endswith(x, ".pdf")]
+    if !isempty(rt_plots)
+        merge_pdfs(rt_plots, 
+                  joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), 
+                  cleanup=true)
+    end
+    
+    # Merge mass error estimation plots
+    mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) if endswith(x, ".pdf")]
+    if !isempty(mass_plots)
+        merge_pdfs(mass_plots, 
+                  joinpath(mass_error_folder, "mass_error_plots.pdf"), 
+                  cleanup=true)
+    end
+
+    @info "QC plot merging complete"
+    return nothing
 end

@@ -1,15 +1,14 @@
 #This method should be generic 
 function execute_search(
-    search_type::SearchMethod, 
+    search_type::FirstPassSearch, 
     search_context::SearchContext,
     params::Any)
 
     msdr = getMassSpecData(search_context)
 
     @info "Starting parameter tuning search" n_files=length(msdr.file_paths)
-
     search_parameters = get_parameters(search_type, params)
-
+    search_results = nothing
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
 
         #Initialize results
@@ -23,9 +22,10 @@ function execute_search(
 
         #Reset search results for the next file
         reset_results!(search_results)
+        return 
     end
-
     summarize_results!(search_results, search_parameters, search_context)
+
 return search_results
 #error("execute_search not implemented for $(typeof(strategy))")
 end
@@ -44,7 +44,6 @@ error("process_file! not implemented for params of type $(typeof(paarams)) and r
 end
 function summarize_results!(results::SearchResults, params::SearchParameters, search_context::SearchContext)
     error("summarize_results! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
-
 end
    
 # Helper functions

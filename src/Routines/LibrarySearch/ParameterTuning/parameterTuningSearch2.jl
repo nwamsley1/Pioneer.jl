@@ -162,12 +162,11 @@ function estimate_mass_errors(
         out_fname = file_name
     )
 end
-
+#=
 # Main execution function
 function execute_search(
     strategy::ParameterTuningSearch,
-    context::SearchContext
-)::SearchResults
+    context::SearchContext)::SearchResults
     
     @info "Starting parameter tuning search" n_files=length(context.ms_table_paths)
     
@@ -189,7 +188,7 @@ function execute_search(
     
     return results
 end
-
+=#
 # Helper function for processing individual files
 function process_file!(
     strategy::ParameterTuningSearch,

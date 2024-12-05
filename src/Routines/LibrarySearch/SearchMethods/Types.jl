@@ -11,6 +11,23 @@ include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
 importScripts()
 include("Routines/LibrarySearch/SearchMethods/Types.jl")
 importScripts()
+include("Routines/LibrarySearch/SearchMethods/SearchMethod.jl")
+include("Routines/LibrarySearch/SearchMethods/ParameterTuningSearch.jl")
+include("Routines/LibrarySearch/SearchMethods/FirstPassSearch.jl")
+include("structs/Ion.jl")
+include("structs/LibraryFragmentIndex.jl")
+include("structs/LibraryIon.jl")
+include("utils/ML/uniformBasisCubicSpline.jl")
+ include("structs/RetentionTimeConversionModel.jl")
+include("utils/quadTransmissionModeling/quadTransmissionModel.jl")
+include("utils/isotopeSplines.jl")
+include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
+importScripts()
+include("Routines/LibrarySearch/SearchMethods/Types.jl")
+importScripts()
+include("Routines/LibrarySearch/SearchMethods/SearchMethod.jl")
+include("Routines/LibrarySearch/SearchMethods/ParameterTuningSearch.jl")
+include("Routines/LibrarySearch/SearchMethods/FirstPassSearch.jl")
 =#
 #include("Routines/LibrarySearch/selectTransitions/selectTransitions.jl")
 #include("src/Routine")
@@ -78,6 +95,12 @@ struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSp
     mass_error_model::Dict{Int64, MassErrorModel}
     rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
+    # New fields for summarization results
+    irt_errs::Dict{String, Float32}
+    irt_rt_map::Base.Ref{Any}
+    rt_irt_map::Base.Ref{Any}
+    precursor_dict::Base.Ref{Dict}
+    rt_index_paths::Base.Ref{Vector{String}}
     function SearchContext(
         spec_lib::L,
         temp_structures::AbstractVector{S},
@@ -95,12 +118,15 @@ struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSp
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, RtConversionModel}(),
-            Dict{Int64, NceModel}()
+            Dict{Int64, NceModel}(),
+            Dict{String, Float32}(),
+            Ref{Any}(),
+            Ref{Any}(),
+            Ref{Dict}(),
+            Ref{Vector{String}}()
         )
     end
-
 end
-
 getMassSpecData(s::SearchContext) = s.mass_spec_data_reference
 getSpecLib(s::SearchContext) = s.spec_lib
 getSearchData(s::SearchContext) = s.temp_structures
@@ -109,6 +135,11 @@ getQcPlotfolder(s::SearchContext) = s.qc_plot_folder[]
 getRtAlignPlotFolder(s::SearchContext) = s.rt_alignment_plot_folder[]
 getMassErrPlotFolder(s::SearchContext) = s.mass_err_plot_folder[]
 getParsedFileName(s::SearchContext, ms_file_idx::Int64) = getParsedFileName(s.mass_spec_data_reference, ms_file_idx)
+getIrtRtMap(s::SearchContext) = s.irt_rt_map[]
+getRtIrtMap(s::SearchContext) = s.rt_irt_map[]
+getPrecursorDict(s::SearchContext) = s.precursor_dict[]
+getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
+getIrtErrors(s::SearchContext) = s.irt_errors
 
 function getQuadTransmissionModel(s::SearchContext, index::Int64) 
     if haskey(s.quad_transmission_model, index)
@@ -177,6 +208,35 @@ function setDataOutDir!(s::SearchContext, dir::String)
 
 end
 
+function setIrtRtMap!(s::SearchContext, map::Any)
+    s.irt_rt_map[] = map
+end
+
+function setRtIrtMap!(s::SearchContext, map::Any)
+    s.rt_irt_map[] = map
+end
+
+function setPrecursorDict!(s::SearchContext, dict::Dict)
+    s.precursor_dict[] = dict
+end
+
+function setRtIndexPaths!(s::SearchContext, paths::Vector{String})
+    s.rt_index_paths[] = paths
+end
+
+function setIrtErrors!(s::SearchContext, errors::Dict{String, Float32})
+    s.irt_errors = errors
+end
+
+# Add getter/setter for irt_errs
+getIrtErrs(s::SearchContext) = s.irt_errs
+function setIrtErrs!(s::SearchContext, errs::Dict{String, Float32})
+    println("errs $errs")
+    println("s.irt_errs ", s.irt_errs)
+    for (k,v) in pairs(errs)
+        s.irt_errs[k] = v
+    end
+end
 
 #Common interface for tunable search parameters
 abstract type SearchParameters end 
