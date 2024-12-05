@@ -55,7 +55,7 @@ getScoredPsms(s::SearchDataStructures) = s.scored_psms
 getUnscoredPsms(s::SearchDataStructures) = s.unscored_psms
 getSpectralScores(s::SearchDataStructures) = s.spectral_scores
 
-struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
+mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
     ion_matches::Vector{FragmentMatch{Float32}}
     ion_misses::Vector{FragmentMatch{Float32}}
     mass_err_matches::Vector{FragmentMatch{Float32}}
@@ -66,8 +66,18 @@ struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructures
     scored_psms::Vector{SimpleScoredPSM{Float32, Float16}}
     unscored_psms::Vector{SimpleUnscoredPSM{Float32}}
     spectral_scores::Vector{SpectralScoresSimple{Float16}}
+    #
+    Hs::SparseArray           # For design matrix
+    precursor_weights::Vector{Float32}
+    temp_weights::Vector{Float32}        # For deconvolution weights
+    residuals::Vector{Float32}      # For deconvolution residuals
+    isotopes::Vector{Float32}       # For isotope calculations
+    precursor_transmission::Vector{Float32}  # For transmission calculations
+    tuning_results::Dict{Symbol, Vector}  # Store results per thread
 end
 
+getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
+getPrecursorWeights(s::SimpleLibrarySearch) = s.precursor_weights
 #Common interface for references to mass spec data used in searches
 abstract type MassSpecDataReference end
 getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = Arrow.Table(msdr.file_paths[ms_file_idx])
@@ -86,9 +96,9 @@ end
 
 
 # Common interface for containers for search data
-mutable struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
+mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     spec_lib::L
-    temp_structures::AbstractVector{S}
+    temp_structures::AbstractVector{<:SearchDataStructures}
     mass_spec_data_reference::M
     data_out_dir::Base.Ref{String}
     qc_plot_folder::Base.Ref{String}
@@ -110,14 +120,14 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,S<:SearchDataStructures,M
 
     function SearchContext(
         spec_lib::L,
-        temp_structures::AbstractVector{S},
+        temp_structures::AbstractVector{<:SearchDataStructures},
         mass_spec_data_reference::M,
         n_threads::Int64,
         n_precursors::Int64,
         buffer_size::Int64
-    ) where {L<:FragmentIndexLibrary,S<:SearchDataStructures,M<:MassSpecDataReference}
+    ) where {L<:FragmentIndexLibrary,M<:MassSpecDataReference}
         N = length(temp_structures)
-        new{N,L,S,M}(
+        new{N,L,M}(
             spec_lib,
             temp_structures,
             mass_spec_data_reference,
@@ -159,7 +169,7 @@ getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 
-function getQuadTransmissionModel(s::SearchContext, index::Int64) 
+function getQuadTransmissionModel(s::SearchContext, index::I) where {I<:Integer}  
     if haskey(s.quad_transmission_model, index)
         return s.quad_transmission_model[index]
     else
@@ -168,11 +178,11 @@ function getQuadTransmissionModel(s::SearchContext, index::Int64)
     end
 end
 
-function setQuadTransmissionModel!(s::SearchContext, index::Int64, model::QuadTransmissionModel)
+function setQuadTransmissionModel!(s::SearchContext, index::I, model::QuadTransmissionModel)where {I<:Integer}
     s.quad_transmission_model[index] = model
 end
 
-function getMassErrorModel(s::SearchContext, index::Int64) 
+function getMassErrorModel(s::SearchContext, index::I) where {I<:Integer} 
     if haskey(s.mass_error_model, index)
         return s.mass_error_model[index]
     else
@@ -183,11 +193,11 @@ function getMassErrorModel(s::SearchContext, index::Int64)
     end
 end
 
-function setMassErrorModel!(s::SearchContext, index::Int64, model::MassErrorModel)
+function setMassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:Integer} 
     s.mass_error_model[index] = model
 end
 
-function getRtIrtModel(s::SearchContext, index::Int64) 
+function getRtIrtModel(s::SearchContext, index::I) where {I<:Integer} 
     if haskey(s.rt_to_irt_model, index)
         return s.rt_to_irt_model[index]
     else
@@ -196,11 +206,11 @@ function getRtIrtModel(s::SearchContext, index::Int64)
     end
 end
 
-function setRtIrtModel!(s::SearchContext, index::Int64, model::Any)
+function setRtIrtModel!(s::SearchContext, index::I, model::Any) where {I<:Integer}
     s.rt_to_irt_model[index] = model
 end
 
-function getNceModelModel(s::SearchContext, index::Int64) 
+function getNceModelModel(s::SearchContext, index::I) where {I<:Integer} 
     if haskey(s.nce_model, index)
         return s.nce_model[index]
     else
@@ -209,7 +219,7 @@ function getNceModelModel(s::SearchContext, index::Int64)
     end
 end
 
-function setNceModel!(s::SearchContext, index::Int64, model::NceModel)
+function setNceModel!(s::SearchContext, index::I, model::NceModel) where {I<:Integer}
     s.nce_model[index] = model
 end
 
@@ -296,9 +306,33 @@ function initSimpleSearchContext(
         iso_splines,
         Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000),
         [SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)],
-        Vector{SpectralScoresSimple{Float16}}(undef, 5000)
+        Vector{SpectralScoresSimple{Float16}}(undef, 5000),
+        SparseArray(UInt32(5000)),
+        zeros(Float32, n_precursors),
+        zeros(Float32, 5000),
+        zeros(Float32, 5000),
+        zeros(Float32, 5),
+        zeros(Float32, 5),
+        Dict(
+            :precursor_idx => UInt32[],
+            :scan_idx => UInt32[],
+            :weight => Float32[],
+            :iso_idx => UInt8[],
+            :center_mz => Float32[],
+            :n_matches => UInt8[]
+        )
     )
 end
+
+
+
+getHs(s::SearchDataStructures) = s.Hs
+getWeights(s::SearchDataStructures) = s.weights
+getResiduals(s::SearchDataStructures) = s.residuals
+getIsotopes(s::SearchDataStructures) = s.isotopes
+getPrecursorTransmission(s::SearchDataStructures) = s.precursor_transmission
+getTuningResults(s::SearchDataStructures) = s.tuning_results
+
 function initSimpleSearchContexts(
     iso_splines::IsotopeSplineModel,
     n_precursors::Int64,

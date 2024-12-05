@@ -146,7 +146,7 @@ function selectTransitions!(
                     getIonPosition(frag),
                     getPrecCharge(frag),
                     getRank(frag),
-                    sulfurCount(frag)
+                    getSulfurCount(frag)
                 )
             end
             if transition_idx + 1 > length(transitions)

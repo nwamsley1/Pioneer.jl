@@ -27,7 +27,7 @@ getSequence(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sequence
 getMissedCleavages(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.missed_cleavages
 getVariableMods(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.variable_mods
 getLength(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.length
-sulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
+getSulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
 getCharge(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.prec_charge
 
 abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
@@ -390,7 +390,7 @@ function convert_to_detailed(frag::DetailedFrag{T}) where {T <: AbstractFloat}
         getIonPosition(frag),
         getPrecCharge(frag),
         getRank(frag),
-        sulfurCount(frag)
+        getSulfurCount(frag)
     )
 end
 

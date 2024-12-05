@@ -152,7 +152,7 @@ function add_quad_transitions!(
             getIonPosition(frag),
             getPrecCharge(frag),
             getRank(frag),
-            sulfurCount(frag)
+            getSulfurCount(frag)
         )
 
         if transition_idx >= length(transitions)

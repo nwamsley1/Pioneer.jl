@@ -1,98 +1,27 @@
-# Revised search data structure to include all thread-specific working arrays
-struct QuadTuningDataStructures{T<:AbstractFloat} <: SearchDataStructures
-    ion_matches::Vector{FragmentMatch{T}}
-    ion_misses::Vector{FragmentMatch{T}}
-    id_to_col::ArrayDict{UInt32, UInt16}
-    ion_templates::Vector{DetailedFrag{T}}
-    iso_splines::IsotopeSplineModel
-    unscored_psms::Vector{SimpleUnscoredPSM{T}}
-    spectral_scores::Vector{SpectralScoresSimple{Float16}}
-    precursor_weights::Vector{T}
-    # New fields for working arrays
-    Hs::SparseArray           # For design matrix
-    weights::Vector{T}        # For deconvolution weights
-    residuals::Vector{T}      # For deconvolution residuals
-    isotopes::Vector{T}       # For isotope calculations
-    precursor_transmission::Vector{T}  # For transmission calculations
-    tuning_results::Dict{Symbol, Vector}  # Store results per thread
-end
 
-# Updated initialization
-function initQuadTuningDataStructures(
-    iso_splines::IsotopeSplineModel,
-    n_precursors::Int64,
-    M::Int64)
+#=
+function convertToQuadTuningContext!(search_context::SearchContext) 
+    iso_splines = getIsoSplines(search_context.temp_structures[1])
     
-    return QuadTuningDataStructures(
-        [FragmentMatch{Float32}() for _ in 1:M],
-        [FragmentMatch{Float32}() for _ in 1:M],
-        ArrayDict(UInt32, UInt16, n_precursors*3+1),  # *3+1 for isotope variants
-        [DetailedFrag{Float32}() for _ in 1:M],
+    # Create new quad structures with correct type
+    quad_structures = initQuadTuningSearchContexts(
         iso_splines,
-        [SimpleUnscoredPSM{Float32}() for _ in 1:5000],
-        Vector{SpectralScoresSimple{Float16}}(undef, 5000),
-        zeros(Float32, n_precursors*3+1),
-        SparseArray(UInt32(5000)),
-        zeros(Float32, 5000),
-        zeros(Float32, 5000),
-        zeros(Float32, 5),
-        zeros(Float32, 5),
-        Dict(
-            :precursor_idx => UInt32[],
-            :scan_idx => UInt32[],
-            :weight => Float32[],
-            :iso_idx => UInt8[],
-            :center_mz => Float32[],
-            :n_matches => UInt8[]
-        )
-    )
-end
-
-# Add getter methods for new fields
-getHs(s::SearchDataStructures) = s.Hs
-getWeights(s::SearchDataStructures) = s.weights
-getResiduals(s::SearchDataStructures) = s.residuals
-getIsotopes(s::SearchDataStructures) = s.isotopes
-getPrecursorTransmission(s::SearchDataStructures) = s.precursor_transmission
-getTuningResults(s::SearchDataStructures) = s.tuning_results
-
-# Updated reset methods
-function reset!(s::QuadTuningDataStructures)
-    reset!(s.id_to_col)
-    reset!(s.Hs)
-    empty!(s.tuning_results[:precursor_idx])
-    empty!(s.tuning_results[:scan_idx])
-    empty!(s.tuning_results[:weight])
-    empty!(s.tuning_results[:iso_idx])
-    empty!(s.tuning_results[:center_mz])
-    empty!(s.tuning_results[:n_matches])
-end
-
-# Function to initialize QuadTuningDataStructures for multiple threads
-function initQuadTuningSearchContexts(
-    iso_splines::IsotopeSplineModel,
-    n_precursors::Int64,
-    N::Int64,  # number of threads
-    M::Int64   # buffer size for matches
-)
-    return [initQuadTuningDataStructures(iso_splines, n_precursors, M) for _ in 1:N]
-end
-
-# Then to modify existing search context:
-# Update conversion function
-function convertToQuadTuningContext!(search_context::SearchContext)
-    resize!(search_context.temp_structures, 0)
-    search_context.temp_structures = Vector{QuadTuningDataStructures{Float32}}()
-    search_context.temp_structures = initQuadTuningSearchContexts(
-        getIsoSplines(search_context.temp_structures[1]),
         getNPrecursors(search_context),
         getNThreads(search_context),
         getBufferSize(search_context)
     )
-    GC.gc()
+    
+    # Empty existing vector
+    empty!(search_context.temp_structures)
+    
+    # Append each new structure individually
+    for quad_struct in quad_structures
+        push!(search_context.temp_structures, quad_struct)
+    end
+    
     return search_context
 end
-
+=#
 # Main search types
 struct QuadTuningSearch <: TuningMethod end
 
@@ -175,7 +104,40 @@ end
 # Interface implementations
 get_parameters(search_type::QuadTuningSearch, params::Any) = QuadTuningSearchParameters(params)
 
+function adjustPrecursorArrays!(search_context::SearchContext)
+    target_size = getNPrecursors(search_context) * 3 + 1
 
+    # Only adjust if not already the right size
+    if length(first(search_context.temp_structures).precursor_weights) == getNPrecursors(search_context)
+        for search_data in search_context.temp_structures
+            # Create new IDtoCol of expanded size
+            search_data.id_to_col = ArrayDict(UInt32, UInt16, target_size)
+            
+            # Expand weights
+            if length(search_data.precursor_weights) == getNPrecursors(search_context)
+                resize!(search_data.precursor_weights, target_size)
+                search_data.precursor_weights[length(search_data.precursor_weights):end] .= zero(Float32)
+            end
+        end
+    end
+    return search_context
+end
+
+function resetPrecursorArrays!(search_context::SearchContext)
+    original_size = getNPrecursors(search_context)
+
+    # Only reset if currently expanded
+    if length(first(search_context.temp_structure).precursor_weights) != original_size
+        for search_data in search_context.temp_structures
+            # Reset IDtoCol to original size
+            search_data.id_to_col = ArrayDict(UInt32, UInt16, original_size)
+            
+            # Reset weights to original size
+            resize!(search_data.precursor_weights, original_size)
+        end
+    end
+    return search_context
+end
 
 function process_file!(
     results::QuadTuningSearchResults,
@@ -185,9 +147,11 @@ function process_file!(
     spectra::Arrow.Table) where {P<:QuadTuningSearchParameters}
 
     #convertToQuadTuningContext!(search_context)
-
+    println("TEST")
+    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
     try
-        convertToQuadTuningContext!(search_context)
+        adjustPrecursorArrays!(search_context)
+        #convertToQuadTuningContext!(search_context)
         # Check for multiple window widths
         window_widths = Set{String}()
         for i in 1:length(spectra[:isolationWidthMz])
@@ -204,13 +168,13 @@ function process_file!(
             return results
         end
         
-        results.window_widths = window_widths
+        #$results.window_widths = window_widths
         
         # Collect PSMs through multiple iterations
         total_psms = DataFrame()
         n_iterations = 0
         
-        while n_iterations < 10
+        while n_iterations < 1
             # Get initial PSMs using library search
             psms = library_search(spectra, search_context, params, ms_file_idx)
             
@@ -229,13 +193,16 @@ function process_file!(
                 spectra[:retentionTime],
                 spectra[:TIC]
             )
-            
+            Arrow.write("/Users/n.t.wamsley/Desktop/og_psms.arrow", psms)
             # Score and filter PSMs
             scorePresearch!(psms)
             getQvalues!(psms[!, :prob], psms[!, :target], psms[!, :q_value])
+            println("a size(psms) ", size(psms))
             filter!(:q_value => x -> x <= 0.01, psms)
+            println("b size(psms) ", size(psms))
             filter!(:target => identity, psms)
             
+            println("c size(psms) ", size(psms))
             # Get best PSMs per precursor
             psms[!, :best_psms] .= false
             for group in groupby(psms, :precursor_idx)
@@ -243,7 +210,7 @@ function process_file!(
                 group[best_idx, :best_psms] = true
             end
             filter!(row -> row.best_psms, psms)
-            
+            println("d size(psms) ", size(psms))
             # Create scan to precursor mapping
             scan_idx_to_prec_idx = getScanToPrecIdx(
                 psms[!, :scan_idx],
@@ -251,7 +218,7 @@ function process_file!(
                 spectra[:centerMz],
                 spectra[:isolationWidthMz]
             )
-            
+            println("total ", sum([abs(length(x)) for x in values(scan_idx_to_prec_idx)]))
             # Perform quad transmission search
             quad_psms = performQuadTransmissionSearch(
                 spectra,
@@ -262,28 +229,36 @@ function process_file!(
             )
             
             # Filter and process quad search results
-            quad_psms = filter_quad_psms(quad_psms, params)
+            println("size(quad_psms ) ", size(quad_psms))
+            quad_psms = quad_psms[filter_quad_psms(quad_psms[!,:iso_idx], quad_psms[!,:n_matches], quad_psms[!,:weight], params),:]
+            println("size(quad_psms) ", size(quad_psms))
+            Arrow.write("/Users/n.t.wamsley/Desktop/tpsms.arrow", quad_psms)
             processed_psms = process_quad_results(
                 quad_psms,
                 getPrecursors(getSpecLib(search_context)),
-                getIsoSplines(search_context)
+                getIsoSplines(first(getSearchData(search_context)))
             )
             
             append!(total_psms, processed_psms)
             
-            if nrow(total_psms) > params.min_quad_tuning_psms
+            if nrow(total_psms) > 0#params.min_quad_tuning_psms
                 break
             end
             
             n_iterations += 1
         end
         
-        if nrow(total_psms) < params.min_quad_tuning_psms
+        if nrow(total_psms) < 0#params.min_quad_tuning_psms
             @warn "Insufficient PSMs for quad model estimation"
             results.quad_models[ms_file_idx] = GeneralGaussModel(5.0f0, 0.0f0)
             return results
         end
-        
+        Arrow.write("/Users/n.t.wamsley/Desktop/ttable.arrow", total_psms)
+        p = plot()
+        plot!(p, total_psms[total_psms[!,:prec_charge].==2,:x0], total_psms[total_psms[!,:prec_charge].==2,:yt], seriestype=:scatter, alpha = 0.1, show = true)
+        plot!(p, total_psms[total_psms[!,:prec_charge].==3,:x0], total_psms[total_psms[!,:prec_charge].==3,:yt], seriestype=:scatter, alpha = 0.1, show = true)
+        println("size(total_psms) ", size(total_psms))
+        println(describe(total_psms))
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
         binned_psms = MergeBins(
@@ -292,7 +267,9 @@ function process_file!(
             min_bin_size=10,
             min_bin_width=0.1
         )
-        
+        #plot( binned_psms[!, :median_x0],
+        #binned_psms[!, :median_yt], series_type=:scatter, show = true
+        #)
         fitted_model = fitRazoQuadModel(
             window_width,
             binned_psms[!, :median_x0],
@@ -304,15 +281,80 @@ function process_file!(
             ϵ3=1e-5
         )
         
-        results.quad_models[ms_file_idx] = RazoQuadModel(fitted_model)
-        append!(results.tuning_psms, total_psms)
+        results.quad_models[][ms_file_idx] = RazoQuadModel(fitted_model)
+        #append!(results.tuning_psms, total_psms)
         
     catch e
         @warn "Quad transmission function fit failed" exception=e
-        results.quad_models[ms_file_idx] = GeneralGaussModel(5.0f0, 0.0f0)
+        merge_into_ref_dict!(
+            results.quad_models,
+            Dict(ms_file_idx => GeneralGaussModel(5.0f0, 0.0f0))
+        )
     end
     
     return results
+end
+
+
+function process_quad_results(
+    psms::DataFrame,
+    precursors::Arrow.Table,
+    iso_splines::IsotopeSplineModel
+)
+    # Sort by scan and precursor index
+    sort!(psms, [:scan_idx, :precursor_idx, :iso_idx])
+    
+    # Add necessary columns
+    processed = hcat(psms, addColumns(
+        psms[!, :precursor_idx],
+        precursors[:mz],
+        precursors[:prec_charge],
+        precursors[:sulfur_count],
+        psms[!, :iso_idx],
+        psms[!, :center_mz],
+        iso_splines
+    ))
+    
+    # Combine precursor results
+    combined = combine(groupby(processed, [:scan_idx, :precursor_idx])) do group
+        summarizePrecursor(
+            group[!, :iso_idx],
+            group[!, :center_mz],
+            group[!, :iso_mz],
+            group[!, :prec_charge],
+            group[!, :weight],
+            group[!, :δ]
+        )
+    end
+    
+    # Filter and convert types
+    filter!(row -> !ismissing(row.yt), combined)
+    combined[!, :prec_charge] = UInt8.(combined[!, :prec_charge])
+    combined[!, :x0] = Float32.(combined[!, :x0])
+    combined[!, :yt] = Float32.(combined[!, :yt])
+    combined[!, :x1] = Float32.(combined[!, :x1])
+    filter!(row -> row.prec_charge < 4, combined)
+    
+    return combined
+end
+function merge_into_ref_dict!(ref_dict::Base.RefValue{Dict{K,V}}, new_dict::Dict{K,V}) where {K,V}
+    ref_dict[] = merge(ref_dict[], new_dict)
+end
+
+function filter_quad_psms(iso_idx::AbstractVector{UInt8},
+    n_matches::AbstractVector{UInt8},
+    weight::AbstractVector{Float32}, 
+    params::QuadTuningSearchParameters)
+
+    #filter!(row -> row.n_matches >= params.min_quad_tuning_fragments, psms)
+    n = length(iso_idx)
+    mask = Vector{Bool}(undef, n)
+    @inbounds for i in 1:n
+        mask[i] = ((iso_idx[i] < 3) && #Only M0 and M1
+                (n_matches[i] >= 5) &&#params.min_quad_tuning_fragments) &&  
+                (weight[i]>0)) #Non-zero abundance 
+    end
+    return mask
 end
 
 function process_search_results!(results::QuadTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64) where {P<:QuadTuningSearchParameters}
@@ -322,6 +364,7 @@ end
 
 function summarize_results!(results::QuadTuningSearchResults, params::P, search_context::SearchContext) where {P<:QuadTuningSearchParameters}
     # Could add summary statistics or plots about quad transmission models if desired
+    resetPrecursorArrays!(search_context)
     return nothing
 end
 
@@ -337,15 +380,20 @@ function performQuadTransmissionSearch(
     scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
     search_context::SearchContext,
     params::QuadTuningSearchParameters,
-    ms_file_idx::UInt32
-)
+    ms_file_idx::Int64)
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_idxs = Set(keys(scan_idx_to_prec_idx))
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
+
+
             thread_id = first(thread_task)
             search_data = getSearchData(search_context)[thread_id]
+            Hs = getHs(search_data,)
+            weights = getTempWeights(search_data)
+            precursor_weights = getPrecursorWeights(search_data)
+            residuals = getResiduals(search_data)
 
             for scan_idx in last(thread_task)
                 scan_idx ∉ scan_idxs && continue
@@ -356,7 +404,7 @@ function performQuadTransmissionSearch(
                 ion_idx = selectTransitions!(
                     getIonTemplates(search_data),
                     QuadEstimationTransitionSelection(),
-                    getPrecEstimation(params),
+                    PartialPrecCapture(),
                     getFragmentLookupTable(getSpecLib(search_context)),
                     scan_idx_to_prec_idx[scan_idx],
                     getPrecursors(getSpecLib(search_context))[:mz],
@@ -379,16 +427,13 @@ function performQuadTransmissionSearch(
                     getMassErrorModel(search_context, ms_file_idx),
                     spectra[:highMz][scan_idx],
                     UInt32(scan_idx),
-                    ms_file_idx
+                    UInt32(ms_file_idx)
                 )
                 
                 sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
                 
                 if nmatches > 2
-                    Hs = getHs(search_data)
-                    weights = getWeights(search_data)
-                    residuals = getResiduals(search_data)
-                    
+            
                     buildDesignMatrix!(
                         Hs, 
                         getIonMatches(search_data), 
@@ -406,10 +451,11 @@ function performQuadTransmissionSearch(
                     end
                     
                     for i in 1:getIdToCol(search_data).size
-                        weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = search_data.precursor_weights[getIdToCol(search_data).keys[i]]
+                        weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = precursor_weights[getIdToCol(search_data).keys[i]]
                     end
                     
                     initResiduals!(residuals, Hs, weights)
+
                     solveHuber!(
                         Hs, 
                         residuals, 
@@ -426,10 +472,11 @@ function performQuadTransmissionSearch(
                     )
                     
                     tuning_results = getTuningResults(search_data)
+
                     for i in 1:getIdToCol(search_data).size
                         id = getIdToCol(search_data).keys[i]
                         colid = getIdToCol(search_data)[id]
-                        search_data.precursor_weights[id] = weights[colid]
+                        precursor_weights[id] = weights[colid]
                         
                         isotope_idx = UInt8(((id - 1) % 3) + 1)
                         pid = UInt32(((id - 1) ÷ 3) + 1)
@@ -445,10 +492,11 @@ function performQuadTransmissionSearch(
                     end
                 end
                 
-                reset!(search_data)
+                reset!(getIdToCol(search_data))
+                reset!(Hs)
             end
             
-            DataFrame(getTuningResults(search_data))
+            return DataFrame(getTuningResults(search_data))
         end
     end
     
