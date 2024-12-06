@@ -1,5 +1,5 @@
 function getIrtErrs(
-    fwhms::Dictionary{String, 
+    fwhms::Dictionary{Int64, 
                         @NamedTuple{
                             median_fwhm::Float32,
                             mad_fwhm::Float32

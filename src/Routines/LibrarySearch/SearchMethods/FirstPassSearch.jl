@@ -54,9 +54,9 @@ Results container for first pass search.
 Holds FWHM statistics, PSM file paths, and model updates.
 """
 struct FirstPassSearchResults <: SearchResults
-    peak_fwhms::Dict{String, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}
-    psms_paths::Dict{String, String}
-    model_updates::Dict{Int64, Any}
+    psms_paths::Dict{Int64, String}
+    fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}
+    psms::Base.Ref{DataFrame}
 end
 
 """
@@ -170,8 +170,9 @@ function process_file!(
         processed_psms = process_psms!(psms, spectra, search_context, params, ms_file_idx)
         
         # Calculate statistics and save results
-        save_results!(results, processed_psms, search_context, params, ms_file_idx)
-        
+        results.psms[] = processed_psms
+
+        #save_results!(results, processed_psms, search_context, params, ms_file_idx)
     catch e
         @warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
@@ -184,12 +185,24 @@ end
 Initial file processing complete, no additional processing needed.
 """
 function process_search_results!(
-    ::FirstPassSearchResults,
-    ::P,
-    ::SearchContext,
-    ::Int64
+    results::FirstPassSearchResults,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64
 ) where {P<:FirstPassSearchParameters}
-    return nothing
+    #save_results!(results, processed_psms, search_context, params, ms_file_idx)
+    #return nothing
+    #fwhm = skipmissing(getPsms(results)[!,:fwhm])
+    psms = results.psms[]
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    temp_path = joinpath(getDataOutDir(search_context), "temp_psms", parsed_fname * ".arrow")
+    psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
+    Arrow.write(
+        temp_path,
+        select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
+            :irt_predicted, :q_value, :score, :prob, :scan_count])
+    )
+    results.psms_paths[ms_file_idx] 
 end
 
 """
@@ -209,7 +222,7 @@ function summarize_results!(
     map_retention_times!(search_context, results, params)
     
     # Process precursors
-    process_precursors!(search_context, results, params)
+    precursor_dict = process_precursors!(search_context, results, params)
     
     # Calculate RT indices
     create_rt_indices!(search_context, results, params)
@@ -221,6 +234,7 @@ end
 No cleanup needed between files.
 """
 function reset_results!(::FirstPassSearchResults)
+    empty!(results.psms[])
     return nothing
 end
 
@@ -362,14 +376,15 @@ function save_results!(
     params::FirstPassSearchParameters,
     ms_file_idx::Int64
 )
+    #=
     # Calculate FWHM statistics
     fwhms = skipmissing(psms[!, :fwhm])
     fwhm_points = count(!ismissing, fwhms)
     
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    #parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
     if fwhm_points >= params.min_inference_points
-        results.peak_fwhms[parsed_fname] = (
+        results.peak_fwhms[ms_file_idx] = (
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)
         )
@@ -377,6 +392,7 @@ function save_results!(
 
     # Save PSMs to file
     save_psms_to_file!(results, psms, search_context, parsed_fname, ms_file_idx)
+    =#
 end
 
 """
@@ -389,6 +405,17 @@ function save_psms_to_file!(
     parsed_fname::String,
     ms_file_idx::Int64
 )
+    fwhms = skipmissing(psms[!, :fwhm])
+    fwhm_points = count(!ismissing, fwhms)
+
+    #parsed_fname = getParsedFileName(search_context, ms_file_idx)
+
+    if fwhm_points >= params.min_inference_points
+        results.fwhms[ms_file_idx] = (
+            median_fwhm = median(fwhms),
+            mad_fwhm = mad(fwhms, normalize=true)
+        )
+    end
     temp_path = joinpath(getDataOutDir(search_context), "temp_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     
@@ -398,7 +425,7 @@ function save_psms_to_file!(
             :irt_predicted, :q_value, :score, :prob, :scan_count])
     )
 
-    results.psms_paths[parsed_fname] = temp_path
+    results.psms_paths[ms_file_idx] = temp_path
 end
 
 """
@@ -411,15 +438,33 @@ function map_retention_times!(
 )
     @info "Mapping library to empirical retention times..."
     
-
-    irt_rt, rt_irt = mapLibraryToEmpiricalRT(
-        results.psms_paths,#collect(values(results.psms_paths)),
-        search_context.rt_to_irt_model,
-        min_prob=params.min_prob_for_irt_mapping
-    )
-    
-    setIrtRtMap!(search_context, irt_rt)
-    setRtIrtMap!(search_context, rt_irt)
+    for (ms_file_idx, psms_path) in pairS(results.psms_paths)
+        psms = Arrow.Table(psms_path)
+        best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
+        if sum(best_hits) > 100
+            best_rts = psms[:rt][best_hits]
+            best_irts = psms[:irt_predicted][best_hits]
+            irt_to_rt_spline = UniformSpline(
+                                        best_rts,
+                                        best_irts,
+                                        3, 
+                                        5
+            )
+            rt_to_irt_spline = UniformSpline(
+                best_irts,
+                best_rts,
+                3, 
+                5
+            )
+            #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
+            setRtIrtMap(search_context, rt_to_irt_spline, ms_file_idx)
+            setIrtRtMap(search_context, rt_to_irt_spline, ms_file_idx)
+        else
+            #sensible default here?
+            continue
+        end
+    end
+    return nothing
 end
 
 """
@@ -433,24 +478,13 @@ function process_precursors!(
     @info "Finding best precursors across runs..."
     
     # Get best precursors
-    precursor_dict = getBestPrecursorsAccrossRuns(
+    return getBestPrecursorsAccrossRuns(
         results.psms_paths,
         getPrecursors(getSpecLib(search_context))[:mz],
         getRtIrtMap(search_context),
         max_q_val=params.max_q_val_for_irt,
         max_precursors=params.max_precursors
     )
-    setPrecursorDict!(search_context, precursor_dict)
-
-    # Calculate iRT errors
-    @info "Calculating iRT errors..."
-    irt_errs = if length(keys(results.peak_fwhms)) > 1
-        getIrtErrs(results.peak_fwhms, precursor_dict, params)
-    else
-        Dict(zip(keys(results.peak_fwhms), 
-            zeros(Float32, length(keys(results.peak_fwhms)))))
-    end
-    setIrtErrors!(search_context, irt_errs)
 end
 
 """
@@ -461,8 +495,17 @@ function create_rt_indices!(
     results::FirstPassSearchResults,
     params::FirstPassSearchParameters
 )
+    # Calculate iRT errors
+    @info "Calculating iRT errors..."
+    irt_errs = if length(keys(results.peak_fwhms)) > 1
+        getIrtErrs(results.peak_fwhms, precursor_dict, params)
+    else
+        Dict(zip(keys(results.peak_fwhms), 
+            zeros(Float32, length(keys(results.peak_fwhms)))))
+    end
+    setIrtErrors!(search_context, irt_errs)
+
     @info "Creating RT indices..."
-    
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
                       getPrecursorDict(search_context))
@@ -474,7 +517,7 @@ function create_rt_indices!(
     # Make RT indices
     rt_index_paths = makeRTIndices(
         rt_indices_folder,
-        collect(values(results.psms_paths)),
+        results.psms_paths,
         prec_to_irt,
         getRtIrtMap(search_context),
         min_prob=params.max_prob_to_impute

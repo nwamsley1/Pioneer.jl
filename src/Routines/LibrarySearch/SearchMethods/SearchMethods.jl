@@ -28,10 +28,8 @@ function execute_search(
     @info "Starting parameter tuning search" n_files=length(msdr.file_paths)
     
     search_parameters = get_parameters(search_type, params)
-    search_results = nothing
-    
+    search_results = init_search_results(search_parameters, search_context, ms_file_idx)
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
-        search_results = init_search_results(search_parameters, search_context, ms_file_idx)
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         process_search_results!(search_results, search_parameters, search_context, ms_file_idx)
         reset_results!(search_results)

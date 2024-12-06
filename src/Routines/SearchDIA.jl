@@ -117,16 +117,18 @@ function SearchDIA(params_path::String)
 
     MS_TABLE_PATHS = MS_TABLE_PATHS[1:3]
     SEARCH_CONTEXT = initSearchContext(
-    SPEC_LIB,
-    parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
-    ArrowTableReference(MS_TABLE_PATHS, file_id_to_parsed_name),
-    Threads.nthreads(),
-    n_precursors,
-    250000  # buffer size
-);
+        SPEC_LIB,
+        parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+        ArrowTableReference(MS_TABLE_PATHS, file_id_to_parsed_name),
+        Threads.nthreads(),
+        n_precursors,
+        250000  # buffer size
+    );
 
     setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"]);
 
+    include("Routines/LibrarySearch/SearchMethods/QuadTuningSearch.jl")
+    include("Routines/LibrarySearch/SearchMethods/NceTuningSearch.jl")
     #Estimate fragment mass errors and library to empirical retention times
     #Fragment mass errors are encoded in the 
     #

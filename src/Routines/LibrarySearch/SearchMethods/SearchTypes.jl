@@ -134,8 +134,8 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     huber_delta::Base.Ref{Float32}
 
     # Results and paths
-    irt_rt_map::Base.Ref{Any}
-    rt_irt_map::Base.Ref{Any}
+    irt_rt_map::Dict{Int64, RtConversionModel}
+    rt_irt_map::Dict{Int64, RtConversionModel}
     precursor_dict::Base.Ref{Dict}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{String, Float32}
@@ -162,7 +162,10 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, RtConversionModel}(),
             Dict{Int64, NceModel}(), Ref(100000.0f0),
-            Ref{Any}(), Ref{Any}(), Ref{Dict}(), Ref{Vector{String}}(),
+            Dict{Int64, RtConversionModel}(), 
+            Dict{Int64, RtConversionModel}(), 
+            Ref{Dict}(), 
+            Ref{Vector{String}}(),
             Dict{String, Float32}(),
             n_threads, n_precursors, buffer_size
         )
@@ -313,9 +316,15 @@ end
 
 # More simple setters
 setNceModel!(s::SearchContext, index::I, model::NceModel) where {I<:Integer} = (s.nce_model[index] = model)
-setIrtRtMap!(s::SearchContext, map::Any) = (s.irt_rt_map[] = map)
-setRtIrtMap!(s::SearchContext, map::Any) = (s.rt_irt_map[] = map)
-setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}) = (s.precursor_dict[] = dict)
+function setIrtRtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer }
+    s.irt_rt_map[index] = tcm
+end
+function setRtIrtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
+    s.rt_irt_map[index] = tcm
+end
+function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}})
+    s.precursor_dict[] = dict
+end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
 setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
 function setIrtErrors!(s::SearchContext, errs::Dict{String, Float32})
