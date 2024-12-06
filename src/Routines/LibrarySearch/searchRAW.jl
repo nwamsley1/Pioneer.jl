@@ -238,7 +238,7 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
-                    getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
+                    getIrtErrors(search_context)[getParsedFileName(search_context, ms_file_idx)]
                 )...)
 end
 
@@ -259,7 +259,7 @@ function library_search(
         getRtIrtModel(search_context, ms_file_idx),
         search_parameters,
         search_parameters.nce_grid,
-        getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
+        getIrtErrors(search_context)[getParsedFileName(search_context, ms_file_idx)]
     )
 end
 

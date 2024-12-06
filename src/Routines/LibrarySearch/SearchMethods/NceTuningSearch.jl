@@ -1,10 +1,57 @@
+"""
+    NceTuningSearch
+
+Search method for optimizing normalized collision energy (NCE) parameters.
+
+This search:
+1. Performs grid search over NCE values
+2. Collects PSMs for each NCE value
+3. Fits piecewise NCE models based on precursor m/z
+4. Stores optimized models in SearchContext for use by other methods
+
+# Example Implementation
+```julia
+# Define search parameters
+params = Dict(
+    :isotope_err_bounds => (0, 2),
+    :presearch_params => Dict(
+        "frag_tol_ppm" => 30.0,
+        "min_index_search_score" => 3,
+        "min_frag_count" => 3,
+        "min_spectral_contrast" => 0.1,
+        "min_log2_matched_ratio" => -3.0,
+        "min_topn_of_m" => (3, 5),
+        "max_best_rank" => 3,
+        "n_frag_isotopes" => 2,
+        "max_frag_rank" => 10,
+        "sample_rate" => 0.1,
+        "abreviate_precursor_calc" => false
+    )
+)
+
+# Execute search
+results = execute_search(NceTuningSearch(), search_context, params)
+```
+"""
 struct NceTuningSearch <: TuningMethod end
 
+#==========================================================
+Type Definitions
+==========================================================#
+
+"""
+Results container for NCE tuning search.
+Holds NCE models and associated PSM data for each file.
+"""
 struct NceTuningSearchResults <: SearchResults
-    nce_models::Dict{Int64, NceModel}  # Store NCE models for each file
-    nce_psms::DataFrame  # Store PSMs from NCE grid search
+    nce_models::Dict{Int64, NceModel}
+    nce_psms::DataFrame
 end
 
+"""
+Parameters for NCE tuning search.
+Configures NCE grid search and general search behavior.
+"""
 struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     frag_tol_ppm::Float32
@@ -40,110 +87,160 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(pp["max_frag_rank"]),
             Float32(pp["sample_rate"]),
             Set(2),
-            LinRange(21.0f0, 40.0f0, 15),  # Default NCE grid
-            NCE_MODEL_BREAKPOINT,  # Global constant for NCE model
-            0.01f0,  # Default q-value threshold
+            LinRange(21.0f0, 40.0f0, 15),  
+            NCE_MODEL_BREAKPOINT,
+            0.01f0,
             prec_estimation
         )
     end
 end
 
-get_parameters(search_type::NceTuningSearch, params::Any) = NceTuningSearchParameters(params)
+#==========================================================
+Interface Implementation
+==========================================================#
 
-function init_search_results(search_parameters::NceTuningSearchParameters, search_context::SearchContext, ms_file_idx::Int64)
+get_parameters(::NceTuningSearch, params::Any) = NceTuningSearchParameters(params)
+
+function init_search_results(
+    ::NceTuningSearchParameters,
+    ::SearchContext,
+    ::Int64
+)
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),
         DataFrame()
     )
 end
 
+#==========================================================
+Core Processing Methods
+==========================================================#
+
+"""
+Main file processing method for NCE tuning search.
+Performs grid search and fits NCE model.
+"""
 function process_file!(
     results::NceTuningSearchResults,
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table) where {P<:NceTuningSearchParameters}
+    spectra::Arrow.Table
+) where {P<:NceTuningSearchParameters}
 
     try
-        # Get models from context
-        #rt_to_irt_model = getRtIrtModel(search_context, ms_file_idx)
-        ##mass_error_model = getMassErrorModel(search_context, ms_file_idx)
-        #irt_err = getIrtErrs(search_context)[getParsedFileName(search_context, ms_file_idx)]
-        #quad_model = getQuadTransmissionModel(search_context, ms_file_idx)
-
-            
+        # Perform grid search
         psms = library_search(spectra, search_context, params, ms_file_idx)
-
-        # Add necessary columns
-        addPreSearchColumns!(
-            psms,
-            spectra,
-            getPrecursors(getSpecLib(search_context))[:is_decoy],
-            getPrecursors(getSpecLib(search_context))[:irt],
-            getPrecursors(getSpecLib(search_context))[:prec_charge],
-            spectra[:retentionTime],
-            spectra[:TIC]
-        )
-
-        # Score and filter PSMs
-        scorePresearch!(psms)
-        getQvalues!(psms[!, :prob], psms[!, :target], psms[!, :q_value])
-
-        # Get best PSMs per precursor and scan
-        spsms = combine(groupby(psms, [:precursor_idx, :scan_idx])) do group
-            max_idx = argmax(group[!, :scribe])
-            return group[max_idx:max_idx, :]
-        end
-
-        # Filter by q-value and target
-        filter!(row -> row.target && row.q_value <= params.max_q_val, spsms)
         
-        # Get passing precursors and filter original PSMs
-        passing_precs = Set(spsms[!, :precursor_idx])
-        filter!(row -> row.precursor_idx ∈ passing_precs, psms)
-
-        # Add precursor m/z and find best PSMs
-        psms[!, :prec_mz] = [getPrecursors(getSpecLib(search_context))[:mz][pid] for pid in psms[!, :precursor_idx]]
-        psms[!, :best_psms] .= false
+        # Process and filter PSMs
+        processed_psms = process_psms!(psms, spectra, search_context, params)
         
-        for group in groupby(psms, :precursor_idx)
-            best_idx = argmax(group[!, :scribe])
-            group[best_idx, :best_psms] = true
-        end
-        
-        filter!(row -> row.best_psms, psms)
-
-        # Fit NCE model and store results
+        # Fit and store NCE model
         nce_model = fit_nce_model(
             PiecewiseNceModel(0.0f0),
-            psms[!, :prec_mz],
-            psms[!, :nce],
-            psms[!, :charge],
+            processed_psms[!, :prec_mz],
+            processed_psms[!, :nce],
+            processed_psms[!, :charge],
             params.nce_breakpoint
         )
         
         results.nce_models[ms_file_idx] = nce_model
-        append!(results.nce_psms, psms)
+        append!(results.nce_psms, processed_psms)
 
     catch e
-        @warn "NCE tuning search failed for file index $ms_file_idx" exception=(e, catch_backtrace())
+        @warn "NCE tuning failed" ms_file_idx exception=e
         rethrow(e)
     end
 
     return results
 end
 
-function process_search_results!(results::NceTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64) where {P<:NceTuningSearchParameters}
-    # Store NCE model in search context
+"""
+Store results in search context.
+"""
+function process_search_results!(
+    results::NceTuningSearchResults,
+    ::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+) where {P<:NceTuningSearchParameters}
+    
     setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])
 end
 
-function summarize_results!(results::NceTuningSearchResults, params::P, search_context::SearchContext) where {P<:NceTuningSearchParameters}
-    # Could add summary statistics or plots about NCE optimization if desired
+"""
+Summarize results across all files.
+"""
+function summarize_results!(
+    ::NceTuningSearchResults,
+    ::P,
+    ::SearchContext
+) where {P<:NceTuningSearchParameters}
+    
+    # Could add NCE model statistics or plots here
     return nothing
 end
 
+"""
+Reset results containers.
+"""
 function reset_results!(results::NceTuningSearchResults)
     empty!(results.nce_models)
     empty!(results.nce_psms)
+end
+
+#==========================================================
+Helper Methods
+==========================================================#
+
+"""
+Process and filter PSMs from search results.
+"""
+function process_psms!(
+    psms::DataFrame,
+    spectra::Arrow.Table,
+    search_context::SearchContext,
+    params::NceTuningSearchParameters
+)
+    # Add columns
+    addPreSearchColumns!(
+        psms,
+        spectra,
+        getPrecursors(getSpecLib(search_context))[:is_decoy],
+        getPrecursors(getSpecLib(search_context))[:irt],
+        getPrecursors(getSpecLib(search_context))[:prec_charge],
+        spectra[:retentionTime],
+        spectra[:TIC]
+    )
+
+    # Score PSMs
+    scorePresearch!(psms)
+    getQvalues!(psms[!, :prob], psms[!, :target], psms[!, :q_value])
+
+    # Get best PSMs per precursor/scan
+    spsms = combine(groupby(psms, [:precursor_idx, :scan_idx])) do group
+        max_idx = argmax(group[!, :scribe])
+        return group[max_idx:max_idx, :]
+    end
+
+    # Apply filters
+    filter!(row -> row.target && row.q_value <= params.max_q_val, spsms)
+    passing_precs = Set(spsms[!, :precursor_idx])
+    filter!(row -> row.precursor_idx ∈ passing_precs, psms)
+
+    # Add precursor info
+    psms[!, :prec_mz] = [
+        getPrecursors(getSpecLib(search_context))[:mz][pid]
+        for pid in psms[!, :precursor_idx]
+    ]
+    
+    # Select best PSMs
+    psms[!, :best_psms] .= false
+    for group in groupby(psms, :precursor_idx)
+        best_idx = argmax(group[!, :scribe])
+        group[best_idx, :best_psms] = true
+    end
+    filter!(row -> row.best_psms, psms)
+
+    return psms
 end

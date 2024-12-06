@@ -11,10 +11,10 @@ include("utils/quadTransmissionModeling/quadTransmissionModel.jl")
 include("utils/isotopeSplines.jl")
 include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
 importScripts()
-include("Routines/LibrarySearch/SearchMethods/Types.jl")
+include("Routines/LibrarySearch/SearchMethods/SearchTypes.jl")
 importScripts()
 include("Routines/LibrarySearch/SearchMethods/NceTuningSearch.jl")
-include("Routines/LibrarySearch/SearchMethods/SearchMethod.jl")
+include("Routines/LibrarySearch/SearchMethods/SearchMethods.jl")
 include("Routines/LibrarySearch/SearchMethods/ParameterTuningSearch.jl")
 include("Routines/LibrarySearch/SearchMethods/FirstPassSearch.jl")
 include("structs/Ion.jl")
@@ -26,9 +26,9 @@ include("utils/quadTransmissionModeling/quadTransmissionModel.jl")
 include("utils/isotopeSplines.jl")
 include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
 importScripts()
-include("Routines/LibrarySearch/SearchMethods/Types.jl")
+include("Routines/LibrarySearch/SearchMethods/SearchTypes.jl")
 importScripts()
-include("Routines/LibrarySearch/SearchMethods/SearchMethod.jl")
+include("Routines/LibrarySearch/SearchMethods/SearchMethods.jl")
 include("Routines/LibrarySearch/SearchMethods/ParameterTuningSearch.jl")
 include("Routines/LibrarySearch/SearchMethods/FirstPassSearch.jl")
 =#
@@ -73,7 +73,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     residuals::Vector{Float32}      # For deconvolution residuals
     isotopes::Vector{Float32}       # For isotope calculations
     precursor_transmission::Vector{Float32}  # For transmission calculations
-    tuning_results::Dict{Symbol, Vector}  # Store results per thread
+    tuning_results::Vector{@NamedTuple{precursor_idx::UInt32, scan_idx::UInt32, weight::Float32, iso_idx::UInt8, center_mz::Float32, n_matches::UInt8}}  # Store results per thread
 end
 
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
@@ -170,10 +170,11 @@ getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 
 function getQuadTransmissionModel(s::SearchContext, index::I) where {I<:Integer}  
-    if haskey(s.quad_transmission_model, index)
+    if haskey(s.quad_transmission_model,index)
         return s.quad_transmission_model[index]
     else
         #Return a sensible default 
+         @warn "Mass error model not found for ms_file_idx $index. Returning default GeneralGaussModel(5.0f0, 0.0f0)"
         return GeneralGaussModel(5.0f0, 0.0f0)
     end
 end
@@ -234,7 +235,6 @@ function setDataOutDir!(s::SearchContext, dir::String)
     s.qc_plot_folder[] = qc_plot_folder
     s.rt_alignment_plot_folder[] = rt_alignment_folder
     s.mass_err_plot_folder[] = mass_error_folder
-
 end
 
 function setIrtRtMap!(s::SearchContext, map::Any)
@@ -253,9 +253,9 @@ function setRtIndexPaths!(s::SearchContext, paths::Vector{String})
     s.rt_index_paths[] = paths
 end
 
-function setIrtErrors!(s::SearchContext, errors::Dict{String, Float32})
-    s.irt_errors = errors
-end
+#function setIrtErrors!(s::SearchContext, errors::Dict{String, Float32})
+#    s.irt_errors = errors
+#end
 
 # Add getter/setter for irt_errs
 getIrtErrs(s::SearchContext) = s.irt_errors
@@ -313,14 +313,7 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),
         zeros(Float32, 5),
         zeros(Float32, 5),
-        Dict(
-            :precursor_idx => UInt32[],
-            :scan_idx => UInt32[],
-            :weight => Float32[],
-            :iso_idx => UInt8[],
-            :center_mz => Float32[],
-            :n_matches => UInt8[]
-        )
+        Vector{@NamedTuple{precursor_idx::UInt32, scan_idx::UInt32, weight::Float32, iso_idx::UInt8, center_mz::Float32, n_matches::UInt8}}()
     )
 end
 

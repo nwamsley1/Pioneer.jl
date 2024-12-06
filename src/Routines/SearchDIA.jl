@@ -125,7 +125,7 @@ function SearchDIA(params_path::String)
     250000  # buffer size
 );
 
-    setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"])
+    setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"]);
 
     @time execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
@@ -139,10 +139,6 @@ function SearchDIA(params_path::String)
         QuadTuningSearch(), SEARCH_CONTEXT, params_
     )
 
-    ttable = DataFrame(Arrow.Table("/Users/n.t.wamsley/Desktop/ttable.arrow"))
-    plot(ttable[!,:x0], ttable[!,:yt], seriestype=:scatter, alpha = 0.1)
-
-    
     @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
     )
