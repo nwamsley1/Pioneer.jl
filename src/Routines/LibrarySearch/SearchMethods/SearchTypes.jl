@@ -131,7 +131,8 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     mass_error_model::Dict{Int64, MassErrorModel}
     rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
-    
+    huber_delta::Base.Ref{Float32}
+
     # Results and paths
     irt_rt_map::Base.Ref{Any}
     rt_irt_map::Base.Ref{Any}
@@ -160,7 +161,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, RtConversionModel}(),
-            Dict{Int64, NceModel}(),
+            Dict{Int64, NceModel}(), Ref(100000.0f0),
             Ref{Any}(), Ref{Any}(), Ref{Dict}(), Ref{Vector{String}}(),
             Dict{String, Float32}(),
             n_threads, n_precursors, buffer_size
@@ -247,7 +248,7 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map[]
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
-
+getHuberDelta(s::SearchContext) = s.huber_delta[]
 
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
@@ -314,8 +315,9 @@ end
 setNceModel!(s::SearchContext, index::I, model::NceModel) where {I<:Integer} = (s.nce_model[index] = model)
 setIrtRtMap!(s::SearchContext, map::Any) = (s.irt_rt_map[] = map)
 setRtIrtMap!(s::SearchContext, map::Any) = (s.rt_irt_map[] = map)
-setPrecursorDict!(s::SearchContext, dict::Dict) = (s.precursor_dict[] = dict)
+setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}) = (s.precursor_dict[] = dict)
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
+setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
 function setIrtErrors!(s::SearchContext, errs::Dict{String, Float32})
     for (k,v) in pairs(errs)
         s.irt_errors[k] = v

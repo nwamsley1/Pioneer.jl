@@ -1,4 +1,4 @@
-function getBestPrecursorsAccrossRuns(psms_paths::Dictionary{String, String},
+function getBestPrecursorsAccrossRuns(psms_paths::Dict{String, String},
                          prec_mzs::AbstractVector{Float32},
                          rt_irt = Dict{Int64, Any};
                          max_q_val::Float32 = 0.01f0,

@@ -258,7 +258,7 @@ function process_psms!(
     rt_model = getRtIrtModel(search_context, ms_file_idx)
     
     # Add columns
-    add_psm_columns!(psms, spectra, search_context, rt_model)
+    add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
     
     # Score PSMs
     score_psms!(psms, params)
@@ -280,11 +280,12 @@ function add_psm_columns!(
     psms::DataFrame,
     spectra::Arrow.Table,
     search_context::SearchContext,
-    rt_model::RtConversionModel
+    rt_model::RtConversionModel,
+    ms_file_idx::Int64
 )
     addMainSearchColumns!(
         psms,
-        rt_model,
+        getModel(rt_model),
         getPrecursors(getSpecLib(search_context))[:structural_mods],
         getPrecursors(getSpecLib(search_context))[:missed_cleavages],
         getPrecursors(getSpecLib(search_context))[:is_decoy],
@@ -410,8 +411,9 @@ function map_retention_times!(
 )
     @info "Mapping library to empirical retention times..."
     
+
     irt_rt, rt_irt = mapLibraryToEmpiricalRT(
-        collect(values(results.psms_paths)),
+        results.psms_paths,#collect(values(results.psms_paths)),
         search_context.rt_to_irt_model,
         min_prob=params.min_prob_for_irt_mapping
     )
@@ -432,7 +434,7 @@ function process_precursors!(
     
     # Get best precursors
     precursor_dict = getBestPrecursorsAccrossRuns(
-        collect(values(results.psms_paths)),
+        results.psms_paths,
         getPrecursors(getSpecLib(search_context))[:mz],
         getRtIrtMap(search_context),
         max_q_val=params.max_q_val_for_irt,

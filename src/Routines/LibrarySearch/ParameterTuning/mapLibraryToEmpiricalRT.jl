@@ -1,7 +1,7 @@
-function mapLibraryToEmpiricalRT(psms_paths::Dictionary{String, String},
-                                 rt_to_irt_dict_presearch::Dict{Int64, Any}; 
+function mapLibraryToEmpiricalRT(psms_paths::Dict{String, String},
+                                 rt_to_irt_dict_presearch::Dict{Int64, R}; 
                         min_prob::AbstractFloat = 0.9
-                    )
+                    ) where {R<:RtConversionModel}
 
     #Dictionaries mapping fild_id names to data
     irt_rt = Dictionary{String, Any}() #File name => KDEmapping from irt to rt 

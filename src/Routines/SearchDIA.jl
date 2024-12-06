@@ -127,10 +127,19 @@ function SearchDIA(params_path::String)
 
     setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"]);
 
+    #Estimate fragment mass errors and library to empirical retention times
+    #Fragment mass errors are encoded in the 
+    #
     @time execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
     )
 
+    #==========================================================
+    Interface Methods for Parameter Access
+        Estimate normalized collision energy for each raw file
+        Normalized collision energy is modeled as a function of peptide m/z and Charge
+        Results stored in SEARCH_CONTEXT.mass_error_model::Dict{Int64, MassErrorModel}
+    ==========================================================#
     @time execute_search(
         NceTuningSearch(), SEARCH_CONTEXT, params_
     ) 
@@ -142,10 +151,12 @@ function SearchDIA(params_path::String)
     @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
     )
+
     @time execute_search(
-        QuadTuningSearch(), SEARCH_CONTEXT, params_
+        HuberTuningSearch(), SEARCH_CONTEXT, params_
     )
- n
+
+
 
 
 

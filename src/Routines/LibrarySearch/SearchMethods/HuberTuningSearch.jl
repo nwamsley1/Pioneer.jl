@@ -223,6 +223,7 @@ function summarize_results!(
     )
     
     results.huber_param[] = optimal_delta
+    setHuberDelta!(search_context, optimal_delta)
     @info "Selected Huber delta: $optimal_delta"
 end
 
