@@ -124,13 +124,13 @@ Interface Implementation
 
 get_parameters(::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)
 
-function init_search_results(::ParameterTuningSearchParameters, search_context::SearchContext, ms_file_idx::Int64)
+function init_search_results(::ParameterTuningSearchParameters, search_context::SearchContext)
     out_dir = getDataOutDir(search_context)
     qc_dir = joinpath(out_dir, "qc_plots")
     !isdir(qc_dir) && mkdir(qc_dir)
     
     return ParameterTuningSearchResults(
-        Ref(getMassErrorModel(search_context, ms_file_idx)),
+        Base.Ref{MassErrorModel}(),
         Ref{SplineRtConversionModel}(),
         Vector{Float32}(),
         Vector{Float32}(),
@@ -173,6 +173,7 @@ end
 function reset_results!(ptsr::ParameterTuningSearchResults)
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
+    resize!(ptsr.ppm_errs, 0)
 end
 
 #==========================================================
@@ -190,7 +191,8 @@ function process_file!(
     spectra::Arrow.Table
 ) where {P<:ParameterTuningSearchParameters}
 
-    try 
+    try
+        #Ref(getMassErrorModel(search_context, ms_file_idx)) 
         # Initialize mass error model
         setMassErrorModel!(
             search_context, 

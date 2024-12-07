@@ -1,8 +1,10 @@
-function getBestPrecursorsAccrossRuns(psms_paths::Dict{String, String},
+function get_best_precursors_accross_runs(
+                         psms_paths::Dict{Int64, String},
                          prec_mzs::AbstractVector{Float32},
-                         rt_irt = Dict{Int64, Any};
+                         rt_irt::Dict{Int64, RtConversionModel};
                          max_q_val::Float32 = 0.01f0,
                          max_precursors::Int = 250000)
+
     function readPSMs!(
         prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
                                                     best_ms_file_idx::UInt32,
@@ -18,7 +20,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dict{String, String},
         rts::AbstractVector{Float32},
         scan_idxs::AbstractVector{UInt32},
         ms_file_idxs::AbstractVector{UInt32},
-        rt_irt::UniformSpline,
+        rt_irt::SplineRtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
 
@@ -84,7 +86,7 @@ function getBestPrecursorsAccrossRuns(psms_paths::Dict{String, String},
         precursor_idxs::AbstractVector{UInt32},
         q_values::AbstractVector{Float16},
         rts::AbstractVector{Float32},
-        rt_irt::UniformSpline,
+        rt_irt::SplineRtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
             #precursor data 

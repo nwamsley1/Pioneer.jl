@@ -103,8 +103,7 @@ get_parameters(::NceTuningSearch, params::Any) = NceTuningSearchParameters(param
 
 function init_search_results(
     ::NceTuningSearchParameters,
-    ::SearchContext,
-    ::Int64
+    ::SearchContext
 )
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),

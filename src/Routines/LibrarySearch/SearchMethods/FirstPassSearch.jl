@@ -134,16 +134,15 @@ get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(param
 
 function init_search_results(
     ::FirstPassSearchParameters,
-    search_context::SearchContext,
-    ::Int64
+    search_context::SearchContext
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_psms")
     !isdir(temp_folder) && mkdir(temp_folder)
     
     return FirstPassSearchResults(
-        Dict{String, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
         Dict{String, String}(),
-        Dict{Int64, Any}()
+        Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
+        Base.Ref{DataFrame}()
     )
 end
 
@@ -202,7 +201,7 @@ function process_search_results!(
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
             :irt_predicted, :q_value, :score, :prob, :scan_count])
     )
-    results.psms_paths[ms_file_idx] 
+    results.psms_paths[ms_file_idx] = temp_path
 end
 
 """
@@ -222,18 +221,23 @@ function summarize_results!(
     map_retention_times!(search_context, results, params)
     
     # Process precursors
-    precursor_dict = process_precursors!(search_context, results, params)
-    
+    precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
+    #println("length(keys(precursor_dict)) ", length(keys(precursor_dict)))
+    setPrecursorDict!(search_context, precursor_dict)
+    #println("typeof(precursor_dict) ", typeof(precursor_dict))
+    #search_context.precursor_dict[] = precursor_dict
+    #println("length(keys(search_context.precursor_dict[])) ", length(keys(search_context.precursor_dict[])))
     # Calculate RT indices
-    create_rt_indices!(search_context, results, params)
+    create_rt_indices!(search_context, results, precursor_dict, params)
     
     @info "Search results summarization complete"
 end
 
+
 """
 No cleanup needed between files.
 """
-function reset_results!(::FirstPassSearchResults)
+function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
     return nothing
 end
@@ -438,7 +442,7 @@ function map_retention_times!(
 )
     @info "Mapping library to empirical retention times..."
     
-    for (ms_file_idx, psms_path) in pairS(results.psms_paths)
+    for (ms_file_idx, psms_path) in pairs(results.psms_paths)
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
         if sum(best_hits) > 100
@@ -457,9 +461,10 @@ function map_retention_times!(
                 5
             )
             #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
-            setRtIrtMap(search_context, rt_to_irt_spline, ms_file_idx)
-            setIrtRtMap(search_context, rt_to_irt_spline, ms_file_idx)
+            setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
+            setIrtRtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
         else
+            throw("add a default option here...")
             #sensible default here?
             continue
         end
@@ -470,7 +475,7 @@ end
 """
 Process precursors and calculate iRT errors.
 """
-function process_precursors!(
+function get_best_precursors_accross_runs!(
     search_context::SearchContext,
     results::FirstPassSearchResults,
     params::FirstPassSearchParameters
@@ -478,7 +483,7 @@ function process_precursors!(
     @info "Finding best precursors across runs..."
     
     # Get best precursors
-    return getBestPrecursorsAccrossRuns(
+    return get_best_precursors_accross_runs(
         results.psms_paths,
         getPrecursors(getSpecLib(search_context))[:mz],
         getRtIrtMap(search_context),
@@ -487,28 +492,38 @@ function process_precursors!(
     )
 end
 
+PrecToIrtType = Dictionary{UInt32, 
+    NamedTuple{
+        (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz), 
+        Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}
+    }
+}
+
 """
 Create retention time indices.
 """
 function create_rt_indices!(
     search_context::SearchContext,
     results::FirstPassSearchResults,
+    precursor_dict::PrecToIrtType,
     params::FirstPassSearchParameters
 )
+
+
     # Calculate iRT errors
     @info "Calculating iRT errors..."
-    irt_errs = if length(keys(results.peak_fwhms)) > 1
-        getIrtErrs(results.peak_fwhms, precursor_dict, params)
+    irt_errs = if length(keys(results.fwhms)) > 1
+        getIrtErrs(results.fwhms, precursor_dict, params)
     else
-        Dict(zip(keys(results.peak_fwhms), 
-            zeros(Float32, length(keys(results.peak_fwhms)))))
+        Dict(zip(keys(results.fwhms), 
+            zeros(Float32, length(keys(results.fwhms)))))
     end
     setIrtErrors!(search_context, irt_errs)
 
     @info "Creating RT indices..."
     # Create precursor to iRT mapping
     prec_to_irt = map(x -> (irt=x[:best_irt], mz=x[:mz]), 
-                      getPrecursorDict(search_context))
+                      precursor_dict)
 
     # Set up indices folder
     rt_indices_folder = joinpath(getDataOutDir(search_context), "rt_indices")

@@ -46,13 +46,13 @@ buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtInde
 
 
 function makeRTIndices(temp_folder::String,
-                       psms_paths::Dictionary{String, String}, 
+                       psms_paths::Dict{Int64, String}, 
                        prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
                        rt_to_irt_splines::Any;
                        min_prob::AbstractFloat = 0.5)
 
     #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
-    rt_index_paths = Dictionary{String, String}()
+    rt_index_paths = Vector{String}(undef, length(values(psms_paths)))
     #Fill retention time index for each file. 
     for (key, psms_path) in pairs(psms_paths)
         psms = Arrow.Table(psms_path)
@@ -86,16 +86,12 @@ function makeRTIndices(temp_folder::String,
                                 :prec_mz => mzs,
                                 :precursor_idx => prec_ids))
         sort!(rt_df, :irt)
-        temp_path =joinpath(temp_folder, key*"rt_indices.arrow")
+        temp_path =joinpath(temp_folder, string(key)*"_rt_indices.arrow")
         Arrow.write(
             temp_path,
             rt_df,
             )
-        insert!(
-            rt_index_paths,
-            key,
-            temp_path
-        )
+        rt_index_paths[key] = temp_path
     end
     return rt_index_paths
 end

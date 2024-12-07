@@ -137,7 +137,7 @@ end
 
 get_parameters(::QuadTuningSearch, params::Any) = QuadTuningSearchParameters(params)
 
-function init_search_results(::QuadTuningSearchParameters, search_context::SearchContext, ::Int64)
+function init_search_results(::QuadTuningSearchParameters, search_context::SearchContext)
     # Initialize empty tuning results vector in each search data structure
     for search_data in getSearchData(search_context)
         search_data.tuning_results = Vector{@NamedTuple{

@@ -96,6 +96,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     
     # Working arrays
     Hs::SparseArray
+    prec_ids::Vector{Float32}
     precursor_weights::Vector{Float32}
     temp_weights::Vector{Float32}
     residuals::Vector{Float32}
@@ -136,7 +137,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     # Results and paths
     irt_rt_map::Dict{Int64, RtConversionModel}
     rt_irt_map::Dict{Int64, RtConversionModel}
-    precursor_dict::Base.Ref{Dict}
+    precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{String, Float32}
     
@@ -164,7 +165,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
             Dict{Int64, NceModel}(), Ref(100000.0f0),
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
-            Ref{Dict}(), 
+            Ref{Dictionary}(), 
             Ref{Vector{String}}(),
             Dict{String, Float32}(),
             n_threads, n_precursors, buffer_size
@@ -221,6 +222,7 @@ getScoredPsms(s::SearchDataStructures) = s.scored_psms
 getUnscoredPsms(s::SearchDataStructures) = s.unscored_psms
 getSpectralScores(s::SearchDataStructures) = s.spectral_scores
 getHs(s::SearchDataStructures) = s.Hs
+getPrecIds(s::SearchDataStructures) = s.prec_ids
 getWeights(s::SearchDataStructures) = s.weights
 getResiduals(s::SearchDataStructures) = s.residuals
 getIsotopes(s::SearchDataStructures) = s.isotopes
@@ -246,8 +248,8 @@ getQcPlotfolder(s::SearchContext) = s.qc_plot_folder[]
 getRtAlignPlotFolder(s::SearchContext) = s.rt_alignment_plot_folder[]
 getMassErrPlotFolder(s::SearchContext) = s.mass_err_plot_folder[]
 getParsedFileName(s::SearchContext, ms_file_idx::Int64) = getParsedFileName(s.mass_spec_data_reference, ms_file_idx)
-getIrtRtMap(s::SearchContext) = s.irt_rt_map[]
-getRtIrtMap(s::SearchContext) = s.rt_irt_map[]
+getIrtRtMap(s::SearchContext) = s.irt_rt_map
+getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
@@ -317,17 +319,17 @@ end
 # More simple setters
 setNceModel!(s::SearchContext, index::I, model::NceModel) where {I<:Integer} = (s.nce_model[index] = model)
 function setIrtRtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer }
-    s.irt_rt_map[index] = tcm
+    s.irt_rt_map[index] = rcm
 end
 function setRtIrtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
-    s.rt_irt_map[index] = tcm
+    s.rt_irt_map[index] = rcm
 end
 function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}})
     s.precursor_dict[] = dict
 end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
 setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
-function setIrtErrors!(s::SearchContext, errs::Dict{String, Float32})
+function setIrtErrors!(s::SearchContext, errs::Dict{Int64, Float32})
     for (k,v) in pairs(errs)
         s.irt_errors[k] = v
     end
