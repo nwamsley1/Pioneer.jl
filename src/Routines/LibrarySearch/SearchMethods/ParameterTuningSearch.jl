@@ -166,8 +166,8 @@ function set_irt_to_rt_model!(
     append!(ptsr.rt, model[2])
     append!(ptsr.irt, model[3])
     
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    getIrtErrors(search_context)[parsed_fname] = model[4] * params.irt_tol_sd
+    #parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    getIrtErrors(search_context)[ms_file_idx] = model[4] * params.irt_tol_sd
 end
 
 function reset_results!(ptsr::ParameterTuningSearchResults)
@@ -192,13 +192,9 @@ function process_file!(
 ) where {P<:ParameterTuningSearchParameters}
 
     try
-        #Ref(getMassErrorModel(search_context, ms_file_idx)) 
-        # Initialize mass error model
-        setMassErrorModel!(
-            search_context, 
-            ms_file_idx,
-            MassErrorModel(zero(Float32), (getFragTolPpm(params), getFragTolPpm(params)))
-        )
+        results.mass_err_model[] =  MassErrorModel(zero(Float32), (getFragTolPpm(params), getFragTolPpm(params)))
+        setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+        setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
         # Collect PSMs through iterations
         psms = collect_psms(spectra, search_context, params, ms_file_idx)
@@ -208,9 +204,10 @@ function process_file!(
                             fit_irt_model(params, psms))
 
         # Get fragments and fit mass error model
-        fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
-        set_mass_err_model!(results, fit_mass_err_model(params, fragments))
-
+        fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
+        mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
+        results.mass_err_model[] = mass_err_model
+        append!(results.ppm_errs, ppm_errs)
     catch e 
         throw(e)
     end
@@ -435,6 +432,7 @@ Get matched fragments for mass error estimation.
 function get_matched_fragments(
     spectra::Arrow.Table,
     psms::DataFrame,
+    results::ParameterTuningSearchResults,
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64
@@ -447,7 +445,7 @@ function get_matched_fragments(
         UInt32(ms_file_idx),
         getSpecLib(search_context),
         getSearchData(search_context),
-        getMassErrorModel(search_context, ms_file_idx),
+        getMassErrorModel(results),
         params
     )...)
 end

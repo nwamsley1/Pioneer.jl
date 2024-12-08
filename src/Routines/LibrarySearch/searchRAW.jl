@@ -15,6 +15,9 @@ function searchFragmentIndex(
     precursors_passed_scoring = Vector{UInt32}(undef, 250000)
     rt_bin_idx = 1
     for scan_idx in thread_task
+        #if scan_idx % 50 != 0
+        #    continue
+        #end
         # Skip invalid indices
         (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
         (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
@@ -238,7 +241,7 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                     getMassErrorModel(search_context, ms_file_idx),
                     getRtIrtModel(search_context, ms_file_idx),
                     search_parameters,
-                    getIrtErrors(search_context)[getParsedFileName(search_context, ms_file_idx)]
+                    getIrtErrors(search_context)[ms_file_idx]
                 )...)
 end
 
@@ -259,7 +262,7 @@ function library_search(
         getRtIrtModel(search_context, ms_file_idx),
         search_parameters,
         search_parameters.nce_grid,
-        getIrtErrors(search_context)[getParsedFileName(search_context, ms_file_idx)]
+        getIrtErrors(search_context)[ms_file_idx]
     )
 end
 
@@ -657,13 +660,23 @@ function huberTuningSearch(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             ion_idx = selectTransitions!(
-                ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
-                precs_temp, precursors[:mz], precursors[:prec_charge],
-                precursors[:sulfur_count], iso_splines,
+                ionTemplates, 
+                RTIndexedTransitionSelection(), 
+                PartialPrecCapture(), 
+                library_fragment_lookup,
+                precs_temp, 
+                precursors[:mz],
+                 precursors[:prec_charge],
+                precursors[:sulfur_count], 
+                iso_splines,
                 getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]), 
                 precursor_transmission,
-                isotopes, n_frag_isotopes, max_frag_rank, rt_index,
-                irt_start, irt_stop, 
+                isotopes, 
+                n_frag_isotopes, 
+                max_frag_rank, 
+                rt_index,
+                irt_start, 
+                irt_stop, 
                 (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
                 precursors_passing = nothing,
                 isotope_err_bounds = isotope_err_bounds,

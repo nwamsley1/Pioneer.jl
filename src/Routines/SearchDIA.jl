@@ -134,7 +134,7 @@ function SearchDIA(params_path::String)
     #
     @time execute_search(
         ParameterTuningSearch(),SEARCH_CONTEXT , params_
-    )
+    );
 
     #==========================================================
     Interface Methods for Parameter Access
@@ -144,19 +144,19 @@ function SearchDIA(params_path::String)
     ==========================================================#
     @time execute_search(
         NceTuningSearch(), SEARCH_CONTEXT, params_
-    ) 
+    );
 
     @time execute_search(
         QuadTuningSearch(), SEARCH_CONTEXT, params_
-    )
+    );
 
     @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
-    )
+    );
 
     @time execute_search(
         HuberTuningSearch(), SEARCH_CONTEXT, params_
-    )
+    );
 
 
 

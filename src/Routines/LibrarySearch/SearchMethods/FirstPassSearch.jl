@@ -91,6 +91,8 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_precursors::Int64
     max_irt_bin_size::Float32
     max_prob_to_impute::Float32
+    fwhm_nstd::Float32
+    irt_nstd::Float32
     prec_estimation::P
 
     function FirstPassSearchParameters(params::Any)
@@ -121,6 +123,8 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(sp["max_precursors"]),
             Float32(sp["max_irt_bin_size"]),
             Float32(sp["max_prob_to_impute"]),
+            Float32(sp["fwhm_nstd"]),
+            Float32(sp["irt_nstd"]),
             prec_estimation
         )
     end
@@ -164,14 +168,7 @@ function process_file!(
     try
         # Get models and update fragment lookup table
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
-        
-        # Process PSMs
-        processed_psms = process_psms!(psms, spectra, search_context, params, ms_file_idx)
-        
-        # Calculate statistics and save results
-        results.psms[] = processed_psms
-
-        #save_results!(results, processed_psms, search_context, params, ms_file_idx)
+        results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
     catch e
         @warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
@@ -189,10 +186,19 @@ function process_search_results!(
     search_context::SearchContext,
     ms_file_idx::Int64
 ) where {P<:FirstPassSearchParameters}
-    #save_results!(results, processed_psms, search_context, params, ms_file_idx)
-    #return nothing
-    #fwhm = skipmissing(getPsms(results)[!,:fwhm])
     psms = results.psms[]
+    fwhms = skipmissing(psms[!, :fwhm])
+    fwhm_points = count(!ismissing, fwhms)
+    if fwhm_points >= params.min_inference_points
+        insert!(results.fwhms, ms_file_idx, (
+            median_fwhm = median(fwhms),
+            mad_fwhm = mad(fwhms, normalize=true)))
+    else
+        @warn "Insuficient fwhm_points to estimate for $ms_file_idx"
+        insert!(results.fwhms, ms_file_idx, (
+            median_fwhm = 0.2f0,
+            mad_fwhm = 0.2f0))
+    end
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     temp_path = joinpath(getDataOutDir(search_context), "temp_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
@@ -214,19 +220,12 @@ function summarize_results!(
 ) where {P<:FirstPassSearchParameters}
     
     isempty(results.psms_paths) && return nothing
-    
     @info "Summarizing first pass search results..."
-    
     # Map retention times
     map_retention_times!(search_context, results, params)
-    
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
-    #println("length(keys(precursor_dict)) ", length(keys(precursor_dict)))
     setPrecursorDict!(search_context, precursor_dict)
-    #println("typeof(precursor_dict) ", typeof(precursor_dict))
-    #search_context.precursor_dict[] = precursor_dict
-    #println("length(keys(search_context.precursor_dict[])) ", length(keys(search_context.precursor_dict[])))
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)
     
@@ -371,68 +370,6 @@ function select_best_psms!(
 end
 
 """
-Save results from file processing.
-"""
-function save_results!(
-    results::FirstPassSearchResults,
-    psms::DataFrame,
-    search_context::SearchContext,
-    params::FirstPassSearchParameters,
-    ms_file_idx::Int64
-)
-    #=
-    # Calculate FWHM statistics
-    fwhms = skipmissing(psms[!, :fwhm])
-    fwhm_points = count(!ismissing, fwhms)
-    
-    #parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    
-    if fwhm_points >= params.min_inference_points
-        results.peak_fwhms[ms_file_idx] = (
-            median_fwhm = median(fwhms),
-            mad_fwhm = mad(fwhms, normalize=true)
-        )
-    end
-
-    # Save PSMs to file
-    save_psms_to_file!(results, psms, search_context, parsed_fname, ms_file_idx)
-    =#
-end
-
-"""
-Save PSMs to Arrow file.
-"""
-function save_psms_to_file!(
-    results::FirstPassSearchResults,
-    psms::DataFrame,
-    search_context::SearchContext,
-    parsed_fname::String,
-    ms_file_idx::Int64
-)
-    fwhms = skipmissing(psms[!, :fwhm])
-    fwhm_points = count(!ismissing, fwhms)
-
-    #parsed_fname = getParsedFileName(search_context, ms_file_idx)
-
-    if fwhm_points >= params.min_inference_points
-        results.fwhms[ms_file_idx] = (
-            median_fwhm = median(fwhms),
-            mad_fwhm = mad(fwhms, normalize=true)
-        )
-    end
-    temp_path = joinpath(getDataOutDir(search_context), "temp_psms", parsed_fname * ".arrow")
-    psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
-    
-    Arrow.write(
-        temp_path,
-        select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
-            :irt_predicted, :q_value, :score, :prob, :scan_count])
-    )
-
-    results.psms_paths[ms_file_idx] = temp_path
-end
-
-"""
 Map retention times between library and empirical scales.
 """
 function map_retention_times!(
@@ -512,12 +449,9 @@ function create_rt_indices!(
 
     # Calculate iRT errors
     @info "Calculating iRT errors..."
-    irt_errs = if length(keys(results.fwhms)) > 1
-        getIrtErrs(results.fwhms, precursor_dict, params)
-    else
-        Dict(zip(keys(results.fwhms), 
-            zeros(Float32, length(keys(results.fwhms)))))
-    end
+    irt_errs = get_irt_errs(results.fwhms, precursor_dict, params)
+
+
     setIrtErrors!(search_context, irt_errs)
 
     @info "Creating RT indices..."
@@ -539,4 +473,40 @@ function create_rt_indices!(
     )
     
     setRtIndexPaths!(search_context, rt_index_paths)
+end
+
+function get_irt_errs(
+    fwhms::Dictionary{Int64, 
+                        @NamedTuple{
+                            median_fwhm::Float32,
+                            mad_fwhm::Float32
+                        }},
+    prec_to_irt::Dictionary{UInt32, 
+    @NamedTuple{best_prob::Float32, 
+                best_ms_file_idx::UInt32, 
+                best_scan_idx::UInt32, 
+                best_irt::Float32, 
+                mean_irt::Union{Missing, Float32}, 
+                var_irt::Union{Missing, Float32}, 
+                n::Union{Missing, UInt16}, 
+                mz::Float32}}
+    ,
+    params::FirstPassSearchParameters
+)
+    #Get upper bound on peak fwhm. Use median + n*standard_deviation
+    #estimate standard deviation by the median absolute deviation. 
+    #n is a user-defined paramter. 
+    fwhms = map(x->x[:median_fwhm] + params.fwhm_nstd*x[:mad_fwhm],
+    fwhms)
+
+    #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold
+    #in more than two runs .
+    irt_std = median(
+                skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt))
+                )
+
+    #Number of standard deviations to cover 
+    irt_std *= params.irt_nstd
+    #dictionary maping file name to irt tolerance. 
+    return map(x->Float32(x+irt_std)::Float32, fwhms)::Dictionary{Int64, Float32}
 end

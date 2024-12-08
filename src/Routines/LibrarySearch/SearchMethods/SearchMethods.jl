@@ -142,7 +142,7 @@ function initSimpleSearchContext(
         [SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{SpectralScoresSimple{Float16}}(undef, 5000),
         SparseArray(UInt32(5000)),
-        zeros(Float32, 5000),
+        zeros(UInt32, 5000),
         zeros(Float32, n_precursors),
         zeros(Float32, 5000),
         zeros(Float32, 5000),

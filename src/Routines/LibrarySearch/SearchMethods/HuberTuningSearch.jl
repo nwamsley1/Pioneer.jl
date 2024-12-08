@@ -54,17 +54,9 @@ Configures deconvolution and δ selection.
 struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    frag_tol_ppm::Float32
-    min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
-    irt_tol::Float32
     spec_order::Set{Int64}
     
     # Deconvolution parameters
@@ -93,17 +85,9 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
         new{typeof(prec_estimation)}(
             (UInt8(0), UInt8(2)),
-            30.0f0,  # Standard fragment tolerance
-            UInt8(3),
-            3,
-            0.1f0,
-            -3.0f0,
-            (3, 5),
-            UInt8(3),
             2,
-            UInt8(10),
+            UInt8(params[:quant_search_params]["max_frag_rank"]),
             1.0f0,
-            Float32(5.0),  # 5 minute iRT tolerance
             Set(2),
             Float32(dp["lambda"]),
             Int64(dp["max_iter_newton"]),
@@ -114,7 +98,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             Float32(dp["max_diff"]),
             huber_δs,#Float32.(hp["delta_grid"]),
             Float32(50),#Float32(hp["min_pct_diff"]),
-            0.0f0,#Float32(hp["q_value_threshold"]),
+            0.001f0,#Float32(hp["q_value_threshold"]),
             prec_estimation
         )
     end
@@ -154,15 +138,20 @@ function process_file!(
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
         isempty(file_psms) && return results
         
+        # Create scan/precursor set and scan indices
+        prec_set = Set(zip(file_psms[!, :precursor_idx], file_psms[!, :scan_idx]))
+        scan_idxs = Set(file_psms[!, :scan_idx])
+        
+                
         # Create scan mapping
         scan_to_prec = get_scan_precursor_mapping(file_psms)
-        scan_idxs = Set(keys(scan_to_prec))
         
         # Perform Huber tuning search
         tuning_results = perform_huber_search(
             spectra,
             scan_to_prec,
-            scan_idxs,
+            #scan_idxs,
+            #prec_set,
             search_context,
             params,
             ms_file_idx
@@ -211,6 +200,7 @@ function summarize_results!(
         setHuberDelta!(search_context, optimal_delta)
         
     catch e
+        throw(e)
         @warn "Failed to determine optimal Huber delta, using default" exception=e
         default_delta = 100000.0f0
         results.huber_delta[] = default_delta
@@ -285,7 +275,8 @@ Perform Huber tuning search on a single file.
 function perform_huber_search(
     spectra::Arrow.Table,
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
-    scan_idxs::Set{UInt32},
+    #scan_idxs::Set{UInt32},
+    #prec_set::Set{Tuple{UInt32, UInt32}},
     search_context::SearchContext,
     params::HuberTuningSearchParameters,
     ms_file_idx::Int64
@@ -299,8 +290,9 @@ function perform_huber_search(
             
             tuning_results = process_scans_for_huber!(
                 last(thread_task),
-                scan_idxs,
+                #scan_idxs,
                 scan_to_prec,
+                #prec_set,
                 spectra,
                 search_context,
                 search_data,
@@ -314,7 +306,7 @@ function perform_huber_search(
     
     return vcat(fetch.(tasks)...)
 end
-
+#=
 """
 Process scans for Huber tuning.
 """
@@ -340,7 +332,7 @@ function process_scans_for_huber!(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    rt_index = Arrow.Table(search_context.rt_index_paths[][ms_file_idx])
+    rt_index = buildRtIndex(DataFrame(Arrow.Table(search_context.rt_index_paths[][ms_file_idx])), bin_rt_size = 0.1)
     for scan_idx in scan_range
         process_scan_for_huber!(
             scan_idx,
@@ -362,15 +354,135 @@ function process_scans_for_huber!(
     
     return tuning_results
 end
+=#
+
+"""
+Process scans for Huber tuning with RT bin caching.
+"""
+function process_scans_for_huber!(
+    scan_range::Vector{Int64},
+    #scan_idxs::Set{UInt32},
+    scan_to_prec::Dict{UInt32, Vector{UInt32}},
+    #prec_set::Set{Tuple{UInt32, UInt32}},
+    spectra::Arrow.Table,
+    search_context::SearchContext,
+    search_data::SearchDataStructures,
+    params::HuberTuningSearchParameters,
+    ms_file_idx::Int64
+)
+    tuning_results = Dict(
+        :precursor_idx => UInt32[],
+        :scan_idx => UInt32[],
+        :weight => Float32[],
+        :huber_δ => Float32[]
+    )
+    
+    # Get working arrays
+    Hs = getHs(search_data)
+    weights = getTempWeights(search_data)
+    precursor_weights = getPrecursorWeights(search_data)
+    residuals = getResiduals(search_data)
+    
+    # RT bin tracking state
+    irt_start, irt_stop = 1, 1
+    prec_mz_string = ""
+    ion_idx = 0
+    
+    # Get RT index
+    rt_index = buildRtIndex(
+        DataFrame(Arrow.Table(getRtIndexPaths(search_context)[ms_file_idx])), 
+        bin_rt_size = 0.1
+    )
+    
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    for scan_idx in scan_range
+        scan_idx ∉ keys(scan_to_prec) && continue
+        
+        msn = spectra[:msOrder][scan_idx]
+        msn ∉ params.spec_order && continue
+        
+        # Calculate RT window
+        irt = getRtIrtModel(search_context, ms_file_idx)(spectra[:retentionTime][scan_idx])
+        irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+        
+        # Check for m/z change
+        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
+        prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
+        
+        # Update transitions if RT window or m/z changed
+        if (irt_start_new != irt_start) || (irt_stop_new != irt_stop) || (prec_mz_string_new != prec_mz_string)
+            irt_start = irt_start_new
+            irt_stop = irt_stop_new
+            prec_mz_string = prec_mz_string_new
+            
+            ion_idx = selectTransitions!(
+                getIonTemplates(search_data),
+                RTIndexedTransitionSelection(),
+                PartialPrecCapture(),
+                getFragmentLookupTable(getSpecLib(search_context)),
+                getPrecIds(search_data),
+                getPrecursors(getSpecLib(search_context))[:mz],
+                getPrecursors(getSpecLib(search_context))[:prec_charge],
+                getPrecursors(getSpecLib(search_context))[:sulfur_count],
+                getIsoSplines(search_data),
+                getQuadTransmissionFunction(
+                    getQuadTransmissionModel(search_context, ms_file_idx),
+                    spectra[:centerMz][scan_idx],
+                    spectra[:isolationWidthMz][scan_idx]
+                ),
+                getPrecursorTransmission(search_data),
+                getIsotopes(search_data),
+                params.n_frag_isotopes,
+                params.max_frag_rank,
+                rt_index,
+                irt_start,
+                irt_stop,
+                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                block_size = 10000
+            )
+        end
+        
+        # Match peaks and process if enough matches found
+        nmatches, nmisses = match_peaks_for_huber!(
+            search_data,
+            ion_idx,
+            spectra,
+            scan_idx,
+            search_context,
+            ms_file_idx
+        )
+        
+        nmatches ≤ 2 && continue
+        
+        # Process delta values for this scan
+        process_delta_values!(
+            params.delta_grid,
+            Hs,
+            weights,
+            precursor_weights,
+            residuals,
+            search_data,
+            nmatches,
+            nmisses,
+            params,
+            scan_idx,
+            scan_to_prec,
+            tuning_results
+        )
+    end
+    
+    return tuning_results
+end
 
 """
 Process single scan for Huber tuning.
 """
 function process_scan_for_huber!(
     scan_idx::Int,
-    scan_idxs::Set{UInt32},
+    #scan_idxs::Set{UInt32},
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
-    rt_index::Arrow.Table,
+    rt_index::retentionTimeIndex,
     spectra::Arrow.Table,
     search_context::SearchContext,
     search_data::SearchDataStructures,
@@ -437,7 +549,7 @@ function estimate_optimal_delta(
     min_pct_diff::Float32
 )
     # Group by precursor/scan
-    gpsms = groupby(psms, [:precursor_idx, :ms_file_idx, :scan_idx])
+    gpsms = groupby(psms, [:precursor_idx, :scan_idx])
     
     # Process each curve
     curves = combine(gpsms) do sdf
@@ -455,7 +567,7 @@ function estimate_optimal_delta(
     sort!(huber_hist, :huber50)
     
     huber_hist[!, :prob] = huber_hist[!, :nrow] ./ sum(huber_hist[!, :nrow])
-    huber_hist[!, :cum_prob] = cumsum(huber_hist[!, :prob])
+    huber_hist[!, :cum_prob] = Float32.(cumsum(huber_hist[!, :prob]))
     
     return get_median_huber_delta(
         huber_hist[!, :cum_prob],
@@ -532,7 +644,7 @@ function process_delta_values!(
     nmatches::Int,
     nmisses::Int,
     params::HuberTuningSearchParameters,
-    scan_idx::Int,
+    scan_idx::Int64,
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     tuning_results::Dict
 )
@@ -588,7 +700,7 @@ function process_delta_values!(
             precursor_weights[id] = weights[colid]
             
             # Record if this is a target PSM
-            if haskey(scan_to_prec, UInt32(scan_idx)) && id in scan_to_prec[UInt32(scan_idx)]
+            if id ∈ scan_to_prec[scan_idx]
                 push!(tuning_results[:precursor_idx], id)
                 push!(tuning_results[:weight], weights[colid])
                 push!(tuning_results[:huber_δ], δ)
@@ -608,12 +720,13 @@ function select_transitions_for_huber!(
     search_data::SearchDataStructures,
     search_context::SearchContext,
     scan_idx::Int,
-    rt_index::Arrow.Table,
+    rt_index::retentionTimeIndex,
     ms_file_idx::Int,
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     spectra::Arrow.Table,
     params::HuberTuningSearchParameters
 )
+
     return selectTransitions!(
         getIonTemplates(search_data),
         RTIndexedTransitionSelection(),

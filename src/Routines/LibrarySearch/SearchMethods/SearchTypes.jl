@@ -96,7 +96,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     
     # Working arrays
     Hs::SparseArray
-    prec_ids::Vector{Float32}
+    prec_ids::Vector{UInt32}
     precursor_weights::Vector{Float32}
     temp_weights::Vector{Float32}
     residuals::Vector{Float32}
@@ -139,7 +139,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     rt_irt_map::Dict{Int64, RtConversionModel}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
-    irt_errors::Dict{String, Float32}
+    irt_errors::Dict{Int64, Float32}
     
     # Configuration
     n_threads::Int64
@@ -167,7 +167,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
-            Dict{String, Float32}(),
+            Dict{Int64, Float32}(),
             n_threads, n_precursors, buffer_size
         )
     end
@@ -264,7 +264,7 @@ function getQuadTransmissionModel(s::SearchContext, index::I) where {I<:Integer}
    if haskey(s.quad_transmission_model,index)
        return s.quad_transmission_model[index]
    else
-       @warn "Mass error model not found for ms_file_idx $index. Returning default GeneralGaussModel(5.0f0, 0.0f0)"
+       @warn "Quad Transmission model not found for ms_file_idx $index. Returning default GeneralGaussModel(5.0f0, 0.0f0)"
        return GeneralGaussModel(5.0f0, 0.0f0)
    end
 end
@@ -329,7 +329,7 @@ function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTupl
 end
 setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
 setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
-function setIrtErrors!(s::SearchContext, errs::Dict{Int64, Float32})
+function setIrtErrors!(s::SearchContext, errs::Dictionary{Int64, Float32})
     for (k,v) in pairs(errs)
         s.irt_errors[k] = v
     end
