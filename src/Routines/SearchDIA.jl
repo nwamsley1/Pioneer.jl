@@ -137,7 +137,6 @@ function SearchDIA(params_path::String)
     );
 
     #==========================================================
-    Interface Methods for Parameter Access
         Estimate normalized collision energy for each raw file
         Normalized collision energy is modeled as a function of peptide m/z and Charge
         Results stored in SEARCH_CONTEXT.mass_error_model::Dict{Int64, MassErrorModel}
@@ -153,12 +152,89 @@ function SearchDIA(params_path::String)
     @time execute_search(
         FirstPassSearch(), SEARCH_CONTEXT, params_
     );
-
+    include("Routines/LibrarySearch/SearchMethods/HuberTuningSearch.jl")
     @time execute_search(
         HuberTuningSearch(), SEARCH_CONTEXT, params_
     );
 
+    include("Routines/LibrarySearch/SearchMethods/SecondPassSearch.jl")
+    @time execute_search(
+        SecondPassSearch(), SEARCH_CONTEXT, params_
+    );
 
+    @time execute_search(
+        ScoringSearch(), SEARCH_CONTEXT, params_
+    );
+
+    @time execute_search(
+        IntegrateChromatogramSearch(), SEARCH_CONTEXT, params_
+    );
+
+    temp_folder = getDataOutDir(SEARCH_CONTEXT)
+
+    second_pass_folder = joinpath(temp_folder, "second_pass_psms")
+    merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
+    passing_psms_folder = joinpath(temp_folder, "passing_psms")
+    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
+    !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
+    !isdir(passing_proteins_folder) && mkdir(passing_proteins_folder)
+
+
+    best_psms = samplePSMsForXgboost(second_pass_folder, params_[:xgboost_params]["max_n_samples"]);
+    models = scoreTraces!(best_psms,readdir(second_pass_folder, join=true), precursors);
+    #Wipe memory
+    best_psms = nothing
+    GC.gc()
+    best_traces = getBestTraces(
+        second_pass_folder,
+        Float32(params_[:xgboost_params]["min_best_trace_prob"]));
+    #Path for merged quant psms scores 
+    #merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
+    #Sort quant tables in descenging order of probability and remove 
+    #sub-optimal isotope traces 
+    sortAndFilterQuantTables( #Go here to let all isotope traces pass and not just the best 
+        second_pass_folder,
+        merged_quant_path,
+        best_traces
+    )
+    #Merge sorted tables into a single list with two columns
+    #for "prob" and "target"
+    mergeSortedPSMScores(
+                    second_pass_folder, 
+                    merged_quant_path
+                    )
+    #functions to convert "prob" to q-value and posterior-error-probability "pep" 
+    precursor_pep_spline = getPEPSpline(merged_quant_path, 
+                                        :prob, 
+                                        min_pep_points_per_bin = params_[:xgboost_params]["precursor_prob_spline_points_per_bin"], 
+                                        n_spline_bins = 5)
+    precursor_qval_interp = getQValueSpline(merged_quant_path, 
+                                            :prob, 
+                                            min_pep_points_per_bin = max(params_[:xgboost_params]["precursor_q_value_interpolation_points_per_bin"], 3))
+
+    getPSMsPassingQVal(
+                                    second_pass_folder, 
+                                    passing_psms_folder,
+                                    precursor_pep_spline,
+                                    precursor_qval_interp,
+                                    0.01f0)
+    ###########
+    #Score Protein Groups
+    sorted_pg_score_path = getProteinGroups(
+            passing_psms_folder, 
+            passing_proteins_folder,
+            temp_folder,
+            precursors[:accession_numbers],
+            accession_number_to_id,
+            precursors[:sequence]);
+    #value_counts(DataFrame(Arrow.Table(readdir(passing_psms_folder, join=true))),:ms_file_idx)
+
+    pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
+                                    :max_pg_score, 
+                                    min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3));
+
+
+    println("A")
 
 
 

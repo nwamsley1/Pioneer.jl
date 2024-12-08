@@ -170,7 +170,8 @@ function process_search_results!(
     ::HuberTuningSearchResults,
     ::P, 
     ::SearchContext,
-    ::Int64
+    ::Int64,
+    ::Arrow.Table
 ) where {P<:HuberTuningSearchParameters}
     return nothing
 end

@@ -210,7 +210,8 @@ function process_search_results!(
     results::QuadTuningSearchResults,
     ::P,
     search_context::SearchContext,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::Arrow.Table
 ) where {P<:QuadTuningSearchParameters}
     
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))

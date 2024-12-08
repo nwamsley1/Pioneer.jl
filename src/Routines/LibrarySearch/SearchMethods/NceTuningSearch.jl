@@ -161,7 +161,8 @@ function process_search_results!(
     results::NceTuningSearchResults,
     ::P,
     search_context::SearchContext,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::Arrow.Table
 ) where {P<:NceTuningSearchParameters}
     
     setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])

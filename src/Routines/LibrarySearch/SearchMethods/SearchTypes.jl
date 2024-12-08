@@ -93,6 +93,9 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scored_psms::Vector{SimpleScoredPSM{Float32, Float16}}
     unscored_psms::Vector{SimpleUnscoredPSM{Float32}}
     spectral_scores::Vector{SpectralScoresSimple{Float16}}
+    complex_scored_psms::Vector{ComplexScoredPSM{Float32, Float16}}
+    complex_unscored_psms::Vector{ComplexUnscoredPSM{Float32}}
+    complex_spectral_scores::Vector{SpectralScoresComplex{Float16}}
     
     # Working arrays
     Hs::SparseArray
@@ -221,6 +224,9 @@ getIsoSplines(s::SearchDataStructures) = s.iso_splines
 getScoredPsms(s::SearchDataStructures) = s.scored_psms
 getUnscoredPsms(s::SearchDataStructures) = s.unscored_psms
 getSpectralScores(s::SearchDataStructures) = s.spectral_scores
+getComplexScoredPsms(s::SearchDataStructures) = s.complex_scored_psms
+getComplexUnscoredPsms(s::SearchDataStructures) = s.complex_unscored_psms
+getComplexSpectralScores(s::SearchDataStructures) = s.complex_spectral_scores
 getHs(s::SearchDataStructures) = s.Hs
 getPrecIds(s::SearchDataStructures) = s.prec_ids
 getWeights(s::SearchDataStructures) = s.weights

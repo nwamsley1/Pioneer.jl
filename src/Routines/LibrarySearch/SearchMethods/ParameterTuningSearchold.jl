@@ -147,7 +147,8 @@ function process_file!(
     return results
 end
 
-function process_search_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
+function process_search_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64,
+    ::Arrow.Table) where {P<:ParameterTuningSearchParameters}
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
     mass_error_folder = getMassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)

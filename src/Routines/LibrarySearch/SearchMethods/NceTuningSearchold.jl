@@ -133,7 +133,8 @@ function process_file!(
     return results
 end
 
-function process_search_results!(results::NceTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64) where {P<:NceTuningSearchParameters}
+function process_search_results!(results::NceTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64,
+    ::Arrow.Table) where {P<:NceTuningSearchParameters}
     # Store NCE model in search context
     setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])
 end

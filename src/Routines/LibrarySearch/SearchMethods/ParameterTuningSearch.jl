@@ -222,7 +222,8 @@ function process_search_results!(
     results::ParameterTuningSearchResults,
     params::P,
     search_context::SearchContext,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::Arrow.Table
 ) where {P<:ParameterTuningSearchParameters}
     
     rt_alignment_folder = getRtAlignPlotFolder(search_context)

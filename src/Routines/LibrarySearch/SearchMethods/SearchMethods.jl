@@ -28,10 +28,11 @@ function execute_search(
     @info "Starting parameter tuning search" n_files=length(msdr.file_paths)
     
     search_parameters = get_parameters(search_type, params)
+
     search_results = init_search_results(search_parameters, search_context)
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)
-        process_search_results!(search_results, search_parameters, search_context, ms_file_idx)
+        process_search_results!(search_results, search_parameters, search_context, ms_file_idx, spectra)
         reset_results!(search_results)
     end
     
@@ -141,6 +142,9 @@ function initSimpleSearchContext(
         Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000),
         [SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)],
         Vector{SpectralScoresSimple{Float16}}(undef, 5000),
+        Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000),
+        [ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)],
+        Vector{SpectralScoresComplex{Float16}}(undef, 5000),
         SparseArray(UInt32(5000)),
         zeros(UInt32, 5000),
         zeros(Float32, n_precursors),

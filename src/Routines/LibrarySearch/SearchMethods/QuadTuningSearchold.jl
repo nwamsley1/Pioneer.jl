@@ -346,7 +346,8 @@ function filter_quad_psms(iso_idx::AbstractVector{UInt8},
     return mask
 end
 
-function process_search_results!(results::QuadTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64) where {P<:QuadTuningSearchParameters}
+function process_search_results!(results::QuadTuningSearchResults, params::P, search_context::SearchContext, ms_file_idx::Int64,
+    ::Arrow.Table) where {P<:QuadTuningSearchParameters}
     # Store quad model in search context
     setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))#getQuadTransmissionModel(search_context, ms_file_idx))
 end

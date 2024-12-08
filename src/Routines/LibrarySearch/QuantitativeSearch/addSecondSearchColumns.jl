@@ -85,8 +85,9 @@ function addPostIntegrationFeatures!(psms::DataFrame,
                                     tic::AbstractVector{Float32},
                                     masses::AbstractArray,
                                     ms_file_idx::Integer,
-                                    rt_to_irt_interp::UniformSpline,
-                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}}) where {T<:AbstractFloat}
+                                    rt_to_irt_interp::RtConversionModel,
+                                    prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
+                                    ) where {T<:AbstractFloat}
 
     #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);

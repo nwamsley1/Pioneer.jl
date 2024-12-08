@@ -193,7 +193,8 @@ function process_search_results!(
     results::FirstPassSearchResults,
     params::P,
     search_context::SearchContext,
-    ms_file_idx::Int64) where {P<:FirstPassSearchParameters}
+    ms_file_idx::Int64,
+    ::Arrow.Table) where {P<:FirstPassSearchParameters}
     
     # No additional processing needed after file processing
     # All results are already saved to files and dictionaries

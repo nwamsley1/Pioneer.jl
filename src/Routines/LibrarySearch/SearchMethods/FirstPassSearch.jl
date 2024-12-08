@@ -184,7 +184,8 @@ function process_search_results!(
     results::FirstPassSearchResults,
     params::P,
     search_context::SearchContext,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::Arrow.Table
 ) where {P<:FirstPassSearchParameters}
     psms = results.psms[]
     fwhms = skipmissing(psms[!, :fwhm])
