@@ -46,15 +46,15 @@ buildRtIndex(PSMs::SubDataFrame; bin_rt_size::AbstractFloat = 0.1) = buildRtInde
 
 
 function makeRTIndices(temp_folder::String,
-                       psms_paths::Dict{Int64, String}, 
+                       psms_paths::Vector{String}, 
                        prec_to_irt::Dictionary{UInt32, @NamedTuple{irt::Float32, mz::Float32}},
                        rt_to_irt_splines::Any;
                        min_prob::AbstractFloat = 0.5)
 
     #Maps filepath to a retentionTimeIndex (see buildrtIndex.jl)
-    rt_index_paths = Vector{String}(undef, length(values(psms_paths)))
+    rt_index_paths = Vector{String}(undef, length(psms_paths))
     #Fill retention time index for each file. 
-    for (key, psms_path) in pairs(psms_paths)
+    for (key, psms_path) in enumerate(psms_paths)
         psms = Arrow.Table(psms_path)
         rt_to_irt = rt_to_irt_splines[key]
         #Impute empirical irt value for psms with probability lower than the threshold

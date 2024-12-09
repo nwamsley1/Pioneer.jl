@@ -24,7 +24,7 @@ function find_score_threshold(
 end
 
 function mergeSortedPSMScores(
-                    input_dir::String, 
+                    input_paths::Vector{String}, 
                     output_path::String,
                     ; N = 10000000)
     
@@ -54,7 +54,7 @@ function mergeSortedPSMScores(
         )
     end
 
-    input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
+    #input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
     tables = [Arrow.Table(path) for path in input_paths]
     table_idxs = ones(Int64, length(tables))
     psms_batch = DataFrame()
@@ -213,15 +213,16 @@ function getQValueSpline(
 end
 
 function getPSMsPassingQVal(
-                            quant_psms_folder::String, 
+                            passing_psms_paths::Vector{String},
                             passing_psms_folder::String,
+                            second_pass_psms_paths::String, 
                             pep_spline::UniformSpline,
                             qval_interp::Interpolations.Extrapolation,
                             q_val_threshold::Float32,
                             )
     
-    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
-    for file_path in file_paths
+    #file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+    for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
         # Read the Arrow table
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
         passing_psms[!,:qval] = qval_interp.(passing_psms[!,:prob])
@@ -246,6 +247,7 @@ function getPSMsPassingQVal(
             joinpath(passing_psms_folder, basename(file_path)),
             passing_psms
         )
+        passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
     end
 
     return

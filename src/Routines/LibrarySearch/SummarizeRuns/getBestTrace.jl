@@ -1,10 +1,10 @@
 function getBestTraces(
-    quant_psms_folder::String,
+    second_pass_psms_paths::Vector{String},
     min_prob::Float32 = 0.75f0)
     psms_trace_scores = Dictionary{
             @NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
 
-    for file_path in readdir(quant_psms_folder, join = true)
+    for file_path in second_pass_psms_paths
         if splitext(file_path)[end] != ".arrow"
             continue
         end

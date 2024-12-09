@@ -132,7 +132,8 @@ function addPSM(
 )
 end
 function getProteinGroups(
-    passing_psms_folder::String,
+    passing_psms_paths::Vector{String},
+    passing_pg_paths::Vector{String},
     protein_groups_folder::String,
     temp_folder::String,
     accession_numbers::AbstractVector{String},
@@ -231,12 +232,13 @@ function getProteinGroups(
 
 
     pg_count = 0
-    for file_path in readdir(passing_psms_folder, join=true)
+    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)#readdir(passing_psms_folder, join=true)
         _, extention = splitext(file_path)
         if extention != ".arrow"
             continue
         end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
+        passing_pg_paths[ms_file_idx] = protein_groups_path
         psms_table = Arrow.Table(file_path)
         max_pg_score, protein_groups = getProteinGroupsDict(
             psms_table[:precursor_idx],

@@ -39,7 +39,6 @@ Type Definitions
 Results container for second pass search.
 """
 struct SecondPassSearchResults <: SearchResults
-    psms_paths::Dict{Int64, String}  # Maps file index to PSMs path
     psms::Base.Ref{DataFrame}          # PSMs for each file
 end
 
@@ -243,7 +242,7 @@ function process_search_results!(
         )
         psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
         Arrow.write(temp_path, psms)
-        results.psms_paths[ms_file_idx] = temp_path
+        setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
     catch e
         @warn "Failed to process search results" ms_file_idx exception=e
         rethrow(e)

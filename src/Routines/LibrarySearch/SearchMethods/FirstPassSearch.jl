@@ -54,7 +54,6 @@ Results container for first pass search.
 Holds FWHM statistics, PSM file paths, and model updates.
 """
 struct FirstPassSearchResults <: SearchResults
-    psms_paths::Dict{Int64, String}
     fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}
     psms::Base.Ref{DataFrame}
 end
@@ -140,11 +139,10 @@ function init_search_results(
     ::FirstPassSearchParameters,
     search_context::SearchContext
 )
-    temp_folder = joinpath(getDataOutDir(search_context), "temp_psms")
-    !isdir(temp_folder) && mkdir(temp_folder)
+    #temp_folder = joinpath(getDataOutDir(search_context), "temp_psms")
+    #!isdir(temp_folder) && mkdir(temp_folder)
     
     return FirstPassSearchResults(
-        Dict{String, String}(),
         Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
         Base.Ref{DataFrame}()
     )
@@ -208,7 +206,7 @@ function process_search_results!(
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
             :irt_predicted, :q_value, :score, :prob, :scan_count])
     )
-    results.psms_paths[ms_file_idx] = temp_path
+    setFistPassPsms!(getMSData(search), ms_file_idx, temp_path)
 end
 
 """
@@ -220,7 +218,7 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:FirstPassSearchParameters}
     
-    isempty(results.psms_paths) && return nothing
+    #isempty(results.psms_paths) && return nothing
     @info "Summarizing first pass search results..."
     # Map retention times
     map_retention_times!(search_context, results, params)
@@ -380,7 +378,7 @@ function map_retention_times!(
 )
     @info "Mapping library to empirical retention times..."
     
-    for (ms_file_idx, psms_path) in pairs(results.psms_paths)
+    for (ms_file_idx, psms_path) in enumerate(getFirstPassPsms(getMSData(search_context)))
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
         if sum(best_hits) > 100
@@ -422,7 +420,7 @@ function get_best_precursors_accross_runs!(
     
     # Get best precursors
     return get_best_precursors_accross_runs(
-        results.psms_paths,
+        getFirstPassPsms(getMSData(search_context)),
         getPrecursors(getSpecLib(search_context))[:mz],
         getRtIrtMap(search_context),
         max_q_val=params.max_q_val_for_irt,
@@ -467,7 +465,7 @@ function create_rt_indices!(
     # Make RT indices
     rt_index_paths = makeRTIndices(
         rt_indices_folder,
-        results.psms_paths,
+        getFirstPassPsms(getMSData(search_context)),
         prec_to_irt,
         getRtIrtMap(search_context),
         min_prob=params.max_prob_to_impute

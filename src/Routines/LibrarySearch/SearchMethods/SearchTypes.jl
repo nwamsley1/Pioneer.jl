@@ -68,10 +68,55 @@ Concrete Types
 """
 Reference to MS data stored in Arrow files.
 """
-struct ArrowTableReference <: MassSpecDataReference
-    file_paths::Vector{AbstractString}
-    file_id_to_name::Dict{Int64, String}
+struct ArrowTableReference{N} <: MassSpecDataReference
+    file_paths::NTuple{N, String}
+    file_id_to_name::NTuple{N, String}
+    first_pass_psms::Vector{String}
+    second_pass_psms::Vector{String}
+    passing_psms::Vector{String}
+    passing_proteins::Vector{String}
+
+    # Internal constructor
+    function ArrowTableReference(file_paths::Vector{String})
+        file_paths = [arrow_path for arrow_path in file_paths if endswith(arrow_path, ".arrow")]
+        file_id_to_name = parseFileNames(file_paths)
+        if length(file_id_to_name) != file_paths
+            file_id_to_name = ["" for x in 1:length(file_id_to_name)]
+            @warn "Improper File Names Parsing. "
+        if length(file_paths) == 0
+            @warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
+        end
+        n = length(file_paths)
+        new(
+            NTuple{n, AbstractString}(file_paths...), 
+            NTuple{n, AbstractString}(file_id_to_name...),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n)
+        )
+    end
+
+    # Internal constructor
+    function ArrowTableReference(file_dir::String)
+        file_paths = [arrow_path for arrow_path in readdir(file_dir, join=true) if endswith(arrow_path, ".arrow")]
+        if length(file_paths) == 0
+            @warn "Could not find any files ending in `arrow` in the directory: $file_dir"
+        end
+        n = length(file_paths)
+        new(
+            NTuple{n, AbstractString}(file_paths...), 
+            Vector{String}(undef, n),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n),
+            Vector{String}(undef, n)
+        )
+    end
+
 end
+
+function ArrowTableReference()
 
 """
 Basic search data structure for library searches.
@@ -187,6 +232,27 @@ import Base: enumerate
 function enumerate(msdr::ArrowTableReference)
     return zip(1:length(msdr.file_paths), (getMSData(msdr, i) for i in 1:length(msdr.file_paths)))
 end
+
+# Getter methods
+getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
+getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[index]
+getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
+getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
+getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
+
+getFileIdToName(ref::ArrowTableReference) = ref.file_id_to_name
+getFirstPassPsms(ref::ArrowTableReference) = ref.first_pass_psms
+getSecondPassPsms(ref::ArrowTableReference) = ref.second_pass_psms
+getPassingPsms(ref::ArrowTableReference) = ref.passing_psms
+getPassingProteins(ref::ArrowTableReference) = ref.passing_proteins
+
+
+# Setter methods
+setFileIdToName!(ref::ArrowTableReference, index::Int, value::String) = ref.file_id_to_name[index] = value
+setFirstPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.first_pass_psms[index] = value
+setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
+setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
+setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
 
 # SearchParameters interface getters
 getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile

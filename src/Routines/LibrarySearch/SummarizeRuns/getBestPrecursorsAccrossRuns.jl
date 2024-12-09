@@ -1,5 +1,5 @@
 function get_best_precursors_accross_runs(
-                         psms_paths::Dict{Int64, String},
+                         psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
                          rt_irt::Dict{Int64, RtConversionModel};
                          max_q_val::Float32 = 0.01f0,
@@ -123,7 +123,7 @@ function get_best_precursors_accross_runs(
                                                         n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
     #prec_to_best_prob = zeros(Float32, n_precursors)
-    for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    for (key, psms_path) in enumerate(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
         readPSMs!(
@@ -150,7 +150,7 @@ function get_best_precursors_accross_runs(
     end
 
     #get variance 
-    for (key, psms_path) in pairs(psms_paths) #For each data frame 
+    for (key, psms_path) in enumerate(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
         getVariance!(

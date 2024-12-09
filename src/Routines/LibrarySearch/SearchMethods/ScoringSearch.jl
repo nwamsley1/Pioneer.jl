@@ -113,7 +113,7 @@ function summarize_results!(
         best_psms = samplePSMsForXgboost(second_pass_folder, params.max_n_samples)
         models = scoreTraces!(
             best_psms,
-            readdir(second_pass_folder, join=true),
+            getSecondPassPsms(getMSData(search_context)),
             getPrecursors(getSpecLib(search_context))
         )
         best_psms = nothing
@@ -122,14 +122,14 @@ function summarize_results!(
         # Get best traces
         @info "Finding best traces..."
         best_traces = getBestTraces(
-            second_pass_folder,
+            getSecondPassPsms(getMSData(search_context)),
             params.min_best_trace_prob
         )
 
         # Sort and filter quantification tables
         @info "Processing quantification results..."
         sortAndFilterQuantTables(
-            second_pass_folder,
+            getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path,
             best_traces
         )
@@ -137,7 +137,7 @@ function summarize_results!(
         # Merge scores
         @info "Merging PSM scores..."
         mergeSortedPSMScores(
-            second_pass_folder,
+            getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path
         )
 
@@ -159,8 +159,9 @@ function summarize_results!(
         # Get passing PSMs
         @info "Filtering passing PSMs..."
         getPSMsPassingQVal(
-            second_pass_folder,
+            getPassingPsms(getMSDataDir(search_context)),
             passing_psms_folder,
+            getSecondPassPsms(getMSData(search_context)),
             results.precursor_pep_spline[],
             results.precursor_qval_interp[],
             0.01f0
@@ -171,7 +172,8 @@ function summarize_results!(
         unique_proteins = unique(precursors[:accession_numbers]);
         accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
         sorted_pg_score_path = getProteinGroups(
-            passing_psms_folder,
+            getPassingPsms(getMSData(search_context)),
+            getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
             temp_folder,
             getPrecursors(getSpecLib(search_context))[:accession_numbers],

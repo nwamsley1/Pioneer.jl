@@ -208,7 +208,7 @@ function addPrecursorToHeap!(
 end
 
 function sortAndFilterQuantTables(
-    quant_psms_folder::String,
+    second_pass_psms_paths::Vector{String},
     merged_quant_path::String,
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}})
 
@@ -216,9 +216,9 @@ function sortAndFilterQuantTables(
     if isfile(merged_quant_path)
         rm(merged_quant_path, force = true)
     end
-    file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
+    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
-    for fpath in file_paths
+    for fpath in second_pass_psms_paths
         psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
 
         #Indicator variable of whether each psm is from the best trace 
