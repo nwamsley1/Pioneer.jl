@@ -203,12 +203,13 @@ function process_psms!(
     params::NceTuningSearchParameters
 )
     # Add columns
+    precursors = getPrecursors(getSpecLib(search_context))
     addPreSearchColumns!(
         psms,
         spectra,
-        getPrecursors(getSpecLib(search_context))[:is_decoy],
-        getPrecursors(getSpecLib(search_context))[:irt],
-        getPrecursors(getSpecLib(search_context))[:prec_charge],
+        getIsDecoy(precursors),
+        getIrt(precursors),
+        getCharge(precursors),
         spectra[:retentionTime],
         spectra[:TIC]
     )
@@ -230,7 +231,7 @@ function process_psms!(
 
     # Add precursor info
     psms[!, :prec_mz] = [
-        getPrecursors(getSpecLib(search_context))[:mz][pid]
+        getMz(precursors)[pid]
         for pid in psms[!, :precursor_idx]
     ]
     

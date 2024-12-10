@@ -99,7 +99,7 @@ function _select_transitions_impl!(
         end
     end
 
-    return transition_idx
+    return transition_idx, precs_temp_size
 end
 
 
@@ -110,8 +110,8 @@ end
 
 function getPrecursorWindowRange(
     precs, min_prec_mz::Float32, max_prec_mz::Float32, 
-    isotope_err_bounds::Tuple{Int64, Int64}
-)
+    isotope_err_bounds::Tuple{I, I}
+) where {I<:Integer}
     start = searchsortedfirst(precs, by = x->last(x), 
         min_prec_mz - first(isotope_err_bounds)*NEUTRON/2)
     stop = searchsortedlast(precs, by = x->last(x), 
@@ -122,8 +122,8 @@ end
 function withinQuadrupoleBounds(
     prec_mz::Float32, prec_charge::UInt8,
     min_prec_mz::Float32, max_prec_mz::Float32,
-    isotope_err_bounds::Tuple{Int64, Int64}
-)
+    isotope_err_bounds::Tuple{I, I}
+)where {I<:Integer}
     mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge
     mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge
     return mz_low ≤ prec_mz ≤ mz_high

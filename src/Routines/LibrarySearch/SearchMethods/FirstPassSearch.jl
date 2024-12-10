@@ -139,8 +139,8 @@ function init_search_results(
     ::FirstPassSearchParameters,
     search_context::SearchContext
 )
-    #temp_folder = joinpath(getDataOutDir(search_context), "temp_psms")
-    #!isdir(temp_folder) && mkdir(temp_folder)
+    temp_folder = joinpath(getDataOutDir(search_context), "first_pass_psms")
+    !isdir(temp_folder) && mkdir(temp_folder)
     
     return FirstPassSearchResults(
         Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
@@ -199,14 +199,14 @@ function process_search_results!(
             mad_fwhm = 0.2f0))
     end
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    temp_path = joinpath(getDataOutDir(search_context), "temp_psms", parsed_fname * ".arrow")
+    temp_path = joinpath(getDataOutDir(search_context), "first_pass_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     Arrow.write(
         temp_path,
         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,
             :irt_predicted, :q_value, :score, :prob, :scan_count])
     )
-    setFistPassPsms!(getMSData(search), ms_file_idx, temp_path)
+    setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
 end
 
 """
@@ -282,7 +282,7 @@ function process_psms!(
     # Get best PSMs
     select_best_psms!(
         psms,
-        getPrecursors(getSpecLib(search_context))[:mz],
+        getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
         params
     )
     
@@ -302,11 +302,11 @@ function add_psm_columns!(
     addMainSearchColumns!(
         psms,
         getModel(rt_model),
-        getPrecursors(getSpecLib(search_context))[:structural_mods],
-        getPrecursors(getSpecLib(search_context))[:missed_cleavages],
-        getPrecursors(getSpecLib(search_context))[:is_decoy],
-        getPrecursors(getSpecLib(search_context))[:irt],
-        getPrecursors(getSpecLib(search_context))[:prec_charge],
+        getStructuralMods(getPrecursors(getSpecLib(search_context))),#,
+        getMissedCleavages(getPrecursors(getSpecLib(search_context))),#[:missed_cleavages],
+        getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
+        getIrt(getPrecursors(getSpecLib(search_context))),#[:irt],
+        getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
         spectra[:retentionTime],
         spectra[:TIC],
         spectra[:mz_array]
@@ -421,7 +421,7 @@ function get_best_precursors_accross_runs!(
     # Get best precursors
     return get_best_precursors_accross_runs(
         getFirstPassPsms(getMSData(search_context)),
-        getPrecursors(getSpecLib(search_context))[:mz],
+        getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
         getRtIrtMap(search_context),
         max_q_val=params.max_q_val_for_irt,
         max_precursors=params.max_precursors
@@ -470,8 +470,9 @@ function create_rt_indices!(
         getRtIrtMap(search_context),
         min_prob=params.max_prob_to_impute
     )
-    
-    setRtIndexPaths!(search_context, rt_index_paths)
+    for (ms_file_idx, rt_index_path) in pairs(rt_index_paths)
+        setRtIndex!(getMSData(search_context), ms_file_idx, rt_index_path)
+    end
 end
 
 function get_irt_errs(

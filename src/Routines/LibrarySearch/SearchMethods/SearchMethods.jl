@@ -97,9 +97,9 @@ function initSearchContext(
     iso_splines::IsotopeSplineModel,
     ms_data_reference::MassSpecDataReference,
     n_threads::Int64,
-    n_precursors::Int64,
     buffer_size::Int64
 )
+    n_precursors = length(getPrecursors(spec_lib))
     temp_structures = initSimpleSearchContexts(
         iso_splines,
         n_precursors,
@@ -131,6 +131,7 @@ function initSimpleSearchContext(
     n_precursors::Int64,
     M::Int64
     )
+
     SimpleLibrarySearch(
         [FragmentMatch{Float32}() for _ in range(1, M)],
         [FragmentMatch{Float32}() for _ in range(1, M)],
@@ -152,7 +153,6 @@ function initSimpleSearchContext(
         zeros(Float32, 5000),
         zeros(Float32, 5),
         zeros(Float32, 5),
-        Vector{@NamedTuple{precursor_idx::UInt32, scan_idx::UInt32, weight::Float32, iso_idx::UInt8, center_mz::Float32, n_matches::UInt8}}()
     )
 end
 

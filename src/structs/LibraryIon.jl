@@ -617,11 +617,74 @@ end
 
 getScore(pbi::PrecursorBinFragment{T}) where {T<:AbstractFloat} = pbi.score
 
+
+abstract type LibraryPrecursors end
+struct BasicLibraryPrecursors
+    data::Arrow.Table
+    n::Int64
+    accession_numbers_to_pid::Dictionary{String, UInt32}
+    pid_to_cv_fold::Vector{UInt8}
+    function BasicLibraryPrecursors(precursor_table::Arrow.Table)
+        try
+            #precursor_table = Arrow.Table(precursor_table_path)
+            n = length(precursor_table[:sequence])
+            accession_numbers = precursor_table[:accession_numbers]::Arrow.List{String, Int32, Vector{UInt8}}
+
+            #Maps each unique accession number group to an UInt32 
+            unique_proteins = unique(accession_numbers);
+            accession_number_to_pgid = Dictionary(
+                unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))
+            );
+
+            #precursor idxs to cross-validation folds
+            #all precursors corresponding to a given protein-group end up in the same cross validation fold
+            pg_to_cv_fold = Dictionary{String, UInt8}()
+            cv_folds = UInt8[0, 1]
+            for pg in unique_proteins
+                insert!(pg_to_cv_fold, pg, rand(cv_folds))
+            end
+            pid_to_cv_fold = Vector{UInt8}(undef, n)
+            for pid in range(1, n)
+                pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
+            end
+            new(
+                precursor_table, n, accession_number_to_pgid, pid_to_cv_fold
+            )
+        catch e
+            @warn "Failed to load precursor_table_path: $precursor_table_path"
+            throw(e)
+        end
+    end
+end
+
+# Define length method
+import Base.length
+Base.length(ms_data::BasicLibraryPrecursors) = ms_data.n
+getProteinGroupId(lp::BasicLibraryPrecursors, accession_numbers::String)::UInt32 = lp.accession_numbers_to_pid[accession_numbers]
+getCvFold(lp::BasicLibraryPrecursors, precursor_idx::I) where {I<:Integer} = lp.pid_to_cv_fold[precursor_idx]
+getProteomeIdentifiers(lp::BasicLibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:proteome_identifiers]
+getAccessionNumbers(lp::BasicLibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:accession_numbers]
+getSequence(lp::BasicLibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:sequence]
+getStructuralMods(lp::BasicLibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
+getCharge(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}  = lp.data[:prec_charge]
+getCollisionEnergy(lp::BasicLibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:collision_energy]
+getIsDecoy(lp::BasicLibraryPrecursors)::Arrow.BoolVector{Bool}  = lp.data[:is_decoy]
+getEntrapmentGroupId(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:entrapment_group_id]
+getBasePepId(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]
+getMz(lp::BasicLibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}}  = lp.data[:mz]
+getLength(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}  = lp.data[:length]
+getMissedCleavages(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:missed_cleavages]
+getIrt(lp::BasicLibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
+getSulfurCount(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
+getIsotopicMods(lp::BasicLibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
+
+
+
 abstract type SpectralLibrary end
 struct FragmentIndexLibrary <: SpectralLibrary
     presearch_fragment_index::FragmentIndex{Float32}
     fragment_index::FragmentIndex{Float32}
-    precursors::Arrow.Table
+    precursors::BasicLibraryPrecursors
     fragment_lookup_table::SplineFragmentLookup
 end
 getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index

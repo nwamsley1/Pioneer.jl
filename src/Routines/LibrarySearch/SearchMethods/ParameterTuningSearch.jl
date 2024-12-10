@@ -52,7 +52,7 @@ Holds mass error models, RT alignment models, and associated data.
 """
 struct ParameterTuningSearchResults <: SearchResults 
     mass_err_model::Base.Ref{<:MassErrorModel}
-    irt_to_rt_model::Base.Ref{<:RtConversionModel}
+    rt_to_irt_model::Base.Ref{<:RtConversionModel}
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
@@ -144,7 +144,7 @@ Results Access Methods
 ==========================================================#
 
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
-getIrtToRtModel(ptsr::ParameterTuningSearchResults) = ptsr.irt_to_rt_model[]
+getRtToIrtModel(ptsr::ParameterTuningSearchResults) = ptsr.rt_to_irt_model[]
 getQcPlotsFolder(ptsr::ParameterTuningSearchResults) = ptsr.qc_plots_folder_path
 
 function set_mass_err_model!(ptsr::ParameterTuningSearchResults, model::Tuple{MassErrorModel, Vector{Float32}})
@@ -152,7 +152,7 @@ function set_mass_err_model!(ptsr::ParameterTuningSearchResults, model::Tuple{Ma
     append!(ptsr.ppm_errs, model[2])
 end
 
-function set_irt_to_rt_model!(
+function set_rt_to_irt_model!(
     ptsr::ParameterTuningSearchResults, 
     search_context::SearchContext,
     params::P,
@@ -160,7 +160,7 @@ function set_irt_to_rt_model!(
     model::Tuple{SplineRtConversionModel, Vector{Float32}, Vector{Float32}, Float32}
 ) where {P<:ParameterTuningSearchParameters}
     
-    ptsr.irt_to_rt_model[] = model[1]
+    ptsr.rt_to_irt_model[] = model[1]
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
     append!(ptsr.rt, model[2])
@@ -200,7 +200,7 @@ function process_file!(
         psms = collect_psms(spectra, search_context, params, ms_file_idx)
         
         # Fit RT alignment model
-        set_irt_to_rt_model!(results, search_context, params, ms_file_idx, 
+        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
                             fit_irt_model(params, psms))
 
         # Get fragments and fit mass error model
@@ -240,7 +240,7 @@ function process_search_results!(
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-    setRtIrtModel!(search_context, ms_file_idx, getIrtToRtModel(results))
+    setRtIrtModel!(search_context, ms_file_idx, getRtToIrtModel(results))
 end
 
 """
@@ -315,16 +315,16 @@ function add_columns_and_concat!(
     psms::DataFrame,
     new_psms::DataFrame,
     spectra::Arrow.Table,
-    precursors::Arrow.Table,
+    precursors::BasicLibraryPrecursors,
     params::P
 ) where {P<:ParameterTuningSearchParameters}
     
     addPreSearchColumns!(
         new_psms,
         spectra,
-        precursors[:is_decoy],
-        precursors[:irt],
-        precursors[:prec_charge],
+        getIsDecoy(precursors),#[:is_decoy],
+        getIrt(precursors),#[:irt],
+        getCharge(precursors),#[:prec_charge],
         spectra[:retentionTime],
         spectra[:TIC]
     )
@@ -477,7 +477,7 @@ function generate_rt_plot(
     )
     
     pbins = LinRange(minimum(results.rt), maximum(results.rt), 100)
-    Plots.plot!(pbins, getIrtToRtModel(results).(pbins), lw=3, label=nothing)
+    Plots.plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
     savefig(p, plot_path)
 end
 

@@ -6,7 +6,6 @@ function qcPlots(
     precursors,
     parsed_fnames,
     qc_plot_folder,
-    file_id_to_parsed_name,
     MS_TABLE_PATHS,
     irt_rt,
     frag_err_dist_dict
@@ -213,7 +212,7 @@ function qcPlots(
     #Plot TIC
     function plotTIC(
         ms_table_paths::Vector{String},
-        file_id_to_parsed_name::Dict{Int64, String};
+        parsed_fnames::Dict{Int64, String};
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -222,7 +221,7 @@ function qcPlots(
         legend=:outertopright, layout = (1, 1), show = true)
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
-            parsed_fname = file_id_to_parsed_name[id]
+            parsed_fname = parsed_fnames[id]
             ms_table = Arrow.Table(ms_table_path)
             ms1_scans = ms_table[:msOrder].==1
 
@@ -244,7 +243,7 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
         plotTIC(
             MS_TABLE_PATHS[start:stop],
-            file_id_to_parsed_name,
+            parsed_fnames,
             title = "TIC plot",
             f_out = joinpath(qc_plot_folder, "tic_plot_"*string(n)*".pdf")
         )
@@ -337,7 +336,7 @@ function qcPlots(
     ###############
     #Plot precursor IDs
     function plotMS2MassErrorCorrection(
-        file_id_to_parsed_name::Dict{Int64, String},
+        parsed_fnames::Dict{Int64, String},
         frag_err_dist_dict::Dict{Int64, MassErrorModel},
         file_ids::Vector{Int64};
         title::String = "precursor_abundance_qc",
@@ -347,7 +346,7 @@ function qcPlots(
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1), show = true)
 
-        parsed_fnames = [file_id_to_parsed_name[file_id] for file_id in file_ids]
+        parsed_fnames = [parsed_fnames[file_id] for file_id in file_ids]
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
 
         Plots.bar!(p, 
@@ -368,7 +367,7 @@ function qcPlots(
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
         plotMS2MassErrorCorrection(
-            file_id_to_parsed_name,
+            parsed_fnames,
             frag_err_dist_dict,
             collect(start:stop),
             title = "MS2 Mass Error Correction",

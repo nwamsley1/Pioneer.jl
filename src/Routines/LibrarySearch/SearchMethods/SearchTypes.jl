@@ -75,21 +75,23 @@ struct ArrowTableReference{N} <: MassSpecDataReference
     second_pass_psms::Vector{String}
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
+    rt_index_paths::Vector{String}
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
         file_paths = [arrow_path for arrow_path in file_paths if endswith(arrow_path, ".arrow")]
         file_id_to_name = parseFileNames(file_paths)
-        if length(file_id_to_name) != file_paths
+        if length(file_id_to_name) != length(file_paths)
             file_id_to_name = ["" for x in 1:length(file_id_to_name)]
             @warn "Improper File Names Parsing. "
-        if length(file_paths) == 0
+        elseif length(file_paths) == 0
             @warn "Could not find any files ending in `arrow` in the paths supplied: $file_paths"
         end
         n = length(file_paths)
-        new(
-            NTuple{n, AbstractString}(file_paths...), 
-            NTuple{n, AbstractString}(file_id_to_name...),
+        new{n}(
+            NTuple{n, String}(file_paths), 
+            NTuple{n, String}(file_id_to_name),
+            Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
@@ -104,8 +106,9 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             @warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
         n = length(file_paths)
-        new(
-            NTuple{n, AbstractString}(file_paths...), 
+        new{n}(
+            NTuple{n, String}(file_paths...), 
+            Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
@@ -116,7 +119,7 @@ struct ArrowTableReference{N} <: MassSpecDataReference
 
 end
 
-function ArrowTableReference()
+
 
 """
 Basic search data structure for library searches.
@@ -150,14 +153,6 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     residuals::Vector{Float32}
     isotopes::Vector{Float32}
     precursor_transmission::Vector{Float32}
-    tuning_results::Vector{@NamedTuple{
-        precursor_idx::UInt32,
-        scan_idx::UInt32,
-        weight::Float32,
-        iso_idx::UInt8,
-        center_mz::Float32,
-        n_matches::UInt8
-    }}
 end
 
 """
@@ -178,7 +173,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
     mass_error_model::Dict{Int64, MassErrorModel}
-    rt_to_irt_model::Dict{Int64, RtConversionModel}
+    #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
     huber_delta::Base.Ref{Float32}
 
@@ -188,6 +183,8 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
+    pg_score_to_qval::Ref{Any}
+
     
     # Configuration
     n_threads::Int64
@@ -209,13 +206,13 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, MassErrorModel}(),
-            Dict{Int64, RtConversionModel}(),
             Dict{Int64, NceModel}(), Ref(100000.0f0),
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
+            Ref{Any}(),
             n_threads, n_precursors, buffer_size
         )
     end
@@ -226,6 +223,7 @@ Interface Methods for Parameter Access
 ==========================================================#
 #MassSpecDataReference interface getters 
 getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = Arrow.Table(msdr.file_paths[ms_file_idx])
+getMSData(sc::SearchContext) = sc.mass_spec_data_reference
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 import Base: enumerate
@@ -239,12 +237,17 @@ getFirstPassPsms(ref::ArrowTableReference, index::Int) = ref.first_pass_psms[ind
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
 getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
 getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
+getRtIndex(ref::ArrowTableReference, index::Int) = ref.rt_index_paths[index]
+getParsedFileNames(ref::ArrowTableReference) = ref.file_id_to_name
+
+getFilePaths(ref::ArrowTableReference) = ref.file_paths
 
 getFileIdToName(ref::ArrowTableReference) = ref.file_id_to_name
 getFirstPassPsms(ref::ArrowTableReference) = ref.first_pass_psms
 getSecondPassPsms(ref::ArrowTableReference) = ref.second_pass_psms
 getPassingPsms(ref::ArrowTableReference) = ref.passing_psms
 getPassingProteins(ref::ArrowTableReference) = ref.passing_proteins
+getRtIndex(ref::ArrowTableReference) = ref.rt_index_paths
 
 
 # Setter methods
@@ -253,6 +256,7 @@ setFirstPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.fir
 setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
+setRtIndex!(ref::ArrowTableReference, index::Int, value::String) = ref.rt_index_paths[index] = value
 
 # SearchParameters interface getters
 getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile
@@ -366,14 +370,14 @@ setMassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:
 Get RT to iRT conversion model for MS file index. Returns identity model if not found.
 """
 function getRtIrtModel(s::SearchContext, index::I) where {I<:Integer} 
-   if haskey(s.rt_to_irt_model, index)
-       return s.rt_to_irt_model[index]
+   if haskey(s.rt_irt_map, index)
+       return s.rt_irt_map[index]
    else
        return IdentityModel()
    end
 end
 
-setRtIrtModel!(s::SearchContext, index::I, model::Any) where {I<:Integer} = (s.rt_to_irt_model[index] = model)
+setRtIrtModel!(s::SearchContext, index::I, model::Any) where {I<:Integer} = (s.rt_irt_map[index] = model)
 
 """
    getNceModelModel(s::SearchContext, index::Integer)

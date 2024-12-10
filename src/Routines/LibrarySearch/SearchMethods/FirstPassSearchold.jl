@@ -280,7 +280,9 @@ function summarize_results!(results::FirstPassSearchResults, params::P, search_c
         rt_irt,
         min_prob=params.max_prob_to_impute
     )
-    setRtIndexPaths!(search_context, rt_index_paths)
+    for (ms_file_idx, rt_index_path) in pairs(rt_index_paths)
+        setRtIndex!(getMSData(search_context), ms_file_idx, rt_index_path)
+    end
 
     @info "Search results summarization complete"
     return nothing

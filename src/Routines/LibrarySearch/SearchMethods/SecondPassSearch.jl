@@ -80,11 +80,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation,I<:IsotopeTraceType} <: Frag
         _ISOTOPE_TRACE_TYPE_ = nothing
         if params[:quant_search_params]["combine_isotope_traces"]
             _ISOTOPE_TRACE_TYPE_ = CombineTraces(Float32(params_[:quant_search_params]["min_fraction_transmitted"]))
-            println("Combine Traces!")
             @warn "Combine Traces"
         else
             _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
-            println("Seperate Traces")
             @warn "Seperate Traces"
         end
 
@@ -124,7 +122,6 @@ function init_search_results(::P, search_context::SearchContext) where {P<:Secon
     second_pass_psms = joinpath(getDataOutDir(search_context), "second_pass_psms")
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
-        Dict{Int64, String}(),
         DataFrame()
     )
 end
@@ -145,11 +142,14 @@ function process_file!(
 ) where {P<:SecondPassSearchParameters}
 
     try
+        setNceModel!(
+            getFragmentLookupTable(getSpecLib(search_context)), 
+            getNceModelModel(search_context, ms_file_idx)
+        )
         # Get RT index
         rt_index = buildRtIndex(
-            DataFrame(Arrow.Table(getRtIndexPaths(search_context)[ms_file_idx])), 
-            bin_rt_size = 0.1
-        )
+            DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
+            bin_rt_size = 0.1)
 
         # Perform second pass search
         psms = perform_second_pass_search(
@@ -159,7 +159,7 @@ function process_file!(
             params,
             ms_file_idx
         )
-        println("typeof(psms) ", typeof(psms))
+
         results.psms[] = psms
 
     catch e
@@ -183,9 +183,9 @@ function process_search_results!(
         
         addSecondSearchColumns!(psms, 
             spectra[:retentionTime],
-            getPrecursors(getSpecLib(search_context))[:prec_charge], 
-            getPrecursors(getSpecLib(search_context))[:is_decoy],
-            pid_to_cv_fold
+            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge], 
+            getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
+            getPrecursors(getSpecLib(search_context))
             );
         # Add required columns
         psms[!, :charge2] = Vector{UInt8}(psms[!, :charge] .== 2)
@@ -195,8 +195,8 @@ function process_search_results!(
             getIsotopeTraceType(params),#.isotope_tracetype,
             getQuadTransmissionModel(search_context, ms_file_idx),
             psms[!, :scan_idx],
-            getPrecursors(getSpecLib(search_context))[:prec_charge],
-            getPrecursors(getSpecLib(search_context))[:mz],
+            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             spectra[:centerMz],
             spectra[:isolationWidthMz]
         )
@@ -221,12 +221,12 @@ function process_search_results!(
         # Add post-integration features
         addPostIntegrationFeatures!(
             psms,
-            getPrecursors(getSpecLib(search_context))[:sequence],
-            getPrecursors(getSpecLib(search_context))[:structural_mods],
-            getPrecursors(getSpecLib(search_context))[:mz],
-            getPrecursors(getSpecLib(search_context))[:irt],
-            getPrecursors(getSpecLib(search_context))[:prec_charge],
-            getPrecursors(getSpecLib(search_context))[:missed_cleavages],
+            getSequence(getPrecursors(getSpecLib(search_context))),#[:sequence],
+            getStructuralMods(getPrecursors(getSpecLib(search_context))),#[:structural_mods],
+            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+            getIrt(getPrecursors(getSpecLib(search_context))),#[:irt],
+            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+            getMissedCleavages(getPrecursors(getSpecLib(search_context))),#[:missed_cleavages],
             spectra[:TIC],
             spectra[:mz_array],
             ms_file_idx,
@@ -335,15 +335,15 @@ function process_scans!(
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
 
-            ion_idx = selectTransitions!(
+            ion_idx, _ = selectTransitions!(
                 getIonTemplates(search_data),
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
                 getPrecIds(search_data),
-                getPrecursors(getSpecLib(search_context))[:mz],
-                getPrecursors(getSpecLib(search_context))[:prec_charge],
-                getPrecursors(getSpecLib(search_context))[:sulfur_count],
+                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
                 getIsoSplines(search_data),
                 getQuadTransmissionFunction(
                     getQuadTransmissionModel(search_context, ms_file_idx),
@@ -521,7 +521,7 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:SecondPassSearchParameters}
 
-    best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
+    #best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
    
     return nothing
 end

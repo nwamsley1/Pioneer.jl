@@ -100,7 +100,7 @@ function getPSMS(
     ms_file_idx::UInt32,
     spectra::Arrow.Table,
     thread_task::Vector{Int64},
-    precursors::Arrow.Table,
+    precursors::BasicLibraryPrecursors,
     ion_list::LibraryFragmentLookup,
     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}}, 
     precursors_passed_scoring::Vector{UInt32},
@@ -126,16 +126,16 @@ function getPSMS(
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1
 
         # Ion Template Selection
-        ion_idx = selectTransitions!(
+        ion_idx, _ = selectTransitions!(
             getIonTemplates(search_data), 
             StandardTransitionSelection(), 
             getPrecEstimation(params),
             ion_list,
             scan_to_prec_idx[scan_idx], precursors_passed_scoring,
-            precursors[:mz], 
-            precursors[:prec_charge], 
-            precursors[:sulfur_count],
-            precursors[:irt],
+            getMz(precursors),#[:mz], 
+            getCharge(precursors),#[:prec_charge], 
+            getSulfurCount(precursors),#[:sulfur_count],
+            getIrt(precursors),#[:irt],
             getIsoSplines(search_data),
             getQuadTransmissionFunction(qtm, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
             precursor_transmission, isotopes, getNFragIsotopes(params),
@@ -471,7 +471,7 @@ function massErrorSearch(
                 ismissing(scan_to_prec_idx[scan_idx]) && continue
 
                 # Select transitions for mass error estimation
-                ion_idx = selectTransitions!(
+                ion_idx, _ = selectTransitions!(
                     getIonTemplates(search_data[thread_id]),
                     MassErrEstimationStrategy(),
                     getPrecEstimation(params),
@@ -549,7 +549,7 @@ function getMassErrors(
         #Candidate precursors and their retention time estimates have already been determined from
         #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
         #the retention time and m/z tolerance constraints
-        ion_idx = selectTransitions!(ionTemplates, MassErrEstimationStrategy(), FullPrecCapture(),
+        ion_idx, _ = selectTransitions!(ionTemplates, MassErrEstimationStrategy(), FullPrecCapture(),
                                         library_fragment_lookup, scan_to_prec_idx[i],
                                         precursors_passed_scoring, max_rank = max_rank
                                         )
@@ -659,7 +659,7 @@ function huberTuningSearch(
             #Candidate precursors and their retention time estimates have already been determined from
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
-            ion_idx = selectTransitions!(
+            ion_idx, _ = selectTransitions!(
                 ionTemplates, 
                 RTIndexedTransitionSelection(), 
                 PartialPrecCapture(), 
@@ -820,7 +820,7 @@ function QuadTransmissionSearch(
         #cycle_idx += (msn == 1)
         msn ∈ spec_order ? nothing : continue #Skip scans outside spec order. (Skips non-MS2 scans is spec_order = Set(2))
 
-        ion_idx = selectTransitions!(
+        ion_idx, _ = selectTransitions!(
             ionTemplates, QuadEstimationTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
             scan_idx_to_prec_idx[scan_idx], precursors[:mz],precursors[:prec_charge],
             precursors[:sulfur_count], iso_splines,
@@ -1021,7 +1021,7 @@ function secondSearch(
                 block_size = 10000
             )
             =#
-            ion_idx = selectTransitions!(
+            ion_idx, _ = selectTransitions!(
                 ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
                 precs_temp, precursors[:mz], precursors[:prec_charge],
                 precursors[:sulfur_count], iso_splines,
@@ -1213,7 +1213,7 @@ function getChromatograms(
             #A previous serach and are incoded in the `rt_index`. Add candidate precursors that fall within
             #the retention time and m/z tolerance constraints
             quad_transmission_function = getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx])
-            ion_idx = selectTransitions!(
+            ion_idx, _ = selectTransitions!(
                 ionTemplates, RTIndexedTransitionSelection(), PartialPrecCapture(), library_fragment_lookup,
                 precs_temp, precursors[:mz], precursors[:prec_charge],
                 precursors[:sulfur_count], iso_splines, getQuadTransmissionFunction(quad_transmission_model, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),

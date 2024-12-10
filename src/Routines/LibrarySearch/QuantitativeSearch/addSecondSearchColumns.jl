@@ -2,7 +2,9 @@ function addSecondSearchColumns!(psms::DataFrame,
                         scan_retention_time::AbstractVector{Float32},
                         prec_charge::AbstractVector{UInt8},
                         prec_is_decoy::AbstractVector{Bool},
-                        prec_id_to_cv_fold::Dictionary{UInt32, UInt8})
+                        precursors::BasicLibraryPrecursors,
+                        #prec_id_to_cv_fold::Dictionary{UInt32, UInt8})
+)
     
     ###########################
     #Correct Weights by base-peak intensity
@@ -51,7 +53,7 @@ function addSecondSearchColumns!(psms::DataFrame,
                 if isinf(matched_ratio[i])
                     matched_ratio[i] = Float16(60000)*sign(matched_ratio[i])
                 end
-                cv_fold[i] = prec_id_to_cv_fold[prec_idx]
+                cv_fold[i] = getCvFold(precursors, prec_idx)#prec_id_to_cv_fold[prec_idx]
             end
         end
     end

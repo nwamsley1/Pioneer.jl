@@ -351,6 +351,8 @@ function integratePrecursors(chromatograms::DataFrame,
     end
     N += n_pad*2
     group_keys = keys(grouped_chroms)
+
+    #println("group_keys[1:10] ", collect(group_keys)[1:10])
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
 

@@ -159,7 +159,7 @@ function summarize_results!(
         # Get passing PSMs
         @info "Filtering passing PSMs..."
         getPSMsPassingQVal(
-            getPassingPsms(getMSDataDir(search_context)),
+            getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
             getSecondPassPsms(getMSData(search_context)),
             results.precursor_pep_spline[],
@@ -169,19 +169,15 @@ function summarize_results!(
 
         # Score protein groups
         @info "Scoring protein groups..."
-        unique_proteins = unique(precursors[:accession_numbers]);
-        accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
         sorted_pg_score_path = getProteinGroups(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
             temp_folder,
-            getPrecursors(getSpecLib(search_context))[:accession_numbers],
-            accession_number_to_id,
-            getPrecursors(getSpecLib(search_context))[:sequence]
+            getPrecursors(getSpecLib(search_context))
         )
 
-        results.pg_qval_interp[] = getQValueSpline(
+        search_context.pg_score_to_qval[] = getQValueSpline(
             sorted_pg_score_path,
             :max_pg_score,
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin

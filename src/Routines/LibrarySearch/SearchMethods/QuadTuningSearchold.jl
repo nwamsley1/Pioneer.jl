@@ -389,7 +389,7 @@ function performQuadTransmissionSearch(
                 msn = spectra[:msOrder][scan_idx]
                 msn ∉ params.spec_order && continue
                 
-                ion_idx = selectTransitions!(
+                ion_idx, _ = selectTransitions!(
                     getIonTemplates(search_data),
                     QuadEstimationTransitionSelection(),
                     PartialPrecCapture(),

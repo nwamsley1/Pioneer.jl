@@ -19,8 +19,7 @@ Type Definitions
 Results container for chromatogram integration search.
 """
 struct IntegrateChromatogramSearchResults <: SearchResults
-    psms_paths::Dict{Int64, String}  # Maps file index to PSMs path
-    chromatograms::Vector{ChromObject}  # Chromatogram data per file
+    psms::Base.Ref{DataFrame}  # Chromatogram data per file
 end
 
 """
@@ -37,7 +36,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     # Chromatogram parameters
     wh_smoothing_strength::Float32
     n_pad::Int64
-    max_apex_offset::Float32
+    max_apex_offset::Int64
     
     # Deconvolution parameters
     lambda::Float32
@@ -73,7 +72,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Set(2),
             Float32(qp["WH_smoothing_strength"]),
             Int64(qp["n_pad"]),
-            Float32(qp["max_apex_offset"]),
+            Int64(qp["max_apex_offset"]),
             Float32(dp["lambda"]),
             Int64(dp["max_iter_newton"]),
             Int64(dp["max_iter_bisection"]),
@@ -95,8 +94,7 @@ get_parameters(::IntegrateChromatogramSearch, params::Any) = IntegrateChromatogr
 
 function init_search_results(::IntegrateChromatogramSearchParameters, search_context::SearchContext)
     return IntegrateChromatogramSearchResults(
-        Dict{Int64, String}(),
-        Vector{ChromObject}(),
+        Ref(DataFrame())
     )
 end
 
@@ -108,17 +106,20 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
-) where {P<:IntegrateChromatogramSearchParameters}
+    spectra::Arrow.Table) where {P<:IntegrateChromatogramSearchParameters}
 
     try
-        # Get RT index
-        #parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        rt_df = DataFrame(Arrow.Table(getRtIndexPaths(search_context)[ms_file_idx]))
-        rt_index = buildRtIndex(rt_df, bin_rt_size = 0.1)
-
+        setNceModel!(
+            getFragmentLookupTable(getSpecLib(search_context)), 
+            getNceModelModel(search_context, ms_file_idx)
+        )
+        # Get RT indes
+        rt_index = buildRtIndex(
+            DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
+            bin_rt_size = 0.1)
         # Load passing PSMs
-        passing_psms = load_passing_psms(search_context, parsed_fname)
+        passing_psms = DataFrame(Tables.columntable(Arrow.Table(getPassingPsms(getMSData(search_context), ms_file_idx))))#load_passing_psms(search_context, parsed_fname)
+        
         filter!(row -> row.target, passing_psms)
 
         # Initialize peak area columns
@@ -126,14 +127,14 @@ function process_file!(
         passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
 
         # Get chromatograms
-        chromatograms = DataFrame(extract_chromatograms(
+        chromatograms = extract_chromatograms(
             spectra,
             passing_psms,
             rt_index,
             search_context,
             params,
             ms_file_idx
-        ))
+        )
 
         # Process isotopes
         getIsotopesCaptured!(
@@ -141,15 +142,15 @@ function process_file!(
             params.isotope_tracetype,
             getQuadTransmissionModel(search_context, ms_file_idx),
             chromatograms[!, :scan_idx],
-            getPrecursors(getSpecLib(search_context))[:prec_charge],
-            getPrecursors(getSpecLib(search_context))[:mz],
+            getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+            getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             spectra[:centerMz],
             spectra[:isolationWidthMz]
         )
 
         # Filter and integrate
         filter!(row -> first(row.isotopes_captured) < 2, chromatograms)
-        
+
         integratePrecursors(
             chromatograms,
             params.isotope_tracetype,
@@ -162,26 +163,8 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-
-        # Process final PSMs
-        process_final_psms!(
-            passing_psms,
-            search_context,
-            parsed_fname,
-            ms_file_idx
-        )
-
-        # Save results
-        temp_path = joinpath(
-            getDataOutDir(search_context),
-            "chromatogram_psms",
-            parsed_fname * ".arrow"
-        )
-
-        Arrow.write(temp_path, passing_psms)
-        results.psms_paths[ms_file_idx] = temp_path
-        results.chromatograms[ms_file_idx] = chromatograms
-
+        chromatograms = nothing
+        results.psms[] = passing_psms
     catch e
         @warn "Chromatogram integration failed" ms_file_idx exception=e
         rethrow(e)
@@ -191,16 +174,42 @@ function process_file!(
 end
 
 function process_search_results!(
-    ::IntegrateChromatogramSearchResults,
-    ::P, 
-    ::SearchContext,
-    ::Int64,
-    ::Arrow.Table
+    results::IntegrateChromatogramSearchResults,
+    params::P, 
+    search_context::SearchContext,    
+    ms_file_idx::Int64,
+    spectra::Arrow.Table
 ) where {P<:IntegrateChromatogramSearchParameters}
+    try
+        passing_psms = results.psms[]
+        parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+        # Process final PSMs
+        process_final_psms!(
+            passing_psms,
+            search_context,
+            parsed_fname,
+            ms_file_idx
+        )
+        # Save results
+        
+        Arrow.write(
+            getPassingPsms(getMSData(search_context))[ms_file_idx],
+            passing_psms)
+        
+        #setPassingPsms!(search_context, ms_file_idx, passing_psms)
+        #Arrow.write(temp_path, passing_psms)
+        #results.psms_paths[ms_file_idx] = temp_path
+        #results.chromatograms[ms_file_idx] = chromatograms
+    catch e
+        @warn "Chromatogram processing failed" ms_file_idx exception=e
+        rethrow(e)
+    end
     return nothing
 end
 
-function reset_results!(::IntegrateChromatogramSearchResults)
+function reset_results!(results::IntegrateChromatogramSearchResults)
+    results.psms[] = DataFrame()
+    GC.gc()
     return nothing
 end
 
@@ -262,26 +271,55 @@ function process_final_psms!(
     # Remove invalid peak areas
     filter!(row -> !isnan(row.peak_area::Float32), psms)
     filter!(row -> row.peak_area::Float32 > 0.0, psms)
-
     # Add columns
     precursors = getPrecursors(getSpecLib(search_context))
-    psms[!, :accession_numbers] = getindex.(Ref(precursors[:accession_numbers]), psms[!, :precursor_idx])
-    psms[!, :protein_idx] = getindex.(Ref(getAccessionNumberToId(search_context)), psms[!, :accession_numbers])
-    psms[!, :ms_file_idx] = UInt32.(psms[!, :ms_file_idx])
+    n = size(psms, 1)
+    accession_numbers = Vector{String}(undef, n)
+    protein_idx = Vector{UInt32}(undef, n)
+    ms_file_idxs = Vector{UInt16}(undef, n)
+    species = Vector{String}(undef, n)
+    peak_area = Vector{Union{Missing, Float32}}(undef, n)
+    peak_area_normalized = Vector{Union{Missing, Float32}}(undef, n)
+    structural_mods = Vector{Union{Missing, String}}(undef, n)
+    isotopic_mods = Vector{Union{Missing, String}}(undef, n)
+    charge = Vector{UInt8}(undef, n)
+    sequence = Vector{String}(undef, n)
+    file_name = Vector{String}(undef, n)
+    psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
+
+    for i in range(1, n)
+        pid = psms_precursor_idx[i]
+        accession_numbers[i] = getAccessionNumbers(precursors)[pid]
+        protein_idx[i] = getProteinGroupId(precursors, accession_numbers[i])
+    end
+    psms[!, :accession_numbers] = accession_numbers
+    psms[!, :protein_idx] = protein_idx
+    sort!(psms, [:protein_idx, :precursor_idx])
+    parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+    for i in range(1, n)
+        pid = psms_precursor_idx[i]
+        ms_file_idxs[i] = UInt32(ms_file_idx)
+        species[i] = getProteomeIdentifiers(precursors)[pid]
+        peak_area[i] = psms[i,:peak_area]
+        peak_area_normalized[i] = zero(Float32)
+        structural_mods[i] = getStructuralMods(precursors)[pid]
+        isotopic_mods[i] = getIsotopicMods(precursors)[pid]
+        charge[i] = getCharge(precursors)[pid]
+        sequence[i] = getSequence(precursors)[pid]
+        file_name[i] = parsed_fname
+    end
+
+    psms[!,:ms_file_idx] = ms_file_idxs
+    psms[!,:species] = species
+    psms[!,:peak_area] = peak_area
+    psms[!,:peak_area_normalized] = peak_area_normalized
+    psms[!,:structural_mods] = structural_mods
+    psms[!,:isotopic_mods] = isotopic_mods
+    psms[!,:charge] = charge 
+    psms[!,:sequence] = sequence
+    psms[!,:file_name] = file_name
     
-    sort!(psms, [:protein_idx, :precursor_idx, :ms_file_idx])
-    
-    psms[!, :species] = getindex.(Ref(precursors[:proteome_identifiers]), psms[!, :precursor_idx])
-    psms[!, :peak_area] = allowmissing(psms[!, :peak_area])
-    psms[!, :peak_area_normalized] = allowmissing(zeros(Float32, nrow(psms)))
-    
-    # Add modification and sequence information
-    psms[!, :structural_mods] = allowmissing(getindex.(Ref(precursors[:structural_mods]), psms[!, :precursor_idx]))
-    psms[!, :isotopic_mods] = allowmissing(getindex.(Ref(precursors[:isotopic_mods]), psms[!, :precursor_idx]))
-    psms[!, :charge] = allowmissing(getindex.(Ref(precursors[:prec_charge]), psms[!, :precursor_idx]))
-    psms[!, :sequence] = allowmissing(getindex.(Ref(precursors[:sequence]), psms[!, :precursor_idx]))
-    
-    psms[!, :file_name] .= parsed_fname
+    return nothing
 end
 
 """
@@ -311,12 +349,10 @@ function build_chromatograms(
     rt_idx = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
-    
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
-
+    i = 1
     for scan_idx in scan_range
-        scan_idx > length(spectra[:mz_array]) && continue
-        
+        ((scan_idx<1) | (scan_idx > length(spectra[:mz_array]))) && continue
         # Process MS2 scans
         msn = spectra[:msOrder][scan_idx]
         msn ∉ params.spec_order && continue
@@ -335,22 +371,22 @@ function build_chromatograms(
             irt_start = irt_start_new
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
-
+            prec_temp_size = 0
             quad_func = getQuadTransmissionFunction(
                 getQuadTransmissionModel(search_context, ms_file_idx),
                 spectra[:centerMz][scan_idx],
                 spectra[:isolationWidthMz][scan_idx]
             )
 
-            ion_idx, _ = selectTransitions!(
+            ion_idx, prec_temp_size = selectTransitions!(
                 getIonTemplates(search_data),
                 RTIndexedTransitionSelection(),
                 params.prec_estimation,
                 getFragmentLookupTable(getSpecLib(search_context)),
                 precs_temp,
-                getPrecursors(getSpecLib(search_context))[:mz],
-                getPrecursors(getSpecLib(search_context))[:prec_charge],
-                getPrecursors(getSpecLib(search_context))[:sulfur_count],
+                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
                 getIsoSplines(search_data),
                 quad_func,
                 getPrecursorTransmission(search_data),
@@ -385,6 +421,7 @@ function build_chromatograms(
 
         # Process matches
         if nmatches > 2
+            i += 1
             # Build design matrix
             buildDesignMatrix!(
                 Hs,
@@ -481,5 +518,5 @@ function build_chromatograms(
         reset!(Hs)
     end
 
-    return chromatograms[1:rt_idx]#DataFrame(@view(chromatograms[1:rt_idx]))
+    return DataFrame(@view(chromatograms[1:rt_idx]))
 end

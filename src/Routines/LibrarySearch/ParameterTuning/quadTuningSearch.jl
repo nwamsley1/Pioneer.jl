@@ -52,6 +52,7 @@ function getScanToPrecIdx(
         #Have encountered scan 
         if haskey(scan_idx_to_prec_idx, scan_idx)
             push!(scan_idx_to_prec_idx[scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            #=
             prev_scan_idx, next_scan_idx = getNearestAdjacentScans(
                 scan_idx, centerMz, isolationWidthMz
             )
@@ -66,9 +67,10 @@ function getScanToPrecIdx(
             else
                 insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
             end
-
+            =#
         else
             insert!(scan_idx_to_prec_idx, scan_idx,[prec_idx])
+            #=
             prev_scan_idx, next_scan_idx = getNearestAdjacentScans(
                 scan_idx, centerMz, isolationWidthMz
             )
@@ -82,6 +84,7 @@ function getScanToPrecIdx(
             else
                 insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
             end
+            =#
         end
     end
     return scan_idx_to_prec_idx
@@ -134,27 +137,33 @@ function summarizePrecursor(
     prec_charge::AbstractVector{UInt8},
     weight::AbstractVector{Float32},
     δ::AbstractVector{Float32})
-    if length(iso_idx) == 2
-        m0_idx, m1_idx = 0, 0
-        if iso_idx[1] == 1
-            m0_idx, m1_idx = 1, 2
+    if (length(iso_idx) == 2)
+        if ((iso_idx[1] == 1) & (iso_idx[2] == 2))
+            m0_idx, m1_idx = 0, 0
+            if iso_idx[1] == 1
+                m0_idx, m1_idx = 1, 2
+            else
+                m0_idx, m1_idx = 2, 1
+            end
+            return (center_mz = center_mz[m0_idx],
+                    δ = δ[m0_idx],
+                    yt = log(weight[m0_idx]/(weight[m1_idx]*δ[m0_idx])), 
+                    x0 = iso_mz[m0_idx]-center_mz[m0_idx], 
+                    x1 = iso_mz[m1_idx]-center_mz[m1_idx], 
+                    prec_charge = prec_charge[m0_idx])
         else
-            m0_idx, m1_idx = 2, 1
+            println("iso_idx $iso_idx")
         end
-        return (center_mz = center_mz[m0_idx],
-                δ = δ[m0_idx],
-                yt = log(weight[m0_idx]/(weight[m1_idx]*δ[m0_idx])), 
-                x0 = iso_mz[m0_idx]-center_mz[m0_idx], 
-                x1 = iso_mz[m1_idx]-center_mz[m1_idx], 
-                prec_charge = prec_charge[m0_idx])
-    else
+    end
+    if length(iso_idx) == 3
+        println("bro... $iso_idx")
+    end
         return (center_mz = missing, 
                 δ = missing, 
                 yt = missing, 
                 x0 = missing, 
                 x1 = missing, 
                 prec_charge = missing)
-    end
 end
 
 function quadTuningSearch(    rt_to_irt_map_dict,

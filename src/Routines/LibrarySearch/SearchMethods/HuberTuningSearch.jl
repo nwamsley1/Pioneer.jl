@@ -133,6 +133,10 @@ function process_file!(
 ) where {P<:HuberTuningSearchParameters}
 
     try
+        setNceModel!(
+            getFragmentLookupTable(getSpecLib(search_context)), 
+            getNceModelModel(search_context, ms_file_idx)
+        )
         # Get PSMs to tune on
         best_psms = get_best_psms(search_context, params.q_value_threshold)
         file_psms = filter(row -> row.ms_file_idx == ms_file_idx, best_psms)
@@ -222,7 +226,7 @@ Get best PSMs from precursor dictionary for tuning.
 """
 function get_best_psms(search_context::SearchContext, q_value_threshold::Float32)
     prec_dict = getPrecursorDict(search_context)
-    is_decoy = getPrecursors(getSpecLib(search_context))[:is_decoy]
+    is_decoy = getIsDecoy(getPrecursors(getSpecLib(search_context)))#[:is_decoy]
     
     N = length(prec_dict)
     df = DataFrame(
@@ -391,9 +395,8 @@ function process_scans_for_huber!(
     
     # Get RT index
     rt_index = buildRtIndex(
-        DataFrame(Arrow.Table(getRtIndexPaths(search_context)[ms_file_idx])), 
-        bin_rt_size = 0.1
-    )
+        DataFrame(Arrow.Table(getRtIndex(getMSData(search_context), ms_file_idx))),
+        bin_rt_size = 0.1)
     
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     for scan_idx in scan_range
@@ -417,15 +420,15 @@ function process_scans_for_huber!(
             irt_stop = irt_stop_new
             prec_mz_string = prec_mz_string_new
             
-            ion_idx = selectTransitions!(
+            ion_idx, _ = selectTransitions!(
                 getIonTemplates(search_data),
                 RTIndexedTransitionSelection(),
                 PartialPrecCapture(),
                 getFragmentLookupTable(getSpecLib(search_context)),
                 getPrecIds(search_data),
-                getPrecursors(getSpecLib(search_context))[:mz],
-                getPrecursors(getSpecLib(search_context))[:prec_charge],
-                getPrecursors(getSpecLib(search_context))[:sulfur_count],
+                getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+                getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+                getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
                 getIsoSplines(search_data),
                 getQuadTransmissionFunction(
                     getQuadTransmissionModel(search_context, ms_file_idx),
@@ -734,9 +737,9 @@ function select_transitions_for_huber!(
         PartialPrecCapture(),
         getFragmentLookupTable(getSpecLib(search_context)),
         getPrecIds(search_data),
-        getPrecursors(getSpecLib(search_context))[:mz],
-        getPrecursors(getSpecLib(search_context))[:prec_charge],
-        getPrecursors(getSpecLib(search_context))[:sulfur_count],
+        getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+        getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
+        getSulfurCount(getPrecursors(getSpecLib(search_context))),#[:sulfur_count],
         getIsoSplines(search_data),
         getQuadTransmissionFunction(
             getQuadTransmissionModel(search_context, ms_file_idx),

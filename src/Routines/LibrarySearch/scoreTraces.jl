@@ -1,7 +1,7 @@
 function scoreTraces!(
     best_psms::DataFrame,
     file_paths::Vector{String},
-    precursors
+    precursors::BasicLibraryPrecursors
 )
     if size(best_psms, 1) > 1000000
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -47,7 +47,8 @@ function scoreTraces!(
         :log2_intensity_explained,
         :tic,
     ];
-    best_psms[!,:accession_numbers] = [precursors[:accession_numbers][pid] for pid in best_psms[!,:precursor_idx]]
+    
+    best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
     best_psms[!,:decoy] = best_psms[!,:target].==false;
     models = rankPSMs!(
@@ -90,7 +91,7 @@ function scoreTraces!(
             :log2_intensity_explained,
             #:tic,
         ];
-        best_psms[!,:accession_numbers] = [precursors[:accession_numbers][pid] for pid in best_psms[!,:precursor_idx]]
+        best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
         best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
         best_psms[!,:decoy] = best_psms[!,:target].==false;
         models = rankPSMs!(

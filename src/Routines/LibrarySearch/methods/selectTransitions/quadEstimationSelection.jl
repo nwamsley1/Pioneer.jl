@@ -51,8 +51,7 @@ function _select_transitions_impl!(
             )
         end
     end
-
-    return transition_idx
+    return transition_idx, n
 end
 
 
@@ -88,7 +87,7 @@ function fill_quad_transitions!(
     # Process each fragment
     for frag_idx in getPrecFragRange(lookup, prec_idx)
         frag = getFrag(lookup, frag_idx)
-        getRank(frag) > 5 && continue
+        getRank(frag) > 7 && continue
 
         # Get isotope abundances
         getFragIsotopes!(
@@ -109,6 +108,7 @@ function fill_quad_transitions!(
         transition_idx = add_quad_transitions!(
             transitions,
             transition_idx,
+            prec_iso_idx,
             frag,
             isotopes,
             iso_fac,
@@ -123,6 +123,7 @@ end
 function add_quad_transitions!(
     transitions::Vector{DetailedFrag{Float32}},
     transition_idx::Int64,
+    prec_iso_idx::Int64,
     frag::F,
     isotopes::Vector{Float32},
     iso_fac::Float32,
@@ -131,7 +132,7 @@ function add_quad_transitions!(
 ) where {F <: AltimeterFragment}
     NEUTRON = 1.00335f0
 
-    for iso_idx in 0:2
+    for iso_idx in 0:3
         frag_mz = getMz(frag) + iso_idx * NEUTRON/getFragCharge(frag)
         
         if frag_mz < first(frag_mz_bounds) || frag_mz > last(frag_mz_bounds)
@@ -140,7 +141,7 @@ function add_quad_transitions!(
 
         transition_idx += 1
         transitions[transition_idx] = DetailedFrag(
-            UInt32((getPID(frag) - 1) * 3 + (iso_idx + 1)),
+            UInt32((getPID(frag) - 1) * 3 + (prec_iso_idx + 1)),
             Float32(frag_mz),
             Float16(isotopes[iso_idx + 1] * iso_fac),
             getIonType(frag),

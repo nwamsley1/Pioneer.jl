@@ -93,9 +93,9 @@ quantitation_time = @timed for (ms_file_idx, MS_TABLE_PATH) in ProgressBar(colle
     try 
     MS_TABLE = Arrow.Table(MS_TABLE_PATH)
     parsed_fname = file_path_to_parsed_name[MS_TABLE_PATH]
-    rt_df = DataFrame(Arrow.Table(rt_index_paths[parsed_fname]))
-    rt_index = buildRtIndex(rt_df,
-                            bin_rt_size = bin_rt_size)
+    rt_index = buildRtIndex(
+        DataFrame(Arrow.Table(getMSData(getRtIndex(search_context, ms_file_idx)))),
+        bin_rt_size = 0.1)
     #Map raw file name to psms table 
     sub_bpsms_path = joinpath(passing_psms_folder, parsed_fname.*".arrow")
     #Get psms table for this raw file. 

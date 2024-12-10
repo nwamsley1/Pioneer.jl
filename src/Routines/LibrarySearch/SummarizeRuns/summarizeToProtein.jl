@@ -136,9 +136,7 @@ function getProteinGroups(
     passing_pg_paths::Vector{String},
     protein_groups_folder::String,
     temp_folder::String,
-    accession_numbers::AbstractVector{String},
-    accession_number_to_id::Dict{String, UInt32},
-    precursor_sequence::AbstractVector{String};
+    precursors::BasicLibraryPrecursors;
     min_peptides = 2,
     protein_q_val_threshold::Float32 = 0.01f0)
 
@@ -146,12 +144,11 @@ function getProteinGroups(
         psm_precursor_idx::AbstractVector{UInt32},
         psm_score::AbstractVector{Float32},
         psm_is_target::AbstractVector{Bool},
-        accession_numbers::AbstractVector{String},
-        accession_number_to_id::Dict{String, UInt32},
-        precursor_sequence::AbstractVector{String};
+        precursors::BasicLibraryPrecursors;
         min_peptides::Int64 = 2)
 
-
+        accession_numbers = getAccessionNumbers(precursors)
+        precursor_sequence = getSequence(precursors)
         protein_groups = Dictionary{@NamedTuple{protein_idx::UInt32, target::Bool},
         @NamedTuple{
             max_pg_score::Float32, 
@@ -162,7 +159,8 @@ function getProteinGroups(
             precursor_idx = psm_precursor_idx[i]
             sequence = precursor_sequence[precursor_idx]
             score = psm_score[i]
-            protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
+            protein_idx = getProteinGroupId(precursors, accession_numbers[precursor_idx])
+            #protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
             keyname = (protein_idx = protein_idx, target = psm_is_target[i])
             if haskey(protein_groups, keyname)
                 max_pg_score, peptides = protein_groups[keyname]
@@ -186,7 +184,8 @@ function getProteinGroups(
         max_pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
         for i in range(1, length(psm_precursor_idx))
             precursor_idx = psm_precursor_idx[i]
-            protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
+            protein_idx = getProteinGroupId(precursors, accession_numbers[precursor_idx])
+            #protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
             key = (protein_idx = protein_idx, target = psm_is_target[i])
             if haskey(protein_groups, key)
                 max_pg_score[i] = protein_groups[key][:max_pg_score]
@@ -244,9 +243,7 @@ function getProteinGroups(
             psms_table[:precursor_idx],
             psms_table[:prob],
             psms_table[:target],
-            accession_numbers,
-            accession_number_to_id,
-            precursor_sequence;
+            precursors;
             min_peptides = min_peptides
         )
         psms_table = DataFrame(Tables.columntable(psms_table))

@@ -74,7 +74,7 @@ function applyNormalization!(
 
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        norm_quant_col = :peak_area_normalized
+        norm_quant_col = Symbol(string(quant_col)*"_normalized")
         correction_spline = corrections[fpath]
         for i in range(1, size(psms, 1))
             hc = correction_spline(psms[i,:irt_obs])
@@ -113,5 +113,5 @@ function normalizeQuant(
         quant_col_name,
         quant_corrections_dict
     )
-    return
+    return nothing
 end

@@ -215,7 +215,7 @@ end
 function getPSMsPassingQVal(
                             passing_psms_paths::Vector{String},
                             passing_psms_folder::String,
-                            second_pass_psms_paths::String, 
+                            second_pass_psms_paths::Vector{String}, 
                             pep_spline::UniformSpline,
                             qval_interp::Interpolations.Extrapolation,
                             q_val_threshold::Float32,

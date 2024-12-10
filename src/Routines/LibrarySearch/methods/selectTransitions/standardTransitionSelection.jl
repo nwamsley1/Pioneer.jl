@@ -65,5 +65,5 @@ function _select_transitions_impl!(
         )
     end
     
-    return transition_idx
+    return transition_idx, 0
 end
