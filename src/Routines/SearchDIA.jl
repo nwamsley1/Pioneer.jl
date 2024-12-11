@@ -69,6 +69,7 @@ function SearchDIA(params_path::String)
             Normalized collision energy is modeled as a function of peptide m/z and Charge
             Results stored in SEARCH_CONTEXT.nce_model::Dict{Int64, NceModel}
         ==========================================================#
+        include("Routines/LibrarySearch/SearchMethods/NceTuningSearch.jl")
         @time execute_search(
             NceTuningSearch(), SEARCH_CONTEXT, params_
         );
@@ -80,10 +81,21 @@ function SearchDIA(params_path::String)
             See src/utils/quadTransmissionModeling.
             Results stored in SEARCH_CONTEXT.quad_transmission_model::Dict{Int64, QuadTransmissionModel}
         ==========================================================#
+        params_[:presearch_params]["quad_tuning_sample_rate"] = 0.05
+        params_[:presearch_params]["min_log2_matched_ratio"] = zero(Float32)#typemin(Float32)
+        include("Routines/LibrarySearch/SearchMethods/QuadTuningSearch.jl")
         @time execute_search(
             QuadTuningSearch(), SEARCH_CONTEXT, params_
         );
-
+        quad_model_dict = SEARCH_CONTEXT.quad_transmission_model
+        p = plot()
+        plot_bins = LinRange(400-3, 400+3, 100)
+        for (key, value) in pairs(quad_model_dict)
+        
+           quad_func = getQuadTransmissionFunction(value, 400.0f0, 2.0f0)
+           plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5)
+        end
+        p
         #==========================================================
         1) Estimate empirical (rt) to library retention time conversion (irt) 
             Results stored in SEARCH_CONTEXT.rt_to_irt_model::Dict{Int64, RtConversionModel}

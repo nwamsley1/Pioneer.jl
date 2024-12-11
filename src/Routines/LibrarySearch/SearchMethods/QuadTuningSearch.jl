@@ -62,6 +62,7 @@ struct QuadTuningSearchResults <: SearchResults
         n_matches::UInt8
     }}}
     quad_model::Base.Ref{QuadTransmissionModel}
+    quad_plot_dir::String
 end
 
 """
@@ -101,7 +102,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     function QuadTuningSearchParameters(params::Any)
         pp = params[:presearch_params]
         dp = params[:deconvolution_params]
-        prec_estimation = pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+        prec_estimation = PartialPrecCapture() #pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
         
         new{typeof(prec_estimation)}(
             (UInt8(0), UInt8(0)),  # Fixed for quad tuning
@@ -147,6 +148,16 @@ get_parameters(::QuadTuningSearch, params::Any) = QuadTuningSearchParameters(par
 
 function init_search_results(::QuadTuningSearchParameters, search_context::SearchContext)
     # Initialize empty tuning results vector in each search data structure
+    out_dir = getDataOutDir(search_context)
+    qc_dir = joinpath(out_dir, "qc_plots")
+    !isdir(qc_dir) && mkdir(qc_dir)
+
+    qpp = joinpath(qc_dir, "quad_transmission_model")
+    !isdir(qpp) && mkdir(qpp)
+    quad_data = joinpath(qpp, "quad_data")
+    !isdir(quad_data) && mkdir(quad_data)
+    quad_models = joinpath(qpp, "quad_models")
+    !isdir(quad_models) && mkdir(quad_models)
     temp_data = Vector{Vector{@NamedTuple{
             precursor_idx::UInt32,
             scan_idx::UInt32,
@@ -167,7 +178,8 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
     end
     return QuadTuningSearchResults(
         temp_data,
-        Ref{QuadTransmissionModel}()
+        Ref{QuadTransmissionModel}(),
+        qpp
     )
 end
 
@@ -183,8 +195,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
-) where {P<:QuadTuningSearchParameters}
+    spectra::Arrow.Table) where {P<:QuadTuningSearchParameters}
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
     
@@ -213,7 +224,7 @@ function process_file!(
         end
 
         # Plot charge states
-        plot_charge_distributions(total_psms)
+        plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx))
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
@@ -221,6 +232,7 @@ function process_file!(
         setQuadModel(results, RazoQuadModel(fitted_model))
         
     catch e
+        throw(e)
         @warn "Quad transmission function fit failed" exception=e
         setQuadModel(results, GeneralGaussModel(5.0f0, 0.0f0))
     end
@@ -240,11 +252,33 @@ function process_search_results!(
 end
 
 function summarize_results!(
-    ::QuadTuningSearchResults,
+    results::QuadTuningSearchResults,
     ::P,
     search_context::SearchContext
 ) where {P<:QuadTuningSearchParameters}
     
+    plot_bins = LinRange(0-3, 0+3, 100)
+    for (ms_file_idx, quad_model) in pairs(search_context.quad_transmission_model)
+        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+        quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
+        p = plot(plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, title = "$fname")
+        savefig(p, joinpath(results.quad_plot_dir, "quad_models", fname*".pdf"))
+    end
+
+    qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_models"), join=true) if endswith(x, ".pdf")]
+    if !isempty(qmp)
+        merge_pdfs(qmp, 
+                  joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf"), 
+                  cleanup=true)
+    end
+
+    qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_data"), join=true) if endswith(x, ".pdf")]
+    if !isempty(qmp)
+        merge_pdfs(qmp, 
+                  joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf"), 
+                  cleanup=true)
+    end
+
     resetPrecursorArrays!(search_context)
     return nothing
 end
@@ -308,7 +342,7 @@ function collect_psms(
         params,
         ms_file_idx
     )
-    
+
     # Filter and process results
     quad_psms = quad_psms[
         filter_quad_psms(
@@ -325,7 +359,25 @@ function collect_psms(
         getPrecursors(getSpecLib(search_context)),
         getIsoSplines(first(getSearchData(search_context)))
     )
-    
+    processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
+    for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
+        processed_psms[i,:half_width_mz] = spectra[:isolationWidthMz][scan_idx]/2
+    end
+    keep_data = zeros(Bool, size(processed_psms, 1))
+    for i in range(1, size(processed_psms, 1))
+        x0 = processed_psms[i,:x0]::Float32
+        hw = processed_psms[i,:half_width_mz]::Float32
+        if x0 > zero(Float32)
+            if (x0 - hw) < (NEUTRON/4 + 0.1)
+                keep_data[i] = true
+            end
+        else
+            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
+                keep_data[i] = true
+            end
+        end
+    end
+    processed_psms = processed_psms[keep_data,:]
     append!(total_psms, processed_psms)
     return total_psms
 end
@@ -383,12 +435,9 @@ function process_quad_results(
         psms[!, :center_mz],
         iso_splines
     ))
-    
+
     sort!(processed, [:scan_idx, :precursor_idx, :iso_idx])
     combined = combine(groupby(processed, [:scan_idx, :precursor_idx])) do group
-        if group[!, :iso_idx] == UInt8[0x01, 0x01, 0x02]
-            println(group)
-        end
         summarizePrecursor(
             group[!, :iso_idx],
             group[!, :center_mz],
@@ -412,15 +461,17 @@ function postprocess_combined_results!(combined::DataFrame)
     combined[!, :x0] = Float32.(combined[!, :x0])
     combined[!, :yt] = Float32.(combined[!, :yt])
     combined[!, :x1] = Float32.(combined[!, :x1])
-    filter!(row -> row.prec_charge < 4, combined)
+    filter!(row -> row.prec_charge < 3, combined)
+    #filter!(row -> row.x0 < 1.5, combined)
+    #filter!(row -> row.x0 > -1.5, combined)
     return combined
 end
 
 """
 Plot charge state distributions.
 """
-function plot_charge_distributions(psms::DataFrame)
-    p = plot()
+function plot_charge_distributions(psms::DataFrame, results::QuadTuningSearchResults, fname::String)
+    p = plot(title = "Quad Model Data for $fname")
     for charge in 2:3
         mask = psms[!, :prec_charge] .== charge
         plot!(p, 
@@ -428,10 +479,12 @@ function plot_charge_distributions(psms::DataFrame)
             psms[mask, :yt],
             seriestype=:scatter,
             alpha=0.1,
-            label="Charge $charge"
+            label="Charge $charge",
+            xlabel = "m/z offset of M0",
+            ylabel = L"log(\delta_i\frac{x_0}{x_1})"
         )
     end
-    display(p)
+    savefig(p, joinpath(results.quad_plot_dir, "quad_data", fname*".pdf"))
 end
 
 """

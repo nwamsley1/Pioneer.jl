@@ -46,6 +46,7 @@ Holds NCE models and associated PSM data for each file.
 struct NceTuningSearchResults <: SearchResults
     nce_models::Dict{Int64, NceModel}
     nce_psms::DataFrame
+    nce_plot_dir::String
 end
 
 """
@@ -54,7 +55,6 @@ Configures NCE grid search and general search behavior.
 """
 struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
-    frag_tol_ppm::Float32
     min_index_search_score::UInt8
     min_frag_count::Int64
     min_spectral_contrast::Float32
@@ -68,29 +68,30 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
+    min_samples::Int64
     prec_estimation::P
 
     function NceTuningSearchParameters(params::Any)
         pp = params[:presearch_params]
-        prec_estimation = pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+        prec_estimation = PartialPrecCapture() #pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
         
         new{typeof(prec_estimation)}(
-            (UInt8(first(params[:isotope_err_bounds])), UInt8(last(params[:isotope_err_bounds]))),
-            Float32(pp["frag_tol_ppm"]),
+            (zero(UInt8), zero(UInt8)),
             UInt8(pp["min_index_search_score"]),
             Int64(pp["min_frag_count"]),
             Float32(pp["min_spectral_contrast"]),
             Float32(pp["min_log2_matched_ratio"]),
             (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
             UInt8(pp["max_best_rank"]),
-            Int64(pp["n_frag_isotopes"]),
+            Int64(1),
             UInt8(pp["max_frag_rank"]),
             Float32(pp["sample_rate"]),
             Set(2),
-            LinRange(21.0f0, 40.0f0, 15),  
+            LinRange(21.0f0, 40.0f0, 30),  
             NCE_MODEL_BREAKPOINT,
             0.01f0,
-            prec_estimation
+            Int64(pp["min_samples"]),
+            PartialPrecCapture()
         )
     end
 end
@@ -103,11 +104,17 @@ get_parameters(::NceTuningSearch, params::Any) = NceTuningSearchParameters(param
 
 function init_search_results(
     ::NceTuningSearchParameters,
-    ::SearchContext
+    search_context::SearchContext
 )
+    out_dir = getDataOutDir(search_context)
+    qc_dir = joinpath(out_dir, "qc_plots")
+    !isdir(qc_dir) && mkdir(qc_dir)
+    nce_model_plots_path = joinpath(qc_dir, "collision_energy_alignemnt")
+    !isdir(nce_model_plots_path) && mkdir(nce_model_plots_path)
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),
-        DataFrame()
+        DataFrame(),
+        nce_model_plots_path
     )
 end
 
@@ -128,12 +135,21 @@ function process_file!(
 ) where {P<:NceTuningSearchParameters}
 
     try
-        # Perform grid search
-        psms = library_search(spectra, search_context, params, ms_file_idx)
-        
-        # Process and filter PSMs
-        processed_psms = process_psms!(psms, spectra, search_context, params)
-        
+        processed_psms = DataFrame()
+        for i in range(1, 10)
+            # Perform grid search
+            psms = library_search(spectra, search_context, params, ms_file_idx)   
+            # Process and filter PSMs
+            append!(processed_psms, process_psms!(psms, spectra, search_context, params))
+            if size(processed_psms, 1)>params.min_samples
+                break
+            end
+            if i == 10
+                n = size(processed_psms, 1)
+                @warn "Could not get collect enough psms for nce alignment. In 10 iterations collected $n samples"
+            end
+        end
+
         # Fit and store NCE model
         nce_model = fit_nce_model(
             PiecewiseNceModel(0.0f0),
@@ -143,6 +159,44 @@ function process_file!(
             params.nce_breakpoint
         )
         
+        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+        # Create the main plot
+        # Create the main plot with adjusted right margin
+        p = plot(
+            title = "NCE calibration for $fname",
+            right_margin = 50Plots.px  # Add extra margin on the right
+        )
+
+        # Calculate bin range
+        pbins = LinRange(minimum(processed_psms[!,:prec_mz]), maximum(processed_psms[!,:prec_mz]), 100)
+
+        # Extend x-axis range to accommodate annotations
+        x_range = maximum(pbins) - minimum(pbins)
+        #plot_xlims = (minimum(pbins), maximum(pbins) + x_range * 0.15)  # Add 15% to x-axis
+
+        # Plot each charge state with annotations
+        for charge in sort(unique(processed_psms[!,:charge]))
+            # Calculate the curve
+            curve_values = nce_model.(pbins, charge)
+            
+            # Plot the line
+            plot!(p, pbins, curve_values, 
+                label = "+"*string(charge), 
+                show = true)
+            
+            # Add annotation at the rightmost point
+            last_x = pbins[end]
+            last_y = curve_values[end]
+            
+            # Add text annotation
+            annotate!(p, [(last_x + x_range*0.02,  # Slight offset from end
+                        last_y,
+                        text("$(round(last_y, digits=1))", 
+                                :left, 
+                                8))])
+        end
+        # Save the plot
+        savefig(p, joinpath(results.nce_plot_dir, "nce_model_"*"$fname"*".pdf"))  
         results.nce_models[ms_file_idx] = nce_model
         append!(results.nce_psms, processed_psms)
 
@@ -172,11 +226,17 @@ end
 Summarize results across all files.
 """
 function summarize_results!(
-    ::NceTuningSearchResults,
+    results::NceTuningSearchResults,
     ::P,
-    ::SearchContext
+    search_context::SearchContext
 ) where {P<:NceTuningSearchParameters}
-    
+
+    if !isempty(results.nce_plot_dir)
+        merge_pdfs([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
+                joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf"), 
+                cleanup=true)
+    end
+
     # Could add NCE model statistics or plots here
     return nothing
 end

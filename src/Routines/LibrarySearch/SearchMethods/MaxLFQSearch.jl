@@ -157,7 +157,7 @@ function summarize_results!(
             DataFrame(Arrow.Table(precursors_long_path)),
             protein_long_path,
             :peak_area,
-            getFileIdToName(getMSData(search_context)),
+            collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
             search_context.pg_score_to_qval[],#getPGQValueInterp(search_context),
             batch_size = params.batch_size

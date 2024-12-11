@@ -128,7 +128,10 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
     out_dir = getDataOutDir(search_context)
     qc_dir = joinpath(out_dir, "qc_plots")
     !isdir(qc_dir) && mkdir(qc_dir)
-    
+    rt_alingment_plots = joinpath(qc_dir, "rt_alignment_plots")
+    !isdir(rt_alingment_plots) && mkdir(rt_alingment_plots)
+    mass_error_plots = joinpath(qc_dir, "mass_error_plots")
+    !isdir(mass_error_plots) && mkdir(mass_error_plots)
     return ParameterTuningSearchResults(
         Base.Ref{MassErrorModel}(),
         Ref{SplineRtConversionModel}(),

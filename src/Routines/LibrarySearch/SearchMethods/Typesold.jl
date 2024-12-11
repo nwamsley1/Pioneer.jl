@@ -1,6 +1,7 @@
 # Define abstract types and traits
 #=
 using Arrow, ArrowTypes, ArgParse
+using LaTeXStrings
 #using BSplineKit Don't need this imports anymore?
 using Base64
 using Base.Order

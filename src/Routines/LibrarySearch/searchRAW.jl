@@ -399,12 +399,15 @@ function LibrarySearchNceTuning(
                 )
                 if !isempty(psms)
                     psms[!, :nce] .= nce
+                else
+                    psms = missing
                 end
-                psms
+
+                return psms
             end
         end
         
-        vcat(fetch.(tasks)...)
+        vcat(skipmissing(fetch.(tasks))...)
     end
 
     return vcat(all_results...)
