@@ -80,7 +80,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     min_topn_of_m::Tuple{Int64, Int64}
     max_best_rank::UInt8
     max_frag_rank::UInt8
-    n_frag_isotopes::UInt8
+    n_frag_isotopes::Int64
     sample_rate::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
@@ -113,7 +113,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
             UInt8(pp["max_best_rank"]),
             UInt8(pp["max_frag_rank"]),
-            one(UInt8),
+            one(Int64),
             Float32(pp["quad_tuning_sample_rate"]),
             typemax(Float32),
             Set(2),
@@ -321,6 +321,13 @@ function collect_psms(
     total_psms = DataFrame()
     n = 0
     unique_precursors = Set{UInt32}()
+    function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
+        charges = zeros(UInt8, length(precursor_idx))
+        for i in range(1, length(precursor_idx))
+            charges[i] = prec_charges[precursor_idx[i]]
+        end
+        return charges
+    end
     while n < 5
         # Get initial PSMs
         psms = library_search(spectra, search_context, params, ms_file_idx)
@@ -348,7 +355,9 @@ function collect_psms(
             ms_file_idx
         )
 
+        
         # Filter and process results
+        quad_psms[!,:charge] = getCharges(getCharge(getPrecursors(getSpecLib(search_context))), quad_psms[!,:precursor_idx])
         quad_psms = quad_psms[
             filter_quad_psms(
                 quad_psms[!,:iso_idx],

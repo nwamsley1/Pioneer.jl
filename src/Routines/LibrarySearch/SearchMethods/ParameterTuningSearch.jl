@@ -111,7 +111,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Set(2),
             3,  # Spline degree
             5,  # Number of knots
-            10, # Outlier threshold
+            5, # Outlier threshold
             Int64(params[:irt_mapping_params]["n_sigma_tol"]),
             prec_estimation
         )
@@ -239,7 +239,7 @@ function process_search_results!(
     
     # Generate and save mass error plot
     mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
-    generate_mass_error_plot(results, mass_plot_path)
+    generate_mass_error_plot(results, parsed_fname, mass_plot_path)
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
@@ -489,10 +489,45 @@ Generate mass error distribution plot.
 """
 function generate_mass_error_plot(
     results::ParameterTuningSearchResults,
+    fname::String,
     plot_path::String
 )
-    p = histogram(results.ppm_errs)
+    #p = histogram(results.ppm_errs)
+    #savefig(p, plot_path)
+    mem = results.mass_err_model[]
+    errs = results.ppm_errs .+ getMassOffset(mem)
+    n = length(errs)
+    plot_title = fname
+    mass_err = getMassOffset(mem)
+    bins = LinRange(mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem), 50)
+    p = Plots.histogram(errs,
+    orientation = :h, 
+    yflip = true,
+    #seriestype=:scatter,
+    title = plot_title*"\n n = $n",
+    xlabel = "Count",
+    ylabel = "Mass Error (ppm)",
+    label = nothing,
+    bins = bins,
+    ylim = (mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem)),
+    topmargin =15mm,
+    #bottommargin = 10mm,
+    )
+
+    mass_err = getMassOffset(mem)
+    Plots.hline!([mass_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), mass_err, text("$mass_err", :black, :right, :bottom, 12))
+
+
+    l_err = mass_err - getLeftTol(mem)
+    Plots.hline!([l_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), l_err, text("$l_err", :black, :right, :bottom, 12))
+    r_err = mass_err + getRightTol(mem)
+    Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
+
     savefig(p, plot_path)
+
 end
 
 #==========================================================
