@@ -52,7 +52,6 @@ function getScanToPrecIdx(
         #Have encountered scan 
         if haskey(scan_idx_to_prec_idx, scan_idx)
             push!(scan_idx_to_prec_idx[scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
-            
             prev_scan_idx, next_scan_idx = getNearestAdjacentScans(
                 scan_idx, centerMz, isolationWidthMz
             )
@@ -67,10 +66,8 @@ function getScanToPrecIdx(
             else
                 insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
             end
-            
         else
             insert!(scan_idx_to_prec_idx, scan_idx,[prec_idx])
-            
             prev_scan_idx, next_scan_idx = getNearestAdjacentScans(
                 scan_idx, centerMz, isolationWidthMz
             )
@@ -84,7 +81,6 @@ function getScanToPrecIdx(
             else
                 insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
             end
-            
         end
     end
     return scan_idx_to_prec_idx

@@ -74,13 +74,13 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     isotope_err_bounds::Tuple{UInt8, UInt8}
     frag_tol_ppm::Float32
     min_index_search_score::UInt8
+    min_log2_matched_ratio::Float32
     min_frag_count::Int64
     min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
     min_topn_of_m::Tuple{Int64, Int64}
     max_best_rank::UInt8
-    n_frag_isotopes::Int64
     max_frag_rank::UInt8
+    n_frag_isotopes::UInt8
     sample_rate::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
@@ -96,7 +96,6 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     # Quad tuning specific parameters
     min_quad_tuning_fragments::Int64
     min_quad_tuning_psms::Int64
-    quad_tuning_sample_rate::Float32
     prec_estimation::P
 
     function QuadTuningSearchParameters(params::Any)
@@ -108,25 +107,26 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             (UInt8(0), UInt8(0)),  # Fixed for quad tuning
             Float32(pp["frag_tol_ppm"]),
             UInt8(pp["min_index_search_score"]),
+            typemin(Float32),
             Int64(pp["min_frag_count"]),
             Float32(pp["min_spectral_contrast"]),
-            Float32(pp["min_log2_matched_ratio"]),
             (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
             UInt8(pp["max_best_rank"]),
-            Int64(pp["n_frag_isotopes"]),
             UInt8(pp["max_frag_rank"]),
+            one(UInt8),
             Float32(pp["quad_tuning_sample_rate"]),
             typemax(Float32),
             Set(2),
+
             Int64(dp["max_iter_newton"]),
             Int64(dp["max_iter_bisection"]),
             Int64(dp["max_iter_outer"]),
             Float32(dp["accuracy_newton"]),
             Float32(dp["accuracy_bisection"]),
             Float32(dp["max_diff"]),
+
             Int64(pp["min_quad_tuning_fragments"]),
             Int64(pp["min_quad_tuning_psms"]),
-            Float32(pp["quad_tuning_sample_rate"]),
             prec_estimation
         )
     end
@@ -228,6 +228,7 @@ function process_file!(
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
+
         fitted_model = fit_quad_model(total_psms, window_width)
         setQuadModel(results, RazoQuadModel(fitted_model))
         
@@ -318,67 +319,79 @@ function collect_psms(
     ms_file_idx::Int64
 )
     total_psms = DataFrame()
-    
-    # Get initial PSMs
-    psms = library_search(spectra, search_context, params, ms_file_idx)
-    isempty(psms) && return total_psms
-    
-    # Process PSMs
-    processed_psms = process_initial_psms(psms, spectra, search_context)
-    
-    # Get scan mapping and perform quad search
-    scan_idx_to_prec_idx = getScanToPrecIdx(
-        processed_psms[!, :scan_idx],
-        processed_psms[!, :precursor_idx],
-        spectra[:centerMz],
-        spectra[:isolationWidthMz]
-    )
-    
-    quad_psms = performQuadTransmissionSearch(
-        spectra,
-        results,
-        scan_idx_to_prec_idx,
-        search_context,
-        params,
-        ms_file_idx
-    )
+    n = 0
+    unique_precursors = Set{UInt32}()
+    while n < 5
+        # Get initial PSMs
+        psms = library_search(spectra, search_context, params, ms_file_idx)
+        isempty(psms) && return total_psms
+        psms = psms[[pid∉unique_precursors for pid in psms[!,:precursor_idx]],:]
+        unique_precursors = union(unique_precursors, Set(psms[!,:precursor_idx]))
 
-    # Filter and process results
-    quad_psms = quad_psms[
-        filter_quad_psms(
-            quad_psms[!,:iso_idx],
-            quad_psms[!,:n_matches],
-            quad_psms[!,:weight],
-            params
-        ),
-        :
-    ]
-    
-    processed_psms = process_quad_results(
-        quad_psms,
-        getPrecursors(getSpecLib(search_context)),
-        getIsoSplines(first(getSearchData(search_context)))
-    )
-    processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
-    for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
-        processed_psms[i,:half_width_mz] = spectra[:isolationWidthMz][scan_idx]/2
-    end
-    keep_data = zeros(Bool, size(processed_psms, 1))
-    for i in range(1, size(processed_psms, 1))
-        x0 = processed_psms[i,:x0]::Float32
-        hw = processed_psms[i,:half_width_mz]::Float32
-        if x0 > zero(Float32)
-            if (x0 - hw) < (NEUTRON/4 + 0.1)
-                keep_data[i] = true
-            end
-        else
-            if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
-                keep_data[i] = true
+        # Process PSMs
+        processed_psms = process_initial_psms(psms, spectra, search_context)
+        
+        # Get scan mapping and perform quad search
+        scan_idx_to_prec_idx = getScanToPrecIdx(
+            processed_psms[!, :scan_idx],
+            processed_psms[!, :precursor_idx],
+            spectra[:centerMz],
+            spectra[:isolationWidthMz]
+        )
+        
+        quad_psms = performQuadTransmissionSearch(
+            spectra,
+            results,
+            scan_idx_to_prec_idx,
+            search_context,
+            params,
+            ms_file_idx
+        )
+
+        # Filter and process results
+        quad_psms = quad_psms[
+            filter_quad_psms(
+                quad_psms[!,:iso_idx],
+                quad_psms[!,:n_matches],
+                quad_psms[!,:weight],
+                quad_psms[!,:charge],
+                params
+            ),
+            :
+        ]
+        
+        processed_psms = process_quad_results(
+            quad_psms,
+            getPrecursors(getSpecLib(search_context)),
+            getIsoSplines(first(getSearchData(search_context)))
+        )
+        processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
+        for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
+            processed_psms[i,:half_width_mz] = spectra[:isolationWidthMz][scan_idx]/2
+        end
+        keep_data = zeros(Bool, size(processed_psms, 1))
+        for i in range(1, size(processed_psms, 1))
+            x0 = processed_psms[i,:x0]::Float32
+            hw = processed_psms[i,:half_width_mz]::Float32
+            if x0 > zero(Float32)
+                if (x0 - hw) < (NEUTRON/4 + 0.1)
+                    keep_data[i] = true
+                end
+            else
+                if (abs(x0) - hw) < (NEUTRON/2 + 0.1)
+                    keep_data[i] = true
+                end
             end
         end
+        processed_psms = processed_psms[keep_data,:]
+
+        append!(total_psms, processed_psms)
+        if size(total_psms, 1) > params.min_quad_tuning_psms
+            break
+        else
+            n += 1
+        end
     end
-    processed_psms = processed_psms[keep_data,:]
-    append!(total_psms, processed_psms)
     return total_psms
 end
 
@@ -461,9 +474,7 @@ function postprocess_combined_results!(combined::DataFrame)
     combined[!, :x0] = Float32.(combined[!, :x0])
     combined[!, :yt] = Float32.(combined[!, :yt])
     combined[!, :x1] = Float32.(combined[!, :x1])
-    filter!(row -> row.prec_charge < 3, combined)
-    #filter!(row -> row.x0 < 1.5, combined)
-    #filter!(row -> row.x0 > -1.5, combined)
+    #filter!(row -> row.prec_charge < 3, combined)
     return combined
 end
 
@@ -481,7 +492,8 @@ function plot_charge_distributions(psms::DataFrame, results::QuadTuningSearchRes
             alpha=0.1,
             label="Charge $charge",
             xlabel = "m/z offset of M0",
-            ylabel = L"log(\delta_i\frac{x_0}{x_1})"
+            ylabel = L"log(\delta_i\frac{x_0}{x_1})",
+            ylim = (-5, 5)
         )
     end
     savefig(p, joinpath(results.quad_plot_dir, "quad_data", fname*".pdf"))
@@ -494,16 +506,16 @@ function fit_quad_model(psms::DataFrame, window_width::Float64)
     binned_psms = MergeBins(
         psms,
         (-(window_width + 1.0), window_width + 1.0),
-        min_bin_size=10,
+        min_bin_size=20,
         min_bin_width=0.1
     )
-    
+
     return fitRazoQuadModel(
         window_width,
         binned_psms[!, :median_x0],
         binned_psms[!, :median_x1],
         binned_psms[!, :median_yt],
-        λ0=1e-1,
+        λ0=1e-2,
         ϵ1=1e-5,
         ϵ2=1e-4,
         ϵ3=1e-5
@@ -563,6 +575,7 @@ function filter_quad_psms(
     iso_idx::AbstractVector{UInt8},
     n_matches::AbstractVector{UInt8},
     weight::AbstractVector{Float32}, 
+    charge::AbstractVector{UInt8},
     params::QuadTuningSearchParameters
 )
     n = length(iso_idx)
@@ -570,8 +583,9 @@ function filter_quad_psms(
     @inbounds for i in 1:n
         mask[i] = (
             (iso_idx[i] < 3) &&  # M0/M1 only
-            (n_matches[i] >= 5) &&  # Min matches
-            (weight[i] > 0)  # Non-zero abundance
+            (n_matches[i] >= params.min_quad_tuning_fragments) &&  # Min matches
+            (weight[i] > 0)  &&
+            (charge[i] == 2)# Non-zero abundance
         )
     end
     return mask

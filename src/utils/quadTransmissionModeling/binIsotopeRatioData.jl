@@ -155,7 +155,8 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
     bin_idxs, n_bins = estimateKdeBins(isotopes_ratio_data[!,:x0])
     isotopes_ratio_data[!,:kde_bin_idx] = bin_idxs
     if n_bins < 4
-        plot(isotopes_ratio_data[!,:x0], isotopes_ratio_data[!,:yt], seriestype=:scatter, alpha = 0.1, show = true)
+        println("<4")
+        #plot(isotopes_ratio_data[!,:x0], isotopes_ratio_data[!,:yt], seriestype=:scatter, alpha = 0.1, show = true)
     end
     #Use KDE bins or uniform bins? Base this decision on the median intra-bin standard deviation 
     #A better bin selection means less intra-bin variance. 
@@ -173,20 +174,21 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         isotopes_ratio_data[!,:uniform_bin_idx] = getBinIdx(isotopes_ratio_data[!,:x0], uniform_x_bounds)
         #Use KDE bins or uniform bins? Base this decision on the mean standard deviation of a bin. 
         #A better bin selection means less within-bin variance. 
-        uniform_bin_stds = values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:uniform_bin_idx))[:,2])    
-        kde_bin_stds = values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:kde_bin_idx))[:,2])
+        uniform_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:uniform_bin_idx))[:,2]))
+        kde_bin_stds = filter!(!isnan, values(combine(x->std(x.x0), groupby(isotopes_ratio_data,:kde_bin_idx))[:,2]))
         mean_uniform_std = median(skipmissing(uniform_bin_stds))
         mean_kde_std = median(skipmissing(kde_bin_stds))
-        if mean_uniform_std < mean_kde_std*0.9
+        if mean_uniform_std > mean_kde_std*0.9
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:uniform_bin_idx]
             @warn "KDE bin estimation failed... Default to uniform binning"
         else
             isotopes_ratio_data[!,:bin_idx] = isotopes_ratio_data[!,:kde_bin_idx]
         end
     end
-  
+    
+    
     last_n_bins = 0
-    for iter in 1:max_iterations
+    for iter in 1:1
         # Compute bin statistics
         grouped_ratio_data = groupby(isotopes_ratio_data, :bin_idx)
         bin_centers = combine(grouped_ratio_data) do k_mean_bin
@@ -199,9 +201,11 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
                 n_bins =length(grouped_ratio_data)
             )
         end
-        current_n_bins = size(bin_centers, 1)
-        
+        #current_n_bins = size(bin_centers, 1)
+        filter!(x->x.n>min_bin_size,bin_centers)
+        return bin_centers
         # Check for convergence
+        #=
         if current_n_bins == last_n_bins
             return bin_centers
             break
@@ -225,8 +229,9 @@ function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Rea
         
         # Update bin indices
         isotopes_ratio_data[!,:bin_idx] = [bin_idx_to_merged_bin_idx[idx] for idx in isotopes_ratio_data[!,:bin_idx]]
+        =#
     end
-    
+
     return nothing
 end
 

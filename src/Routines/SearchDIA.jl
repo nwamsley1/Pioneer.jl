@@ -7,6 +7,7 @@ function SearchDIA(params_path::String)
     end
     params = JSON.parse(read(params_path, String));
     MS_DATA_DIR = params["ms_data_dir"];
+    MS_DATA_DIR = "/Users/n.t.wamsley/Desktop/FIRST_TRY_ASTRAL/arrow_out"
     SPEC_LIB_DIR = params["library_folder"];
     if !isabspath(SPEC_LIB_DIR)
         SPEC_LIB_DIR =  joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
@@ -38,7 +39,7 @@ function SearchDIA(params_path::String)
       file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
 
 
-    MS_TABLE_PATHS = MS_TABLE_PATHS[1:3]
+    #MS_TABLE_PATHS = MS_TABLE_PATHS[end-2:end]
 
     SEARCH_CONTEXT = initSearchContext(
         SPEC_LIB,
@@ -81,21 +82,27 @@ function SearchDIA(params_path::String)
             See src/utils/quadTransmissionModeling.
             Results stored in SEARCH_CONTEXT.quad_transmission_model::Dict{Int64, QuadTransmissionModel}
         ==========================================================#
-        params_[:presearch_params]["quad_tuning_sample_rate"] = 0.05
-        params_[:presearch_params]["min_log2_matched_ratio"] = zero(Float32)#typemin(Float32)
+        params_[:presearch_params]["quad_tuning_sample_rate"] = 0.02
+        #params_[:presearch_params]["min_log2_matched_ratio"] = zero(Float32)#typemin(Float32)
+        params_[:presearch_params]["min_quad_tuning_psms"] = 3000
+        include("utils/quadTransmissionModeling/binIsotopeRatioData.jl")
         include("Routines/LibrarySearch/SearchMethods/QuadTuningSearch.jl")
         @time execute_search(
             QuadTuningSearch(), SEARCH_CONTEXT, params_
         );
+    
         quad_model_dict = SEARCH_CONTEXT.quad_transmission_model
         p = plot()
         plot_bins = LinRange(400-3, 400+3, 100)
         for (key, value) in pairs(quad_model_dict)
         
            quad_func = getQuadTransmissionFunction(value, 400.0f0, 2.0f0)
-           plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5)
+           plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5,
+           #label =  getFileIdToName(getMSData(SEARCH_CONTEXT),key), 
+           legend = :outertopleft)
         end
         p
+        
         #==========================================================
         1) Estimate empirical (rt) to library retention time conversion (irt) 
             Results stored in SEARCH_CONTEXT.rt_to_irt_model::Dict{Int64, RtConversionModel}
