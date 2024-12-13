@@ -329,7 +329,8 @@ function integratePrecursors(chromatograms::DataFrame,
                              isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
-                             new_best_scan::AbstractVector{UInt32}; 
+                             new_best_scan::AbstractVector{UInt32},
+                             ms_file_idx::Int64; 
                              λ::Float32 = 1.0f0,
                              n_pad::Int64 = 20,
                              max_apex_offset::Int64 = 2,
@@ -351,11 +352,10 @@ function integratePrecursors(chromatograms::DataFrame,
     end
     N += n_pad*2
     group_keys = keys(grouped_chroms)
-
     #println("group_keys[1:10] ", collect(group_keys)[1:10])
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
-
+            #chromdf = DataFrame()
             b = zeros(Float32, N);
             A = getWittakerHendersonDesignMat(length(b), λ);
             prob = LinearProblem(A, b);
@@ -395,12 +395,16 @@ function integratePrecursors(chromatograms::DataFrame,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
+                #df = DataFrame((t = state.t[1:state.max_index], intensity = state.data[1:state.max_index]))
+                #df[!,:precursor_idx] .= chrom[1,:precursor_idx]
+                #append!(chromdf, df)
                 #println("peak_area $peak_area i $i")
                 reset!(state)
             end
+            return #chromdf
         end
     end
-    fetch.(tasks)
+    return fetch.(tasks)
 end
 
 

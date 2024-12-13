@@ -46,7 +46,9 @@ function getIsotopesCaptured!(chroms::DataFrame,
                 scan_mz = coalesce(centerMz[scan_id], zero(Float32))::Float32
                 window_width = coalesce(isolationWidthMz[scan_id], zero(Float32))::Float32
 
-                low_mz, high_mz = Float32(scan_mz - window_width/2), Float32(scan_mz + window_width/2 + 0.5f0)#getQuadTransmissionBounds(quad_transmission_model, scan_mz, window_width)
+                #Needs to be based on the scan definition and not the fitted model
+                #because the isotopes_captured annotation must be consistent between runs 
+                low_mz, high_mz = Float32(scan_mz - window_width/2), Float32(scan_mz + window_width/2)#getQuadTransmissionBounds(quad_transmission_model, scan_mz, window_width)
                 isotopes = getPrecursorIsotopeSet(mz, 
                                                     charge, 
                                                     low_mz, high_mz

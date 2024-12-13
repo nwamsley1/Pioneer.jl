@@ -2,12 +2,14 @@ function SearchDIA(params_path::String)
     #println("JLD2 version is: ", Pkg.installed()["JLD2"])
     total_time = @timed begin
     #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedAltimeterParamsAltimeter111824_SeperateTracesNoMax.json"
+    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/COMBINE_TRACES.json"
+    params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/COMBINE_TRACES_2.json"
     if !isabspath(params_path)
         params_path = joinpath(@__DIR__, "../../", params_path)
     end
     params = JSON.parse(read(params_path, String));
     MS_DATA_DIR = params["ms_data_dir"];
-    MS_DATA_DIR = "/Users/n.t.wamsley/Desktop/FIRST_TRY_ASTRAL/arrow_out"
+    #MS_DATA_DIR = "/Users/n.t.wamsley/Desktop/FIRST_TRY_ASTRAL/arrow_out"
     SPEC_LIB_DIR = params["library_folder"];
     if !isabspath(SPEC_LIB_DIR)
         SPEC_LIB_DIR =  joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
@@ -84,7 +86,7 @@ function SearchDIA(params_path::String)
         ==========================================================#
         params_[:presearch_params]["quad_tuning_sample_rate"] = 0.02
         #params_[:presearch_params]["min_log2_matched_ratio"] = zero(Float32)#typemin(Float32)
-        params_[:presearch_params]["min_quad_tuning_psms"] = 3000
+        #params_[:presearch_params]["min_quad_tuning_psms"] = 3000
         include("utils/quadTransmissionModeling/binIsotopeRatioData.jl")
         include("Routines/LibrarySearch/SearchMethods/QuadTuningSearch.jl")
         @time execute_search(

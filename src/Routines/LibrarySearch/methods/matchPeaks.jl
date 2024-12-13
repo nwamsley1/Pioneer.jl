@@ -230,7 +230,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
     #ion_idx is the index of the theoretical ion being matched to the spectrum (ions[ion])
     peak_idx, ion_idx, matched_idx, unmatched_idx = 1, 1, 0, 0
 
-    if max_ions_idx<1
+    if (max_ions_idx<1) | (iszero(length(masses)))
         return matched_idx, unmatched_idx
     end
 

@@ -19,7 +19,7 @@ was not seen in the i'th experiment, then S[i, j] == missing.
 ### Examples 
 
 """
-function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt16}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
+function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt16}, experiments_dict::Dict{UInt16, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
     #Initialize
     S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
@@ -212,8 +212,8 @@ function getProtAbundance(protein::String,
                             protein_out::Vector{Union{Missing, String}}, 
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}}, 
-                            experiments_out::Vector{Union{Missing, UInt16}}, 
-                            S::Matrix{Union{Missing, T}}) where {T<:Real}
+                            experiments_out::Vector{Union{Missing, I}}, 
+                            S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
         function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                                 row_idx::Int64,

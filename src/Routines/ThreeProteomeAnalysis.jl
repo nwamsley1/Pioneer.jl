@@ -12,18 +12,25 @@ function ThreeProteomeAnalysis(
 
 
     ThreeProteomeAnalysis(
-    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralSeperateTraces/RESULTS/RESULTS",
-    "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-    "/Users/n.t.wamsley/Desktop/SeperateTraces111824"
+    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralSeperateTracesNoMax",
+    "/Users/n.t.wamsley/Desktop/olsen_test_121224.txt",
+    "/Users/n.t.wamsley/Desktop/olsen_test"
     )
 
 
 
     ThreeProteomeAnalysis(
-    "/Users/n.t.wamsley/Desktop/ALTIMETER_PIONEER_111824/AstralSeperateTracesNoMax/RESULTS/RESULTS",
-    "/Users/n.t.wamsley/Desktop/astral_test_key_080324.txt",
-    "/Users/n.t.wamsley/Desktop/SeperateTracesNoMax111824"
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/COMBINE_TRACES",
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/COMBINE_TRACES/combined_three_proteome_5min.txt",
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/COMBINE_TRACES/three_proteome"
     )
+
+        ThreeProteomeAnalysis(
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/SEPERATE_TRACES",
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/SEPERATE_TRACES/seperate_three_proteome_5min.txt",
+    "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/SEPERATE_TRACES/three_proteome"
+    )
+
 
     =#
     #=

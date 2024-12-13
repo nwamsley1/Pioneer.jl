@@ -114,7 +114,7 @@ function summarize_results!(
         # Get paths
         temp_folder = getDataOutDir(search_context)
         passing_psms_folder = joinpath(temp_folder, "passing_psms")
-        qc_plot_folder = getQcPlotfolder(search_context)
+        qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
         protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
         @info "Performing intensity normalization..."
@@ -172,7 +172,7 @@ function summarize_results!(
             getIsotopicMods(precursors),
             getStructuralMods(precursors),
             getCharge(precursors),
-            sort(collect(values(getMSFileNames(search_context)))),
+            sort(collect(values(getFileIdToName(getMSData(search_context))))),
             write_csv = params.write_csv
         )
 
@@ -184,6 +184,7 @@ function summarize_results!(
             precursors_wide_path,
             precursors_long_path,
             search_context,
+            precursors
         )
 
     catch e
@@ -204,7 +205,8 @@ Create QC plots showing quantification metrics.
 function create_qc_plots(
     precursors_path::String,
     proteins_path::String,
-    search_context::SearchContext
+    search_context::SearchContext,
+    precursors::BasicLibraryPrecursors
 )
     # Create plots showing:
     # - Normalization factors
@@ -219,8 +221,8 @@ function create_qc_plots(
         params_,
         precursors,
         getFileIdToName(getMSData(search_context)),
-        getQcPlotFolder(search_context),
-        getFilePaths(getMSData(search_context)),
+        joinpath(getDataOutDir(search_context), "qc_plots"),
+        collect(getFilePaths(getMSData(search_context))),
         getIrtRtMap(search_context),
         search_context.mass_error_model
     )

@@ -188,7 +188,7 @@ function process_search_results!(
     psms = results.psms[]
     fwhms = skipmissing(psms[!, :fwhm])
     fwhm_points = count(!ismissing, fwhms)
-    if fwhm_points >= params.min_inference_points
+    if fwhm_points >= 1#params.min_inference_points
         insert!(results.fwhms, ms_file_idx, (
             median_fwhm = median(fwhms),
             mad_fwhm = mad(fwhms, normalize=true)))
@@ -504,7 +504,6 @@ function get_irt_errs(
     irt_std = median(
                 skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt))
                 )
-
     #Number of standard deviations to cover 
     irt_std *= params.irt_nstd
     #dictionary maping file name to irt tolerance. 

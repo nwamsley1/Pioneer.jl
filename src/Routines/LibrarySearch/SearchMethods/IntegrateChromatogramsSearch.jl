@@ -135,7 +135,6 @@ function process_file!(
             params,
             ms_file_idx
         )
-
         # Process isotopes
         getIsotopesCaptured!(
             chromatograms,
@@ -150,7 +149,6 @@ function process_file!(
 
         # Filter and integrate
         filter!(row -> first(row.isotopes_captured) < 2, chromatograms)
-
         integratePrecursors(
             chromatograms,
             params.isotope_tracetype,
@@ -159,10 +157,23 @@ function process_file!(
             passing_psms[!, :scan_idx],
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
+            ms_file_idx,
             λ = params.wh_smoothing_strength,
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
+        #println("size(chromdf) ", size(chromdf))
+        #println("A")
+        #Arrow.append(
+        #    joinpath(getDataOutDir(SEARCH_CONTEXT), "chromatograms", "smoothed_chroms.arrow"),
+        #    chromdf)
+        #fname = getFileIdToName(getMSData(search_context), ms_file_idx)
+
+        #chromdir = joinpath(search_context.qc_plot_folder[], "../", "chromatograms")
+        #!isdir(chromdir) && mkdir(chromdir)
+        #jldsave(joinpath(chromdir, fname*"_chroms.jld2"); chromatograms)
+
+
         chromatograms = nothing
         results.psms[] = passing_psms
     catch e

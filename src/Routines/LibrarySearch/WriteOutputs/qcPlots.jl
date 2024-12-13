@@ -23,7 +23,7 @@ function qcPlots(
     #Plot precursor abundance distribution
     function plotAbundanceECDF(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Vector{<:Any};
+        parsed_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -73,7 +73,7 @@ function qcPlots(
 
         plotAbundanceECDF(
             precursors_wide,
-            parsed_fnames[start:stop],
+            [x for x in parsed_fnames[start:stop]],
             title = "Precursor Abundance by Rank",
             f_out = joinpath(qc_plot_folder, "precursor_abundance_qc_"*string(n)*".pdf")
         )
@@ -83,10 +83,11 @@ function qcPlots(
     #Plot precursor IDs
     function plotPrecursorIDBarPlot(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Vector{<:Any};
+        parsed_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
+
         function getColumnIDs(
             abundance::AbstractVector{Union{Missing, Float32}})
             non_missing_count = 0
@@ -126,24 +127,9 @@ function qcPlots(
 
         plotPrecursorIDBarPlot(
             precursors_wide,
-            parsed_fnames[start:stop],
+            [x for x in parsed_fnames[start:stop]],
             title = "Precursor ID's per File",
             f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_"*string(n)*".pdf")
-        )
-
-    end
-
-    ###############
-    #Plot precursor IDs
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-
-        plotPrecursorIDBarPlot(
-            protein_groups_wide,
-            parsed_fnames[start:stop],
-            title = "Protein Group ID's per File",
-            f_out = joinpath(qc_plot_folder, "protein_ids_barplot_"*string(n)*".pdf")
         )
 
     end
@@ -152,7 +138,7 @@ function qcPlots(
     #Plot missed cleavage rate
     function plotMissedCleavageRate(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Vector{<:Any};
+        parsed_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -176,7 +162,7 @@ function qcPlots(
             try
                 ids[i] = 100*getMissedCleavageRate(precursors_wide[Symbol(fname)],
                 precursors_wide[:precursor_idx],
-                precursors[:missed_cleavages])
+                getMissedCleavages(precursors))#[:missed_cleavages])
             catch
                 continue
             end
@@ -201,7 +187,7 @@ function qcPlots(
 
         plotMissedCleavageRate(
             precursors_wide,
-            parsed_fnames[start:stop],
+            [x for x in parsed_fnames[start:stop]],
             title = "Missed Cleavage Percentage",
             f_out = joinpath(qc_plot_folder, "missed_cleavage_plot_"*string(n)*".pdf")
         )
@@ -212,7 +198,7 @@ function qcPlots(
     #Plot TIC
     function plotTIC(
         ms_table_paths::Vector{String},
-        parsed_fnames::Dict{Int64, String};
+        parsed_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -293,7 +279,7 @@ function qcPlots(
     #Plot precursor IDs
     function plotMS2MassErrors(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Vector{<:Any};
+        parsed_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -336,7 +322,7 @@ function qcPlots(
     ###############
     #Plot precursor IDs
     function plotMS2MassErrorCorrection(
-        parsed_fnames::Dict{Int64, String},
+        parsed_fnames::Any,
         frag_err_dist_dict::Dict{Int64, MassErrorModel},
         file_ids::Vector{Int64};
         title::String = "precursor_abundance_qc",
@@ -381,7 +367,7 @@ function qcPlots(
     #Plot precursor IDs
     function plotFWHM(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Vector{<:Any};
+        parsed_fnames::Any;
         title::String = "fwhm_qc",
         f_out::String = "./test.pdf"
         )
