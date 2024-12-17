@@ -39,7 +39,8 @@ function mergeSortedArrowTables(
     input_dir::String, 
     output_path::String,
     sort_keys::Tuple{Symbol, Symbol};
-    N = 1000000)
+    N = 1000000
+)
 
     function fillColumn!(
         peptide_batch_col::Vector{R},
@@ -206,76 +207,6 @@ function addPrecursorToHeap!(
         )
     )
 end
-
-function sortAndFilterQuantTables(
-    second_pass_psms_paths::Vector{String},
-    merged_quant_path::String,
-    best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}})
-
-    #Remove if present 
-    if isfile(merged_quant_path)
-        rm(merged_quant_path, force = true)
-    end
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
-    for fpath in second_pass_psms_paths
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-
-        #Indicator variable of whether each psm is from the best trace 
-        psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
-        for i in range(1, size(psms_table, 1))
-            key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
-            if key ∈ best_traces
-                psms_table[i,:best_trace]=true
-            end
-        end
-        #Filter out unused traces 
-        filter!(x->x.best_trace,psms_table)
-        #Sort in descending order of probability
-        sort!(psms_table, :prob, rev = true, alg=QuickSort)
-        #write back
-        Arrow.write(fpath, 
-                    psms_table
-                    )
-    end
-    return nothing
-end
-
-function sortAndFilterQuantTables(
-    quant_psms_folder::String,
-    merged_quant_path::String)
-
-    #Remove if present 
-    if isfile(merged_quant_path)
-        rm(merged_quant_path, force = true)
-    end
-    file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
-    for fpath in file_paths
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-
-        #Indicator variable of whether each psm is from the best trace 
-        #=
-        psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
-        for i in range(1, size(psms_table, 1))
-            key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
-            if key ∈ best_traces
-                psms_table[i,:best_trace]=true
-            end
-        end
-        =#
-        #Filter out unused traces 
-        #filter!(x->x.best_trace,psms_table)
-        #Sort in descending order of probability
-        sort!(psms_table, :prob, rev = true, alg=QuickSort)
-        #write back
-        Arrow.write(fpath, 
-                    psms_table
-                    )
-    end
-    return nothing
-end
-
 
 function mergeSortedArrowTables(
     input_dir::String, 

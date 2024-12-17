@@ -1,3 +1,36 @@
+"""
+    get_best_precursors_accross_runs(psms_paths::Vector{String}, 
+                                    prec_mzs::AbstractVector{Float32},
+                                    rt_irt::Dict{Int64, RtConversionModel};
+                                    max_q_val::Float32=0.01f0,
+                                    max_precursors::Int=250000) 
+    -> Dictionary{UInt32, NamedTuple}
+
+Identify and collect best precursor matches across multiple runs for retention time calibration.
+
+# Arguments
+- `psms_paths`: Paths to PSM files from first pass search
+- `prec_mzs`: Vector of precursor m/z values
+- `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
+- `max_q_val`: Maximum q-value threshold for considering PSMs
+- `max_precursors`: Maximum number of precursors to retain
+
+# Returns
+Dictionary mapping precursor indices to NamedTuple containing:
+- `best_prob`: Highest probability score
+- `best_ms_file_idx`: File index with best match
+- `best_scan_idx`: Scan index of best match
+- `best_irt`: iRT value of best match
+- `mean_irt`: Mean iRT across qualifying matches
+- `var_irt`: Variance in iRT across qualifying matches
+- `n`: Number of qualifying matches
+- `mz`: Precursor m/z value
+
+# Process
+1. First pass: Collects best matches and calculates mean iRT for each precursor accross the runs 
+2. Filters to top N precursors by probability
+3. Second pass: Calculates iRT variance for remaining precursors
+"""
 function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
@@ -23,16 +56,15 @@ function get_best_precursors_accross_runs(
         rt_irt::SplineRtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
-
-            #precursor data 
+            # Extract current PSM information
             q_value = q_values[row]
             precursor_idx = precursor_idxs[row]
             prob = probs[row]
             irt =  rt_irt(rts[row])
             scan_idx = UInt32(scan_idxs[row])
             ms_file_idx = UInt32(ms_file_idxs[row])
-            #initial values
-            #only count towards mean_irt if below the q_value threshold 
+
+            # Initialize running statistics
             passed_q_val = (q_value <= max_q_val)
             n = passed_q_val ? one(UInt16) : zero(UInt16)
             mean_irt = passed_q_val ? irt : zero(Float32)
@@ -42,13 +74,18 @@ function get_best_precursors_accross_runs(
             #Has the precursor been encountered in a previous raw file?
             #Keep a running mean irt for instances below q-val threshold
             if haskey(prec_to_best_prob, precursor_idx)
+                # Update existing precursor entry
                 best_prob, best_ms_file_idx, best_scan_idx, best_irt, old_mean_irt, var_irt, old_n, mz = prec_to_best_prob[precursor_idx] 
+                
+                # Update best match if current is better
                 if (best_prob < prob)
                     best_prob = prob
                     best_irt = irt
                     best_scan_idx = scan_idx
                     best_ms_file_idx = ms_file_idx
                 end
+
+                # Update running statistics
                 mean_irt += old_mean_irt
                 n += old_n 
                 prec_to_best_prob[precursor_idx] = (
@@ -61,7 +98,7 @@ function get_best_precursors_accross_runs(
                                                 n = n,
                                                 mz = mz)
             else
-                #Fist encounter use default values 
+                # Create new precursor entry
                 val = (best_prob = prob,
                         best_ms_file_idx = ms_file_idx,
                         best_scan_idx = scan_idx, 
@@ -89,8 +126,10 @@ function get_best_precursors_accross_runs(
         rt_irt::SplineRtConversionModel,
         max_q_val::Float32)
         for row in eachindex(precursor_idxs)
-            #precursor data 
+            # Skip PSMs that don't pass q-value threshold
             q_value = q_values[row]
+
+            # Get precursor info
             precursor_idx = precursor_idxs[row]
             irt =  rt_irt(rts[row])
 
@@ -98,6 +137,7 @@ function get_best_precursors_accross_runs(
                 continue
             end
             if haskey(prec_to_best_prob, precursor_idx)
+                # Update variance calculation
                 best_prob, best_ms_file_idx, best_scan_idx, best_irt, mean_irt, var_irt, n, mz = prec_to_best_prob[precursor_idx] 
                 var_irt += (irt - mean_irt/n)^2
                 prec_to_best_prob[precursor_idx] = (
@@ -113,7 +153,7 @@ function get_best_precursors_accross_runs(
             end
         end
     end
-
+    # Initialize dictionary to store best precursor matches
     prec_to_best_prob = Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
                                                         best_ms_file_idx::UInt32,
                                                         best_scan_idx::UInt32,
@@ -122,7 +162,8 @@ function get_best_precursors_accross_runs(
                                                         var_irt::Union{Missing, Float32}, 
                                                         n::Union{Missing, UInt16}, 
                                                         mz::Float32}}()
-    #prec_to_best_prob = zeros(Float32, n_precursors)
+
+    # First pass: collect best matches and mean iRT
     for (key, psms_path) in enumerate(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 
@@ -138,8 +179,8 @@ function get_best_precursors_accross_runs(
             max_q_val
         )
     end
-    # Get the top N peptide_idx's with their corresponding maximum probabilities
-    #Currently this is slow
+
+    # Filter to top N precursors by probability
     sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
     N = 0
     for key in collect(keys(prec_to_best_prob))
@@ -149,7 +190,7 @@ function get_best_precursors_accross_runs(
         end
     end
 
-    #get variance 
+    # Second pass: calculate iRT variance for remaining precursors
     for (key, psms_path) in enumerate(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
         #One row for each precursor 

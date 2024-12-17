@@ -40,9 +40,6 @@ function parseFileNames(
                     parsed_file_names[i] = string(i)
                 end
             end
-            #file_id_to_parsed_name = Dict(zip(1:M, [string(x) for x in parsed_file_names]))
-            #Parsed file names 
-            #parsed_fnames = sort(collect(values(file_id_to_parsed_name)))
-            #file_path_to_parsed_name = Dict(zip(ms_table_paths, parsed_fnames))
+            
             return parsed_file_names#, parsed_fnames, file_path_to_parsed_name
 end

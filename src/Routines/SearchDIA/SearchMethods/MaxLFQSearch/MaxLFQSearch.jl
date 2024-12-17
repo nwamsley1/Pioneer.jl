@@ -125,13 +125,6 @@ function summarize_results!(
             N = params.n_rt_bins,
             spline_n_knots = params.spline_n_knots
         )
-        
-        #results.normalized_quant = normalization_factors
-
-        # Clean up existing files
-        #for file in [results.precursors_long_path, results.proteins_long_path]
-        #    isfile(file) && rm(file, force=true)
-        #end
 
         @info "Merging quantification tables..."
         # Merge quantification tables
@@ -193,54 +186,4 @@ function summarize_results!(
     end
 
     return nothing
-end
-
-#==========================================================
-Helper Methods
-==========================================================#
-
-"""
-Create QC plots showing quantification metrics.
-"""
-function create_qc_plots(
-    precursors_path::String,
-    proteins_path::String,
-    search_context::SearchContext,
-    precursors::BasicLibraryPrecursors
-)
-    # Create plots showing:
-    # - Normalization factors
-    # - Missing value patterns
-    # - CV distributions
-    # - Dynamic range
-    # Implementation depends on plotting library
-    @info "Generating final QC plots"
-    qcPlots(
-        precursors_path,
-        proteins_path,
-        params_,
-        precursors,
-        getFileIdToName(getMSData(search_context)),
-        joinpath(getDataOutDir(search_context), "qc_plots"),
-        collect(getFilePaths(getMSData(search_context))),
-        getIrtRtMap(search_context),
-        search_context.mass_error_model
-    )
-end
-
-
-#=
-function getMSFileNames(search_context::SearchContext)
-    files = Dict{Int64, String}()
-    for (idx, path) in enumerate(search_context.mass_spec_data_reference.file_paths)
-        files[idx] = splitext(basename(path))[1]
-    end
-    return files
-end
-=#
-"""
-Get protein group q-value interpolation function.
-"""
-function getPGQValueInterp(search_context::SearchContext)
-    # Implementation to get protein group q-value interpolation
 end

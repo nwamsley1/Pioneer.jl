@@ -1,9 +1,25 @@
+"""
+    mutable struct Chromatogram{T<:Real, J<:Integer}
+        t::Vector{T}
+        data::Vector{T}
+        max_index::J
+    end
+
+Container for chromatogram data during integration.
+
+Holds time points, intensities, and current array size.
+"""
 mutable struct Chromatogram{T<:Real, J<:Integer}
     t::Vector{T}
     data::Vector{T}
     max_index::J
 end
 
+"""
+    reset!(state::Chromatogram)
+
+Reset chromatogram state by zeroing arrays and index.
+"""
 function reset!(state::Chromatogram)
     for i in range(1, state.max_index)
         state.t[i], state.data[i] = zero(eltype(state.t)), zero(eltype(state.data))
@@ -13,8 +29,38 @@ function reset!(state::Chromatogram)
 end
 
 
+"""
+    integrate_chrom(chrom::SubDataFrame, apex_scan::Int64,
+                   linsolve::LinearSolve.LinearCache, u2::Vector{Float32},
+                   state::Chromatogram; max_apex_offset=2, n_pad::Int64=0,
+                   isplot::Bool=false) -> Tuple{Float32, UInt32}
 
-function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
+Integrate a single chromatographic peak.
+
+# Process
+1. Applies Whittaker-Henderson smoothing
+2. Calculates second derivative
+3. Finds true apex within allowed offset
+4. Determines integration bounds
+5. Subtracts baseline
+6. Normalizes and fills state
+7. Performs trapezoidal integration
+
+# Returns
+- Peak area
+- Updated apex scan index
+
+#Internal Chromatogram Processing Functions:
+
+- `WHSmooth!`: Apply Whittaker-Henderson smoothing
+- `fillU2!`: Calculate second derivatives
+- `getApexScan`: Find true apex within allowed offset
+- `getIntegrationBounds!`: Determine integration boundaries
+- `subtractBaseline!`: Remove linear baseline
+- `fillState!`: Normalize and fill chromatogram state
+- `integrateTrapezoidal`: Perform trapezoidal integration
+"""
+function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
                                 apex_scan::Int64,
                                 linsolve::LinearSolve.LinearCache,
                                 u2::Vector{Float32},
@@ -255,156 +301,3 @@ function integrateChrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{
     #trapezoid_area = 0.0f0
     return trapezoid_area, chrom[!,:scan_idx][apex_scan]
 end
-
-function getSummaryScores!(
-                            psms::SubDataFrame,
-                            weight::AbstractVector{Float32},
-                            gof::AbstractVector{Float16},
-                            matched_ratio::AbstractVector{Float16},
-                            #entropy::AbstractVector{Float16},
-                            fitted_manhattan_distance::AbstractVector{Float16},
-                            fitted_spectral_contrast::AbstractVector{Float16},
-                            y_count::AbstractVector{UInt8},
-
-                        )
-
-    max_gof = -100.0
-    max_matched_ratio = -100.0
-   # max_entropy = -100.0
-    max_fitted_manhattan_distance = -100.0
-    max_fitted_spectral_contrast= -100
-    count = 0
-    y_ions_sum = 0
-    max_y_ions = 0
-
-    apex_scan = argmax(psms[!,:weight])
-    #Need to make sure there is not a big gap. 
-    start = max(1, apex_scan - 2)
-    stop = min(length(weight), apex_scan + 2)
-
-    for i in range(start, stop)
-        if gof[i]>max_gof
-            max_gof =gof[i]
-        end
-
-        if matched_ratio[i]>max_matched_ratio
-            max_matched_ratio = matched_ratio[i]
-        end
-
-        #if entropy[i]>max_entropy
-        #    max_entropy=entropy[i]
-        #end
-
-        if fitted_manhattan_distance[i]>max_fitted_manhattan_distance
-            max_fitted_manhattan_distance = fitted_manhattan_distance[i]
-        end
-
-        if fitted_spectral_contrast[i]>max_fitted_spectral_contrast
-            max_fitted_spectral_contrast = fitted_spectral_contrast[i]
-        end
-    
-        y_ions_sum += y_count[i]
-        if y_count[i] > max_y_ions
-            max_y_ions = y_count[i]
-        end
-
-        count += 1
-    end    
-
-    psms.max_gof[apex_scan] = max_gof
-    psms.max_matched_ratio[apex_scan] = max_matched_ratio
-   # psms.max_entropy[apex_scan] = max_entropy
-    psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
-    psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
-    psms.y_ions_sum[apex_scan] = y_ions_sum
-    psms.max_y_ions[apex_scan] = max_y_ions
-    psms.best_scan[apex_scan] = true
-
-end
-
-
-function integratePrecursors(chromatograms::DataFrame,
-                             isotope_trace_type::IsotopeTraceType,
-                             precursor_idx::AbstractVector{UInt32},
-                             isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
-                             apex_scan_idx::AbstractVector{UInt32},
-                             peak_area::AbstractVector{Float32},
-                             new_best_scan::AbstractVector{UInt32},
-                             ms_file_idx::Int64; 
-                             λ::Float32 = 1.0f0,
-                             n_pad::Int64 = 20,
-                             max_apex_offset::Int64 = 2,
-                             )
-    chromatogram_keys = [:precursor_idx]
-    if seperateTraces(isotope_trace_type)
-        chromatogram_keys = [:precursor_idx,:isotopes_captured]
-    end
-    grouped_chroms = groupby(chromatograms, chromatogram_keys)
-    dtype = Float32
-    thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
-
-    #Maximal size of a chromatogram
-    N = 0
-    for (chrom_id, chrom) in pairs(grouped_chroms)
-        if size(chrom, 1) > N
-            N = size(chrom, 1)
-        end
-    end
-    N += n_pad*2
-    group_keys = keys(grouped_chroms)
-    #println("group_keys[1:10] ", collect(group_keys)[1:10])
-    tasks = map(thread_tasks) do chunk
-        Threads.@spawn begin
-            #chromdf = DataFrame()
-            b = zeros(Float32, N);
-            A = getWittakerHendersonDesignMat(length(b), λ);
-            prob = LinearProblem(A, b);
-            linsolve = init(prob);
-            u2 = zeros(Float32, length(linsolve.b));
-
-            state = Chromatogram(
-                zeros(dtype, N), #t
-                zeros(dtype, N), #data
-                N #max index
-                )
-            for i in chunk
-                prec_id = precursor_idx[i]
-                iso_set = isotopes_captured[i]
-                apex_scan = apex_scan_idx[i]
-                #grouped_chroms must be sorted by retention time 
-                if seperateTraces(isotope_trace_type)
-                    (precursor_idx = prec_id, isotopes_captured = iso_set) ∉ group_keys ? continue : nothing
-                    chrom = grouped_chroms[(precursor_idx = prec_id, isotopes_captured = iso_set)]
-                else
-                    (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
-                    chrom = grouped_chroms[(precursor_idx = prec_id,)]
-                end
-                sort!(chrom,
-                        :scan_idx, 
-                        alg = QuickSort) #Could alternatively sort by :rt
-                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
-                isnothing(apex_scan) ? continue : nothing
-                
-                peak_area[i], new_best_scan[i] = integrateChrom(
-                                chrom,
-                                apex_scan,
-                                linsolve,
-                                u2,
-                                state,
-                                n_pad = n_pad,
-                                max_apex_offset = max_apex_offset,
-                                isplot = false
-                                );
-                #df = DataFrame((t = state.t[1:state.max_index], intensity = state.data[1:state.max_index]))
-                #df[!,:precursor_idx] .= chrom[1,:precursor_idx]
-                #append!(chromdf, df)
-                #println("peak_area $peak_area i $i")
-                reset!(state)
-            end
-            return #chromdf
-        end
-    end
-    return fetch.(tasks)
-end
-
-

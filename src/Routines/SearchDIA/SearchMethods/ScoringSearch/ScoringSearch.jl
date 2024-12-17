@@ -98,7 +98,7 @@ function summarize_results!(
 )
     temp_folder = getDataOutDir(search_context)
     
-    # Create necessary folders
+    # Set up output folders for different stages
     second_pass_folder = joinpath(temp_folder, "second_pass_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
@@ -108,57 +108,63 @@ function summarize_results!(
     end
 
     try
-        # Train XGBoost models
+        # Step 1: Train XGBoost Models
         @info "Training XGBoost models..."
-        best_psms = samplePSMsForXgboost(second_pass_folder, params.max_n_samples)
-        models = scoreTraces!(
+        # Sample PSMs for training to avoid memory consumption issues
+        best_psms = sample_psms_for_xgboost(second_pass_folder, params.max_n_samples)
+        # Train models on sampled PSMs
+        models =  score_precursor_isotope_traces!(
             best_psms,
             getSecondPassPsms(getMSData(search_context)),
             getPrecursors(getSpecLib(search_context))
         )
-        best_psms = nothing
+        best_psms = nothing # Free memory
         GC.gc()
 
-        # Get best traces
+        # Step 2: Find Best Isotope Traces
         @info "Finding best traces..."
-        best_traces = getBestTraces(
+        best_traces = get_best_traces(
             getSecondPassPsms(getMSData(search_context)),
             params.min_best_trace_prob
         )
 
-        # Sort and filter quantification tables
+        # Step 3: Process Quantification Results
         @info "Processing quantification results..."
-        sortAndFilterQuantTables(
+        # Filter to best traces and sort tables
+        sort_and_filter_quant_tables(
             getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path,
             best_traces
         )
 
-        # Merge scores
+        # Step 4: Merge PSM Scores
         @info "Merging PSM scores..."
-        mergeSortedPSMScores(
+        merge_sorted_psms_scores(
             getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path
         )
 
-        # Calculate error probabilities
+        # Step 5: Calculate Error Probabilities
         @info "Calculating error probabilities..."
-        results.precursor_pep_spline[] = getPEPSpline(
+        # Create PEP spline
+        results.precursor_pep_spline[] = get_pep_spline(
             results.merged_quant_path,
             :prob,
             min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
             n_spline_bins = 5
         )
 
-        results.precursor_qval_interp[] = getQValueSpline(
+        # Create q-value interpolation
+        results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :prob,
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
         )
 
-        # Get passing PSMs
+        # Step 6: Filter PSMs
         @info "Filtering passing PSMs..."
-        getPSMsPassingQVal(
+        # Apply q-value threshold and store passing PSMs
+        get_psms_passing_qval(
             getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
             getSecondPassPsms(getMSData(search_context)),
@@ -167,9 +173,10 @@ function summarize_results!(
             0.01f0
         )
 
-        # Score protein groups
+        # Step 7: Score Protein Groups
         @info "Scoring protein groups..."
-        sorted_pg_score_path = getProteinGroups(
+        # Create protein groups and calculate scores
+        sorted_pg_score_path = get_protein_groups(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
@@ -177,15 +184,15 @@ function summarize_results!(
             getPrecursors(getSpecLib(search_context))
         )
 
-        search_context.pg_score_to_qval[] = getQValueSpline(
+        # Create protein group q-value interpolation
+        search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_score_path,
             :max_pg_score,
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
-        # Store best traces
-        #results.best_traces = best_traces
-        best_traces = nothing
+
+        best_traces = nothing # Free memory
     catch e
         @error "Failed to summarize scoring results" exception=e
         rethrow(e)
