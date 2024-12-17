@@ -117,9 +117,6 @@ function init_search_results(::HuberTuningSearchParameters, search_context::Sear
     )
 end
 
-#==========================================================
-Core Processing Methods
-==========================================================#
 
 """
 Process a single file for Huber tuning.
