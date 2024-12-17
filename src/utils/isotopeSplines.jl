@@ -163,7 +163,6 @@ Fills `isotopes` in place with the relative abundances of the fragment isotopes.
 ### Examples 
 
 """
-
 function getFragAbundance!(isotopes::Vector{T}, 
                             iso_splines::IsotopeSplineModel, 
                             frag::isotope{T, I}, 
@@ -195,7 +194,7 @@ function getFragAbundance!(isotopes::Vector{T},
 end
 
 function getFragAbundance!(frag_isotopes::Vector{T}, #Probability of each fragment isotopes (initialized as zeros)
-                           prec_isotopes::Vector{T}, #Probability of each precursor isotope (determined by quadrupole transmission function)
+                            prec_isotopes::Vector{T}, #Probability of each precursor isotope (determined by quadrupole transmission function)
                             iso_splines::IsotopeSplineModel,
                             frag::isotope{T, I}, 
                             prec::isotope{T, I}
