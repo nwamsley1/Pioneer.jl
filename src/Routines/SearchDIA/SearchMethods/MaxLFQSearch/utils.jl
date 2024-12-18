@@ -5,7 +5,8 @@ function create_qc_plots(
     precursors_path::String,
     proteins_path::String,
     search_context::SearchContext,
-    precursors::BasicLibraryPrecursors
+    precursors::BasicLibraryPrecursors,
+    params::Any
 )
     # Create plots showing:
     # - Normalization factors
@@ -17,7 +18,7 @@ function create_qc_plots(
     qcPlots(
         precursors_path,
         proteins_path,
-        params_,
+        params.params,
         precursors,
         getFileIdToName(getMSData(search_context)),
         joinpath(getDataOutDir(search_context), "qc_plots"),

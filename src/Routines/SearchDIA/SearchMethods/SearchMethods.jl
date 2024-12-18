@@ -25,7 +25,7 @@ function execute_search(
     params::Any)
 
     msdr = getMassSpecData(search_context)
-    @info "Starting parameter tuning search" n_files=length(msdr.file_paths)
+    @info n_files=length(msdr.file_paths)
     
     search_parameters = get_parameters(search_type, params)
 
@@ -37,7 +37,7 @@ function execute_search(
     end
     
     summarize_results!(search_results, search_parameters, search_context)
-    return search_results
+    return nothing#search_results
 end
 
 #==========================================================

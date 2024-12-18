@@ -202,7 +202,7 @@ function collect_psms(
         end
         return charges
     end
-    while n < 5
+    for i in range(1, 10)
         # Get initial PSMs
         psms = library_search(spectra, search_context, params, ms_file_idx)
         isempty(psms) && return total_psms
@@ -271,8 +271,6 @@ function collect_psms(
         append!(total_psms, processed_psms)
         if size(total_psms, 1) > params.min_quad_tuning_psms
             break
-        else
-            n += 1
         end
     end
     return total_psms

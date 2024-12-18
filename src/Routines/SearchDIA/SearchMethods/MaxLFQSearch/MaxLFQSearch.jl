@@ -40,6 +40,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     
     # Output parameters
     write_csv::Bool
+    params::Any
 
     function MaxLFQSearchParameters(params::Any)
         np = params[:normalization_params]
@@ -49,7 +50,8 @@ struct MaxLFQSearchParameters <: SearchParameters
             Int64(np["spline_n_knots"]),
             0.01f0,  # Fixed q-value threshold
             100000,  # Default batch size
-            params[:output_params]["write_csv"]
+            params[:output_params]["write_csv"],
+            params
         )
     end
 end
@@ -177,7 +179,8 @@ function summarize_results!(
             precursors_wide_path,
             precursors_long_path,
             search_context,
-            precursors
+            precursors,
+            params
         )
 
     catch e

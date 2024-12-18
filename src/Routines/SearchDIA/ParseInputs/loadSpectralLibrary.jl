@@ -1,7 +1,11 @@
+
+#=
 function load_detailed_frags(filename::String)
     jldopen(filename, "r") do file
         data = read(file, "data")
         spline_type_name = eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
+        println("a ", eltype(data).name)
+        println("b ", spline_type_name)
         if eltype(data).name != spline_type_name
             return map(x -> DetailedFrag{Float32}(
                 x.prec_id,
@@ -37,6 +41,7 @@ function load_detailed_frags(filename::String)
         end
     end
 end
+=#
 
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
@@ -56,7 +61,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
     prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]
     library_fragment_lookup_table = nothing
-    if eltype(detailed_frags).name == eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name
+    if (eltype(detailed_frags).name == (eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name))
         try
             #Model that encodes initial nce guess. 
             nmc = PiecewiseNceModel(Float32(params[:presearch_params]["nce_guess"]))

@@ -79,7 +79,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation,I<:IsotopeTraceType} <: Frag
         dp = params[:deconvolution_params]
         _ISOTOPE_TRACE_TYPE_ = nothing
         if params[:quant_search_params]["combine_isotope_traces"]
-            _ISOTOPE_TRACE_TYPE_ = CombineTraces(Float32(params_[:quant_search_params]["min_fraction_transmitted"]))
+            _ISOTOPE_TRACE_TYPE_ = CombineTraces(Float32(params[:quant_search_params]["min_fraction_transmitted"]))
             @warn "Combine Traces"
         else
             _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
