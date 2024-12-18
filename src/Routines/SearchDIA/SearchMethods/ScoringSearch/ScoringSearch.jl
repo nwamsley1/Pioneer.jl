@@ -31,17 +31,20 @@ struct ScoringSearchParameters <: SearchParameters
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
-    pg_q_value_interpolation_points_per_bin::Int64
+    pg_prob_spline_points_per_bin::Int64  # Added based on original struct
+    pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
 
-    function ScoringSearchParameters(params::Any)
-        xp = params[:xgboost_params]
+    function ScoringSearchParameters(params::PioneerParameters)
+        # Extract machine learning parameters from optimization section
+        ml_params = params.optimization.machine_learning
         
         new(
-            Int64(xp["max_n_samples"]),
-            Float32(xp["min_best_trace_prob"]),
-            Int64(xp["precursor_prob_spline_points_per_bin"]),
-            Int64(xp["precursor_q_value_interpolation_points_per_bin"]),
-            Int64(xp["pg_q_value_interpolation_points_per_bin"])
+            Int64(ml_params.max_samples),
+            Float32(ml_params.min_trace_prob),
+            Int64(ml_params.spline_points),
+            Int64(ml_params.interpolation_points),
+            Int64(ml_params.spline_points),       # Using same value for protein groups
+            Int64(ml_params.interpolation_points) # Using same value for protein groups
         )
     end
 end

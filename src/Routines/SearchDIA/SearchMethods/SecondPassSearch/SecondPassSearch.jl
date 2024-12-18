@@ -45,7 +45,7 @@ end
 """
 Parameters for second pass search.
 """
-struct SecondPassSearchParameters{P<:PrecEstimation,I<:IsotopeTraceType} <: FragmentIndexSearchParameters
+struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     n_frag_isotopes::Int64
@@ -74,39 +74,48 @@ struct SecondPassSearchParameters{P<:PrecEstimation,I<:IsotopeTraceType} <: Frag
     isotope_tracetype::I
     prec_estimation::P
 
-    function SecondPassSearchParameters(params::Any) 
-        sp = params[:quant_search_params]
-        dp = params[:deconvolution_params]
-        _ISOTOPE_TRACE_TYPE_ = nothing
-        if params[:quant_search_params]["combine_isotope_traces"]
-            _ISOTOPE_TRACE_TYPE_ = CombineTraces(Float32(params[:quant_search_params]["min_fraction_transmitted"]))
-            @warn "Combine Traces"
+    function SecondPassSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        global_params = params.global_settings
+        quant_params = params.quant_search
+        frag_params = quant_params.fragment_settings
+        deconv_params = params.optimization.deconvolution
+        
+        # Determine isotope trace type based on global settings
+        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
+                               global_params.isotope_settings.combine_traces
+            CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
-            _ISOTOPE_TRACE_TYPE_ = SeperateTraces()
-            @warn "Seperate Traces"
+            SeperateTraces()
         end
 
-        new{typeof(PartialPrecCapture()),typeof(_ISOTOPE_TRACE_TYPE_)}(
-            (UInt8(3), UInt8(0)),  # Fixed isotope bounds
-            Int64(sp["n_frag_isotopes"]),
-            UInt8(sp["max_frag_rank"]),
-            1.0f0,
-            Set(2),
-            Float32(dp["lambda"]),
-            Int64(dp["max_iter_newton"]),
-            Int64(dp["max_iter_bisection"]),
-            Int64(dp["max_iter_outer"]),
-            Float32(dp["accuracy_newton"]),
-            Float32(dp["accuracy_bisection"]),
-            Float32(dp["max_diff"]),
-            Int64(sp["min_y_count"]),
-            Int64(sp["min_frag_count"]),
-            Float32(sp["min_spectral_contrast"]),
-            Float32(sp["min_log2_matched_ratio"]),
-            (Int64(first(sp["min_topn_of_m"])), Int64(last(sp["min_topn_of_m"]))),
-            Int64(sp["max_best_rank"]),
-            _ISOTOPE_TRACE_TYPE_,
-            PartialPrecCapture()
+        # Use partial precursor capture for second pass
+        prec_estimation = PartialPrecCapture()
+
+        new{typeof(prec_estimation), typeof(isotope_trace_type)}(
+            (UInt8(3), UInt8(0)),  # Fixed isotope bounds for second pass
+            Int64(frag_params.n_isotopes),
+            UInt8(frag_params.max_rank),
+            1.0f0,  # Full sampling rate
+            Set{Int64}([2]),
+            
+            Float32(deconv_params.lambda),
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),  # Using same value for bisection
+            Int64(deconv_params.newton_iters),  # Using same value for outer
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.max_diff),
+            
+            Int64(frag_params.min_y_count),
+            Int64(frag_params.min_count),
+            Float32(frag_params.min_spectral_contrast),
+            Float32(frag_params.min_log2_ratio),
+            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            Int64(frag_params.max_rank),
+            
+            isotope_trace_type,
+            prec_estimation
         )
     end
 end

@@ -29,6 +29,7 @@ end
 """
 Parameters for MaxLFQ search.
 """
+
 struct MaxLFQSearchParameters <: SearchParameters
     # Normalization parameters
     n_rt_bins::Int64
@@ -40,21 +41,25 @@ struct MaxLFQSearchParameters <: SearchParameters
     
     # Output parameters
     write_csv::Bool
-    params::Any
+    params::Any  # Store full parameters for reference
 
-    function MaxLFQSearchParameters(params::Any)
-        np = params[:normalization_params]
+    function MaxLFQSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        norm_params = params.global_settings.normalization
+        output_params = params.output
+        global_params = params.global_settings
         
         new(
-            Int64(np["n_rt_bins"]),
-            Int64(np["spline_n_knots"]),
-            0.01f0,  # Fixed q-value threshold
-            100000,  # Default batch size
-            params[:output_params]["write_csv"],
-            params
+            Int64(norm_params.n_rt_bins),
+            Int64(norm_params.spline_n_knots),
+            Float32(global_params.scoring.q_value_threshold),
+            Int64(100000),  # Default batch size
+            Bool(output_params.write_csv),
+            params  # Store full parameters
         )
     end
 end
+
 
 #==========================================================
 Interface Implementation

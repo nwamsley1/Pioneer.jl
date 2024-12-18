@@ -63,7 +63,7 @@ Parameters for first pass search.
 Configures PSM identification, scoring, and RT calibration.
 """
 struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    # Search parameters
+    # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     frag_tol_ppm::Float32
     min_index_search_score::UInt8
@@ -94,36 +94,48 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     irt_nstd::Float32
     prec_estimation::P
 
-    function FirstPassSearchParameters(params::Any)
-        fp = params[:first_search_params]
-        sp = params[:summarize_first_search_params]
-        prec_estimation = fp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+    function FirstPassSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        global_params = params.global_settings
+        first_params = params.first_search
+        frag_params = first_params.fragment_settings
+        score_params = first_params.scoring_settings
+        rt_params = params.rt_alignment
+        
+        # Convert isotope error bounds
+        isotope_bounds = haskey(global_params, :isotope_settings) ? 
+            global_params.isotope_settings.err_bounds : [1, 0]
+        
+        # Determine precursor estimation strategy
+        prec_estimation = PartialPrecCapture()
         
         new{typeof(prec_estimation)}(
-            (UInt8(first(params[:isotope_err_bounds])), UInt8(last(params[:isotope_err_bounds]))),
+            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             0.0f0,  # No fragment tolerance for first pass
-            UInt8(fp["min_index_search_score"]),
-            Int64(fp["min_frag_count"]),
-            Float32(fp["min_spectral_contrast"]),
-            Float32(fp["min_log2_matched_ratio"]),
-            (Int64(first(fp["min_topn_of_m"])), Int64(last(fp["min_topn_of_m"]))),
-            UInt8(fp["max_best_rank"]),
-            Int64(fp["n_frag_isotopes"]),
-            UInt8(fp["max_frag_rank"]),
+            UInt8(frag_params.min_score),
+            Int64(frag_params.min_count),
+            Float32(frag_params.min_spectral_contrast),
+            Float32(frag_params.min_log2_ratio),
+            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            UInt8(1), # max_best_rank
+            Int64(frag_params.n_isotopes),
+            UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling for first pass
-            Set(2),
-            Int64(fp["n_train_rounds_probit"]),
-            Int64(fp["max_iter_probit"]),
-            Float32(fp["max_q_value_probit_rescore"]),
-            Int64(fp["max_precursors_passing"]),
-            Int64(sp["min_inference_points"]),
-            Float32(sp["max_q_val_for_irt"]),
-            Float32(params[:irt_mapping_params]["min_prob"]),
-            Int64(sp["max_precursors"]),
-            Float32(sp["max_irt_bin_size"]),
-            Float32(sp["max_prob_to_impute"]),
-            Float32(sp["fwhm_nstd"]),
-            Float32(sp["irt_nstd"]),
+            Set{Int64}([2]),
+            
+            Int64(score_params.n_train_rounds),
+            Int64(score_params.max_iterations),
+            Float32(score_params.max_q_value),
+            
+            Int64(score_params.max_precursors),
+            Int64(1000), # Default min_inference_points
+            Float32(rt_params.min_probability),
+            Float32(rt_params.min_probability),
+            Int64(score_params.max_precursors),
+            Float32(0.1), # Default max_irt_bin_size
+            0.75f0,  # Default max_prob_to_impute
+            4.0f0,   # Default fwhm_nstd
+            4.0f0,   # Default irt_nstd
             prec_estimation
         )
     end

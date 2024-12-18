@@ -98,35 +98,43 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     min_quad_tuning_psms::Int64
     prec_estimation::P
 
-    function QuadTuningSearchParameters(params::Any)
-        pp = params[:presearch_params]
-        dp = params[:deconvolution_params]
-        prec_estimation = PartialPrecCapture() #pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+    function QuadTuningSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        tuning_params = params.parameter_tuning
+        frag_params = tuning_params.fragment_settings
+        search_params = tuning_params.search_settings
+        deconv_params = params.optimization.deconvolution
+        
+        # Always use partial capture for quad tuning
+        prec_estimation = PartialPrecCapture()
         
         new{typeof(prec_estimation)}(
-            (UInt8(0), UInt8(0)),  # Fixed for quad tuning
-            Float32(pp["frag_tol_ppm"]),
-            UInt8(pp["min_index_search_score"]),
-            typemin(Float32),
-            Int64(pp["min_frag_count"]),
-            Float32(pp["min_spectral_contrast"]),
-            (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
-            UInt8(pp["max_best_rank"]),
-            UInt8(pp["max_frag_rank"]),
-            one(Int64),
-            Float32(pp["quad_tuning_sample_rate"]),
-            typemax(Float32),
-            Set(2),
-
-            Int64(dp["max_iter_newton"]),
-            Int64(dp["max_iter_bisection"]),
-            Int64(dp["max_iter_outer"]),
-            Float32(dp["accuracy_newton"]),
-            Float32(dp["accuracy_bisection"]),
-            Float32(dp["max_diff"]),
-
-            Int64(pp["min_quad_tuning_fragments"]),
-            Int64(pp["min_quad_tuning_psms"]),
+            # Search parameters
+            (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
+            Float32(frag_params.tol_ppm),
+            UInt8(frag_params.min_score),
+            typemin(Float32),  # Minimum possible value for min_log2_matched_ratio
+            Int64(frag_params.min_count),
+            Float32(frag_params.min_spectral_contrast),
+            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            UInt8(1),  # Fixed max_best_rank
+            UInt8(frag_params.max_rank),
+            Int64(1),  # Fixed n_frag_isotopes for quad tuning
+            Float32(search_params.sample_rate),
+            typemax(Float32),  # Maximum possible value for irt_tol
+            Set{Int64}([2]),
+            
+            # Deconvolution parameters
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),  # Using same value for bisection
+            Int64(deconv_params.newton_iters),  # Using same value for outer
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.max_diff),
+            
+            # Quad tuning specific parameters
+            Int64(get(search_params, :min_quad_tuning_fragments, 3)),  # Default if not specified
+            Int64(get(search_params, :min_quad_tuning_psms, 5000)),   # Default if not specified
             prec_estimation
         )
     end

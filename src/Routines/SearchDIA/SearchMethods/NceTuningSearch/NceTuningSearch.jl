@@ -54,6 +54,7 @@ Parameters for NCE tuning search.
 Configures NCE grid search and general search behavior.
 """
 struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
+    # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_index_search_score::UInt8
     min_frag_count::Int64
@@ -65,33 +66,46 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_frag_rank::UInt8
     sample_rate::Float32
     spec_order::Set{Int64}
+    
+    # NCE specific parameters
     nce_grid::LinRange{Float32, Int64}
     nce_breakpoint::Float32
     max_q_val::Float32
     min_samples::Int64
     prec_estimation::P
 
-    function NceTuningSearchParameters(params::Any)
-        pp = params[:presearch_params]
-        prec_estimation = PartialPrecCapture() #pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+    function NceTuningSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        tuning_params = params.parameter_tuning
+        frag_params = tuning_params.fragment_settings
+        search_params = tuning_params.search_settings
+        
+        # Always use partial capture for NCE tuning
+        prec_estimation = PartialPrecCapture()
+        
+        # Create NCE grid
+        nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 30)
         
         new{typeof(prec_estimation)}(
-            (zero(UInt8), zero(UInt8)),
-            UInt8(pp["min_index_search_score"]),
-            Int64(pp["min_frag_count"]),
-            Float32(pp["min_spectral_contrast"]),
-            Float32(pp["min_log2_matched_ratio"]),
-            (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
-            UInt8(pp["max_best_rank"]),
-            Int64(1),
-            UInt8(pp["max_frag_rank"]),
-            Float32(pp["sample_rate"]),
-            Set(2),
-            LinRange(21.0f0, 40.0f0, 30),  
-            NCE_MODEL_BREAKPOINT,
-            0.01f0,
-            Int64(pp["min_samples"]),
-            PartialPrecCapture()
+            # Core parameters
+            (UInt8(0), UInt8(0)),  # Fixed isotope bounds for NCE tuning
+            UInt8(frag_params.min_score),
+            Int64(frag_params.min_count),
+            Float32(frag_params.min_spectral_contrast),
+            Float32(frag_params.min_log2_ratio),
+            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            UInt8(1),  # Fixed max_best_rank
+            Int64(1),  # Fixed n_frag_isotopes for NCE tuning
+            UInt8(frag_params.max_rank),
+            Float32(search_params.sample_rate),
+            Set{Int64}([2]),
+            
+            # NCE specific parameters
+            nce_grid,
+            NCE_MODEL_BREAKPOINT,  # Assuming this is defined as a constant
+            Float32(0.01),  # Fixed max_q_val for NCE tuning
+            Int64(search_params.min_samples),
+            prec_estimation
         )
     end
 end

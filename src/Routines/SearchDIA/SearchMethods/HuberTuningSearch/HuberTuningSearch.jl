@@ -74,31 +74,37 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
     q_value_threshold::Float32
     prec_estimation::P
 
-    function HuberTuningSearchParameters(params::Any)
-       #hp = params[:huber_delta_params]
-        dp = params[:deconvolution_params]
-        prec_estimation = PartialPrecCapture()  # Always use partial capture for Huber tuning
+    function HuberTuningSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        deconv_params = params.optimization.deconvolution
         
-        delta0 = params[:deconvolution_params]["huber_delta0"];
-        delta_exp = params[:deconvolution_params]["huber_delta_exp"];
-        delta_iters = params[:deconvolution_params]["huber_delta_iters"];
-        huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
+        # Calculate Huber delta grid
+        delta0 = Float32(deconv_params.huber_delta)
+        delta_exp = Float32(deconv_params.huber_exp)
+        delta_iters = Int64(deconv_params.huber_iters)
+        huber_δs = Float32[delta0 * (delta_exp^i) for i in 1:delta_iters]
+        
+        # Always use partial capture for Huber tuning
+        prec_estimation = PartialPrecCapture()
+        
         new{typeof(prec_estimation)}(
-            (UInt8(0), UInt8(2)),
-            2,
-            UInt8(params[:quant_search_params]["max_frag_rank"]),
-            1.0f0,
-            Set(2),
-            Float32(dp["lambda"]),
-            Int64(dp["max_iter_newton"]),
-            Int64(dp["max_iter_bisection"]),
-            Int64(dp["max_iter_outer"]),
-            Float32(dp["accuracy_newton"]),
-            Float32(dp["accuracy_bisection"]),
-            Float32(dp["max_diff"]),
-            huber_δs,#Float32.(hp["delta_grid"]),
-            Float32(50),#Float32(hp["min_pct_diff"]),
-            0.001f0,#Float32(hp["q_value_threshold"]),
+            (UInt8(0), UInt8(2)), # Fixed isotope bounds for Huber tuning
+            2,  # Fixed n_frag_isotopes
+            UInt8(255),  # Using max possible rank
+            1.0f0,  # Full sampling
+            Set{Int64}([2]),
+            
+            Float32(deconv_params.lambda),
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.max_diff),
+            
+            huber_δs,
+            50.0f0,  # Default min_pct_diff
+            0.001f0, # Default q_value_threshold
             prec_estimation
         )
     end

@@ -22,7 +22,7 @@ The execution follows these steps for each MS file:
 function execute_search(
     search_type::SearchMethod, 
     search_context::SearchContext,
-    params::Any)
+    params::PioneerParameters)
 
     msdr = getMassSpecData(search_context)
     @info n_files=length(msdr.file_paths)

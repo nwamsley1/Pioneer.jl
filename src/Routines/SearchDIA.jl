@@ -6,9 +6,10 @@ function SearchDIA(params_path::String)
         if !isabspath(params_path)
             params_path = joinpath(@__DIR__, "../../", params_path)
         end
-        params = JSON.parse(read(params_path, String))
-        MS_DATA_DIR = params["ms_data_dir"]
-        SPEC_LIB_DIR = params["library_folder"]
+        #params = JSON.parse(read(params_path, String))
+        params = parse_pioneer_parameters(params_path)
+        MS_DATA_DIR = params.paths[:ms_data]
+        SPEC_LIB_DIR = params.paths[:library]
         if !isabspath(SPEC_LIB_DIR)
             SPEC_LIB_DIR = joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
         end
@@ -20,7 +21,7 @@ function SearchDIA(params_path::String)
             MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))]
         end
 
-        params_ = parseParams(params);
+        #params_ = parseParams(params);
         nothing
     end
     timings["Parameter Loading"] = params_timing
@@ -28,7 +29,7 @@ function SearchDIA(params_path::String)
     # Load Spectral Library
     @info "Loading Spectral Library..."
     lib_timing = @timed begin
-        spec_lib = loadSpectralLibrary(SPEC_LIB_DIR, params_)
+        spec_lib = loadSpectralLibrary(SPEC_LIB_DIR, params)
         SPEC_LIB = FragmentIndexLibrary(
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
@@ -48,7 +49,7 @@ function SearchDIA(params_path::String)
             Threads.nthreads(),
             250000
         );
-        setDataOutDir!(SEARCH_CONTEXT, params_[:benchmark_params]["results_folder"]);
+        setDataOutDir!(SEARCH_CONTEXT, params.paths[:results]);
         nothing
     end
     timings["Search Context Initialization"] = context_timing
@@ -68,7 +69,7 @@ function SearchDIA(params_path::String)
 
     for (name, search) in searches
         @info "Executing $name..."
-        search_timing = @timed execute_search(search, SEARCH_CONTEXT, params_)
+        search_timing = @timed execute_search(search, SEARCH_CONTEXT, params)
         timings[name] = search_timing
     end
 

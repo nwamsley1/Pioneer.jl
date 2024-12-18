@@ -16,7 +16,7 @@ function qcPlots(
     precursors_wide = Arrow.Table(precursors_wide_path)
     protein_groups_wide = Arrow.Table(protein_groups_wide_path)
     n_files = length(parsed_fnames)
-    n_files_per_plot = Int64(params_[:qc_plot_params]["n_files_per_plot"])
+    n_files_per_plot = Int64(params_.output[:plots_per_page])
     #Number of QC plots to build 
     n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
     ###############

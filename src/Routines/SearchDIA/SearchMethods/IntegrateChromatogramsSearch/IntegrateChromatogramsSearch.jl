@@ -51,40 +51,50 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     isotope_tracetype::I
     prec_estimation::P
 
-    function IntegrateChromatogramSearchParameters(params::Any)
-        qp = params[:quant_search_params]
-        dp = params[:deconvolution_params]
+    function IntegrateChromatogramSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        global_params = params.global_settings
+        quant_params = params.quant_search
+        frag_params = quant_params.fragment_settings
+        chrom_params = quant_params.chromatogram
+        deconv_params = params.optimization.deconvolution
         
         # Determine isotope trace type
-        isotope_trace_type = if qp["combine_isotope_traces"]
-            CombineTraces(Float32(qp["min_fraction_transmitted"]))
+        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
+                               global_params.isotope_settings.combine_traces
+            CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
             SeperateTraces()
         end
 
+        # Always use partial precursor capture for integrate chromatogram
         prec_estimation = PartialPrecCapture()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
-            (UInt8(3), UInt8(0)),
-            Int64(qp["n_frag_isotopes"]),
-            UInt8(qp["max_frag_rank"]),
-            1.0f0,
-            Set(2),
-            Float32(qp["WH_smoothing_strength"]),
-            Int64(qp["n_pad"]),
-            Int64(qp["max_apex_offset"]),
-            Float32(dp["lambda"]),
-            Int64(dp["max_iter_newton"]),
-            Int64(dp["max_iter_bisection"]),
-            Int64(dp["max_iter_outer"]),
-            Float32(dp["accuracy_newton"]),
-            Float32(dp["accuracy_bisection"]),
-            Float32(dp["max_diff"]),
+            (UInt8(3), UInt8(0)),  # Fixed isotope bounds
+            Int64(frag_params.n_isotopes),
+            UInt8(frag_params.max_rank),
+            1.0f0,  # Full sampling
+            Set{Int64}([2]),
+            
+            Float32(chrom_params.smoothing_strength),
+            Int64(chrom_params.padding),
+            Int64(chrom_params.max_apex_offset),
+            
+            Float32(deconv_params.lambda),
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.newton_iters),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.newton_accuracy),
+            Float32(deconv_params.max_diff),
+            
             isotope_trace_type,
             prec_estimation
         )
     end
 end
+
 
 #==========================================================
 Interface Implementation

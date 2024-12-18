@@ -64,6 +64,7 @@ Parameters for parameter tuning search.
 Configures fragment matching, RT alignment, and general search behavior.
 """
 struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
+    # Core parameters from the original struct
     isotope_err_bounds::Tuple{UInt8, UInt8}
     frag_tol_ppm::Float32
     frag_err_quantile::Float32
@@ -87,32 +88,45 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     irt_tol_sd::Int64
     prec_estimation::P
 
-    function ParameterTuningSearchParameters(params::Any)
-        pp = params[:presearch_params]
-        prec_estimation = pp["abreviate_precursor_calc"] ? FullPrecCapture() : PartialPrecCapture()
+    function ParameterTuningSearchParameters(params::PioneerParameters)
+        # Extract relevant parameter groups
+        global_params = params.global_settings
+        tuning_params = params.parameter_tuning
+        frag_params = tuning_params.fragment_settings
+        search_params = tuning_params.search_settings
+        rt_params = params.rt_alignment
         
+        # Convert isotope error bounds
+        isotope_bounds = haskey(global_params, :isotope_settings) ? 
+            global_params.isotope_settings.err_bounds : [1, 0]
+            
+        # Create precursor estimation type
+        prec_estimation = PartialPrecCapture()
+        
+        # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
-            (UInt8(first(params[:isotope_err_bounds])), UInt8(last(params[:isotope_err_bounds]))),
-            Float32(pp["frag_tol_ppm"]),
-            Float32(pp["frag_err_quantile"]),
-            Int64(pp["min_samples"]),
-            Float32(pp["max_qval"]),
-            Int64(pp["max_presearch_iters"]),
-            UInt8(pp["min_index_search_score"]),
-            Int64(pp["min_frag_count"]),
-            Float32(pp["min_spectral_contrast"]),
-            Float32(pp["min_log2_matched_ratio"]),
-            (Int64(first(pp["min_topn_of_m"])), Int64(last(pp["min_topn_of_m"]))),
-            UInt8(pp["max_best_rank"]),
-            Int64(pp["n_frag_isotopes"]),
-            UInt8(pp["max_frag_rank"]),
-            Float32(pp["sample_rate"]),
-            typemax(Float32),
-            Set(2),
-            3,  # Spline degree
-            5,  # Number of knots
-            5, # Outlier threshold
-            Int64(params[:irt_mapping_params]["n_sigma_tol"]),
+            # Core parameters
+            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            Float32(frag_params.tol_ppm),
+            Float32(search_params.frag_err_quantile),
+            Int64(search_params.min_samples),
+            Float32(global_params.scoring.q_value_threshold),
+            Int64(search_params.max_presearch_iters),
+            UInt8(frag_params.min_score),
+            Int64(frag_params.min_count),
+            Float32(frag_params.min_spectral_contrast),
+            Float32(frag_params.min_log2_ratio),
+            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
+            UInt8(1), # max_best_rank default
+            Int64(frag_params.n_isotopes),
+            UInt8(frag_params.max_rank),
+            Float32(search_params.sample_rate),
+            typemax(Float32), # irt_tol default
+            Set{Int64}([2]), # spec_order default
+            3,  # spline_degree default
+            5,  # spline_n_knots default
+            5,  # spline_fit_outlier_sd default
+            Int64(rt_params.sigma_tolerance),
             prec_estimation
         )
     end
@@ -152,7 +166,7 @@ end
 Interface Implementation
 ==========================================================#
 
-get_parameters(::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)
+get_parameters(::ParameterTuningSearch, params::PioneerParameters) = ParameterTuningSearchParameters(params)
 
 function init_search_results(::ParameterTuningSearchParameters, search_context::SearchContext)
     out_dir = getDataOutDir(search_context)
