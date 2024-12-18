@@ -221,7 +221,7 @@ function process_scans_for_huber!(
             
             ion_idx, _ = select_transitions_for_huber!(
                 search_data, search_context, scan_idx, 
-                ms_file_idx, spectra, params
+                ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
             )
         end
         
@@ -282,6 +282,7 @@ function select_transitions_for_huber!(
     scan_idx::Int,
     ms_file_idx::Int,
     spectra::Arrow.Table,
+    irt_start::Int64, irt_stop::Int64, rt_index::Any,
     params::HuberTuningSearchParameters
 )
 
@@ -305,8 +306,8 @@ function select_transitions_for_huber!(
         params.n_frag_isotopes,
         params.max_frag_rank,
         rt_index,#getRtIndex(search_context),
-        getIrtStart(search_context),
-        getIrtStop(search_context),
+        irt_start,
+        irt_stop,
         (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
         block_size = 10000
     )

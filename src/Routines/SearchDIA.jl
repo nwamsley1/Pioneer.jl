@@ -50,7 +50,7 @@ function SearchDIA(params_path::String)
         Results stored in SEARCH_CONTEXT.mass_error_model::Dict{Int64, MassErrorModel}
     ==========================================================#
     test = @timed begin
-        @time execute_search(
+        execute_search(
             ParameterTuningSearch(),SEARCH_CONTEXT , params_
         );
 
@@ -59,7 +59,7 @@ function SearchDIA(params_path::String)
             Normalized collision energy is modeled as a function of peptide m/z and Charge
             Results stored in SEARCH_CONTEXT.nce_model::Dict{Int64, NceModel}
         ==========================================================#
-        @time execute_search(
+        execute_search(
             NceTuningSearch(), SEARCH_CONTEXT, params_
         );
 
@@ -85,7 +85,7 @@ function SearchDIA(params_path::String)
         3) Summarize search results. Accross all raw files in SEARCH_CONTEXT.mass_spec_data_reference, 
             identify the top
         ==========================================================#
-        @time execute_search(
+        execute_search(
             FirstPassSearch(), SEARCH_CONTEXT, params_
         );
 
@@ -95,7 +95,7 @@ function SearchDIA(params_path::String)
             Used for linear regression of MS/MS spectra onto library spectra. 
             Results stored in SEARCH_CONTEXT.huber_delta::Base.Ref{Float32}
         ==========================================================#
-        @time execute_search(
+        execute_search(
             HuberTuningSearch(), SEARCH_CONTEXT, params_
         );
 
@@ -105,19 +105,19 @@ function SearchDIA(params_path::String)
             Used for linear regression of MS/MS spectra onto library spectra. 
             Results stored in SEARCH_CONTEXT.huber_delta::Base.Ref{Float32}
         ==========================================================#
-        @time execute_search(
+        execute_search(
             SecondPassSearch(), SEARCH_CONTEXT, params_
         );
 
-        @time execute_search(
+        execute_search(
             ScoringSearch(), SEARCH_CONTEXT, params_
         );
 
-        @time execute_search(
+        execute_search(
             IntegrateChromatogramSearch(), SEARCH_CONTEXT, params_
         );
 
-        @time execute_search(
+        execute_search(
             MaxLFQSearch(), SEARCH_CONTEXT, params_
         );
     end

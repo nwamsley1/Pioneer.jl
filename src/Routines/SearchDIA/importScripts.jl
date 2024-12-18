@@ -1,6 +1,17 @@
 function importScripts()
     package_root = dirname(dirname(dirname(@__DIR__)))
-    
+    #package_root = dirname(@__DIR__)
+    function get_julia_files(dir::String)
+        julia_files = String[]
+        for (root, _, files) in walkdir(dir)
+            for file in files
+                if endswith(file, ".jl")
+                    push!(julia_files, joinpath(root, file))
+                end
+            end
+        end
+        return julia_files
+    end
     [include(joinpath(package_root, "src","utils", "quadTransmissionModeling", jl_file)) for jl_file in [
         "quadTransmissionModel.jl",
         "generalGaussModel.jl",
@@ -18,23 +29,28 @@ function importScripts()
                                                                     "Counter.jl",
                                                                     "Ion.jl",
                                                                     "LibraryIon.jl",
+                                                                    "LibraryFragmentIndex.jl",                                                                    
+                                                                    "IsotopeTraceType.jl",
                                                                     "MatchIon.jl",
-                                                                    "LibraryFragmentIndex.jl",
                                                                     "SparseArray.jl",
                                                                     "fastaEntry.jl",
                                                                     "fragBoundModel.jl",
                                                                     "modelTypes.jl",
                                                                     "RetentionTimeIndex.jl",
-                                                                    "MassErrorModel.jl"]];
-    #Utilities
-    [include(joinpath(package_root, "src","utils", "ML", jl_file)) for jl_file in [
-        "percolatorSortOf.jl",
-        "piecewiseLinearFunction.jl",
-        "probitRegression.jl",
-        "spectralLinearRegression.jl",
-        "uniformBasisCubicSpline.jl",
-        "wittakerHendersonSmoothing.jl"
-    ]];   
+                                                                    "MassErrorModel.jl",                                                                  
+                                                                    "RetentionTimeConversionModel.jl"
+                                                                    ]];
+  
+        #Utilities
+        [include(joinpath(package_root, "src","utils", "ML", jl_file)) for jl_file in [
+                "percolatorSortOf.jl",
+                "piecewiseLinearFunction.jl",
+                "probitRegression.jl",
+                "spectralLinearRegression.jl",
+                "uniformBasisCubicSpline.jl",
+                "wittakerHendersonSmoothing.jl",
+                "libraryBSpline.jl"
+                ]]; 
 
     [include(joinpath(package_root, "src","utils", jl_file)) for jl_file in [
         "isotopes.jl",
@@ -42,109 +58,25 @@ function importScripts()
         "maxLFQ.jl"
     ]];   
 
-
-
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","PSMs", jl_file)) for jl_file in [
+    [include(joinpath(package_root,"src","Routines","SearchDIA","PSMs", jl_file)) for jl_file in [
         "PSM.jl",
         "spectralDistanceMetrics.jl",
         "UnscoredPSMs.jl",
         "ScoredPSMs.jl"]];
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","FirstSearch",jl_file)) for jl_file in [
-            "firstSearch.jl",
-            "getBestPSMs.jl",
-            "scoreMainSearch.jl"]];
+        
+    #Search Method 
+    include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
+    include(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","methods",jl_file)) for jl_file in [
-                                                                                    "matchPeaks.jl",
-                                                                                    "buildDesignMatrix.jl",
-                                                                                    "normalizeQuant.jl",
-                                                                                    #"selectTransitions.jl",
-                                                                                   "queryFragmentIndex.jl"]];
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","methods","selectTransitions", jl_file)) for jl_file in [
-    "selectTransitions.jl",  
-    "fillTransitionList.jl",
-    "standardTransitionSelection.jl", 
-    "massErrEstimationStrategy.jl",
-        "quadEstimationSelection.jl",
-        "rtIndexTransitionSelection.jl",
-                    ]];                                                                                
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","ParameterTuning",jl_file)) for jl_file in [
-            "addPreSearchColumns.jl",
-            "huberLossSearch.jl",
-            "mapLibraryToEmpiricalRT.jl",
-            "massErrorEstimation.jl",
-            "parameterTuningSearch.jl",
-            "quadTuningSearch.jl"]];
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))]
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","ParseInputs",jl_file)) for jl_file in [
-            "getCVFolds.jl",
-            "loadSpectralLibrary.jl",
-            "parseFileNames.jl",
-            "parseParams.jl"]];
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))]
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","ProteinGroups",jl_file)) for jl_file in [
-            "proteinQuant.jl",
-            "scoreProteinGroups.jl"]];
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods"))]
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","QuantitativeSearch",jl_file)) for jl_file in [
-            "isotopeTraces.jl",
-            "addSecondSearchColumns.jl",
-            "integrateChroms.jl",
-            "quantitativeSearch.jl",
-            "samplePsmsForXgboost.jl",
-            "secondQuant.jl"]];
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))]
 
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","SummarizeRuns",jl_file)) for jl_file in [
-            "buildRTIndex.jl",
-            "entrapmentAnalysis.jl",
-            "getBestPrecursorsAccrossRuns.jl",
-            "getBestTrace.jl",
-            "getIrtErrs.jl",
-            "getPSMsPassingQVal.jl",
-            "makeOutputDirectories.jl",
-            "mergePsmTables.jl",
-            "summarizeToProtein.jl"]];    
-
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch","WriteOutputs",jl_file)) for jl_file in [
-            "plotRTAlignment.jl",
-            "qcPlots.jl",
-            "writeCSVTables.jl"]];                    
-    #Files needed for PRM routines
-    [include(joinpath(package_root,"src","Routines","LibrarySearch",jl_file)) for jl_file in [
-                                                                                    "paramsChecks.jl",
-                                                                                    "partitionThreadTasks.jl",
-                                                                                    "scoreTraces.jl",
-                                                                                    "searchRAW.jl"]];                                                                                      
-
-                                                                                                                                
-    [include(joinpath(package_root,"src","Routines","BuildSpecLib",jl_file)) for jl_file in [
-        "libraryBSpline.jl",
-        "PioneerLib.jl",
-        "buildPioneerLib.jl",  
-        "buildUniSpecInput.jl",
-        "estimateCollisionEv.jl",
-        "fragBounds.jl",
-        "getIonAnnotations.jl",
-        "getMZ.jl",
-        "koinaRequests.jl",
-        "paramsChecks.jl",
-        "parseChronologerResults.jl",
-        "parseFasta.jl",
-        "parseIonAnnotations.jl",
-        "parseIsotopeMods.jl",
-        "parseKoinaFragments.jl",
-        "prepareChronologerInput.jl"
-        ]];
-
+    include(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
 end

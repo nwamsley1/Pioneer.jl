@@ -22,9 +22,10 @@ using StaticArrays, StatsBase, SpecialFunctions, Statistics
 using XGBoost
 using KernelDensity
 using FastGaussQuadrature
+using LaTeXStrings
 #create_app("../Pioneer","../Pioneer_Compiled", force = true)
 #Inport Pioneer Files 
-include(joinpath(@__DIR__, "Routines","LibrarySearch","importScripts.jl"))
+include(joinpath(@__DIR__, "Routines","SearchDIA","importScripts.jl"))
 importScripts()
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       

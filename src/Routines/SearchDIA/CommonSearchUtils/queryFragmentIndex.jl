@@ -1,3 +1,31 @@
+"""
+    exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBin},
+                               frag_bin_max_idx::UInt32,
+                               lower_bound_guess::UInt32,
+                               upper_bound_guess::UInt32,
+                               frag_mz_min::Float32,
+                               frag_mz_max::Float32,
+                               step_size::UInt32) -> Tuple{UInt32, UInt32}
+
+Find new lower and upper bounds for fragment bin search using exponential search.
+
+# Arguments
+- `frag_index_bins`: Array of fragment index bins
+- `frag_bin_max_idx`: Maximum index in fragment bins
+- `lower_bound_guess`: Initial lower bound guess
+- `upper_bound_guess`: Initial upper bound guess
+- `frag_mz_min`: Minimum fragment m/z value
+- `frag_mz_max`: Maximum fragment m/z value
+- `step_size`: Initial step size for exponential search
+
+# Process
+1. Exponentially increases upper bound until fragment m/z range is contained
+2. Adjusts lower bound downward if needed using binary reduction
+3. Handles edge cases for array bounds
+
+# Returns
+Tuple of (new_lower_bound, new_upper_bound) for fragment bin search
+"""
 function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBin},
                                         frag_bin_max_idx::UInt32,
                                         lower_bound_guess::UInt32,
@@ -40,6 +68,25 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
     return lower_bound_guess, upper_bound_guess
 end
 
+"""
+    findFirstFragmentBin(frag_index_bins::AbstractArray{FragIndexBin},
+                        lower_bound_guess::UInt32,
+                        upper_bound_guess::UInt32,
+                        frag_min::Float32) -> UInt32
+
+Perform branchless binary search to find first fragment bin that could contain frag_min.
+
+# Arguments
+- `frag_index_bins`: Array of fragment index bins
+- `lower_bound_guess`: Lower bound for search range
+- `upper_bound_guess`: Upper bound for search range
+- `frag_min`: Minimum fragment m/z value to find
+
+# Returns
+Index of first fragment bin that could contain frag_min
+
+Uses branchless binary search for performance optimization.
+"""
 function findFirstFragmentBin(frag_index_bins::AbstractArray{FragIndexBin},
                                 lower_bound_guess::UInt32,
                                 upper_bound_guess::UInt32,
@@ -58,6 +105,30 @@ function findFirstFragmentBin(frag_index_bins::AbstractArray{FragIndexBin},
     return base
 end
 
+
+"""
+    searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8},
+                      fragments::AbstractArray{IndexFragment},
+                      frag_id_range::UnitRange{UInt32},
+                      window_min::Float32,
+                      window_max::Float32)
+
+Search a fragment bin for matches within precursor mass window.
+
+# Arguments
+- `prec_id_to_score`: Counter tracking scores per precursor
+- `fragments`: Array of indexed fragments
+- `frag_id_range`: Range of fragment indices to search
+- `window_min`: Minimum precursor m/z window
+- `window_max`: Maximum precursor m/z window
+
+# Process
+1. Binary search to find first fragment in precursor window
+2. Binary search to find last fragment in precursor window
+3. Adds match scores for all qualifying fragments
+
+Updates prec_id_to_score in place with new matches.
+"""
 function searchFragmentBin!(prec_id_to_score::Counter{UInt32, UInt8}, 
                             fragments::AbstractArray{IndexFragment},
                             frag_id_range::UnitRange{UInt32},

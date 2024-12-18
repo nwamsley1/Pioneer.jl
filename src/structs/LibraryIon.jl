@@ -680,15 +680,4 @@ getIsotopicMods(lp::BasicLibraryPrecursors)::Arrow.List{Union{Missing, String}, 
 
 
 
-abstract type SpectralLibrary end
-struct FragmentIndexLibrary <: SpectralLibrary
-    presearch_fragment_index::FragmentIndex{Float32}
-    fragment_index::FragmentIndex{Float32}
-    precursors::BasicLibraryPrecursors
-    fragment_lookup_table::SplineFragmentLookup
-end
-getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
-getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
-getPrecursors(sl::SpectralLibrary) = sl.precursors
-getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 
 

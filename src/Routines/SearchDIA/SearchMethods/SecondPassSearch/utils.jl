@@ -483,12 +483,12 @@ function add_features!(psms::DataFrame,
                                     prec_id_to_irt::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}}
                                     ) where {T<:AbstractFloat}
 
-    precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context))),#[:sequence],
-    structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context))),#[:structural_mods],
-    prec_mz = getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-    prec_irt = getIrt(getPrecursors(getSpecLib(search_context))),#[:irt],
-    prec_charge = getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-    precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context))),#[:missed_cleavages],
+    precursor_sequence = getSequence(getPrecursors(getSpecLib(search_context)))#[:sequence],
+    structural_mods = getStructuralMods(getPrecursors(getSpecLib(search_context)))#[:structural_mods],
+    prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
+    prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
+    prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
+    precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
 
     #filter!(x -> x.best_scan, psms);
     filter!(x->x.weight>0, psms);

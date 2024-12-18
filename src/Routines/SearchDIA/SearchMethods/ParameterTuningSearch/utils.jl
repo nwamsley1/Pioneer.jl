@@ -275,6 +275,34 @@ Tuple containing:
 #==========================================================
 Mass Error Modeling
 ==========================================================#
+function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
+    start_idx = stop_idx = 1
+    
+    for i in 1:length(scan_idxs)
+        stop_idx = i
+        if scan_idxs[start_idx] == scan_idxs[stop_idx]
+            scan_to_prec_idx[scan_idxs[i]] = start_idx:stop_idx
+        else
+            scan_to_prec_idx[scan_idxs[i]] = i:i
+            start_idx = i
+        end
+    end
+    scan_to_prec_idx
+end
+
+function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
+    for match in range(1, nmatches)
+        if n < length(fmatches)
+            n += 1
+            fmatches[n] = new_fmatches[match]
+        else
+            fmatches = append!(fmatches, [M() for x in range(1, length(fmatches))])
+        end
+    end
+    return n
+end
+
 """
     mass_error_search(spectra::Arrow.Table, scan_idxs::Vector{UInt32},
                      precursor_idxs::Vector{UInt32}, ms_file_idx::UInt32,
@@ -315,34 +343,6 @@ function mass_error_search(
         S<:SearchDataStructures, 
         P<:SearchParameters
         }
-
-    function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
-        scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
-        start_idx = stop_idx = 1
-        
-        for i in 1:length(scan_idxs)
-            stop_idx = i
-            if scan_idxs[start_idx] == scan_idxs[stop_idx]
-                scan_to_prec_idx[scan_idxs[i]] = start_idx:stop_idx
-            else
-                scan_to_prec_idx[scan_idxs[i]] = i:i
-                start_idx = i
-            end
-        end
-        scan_to_prec_idx
-    end
-
-    function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
-        for match in range(1, nmatches)
-            if n < length(fmatches)
-                n += 1
-                fmatches[n] = new_fmatches[match]
-            else
-                fmatches = append!(fmatches, [M() for x in range(1, length(fmatches))])
-            end
-        end
-        return n
-    end
 
     # Sort scans and setup thread tasks
     sorted_indices = sortperm(scan_idxs)

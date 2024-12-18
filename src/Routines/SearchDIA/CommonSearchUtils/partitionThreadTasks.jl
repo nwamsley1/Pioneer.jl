@@ -11,37 +11,6 @@ function partitionThreadTasks(n_tasks::Int, tasks_per_thread::Int, n_threads::In
     return partition(1:n_tasks, chunk_size)
 end
 
-function partitionScansToThreadsQuant(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
-                                n_threads::Int,
-                                tasks_per_thread::Int)
-    total_peaks = sum(length.(spectra))
-    n_tasks = n_threads*tasks_per_thread
-    peaks_per_task = total_peaks÷(n_tasks)
-    thread_tasks = Vector{ThreadTask}(undef, n_tasks)
-    
-    n = 0
-    start = 1
-    thread_id = 1
-    task = 1
-    for (i, spectrum) in enumerate(spectra)
-        n += length(spectrum)
-        if (n > peaks_per_task) | ((i + 1) == length(spectra))
-
-            thread_tasks[task] = ThreadTask(
-                                                UnitRange(start, i), 
-                                                thread_id
-                                            )
-            thread_id += 1
-            if thread_id > n_threads
-                thread_id = 1
-            end
-            task += 1
-            start = i + 1
-            n = 0
-        end
-    end
-    return thread_tasks, total_peaks
-end
 
 function partitionScansToThreads(spectra::AbstractArray,
                                 rt::AbstractVector{Float32},
@@ -91,7 +60,39 @@ function partitionScansToThreads(spectra::AbstractArray,
 end
 
 
+#=
+function partitionScansToThreadsQuant(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
+                                n_threads::Int,
+                                tasks_per_thread::Int)
+    total_peaks = sum(length.(spectra))
+    n_tasks = n_threads*tasks_per_thread
+    peaks_per_task = total_peaks÷(n_tasks)
+    thread_tasks = Vector{ThreadTask}(undef, n_tasks)
+    
+    n = 0
+    start = 1
+    thread_id = 1
+    task = 1
+    for (i, spectrum) in enumerate(spectra)
+        n += length(spectrum)
+        if (n > peaks_per_task) | ((i + 1) == length(spectra))
 
+            thread_tasks[task] = ThreadTask(
+                                                UnitRange(start, i), 
+                                                thread_id
+                                            )
+            thread_id += 1
+            if thread_id > n_threads
+                thread_id = 1
+            end
+            task += 1
+            start = i + 1
+            n = 0
+        end
+    end
+    return thread_tasks, total_peaks
+end
+=#
 #=
 function partitionScansToThreads(spectra::Arrow.List{Union{Missing, SubArray{Union{Missing, Float32}, 1, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}, Tuple{UnitRange{Int64}}, true}}, Int64, Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}},
                                 rt::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}},

@@ -244,7 +244,7 @@ Filter PSM tables to retain only best traces and sort by probability.
 
 Modifies files in place to optimize storage.
 """
-function sort_and_fileer_quant_tables(
+function sort_and_filter_quant_tables(
     second_pass_psms_paths::Vector{String},
     merged_quant_path::String,
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}

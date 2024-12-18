@@ -23,6 +23,118 @@ end
 #==========================================================
 PSM scoring and processing
 ==========================================================#
+function get_nearest_adjacent_scans(scan_idx::UInt32,
+                            centerMz::AbstractArray{Union{Missing, T}},
+                            isolationWidthMz::AbstractArray{Union{Missing, T}};
+                            scans_to_search::Int64 = 500
+        ) where {T<:AbstractFloat}
+    
+    upperBoundMz = centerMz[scan_idx] + isolationWidthMz[scan_idx]/T(2.0)
+    min_diff, min_diff_idx = typemax(Float32), -1
+    for near_scan_idx in range(scan_idx, min(scan_idx + scans_to_search, length(centerMz)))
+        if ismissing(centerMz[near_scan_idx])
+            continue
+        end
+        lowerBoundMz = centerMz[near_scan_idx] - isolationWidthMz[near_scan_idx]/T(2.0)
+        if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
+            min_diff_idx = near_scan_idx
+            min_diff = abs(upperBoundMz - lowerBoundMz) 
+        end
+    end
+    next_scan_idx = sign(min_diff_idx)==-1 ? scan_idx : min_diff_idx
+
+    min_diff, min_diff_idx = typemax(Float32), -1
+    lowerBoundMz = centerMz[scan_idx] - isolationWidthMz[scan_idx]/T(2.0)
+    for near_scan_idx in (scan_idx):-1:max(scan_idx - scans_to_search, 1)
+        if ismissing(centerMz[near_scan_idx])
+            continue
+        end
+        upperBoundMz = centerMz[near_scan_idx] + isolationWidthMz[near_scan_idx]/T(2.0)
+        if max(abs(upperBoundMz - lowerBoundMz), 0.1) < min_diff
+            min_diff_idx = near_scan_idx
+            min_diff = abs(upperBoundMz - lowerBoundMz) 
+        end
+    end
+    prev_scan_idx = sign(min_diff_idx)==-1 ? scan_idx : min_diff_idx
+
+
+
+    return prev_scan_idx, next_scan_idx
+end
+
+function get_scan_to_prec_idx(
+    scan_idxs::AbstractVector{UInt32},
+    prec_idxs::AbstractVector{UInt32},
+    centerMz::AbstractVector{Union{Missing, Float32}},
+    isolationWidthMz::AbstractVector{Union{Missing, Float32}}
+    )
+    N = length(scan_idxs)
+    #Maps scans to the list of precursors in the scan 
+    scan_idx_to_prec_idx = Dictionary{UInt32, Vector{UInt32}}()
+    for i in range(1, N)
+        scan_idx = scan_idxs[i]
+        prec_idx = prec_idxs[i]
+        #Have encountered scan 
+        if haskey(scan_idx_to_prec_idx, scan_idx)
+            push!(scan_idx_to_prec_idx[scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            prev_scan_idx, next_scan_idx = get_nearest_adjacent_scans(
+                scan_idx, centerMz, isolationWidthMz
+            )
+            #Have encountered nearest scan 
+            if haskey(scan_idx_to_prec_idx, next_scan_idx)
+                push!(scan_idx_to_prec_idx[next_scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            else
+                insert!(scan_idx_to_prec_idx, next_scan_idx,[prec_idx])
+            end
+            if haskey(scan_idx_to_prec_idx, prev_scan_idx)
+                push!(scan_idx_to_prec_idx[prev_scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            else
+                insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
+            end
+        else
+            insert!(scan_idx_to_prec_idx, scan_idx,[prec_idx])
+            prev_scan_idx, next_scan_idx = get_nearest_adjacent_scans(
+                scan_idx, centerMz, isolationWidthMz
+            )
+            if haskey(scan_idx_to_prec_idx, next_scan_idx)
+                push!(scan_idx_to_prec_idx[next_scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            else
+                insert!(scan_idx_to_prec_idx, next_scan_idx,[prec_idx])
+            end
+            if haskey(scan_idx_to_prec_idx, prev_scan_idx)
+                push!(scan_idx_to_prec_idx[prev_scan_idx], prec_idx)#(zip(psms[!,:scan_idx], psms[!,:precursor_idx]))
+            else
+                insert!(scan_idx_to_prec_idx, prev_scan_idx,[prec_idx])
+            end
+        end
+    end
+    return scan_idx_to_prec_idx
+end
+
+function add_columns!(
+    precursor_idx::AbstractVector{UInt32},
+    lib_precursor_mz::AbstractVector{Float32},
+    lib_prec_charge::AbstractVector{UInt8},
+    lib_sulfur_count::AbstractVector{UInt8},
+    iso_idx::AbstractVector{UInt8},
+    center_mz::AbstractVector{Float32},
+    iso_splines::IsotopeSplineModel)
+
+    mono_mz = [lib_precursor_mz[pid] for pid in precursor_idx]
+    prec_charge = [lib_prec_charge[pid] for pid in precursor_idx]
+    sulfur_count = [lib_sulfur_count[pid] for pid in precursor_idx]
+    #The iso_idx is 1 indexed. So the M0 has an index of 1, the M+1 had an index of 2, etc.
+    iso_mz = Float32.(mono_mz .+ NEUTRON.*(iso_idx.-1.0f0)./prec_charge)
+    mz_offset = iso_mz .- center_mz
+    δ = zeros(Float32, length(precursor_idx))
+    for i in range(1, length(precursor_idx))
+        s_count = min(Int64(sulfur_count[i]), 5)
+        mono_mass = Float32((mono_mz[i] - PROTON)*prec_charge[i])
+        δ[i] = iso_splines(s_count, 0, mono_mass)/iso_splines(s_count, 1, mono_mass)
+    end
+    return DataFrame((mono_mz = mono_mz, prec_charge = prec_charge, sulfur_count = sulfur_count, iso_mz = iso_mz, mz_offset = mz_offset, δ = δ))
+end
+
 """
     collect_psms(spectra::Arrow.Table, search_context::SearchContext,
                 results::QuadTuningSearchResults, params::QuadTuningSearchParameters,
@@ -101,7 +213,7 @@ function collect_psms(
         processed_psms = process_initial_psms(psms, spectra, search_context)
         
         # Get scan mapping and perform quad search
-        scan_idx_to_prec_idx = getScanToPrecIdx(
+        scan_idx_to_prec_idx = get_scan_to_prec_idx(
             processed_psms[!, :scan_idx],
             processed_psms[!, :precursor_idx],
             spectra[:centerMz],
@@ -314,7 +426,7 @@ function process_quad_results(
 )
     sort!(psms, [:scan_idx, :precursor_idx, :iso_idx])
     
-    processed = hcat(psms, addColumns(
+    processed = hcat(psms, add_columns!(
         psms[!, :precursor_idx],
         getMz(precursors),
         getCharge(precursors),#[:prec_charge],

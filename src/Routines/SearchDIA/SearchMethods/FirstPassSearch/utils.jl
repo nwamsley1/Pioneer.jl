@@ -149,7 +149,7 @@ function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
             β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
             ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
         end
-        getQvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
+        get_qvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
         if i < n_train_rounds #Get Data to train on during subsequent round
             best_psms = ((psms[!,:q_value].<=max_q_value).&(psms[!,:target])) .| (psms[!,:target].==false);
         end
