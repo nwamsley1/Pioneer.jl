@@ -15,11 +15,11 @@ function importScripts()
     [include(joinpath(package_root, "src","utils", "quadTransmissionModeling", jl_file)) for jl_file in [
         "quadTransmissionModel.jl",
         "generalGaussModel.jl",
-        "NoQuadModel.jl",
+        "noQuadModel.jl",
         "RazoQuadModel.jl",
         "SplineQuadModel.jl",
         "binIsotopeRatioData.jl",
-        "SquareQuadModel.jl",
+        "squareQuadModel.jl",
     
     ]];   
 
