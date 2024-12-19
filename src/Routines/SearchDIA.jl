@@ -20,6 +20,7 @@ Output:
 """
 function SearchDIA(params_path::String)
     # === Initialize logging ===
+    checkParams(params_path)
     params = parse_pioneer_parameters(params_path)
     log_path = joinpath(params.paths[:results], "pioneer_search_log.txt")
     mkpath(dirname(log_path))  # Ensure directory exists

@@ -5,9 +5,8 @@ struct InvalidParametersError <: Exception
     params::Dict{String, Any}
 end
 
-function checkParams(json_string::String)
-    params = JSON.parse(json_string)
-    
+function checkParams(json_path::String)
+    params = JSON.parsefile(json_path)
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
         if !haskey(dict, key)
@@ -17,137 +16,129 @@ function checkParams(json_string::String)
         end
     end
 
-    # Check top-level parameters
-    check_param(params, "isotope_err_bounds", Vector)
-    check_param(params, "choose_most_intense", Bool)
-    check_param(params, "q_value", Real)
-
-    # Check nested parameter groups
-    nested_params = [
-        "presearch_params", "first_search_params", "summarize_first_search_params",
-        "quant_search_params", "irt_mapping_params", "deconvolution_params",
-        "qc_plot_params", "normalization_params", "xgboost_params",
-        "quad_transmission", "benchmark_params", "output_params"
+    # Check top-level sections
+    required_sections = [
+        "global", "parameter_tuning", "first_search", "quant_search",
+        "acquisition", "rt_alignment", "optimization", "output", "paths"
     ]
-
-    for group in nested_params
-        check_param(params, group, Dict)
+    
+    for section in required_sections
+        check_param(params, section, Dict)
     end
 
-    # Validate presearch_params
-    presearch = params["presearch_params"]
-    check_param(presearch, "min_index_search_score", Real)
-    check_param(presearch, "n_frag_isotopes", Integer)
-    check_param(presearch, "min_frag_count", Integer)
-    check_param(presearch, "min_log2_matched_ratio", Real)
-    check_param(presearch, "min_spectral_contrast", Real)
-    check_param(presearch, "min_topn_of_m", Vector)
-    check_param(presearch, "max_best_rank", Integer)
-    check_param(presearch, "sample_rate", Real)
-    check_param(presearch, "frag_tol_ppm", Real)
-    check_param(presearch, "max_qval", Real)
-    check_param(presearch, "min_samples", Integer)
-    check_param(presearch, "frag_err_quantile", Real)
-    check_param(presearch, "max_presearch_iters", Integer)
+    # Validate global parameters
+    global_params = params["global"]
+    check_param(global_params, "isotope_settings", Dict)
+    check_param(global_params["isotope_settings"], "err_bounds", Vector)
+    check_param(global_params["isotope_settings"], "combine_traces", Bool)
+    check_param(global_params, "scoring", Dict)
+    check_param(global_params["scoring"], "q_value_threshold", Real)
 
-    # Validate first_search_params
-    first_search = params["first_search_params"]
-    check_param(first_search, "min_index_search_score", Real)
-    check_param(first_search, "min_frag_count", Integer)
-    check_param(first_search, "min_topn_of_m", Vector)
-    check_param(first_search, "n_frag_isotopes", Integer)
-    check_param(first_search, "min_log2_matched_ratio", Real)
-    check_param(first_search, "min_spectral_contrast", Real)
-    check_param(first_search, "max_best_rank", Integer)
-    check_param(first_search, "n_train_rounds_probit", Integer)
-    check_param(first_search, "max_iter_probit", Integer)
-    check_param(first_search, "max_q_value_probit_rescore", Real)
-    check_param(first_search, "max_precursors_passing", Integer)
+    # Validate parameter tuning parameters
+    tuning_params = params["parameter_tuning"]
+    check_param(tuning_params, "fragment_settings", Dict)
+    frag_settings = tuning_params["fragment_settings"]
+    check_param(frag_settings, "min_count", Integer)
+    check_param(frag_settings, "max_rank", Integer)
+    check_param(frag_settings, "tol_ppm", Real)
+    check_param(frag_settings, "min_score", Integer)
+    check_param(frag_settings, "min_spectral_contrast", Real)
+    check_param(frag_settings, "min_log2_ratio", Real)
+    check_param(frag_settings, "min_top_n", Vector)
+    check_param(frag_settings, "n_isotopes", Integer)
 
-    # Validate summarize_first_search_params
-    summarize = params["summarize_first_search_params"]
-    check_param(summarize, "max_precursors", Integer)
-    check_param(summarize, "scan_count_range", Vector)
-    check_param(summarize, "max_q_val_for_irt", Real)
-    check_param(summarize, "max_prob_to_impute", Real)
-    check_param(summarize, "min_inference_points", Integer)
-    check_param(summarize, "fwhm_nstd", Real)
-    check_param(summarize, "irt_nstd", Real)
-    check_param(summarize, "default_irt_width", Real)
-    check_param(summarize, "peak_width_quantile", Real)
-    check_param(summarize, "max_irt_bin_size", Real)
+    check_param(tuning_params, "search_settings", Dict)
+    search_settings = tuning_params["search_settings"]
+    check_param(search_settings, "sample_rate", Real)
+    check_param(search_settings, "min_samples", Integer)
+    check_param(search_settings, "max_presearch_iters", Integer)
+    check_param(search_settings, "frag_err_quantile", Real)
 
-    # Validate quant_search_params
-    quant_search = params["quant_search_params"]
-    check_param(quant_search, "WH_smoothing_strength", Real)
-    check_param(quant_search, "min_frag_count", Integer)
-    check_param(quant_search, "min_y_count", Integer)
-    check_param(quant_search, "min_log2_matched_ratio", Real)
-    check_param(quant_search, "min_spectral_contrast", Real)
-    check_param(quant_search, "min_topn_of_m", Vector)
-    check_param(quant_search, "n_frag_isotopes", Integer)
-    check_param(quant_search, "max_best_rank", Integer)
-    check_param(quant_search, "n_pad", Integer)
-    check_param(quant_search, "max_apex_offset", Integer)
+    # Validate first search parameters
+    first_search = params["first_search"]
+    check_param(first_search, "fragment_settings", Dict)
+    first_frag = first_search["fragment_settings"]
+    check_param(first_frag, "min_count", Integer)
+    check_param(first_frag, "max_rank", Integer)
+    check_param(first_frag, "min_score", Integer)
+    check_param(first_frag, "min_spectral_contrast", Real)
+    check_param(first_frag, "min_log2_ratio", Real)
+    check_param(first_frag, "min_top_n", Vector)
+    check_param(first_frag, "n_isotopes", Integer)
 
-    # Validate irt_mapping_params
-    irt_mapping = params["irt_mapping_params"]
-    check_param(irt_mapping, "n_bins", Integer)
-    check_param(irt_mapping, "bandwidth", Real)
-    check_param(irt_mapping, "n_sigma_tol", Real)
-    check_param(irt_mapping, "min_prob", Real)
+    check_param(first_search, "scoring_settings", Dict)
+    score_settings = first_search["scoring_settings"]
+    check_param(score_settings, "n_train_rounds", Integer)
+    check_param(score_settings, "max_iterations", Integer)
+    check_param(score_settings, "max_q_value", Real)
+    check_param(score_settings, "max_precursors", Integer)
 
-    # Validate deconvolution_params
-    deconvolution = params["deconvolution_params"]
-    check_param(deconvolution, "lambda", Real)
-    check_param(deconvolution, "huber_delta", Real)
-    check_param(deconvolution, "huber_delta0", Real)
-    check_param(deconvolution, "huber_delta_exp", Real)
-    check_param(deconvolution, "huber_delta_iters", Integer)
-    check_param(deconvolution, "max_iter_newton", Integer)
-    check_param(deconvolution, "max_iter_bisection", Integer)
-    check_param(deconvolution, "max_iter_outer", Integer)
-    check_param(deconvolution, "accuracy_newton", Real)
-    check_param(deconvolution, "accuracy_bisection", Real)
-    check_param(deconvolution, "max_diff", Real)
+    # Validate quant search parameters
+    quant_search = params["quant_search"]
+    check_param(quant_search, "fragment_settings", Dict)
+    check_param(quant_search, "chromatogram", Dict)
+    
+    quant_frag = quant_search["fragment_settings"]
+    check_param(quant_frag, "min_count", Integer)
+    check_param(quant_frag, "min_y_count", Integer)
+    check_param(quant_frag, "max_rank", Integer)
+    check_param(quant_frag, "min_spectral_contrast", Real)
+    check_param(quant_frag, "min_log2_ratio", Real)
+    check_param(quant_frag, "min_top_n", Vector)
+    check_param(quant_frag, "n_isotopes", Integer)
 
-    # Validate qc_plot_params
-    qc_plot = params["qc_plot_params"]
-    check_param(qc_plot, "n_files_per_plot", Integer)
+    chrom_settings = quant_search["chromatogram"]
+    check_param(chrom_settings, "smoothing_strength", Real)
+    check_param(chrom_settings, "padding", Integer)
+    check_param(chrom_settings, "max_apex_offset", Integer)
 
-    # Validate normalization_params
-    normalization = params["normalization_params"]
-    check_param(normalization, "n_rt_bins", Integer)
-    check_param(normalization, "spline_n_knots", Integer)
+    # Validate acquisition parameters
+    acq_params = params["acquisition"]
+    check_param(acq_params, "nce", Integer)
+    check_param(acq_params, "quad_transmission", Dict)
+    quad_trans = acq_params["quad_transmission"]
+    check_param(quad_trans, "fit_from_data", Bool)
+    check_param(quad_trans, "overhang", Real)
+    check_param(quad_trans, "smoothness", Real)
 
-    # Validate xgboost_params
-    xgboost = params["xgboost_params"]
-    check_param(xgboost, "max_n_samples", Integer)
-    check_param(xgboost, "min_best_trace_prob", Real)
-    check_param(xgboost, "precursor_prob_spline_points_per_bin", Integer)
-    check_param(xgboost, "precursor_q_value_interpolation_points_per_bin", Integer)
-    check_param(xgboost, "pg_prob_spline_points_per_bin", Integer)
-    check_param(xgboost, "pg_q_value_interpolation_points_per_bin", Integer)
+    # Validate RT alignment parameters
+    rt_params = params["rt_alignment"]
+    check_param(rt_params, "n_bins", Integer)
+    check_param(rt_params, "bandwidth", Real)
+    check_param(rt_params, "sigma_tolerance", Integer)
+    check_param(rt_params, "min_probability", Real)
 
-    # Validate quad_transmission
-    quad_transmission = params["quad_transmission"]
-    check_param(quad_transmission, "fit_from_data", Bool)
-    check_param(quad_transmission, "overhang", Real)
-    check_param(quad_transmission, "smoothness", Real)
+    # Validate optimization parameters
+    opt_params = params["optimization"]
+    check_param(opt_params, "deconvolution", Dict)
+    check_param(opt_params, "machine_learning", Dict)
 
-    # Validate benchmark_params
-    benchmark = params["benchmark_params"]
-    check_param(benchmark, "results_folder", String)
+    deconv = opt_params["deconvolution"]
+    check_param(deconv, "lambda", Real)
+    check_param(deconv, "huber_delta", Real)
+    check_param(deconv, "huber_exp", Real)
+    check_param(deconv, "huber_iters", Integer)
+    check_param(deconv, "newton_iters", Integer)
+    check_param(deconv, "newton_accuracy", Real)
+    check_param(deconv, "max_diff", Real)
 
-    # Validate output_params
-    output = params["output_params"]
+    ml_params = opt_params["machine_learning"]
+    check_param(ml_params, "max_samples", Integer)
+    check_param(ml_params, "min_trace_prob", Real)
+    check_param(ml_params, "spline_points", Integer)
+    check_param(ml_params, "interpolation_points", Integer)
+
+    # Validate output parameters
+    output = params["output"]
     check_param(output, "write_csv", Bool)
     check_param(output, "delete_temp", Bool)
+    check_param(output, "plots_per_page", Integer)
 
-    # Check remaining top-level parameters
-    check_param(params, "library_folder", String)
-    check_param(params, "ms_data_dir", String)
+    # Validate path parameters
+    paths = params["paths"]
+    check_param(paths, "library", String)
+    check_param(paths, "ms_data", String)
+    check_param(paths, "results", String)
 
-    # If all checks pass, return the validated parameters
     return params
 end

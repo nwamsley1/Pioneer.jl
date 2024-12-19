@@ -100,8 +100,8 @@
         "plots_per_page": 12
     },
     "paths": {
-        "library": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin",
-        "ms_data": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN",
-        "results": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/ASTRAL_MTAC/THREE_PROTEOME_5MIN/SEPERATE_TRACES"
+        "library": "/abs/path/to/lib",
+        "ms_data": "/abs/path/to/ms_data",
+        "results": "/abs/path/to/results"
     }
 }
