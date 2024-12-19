@@ -220,7 +220,6 @@ function process_file!(
         end
 
         rt_model = getRtIrtModel(search_context, ms_file_idx)
-        
         # Add columns
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
         
@@ -276,23 +275,38 @@ function process_file!(
     )
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe,
-            :charge2, :poisson, :irt_error, :missed_cleavage, :Mox,
-            :charge, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
+            :charge2, :poisson, :irt_error, 
+            :missed_cleavage, 
+            :Mox,
+            #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
+            :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
-        
+
         # Select scoring columns
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))
-
         # Score PSMs
-        score_main_search_psms!(
-            psms,
-            column_names,
-            n_train_rounds=params.n_train_rounds_probit,
-            max_iter_per_round=params.max_iter_probit,
-            max_q_value=Float64(params.max_q_value_probit_rescore)
-        )
-
+        try
+            score_main_search_psms!(
+                psms,
+                column_names,
+                n_train_rounds=params.n_train_rounds_probit,
+                max_iter_per_round=params.max_iter_probit,
+                max_q_value=Float64(params.max_q_value_probit_rescore)
+            )
+        catch
+            column_names = [
+            :spectral_contrast, :city_block, :entropy_score, :scribe,
+            :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
+            ]
+            score_main_search_psms!(
+                psms,
+                column_names,
+                n_train_rounds=params.n_train_rounds_probit,
+                max_iter_per_round=params.max_iter_probit,
+                max_q_value=Float64(params.max_q_value_probit_rescore)
+            )
+        end
         # Process scores
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted])

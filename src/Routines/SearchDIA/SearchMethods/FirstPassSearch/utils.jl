@@ -321,9 +321,12 @@ function map_retention_times!(
     @info "Mapping library to empirical retention times..."
     
     for (ms_file_idx, psms_path) in enumerate(getFirstPassPsms(getMSData(search_context)))
+        #if getFailedIndicator(getMSData(search_context), ms_file_idx)==true
+        #    continue
+        #end
         psms = Arrow.Table(psms_path)
         best_hits = psms[:prob].>params.min_prob_for_irt_mapping#Map rts using only the best psms
-        if sum(best_hits) > 100
+        try#if sum(best_hits) > 100
             best_rts = psms[:rt][best_hits]
             best_irts = psms[:irt_predicted][best_hits]
             irt_to_rt_spline = UniformSpline(
@@ -341,7 +344,7 @@ function map_retention_times!(
             #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
             setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
             setIrtRtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
-        else
+        catch
             throw("add a default option here...")
             #sensible default here?
             continue

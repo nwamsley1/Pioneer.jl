@@ -267,7 +267,9 @@ function process_file!(
         mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
         results.mass_err_model[] = mass_err_model
         append!(results.ppm_errs, ppm_errs)
-    catch e 
+    catch e
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+        @warn "Could not tune parameters for $ms_file_idx"
         throw(e)
     end
     
@@ -284,7 +286,7 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::Arrow.Table
 ) where {P<:ParameterTuningSearchParameters}
-    
+    try
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
     mass_error_folder = getMassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
@@ -300,6 +302,10 @@ function process_search_results!(
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
     setRtIrtModel!(search_context, ms_file_idx, getRtToIrtModel(results))
+    catch
+        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+        nothing
+    end
 end
 
 function reset_results!(ptsr::ParameterTuningSearchResults)

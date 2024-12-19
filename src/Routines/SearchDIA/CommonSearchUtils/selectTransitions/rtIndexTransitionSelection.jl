@@ -74,7 +74,7 @@ function _select_transitions_impl!(
             n += 1
             precs_temp[precs_temp_size] = prec_idx
 
-            nce = getNCE(lookup, prec_charge, prec_mz)
+            #nce = getNCE(lookup, prec_charge, prec_mz)
         
             
             transition_idx = @inline fillTransitionList!(

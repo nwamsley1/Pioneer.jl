@@ -76,6 +76,7 @@ struct ArrowTableReference{N} <: MassSpecDataReference
     passing_psms::Vector{String}
     passing_proteins::Vector{String}
     rt_index_paths::Vector{String}
+    failed_search_indicator::Vector{Bool}
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
@@ -95,7 +96,8 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
-            Vector{String}(undef, n)
+            Vector{String}(undef, n),
+            Vector{Bool}(undef, n)
         )
     end
 
@@ -113,7 +115,8 @@ struct ArrowTableReference{N} <: MassSpecDataReference
             Vector{String}(undef, n),
             Vector{String}(undef, n),
             Vector{String}(undef, n),
-            Vector{String}(undef, n)
+            Vector{String}(undef, n),
+            Vector{Bool}(undef, n)
         )
     end
 
@@ -238,6 +241,7 @@ getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[i
 getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
 getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
 getRtIndex(ref::ArrowTableReference, index::Int) = ref.rt_index_paths[index]
+getFailedIndicator(ref::ArrowTableReference, index::Int) = ref.failed_search_indicator[index]
 getParsedFileNames(ref::ArrowTableReference) = ref.file_id_to_name
 
 getFilePaths(ref::ArrowTableReference) = ref.file_paths
@@ -257,6 +261,7 @@ setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.se
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
 setRtIndex!(ref::ArrowTableReference, index::Int, value::String) = ref.rt_index_paths[index] = value
+setFailedIndicator!(ref::ArrowTableReference, index::Int, value::Bool) = ref.failed_search_indicator[index] = value
 
 # SearchParameters interface getters
 getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile

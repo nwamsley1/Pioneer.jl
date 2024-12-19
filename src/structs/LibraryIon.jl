@@ -406,23 +406,26 @@ function load_detailed_frags(filename::String)
     
     jldopen(filename, "r") do file
         data = read(file, "data")
-        
-        # Convert the loaded data to Pioneer.SplineDetailedFrag
-        map(x -> Pioneer.SplineDetailedFrag{4,Float32}(
-            x.prec_id,
-            x.mz,
-            x.intensity,
-            x.ion_type,
-            x.is_y,
-            x.is_b,
-            x.is_p,
-            x.is_isotope,
-            x.frag_charge,
-            x.ion_position,
-            x.prec_charge,
-            x.rank,
-            x.sulfur_count
-        ), data)
+        if eltype(data) == Pioneer.DetailedFrag{Float32}
+            return data
+        else
+            # Convert the loaded data to Pioneer.SplineDetailedFrag
+            map(x -> Pioneer.SplineDetailedFrag{4,Float32}(
+                x.prec_id,
+                x.mz,
+                x.intensity,
+                x.ion_type,
+                x.is_y,
+                x.is_b,
+                x.is_p,
+                x.is_isotope,
+                x.frag_charge,
+                x.ion_position,
+                x.prec_charge,
+                x.rank,
+                x.sulfur_count
+            ), data)
+        end
     end
 end
 
@@ -458,7 +461,7 @@ SplineDetailedFrag{N,T}() where {N,T<:AbstractFloat} = SplineDetailedFrag(
  )
 
 # Generic conversion for any AltimeterFragment to DetailedFrag
-function convert_to_detailed(frag::DetailedFrag{T}) where {T <: AbstractFloat}
+function convert_to_detailed(frag::DetailedFrag{T}, ::ConstantType) where {T <: AbstractFloat}
     DetailedFrag(
         getPID(frag),
         getMz(frag),
@@ -533,6 +536,12 @@ getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt
 function getSplineData(lfp::StandardFragmentLookup, prec_charge::UInt8, prec_mz::T) where {T<:AbstractFloat}
     return ConstantType()
 end
+
+function getSplineData(lfp::StandardFragmentLookup)
+    return ConstantType()
+end
+
+
 
 """
    abstract type NceModel{T<:AbstractFloat} end
@@ -634,6 +643,12 @@ getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64
 # Add a setter for the NCE model in SplineFragmentLookup
 function setNceModel!(lookup::SplineFragmentLookup{N,M,T}, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
     lookup.nce_model[] = new_nce_model
+end
+
+
+# Add a setter for the NCE model in SplineFragmentLookup
+function setNceModel!(lookup::StandardFragmentLookup, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
+    return nothing
 end
 
 function getSplineData(lfp::SplineFragmentLookup{N,M,T}, prec_charge::UInt8, prec_mz::T) where {N,M,T<:AbstractFloat}

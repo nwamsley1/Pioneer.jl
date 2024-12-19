@@ -149,6 +149,10 @@ function process_file!(
 ) where {P<:NceTuningSearchParameters}
 
     try
+        if typeof(getSpecLib(search_context))==FragmentIndexLibrary
+            #No NCE tuning for basic FramgentIndexLibrary
+            return nothing
+        end
         processed_psms = DataFrame()
         for i in range(1, 10)
             # Perform grid search
@@ -232,8 +236,11 @@ function process_search_results!(
     ms_file_idx::Int64,
     ::Arrow.Table
 ) where {P<:NceTuningSearchParameters}
-    
-    setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])
+    try
+        setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])
+    catch
+        nothing
+    end
 end
 
 """
@@ -241,16 +248,18 @@ Summarize results across all files.
 """
 function summarize_results!(
     results::NceTuningSearchResults,
-    ::P,
+    params::P,
     search_context::SearchContext
 ) where {P<:NceTuningSearchParameters}
-
-    if !isempty(results.nce_plot_dir)
-        merge_pdfs([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
-                joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf"), 
-                cleanup=true)
+    try
+        if !isempty(results.nce_plot_dir)
+            merge_pdfs([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
+                    joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf"), 
+                    cleanup=true)
+        end
+    catch
+        nothing
     end
-
     # Could add NCE model statistics or plots here
     return nothing
 end

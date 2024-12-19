@@ -109,8 +109,16 @@ struct FragmentIndexLibrary <: SpectralLibrary
     presearch_fragment_index::FragmentIndex{Float32}
     fragment_index::FragmentIndex{Float32}
     precursors::BasicLibraryPrecursors
+    fragment_lookup_table::StandardFragmentLookup
+end
+
+struct SplineFragmentIndexLibrary <: SpectralLibrary
+    presearch_fragment_index::FragmentIndex{Float32}
+    fragment_index::FragmentIndex{Float32}
+    precursors::BasicLibraryPrecursors
     fragment_lookup_table::SplineFragmentLookup
 end
+
 
 getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
 getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index

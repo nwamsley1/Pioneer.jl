@@ -102,5 +102,20 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     spec_lib["f_index"] = f_index;
     spec_lib["presearch_f_index"] = presearch_f_index;
     spec_lib["precursors"] = precursors;
-    return spec_lib
+
+    if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
+        return FragmentIndexLibrary(
+            spec_lib["presearch_f_index"], 
+            spec_lib["f_index"], 
+            BasicLibraryPrecursors(spec_lib["precursors"]), 
+            spec_lib["f_det"]
+        )
+    else
+        return SplineFragmentIndexLibrary(
+            spec_lib["presearch_f_index"], 
+            spec_lib["f_index"], 
+            BasicLibraryPrecursors(spec_lib["precursors"]), 
+            spec_lib["f_det"]
+        )
+    end
 end

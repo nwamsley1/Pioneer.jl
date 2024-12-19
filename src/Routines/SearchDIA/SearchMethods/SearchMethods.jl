@@ -25,7 +25,7 @@ function execute_search(
     params::PioneerParameters)
 
     msdr = getMassSpecData(search_context)
-    @info n_files=length(msdr.file_paths)
+    n_files=length(msdr.file_paths)
     
     search_parameters = get_parameters(search_type, params)
 

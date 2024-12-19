@@ -70,6 +70,9 @@ Parameters for quadrupole tuning search.
 Configures deconvolution and quad model fitting.
 """
 struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
+    #Fit Quad Model from Data?
+    fit_from_data::Bool
+
     # Search parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
     frag_tol_ppm::Float32
@@ -110,6 +113,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         
         new{typeof(prec_estimation)}(
             # Search parameters
+            params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
             Float32(frag_params.tol_ppm),
             UInt8(frag_params.min_score),
@@ -206,7 +210,9 @@ function process_file!(
     spectra::Arrow.Table) where {P<:QuadTuningSearchParameters}
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
-    
+    if params.fit_from_data == false
+        return nothing
+    end
     try
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
@@ -251,13 +257,14 @@ end
 
 function process_search_results!(
     results::QuadTuningSearchResults,
-    ::P,
+    params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
     ::Arrow.Table
 ) where {P<:QuadTuningSearchParameters}
-    
-    setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
+    if params.fit_from_data==true
+        setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
+    end
 end
 
 function summarize_results!(

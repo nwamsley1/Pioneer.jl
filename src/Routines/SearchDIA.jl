@@ -29,12 +29,8 @@ function SearchDIA(params_path::String)
     # Load Spectral Library
     @info "Loading Spectral Library..."
     lib_timing = @timed begin
-        spec_lib = loadSpectralLibrary(SPEC_LIB_DIR, params)
-        SPEC_LIB = FragmentIndexLibrary(
-            spec_lib["presearch_f_index"], 
-            spec_lib["f_index"], 
-            BasicLibraryPrecursors(spec_lib["precursors"]), 
-            spec_lib["f_det"]);
+        SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
+        println("c ", typeof(SPEC_LIB))
         nothing
     end
     timings["Spectral Library Loading"] = lib_timing
