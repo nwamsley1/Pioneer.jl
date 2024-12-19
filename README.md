@@ -338,9 +338,9 @@ Example json
         "plots_per_page": 12
     },
     "paths": {
-        "library": "./data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin",
-        "ms_data": "./data/ecoli_test/raw",
-        "results": "./../data/ecoli_test/ecoli_test_results"
+        "library": "/abs/path/to/lib",
+        "ms_data": "/abs/path/to/ms_data",
+        "results": "/abs/path/to/results"
     }
 }
 ```
