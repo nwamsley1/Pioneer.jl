@@ -36,20 +36,20 @@ using SparseArrays
     sort!(misses, by = x->getPeakInd(x))
     X, Hs, Hst, IDtoROW, matched_cols = buildDesignMatrix(matches, misses)
 
-#=
-julia> Matrix(Hs)
-10×3 Matrix{Float64}:
- 100.0    0.0    0.0
- 100.0    0.0    0.0
- 100.0  100.0    0.0 #Third fragment matched by precursor 1 and 2
-   0.0  100.0  100.0 #Fourgh fragment matched by precursor 2 and 3
-   0.0  100.0    0.0
-   0.0    0.0  100.0
-   0.0    0.0  100.0
- 100.0    0.0    0.0 #Missed fragments
-   0.0  100.0    0.0
-   0.0    0.0  100.0
-=#
+    #=
+    julia> Matrix(Hs)
+    10×3 Matrix{Float64}:
+    100.0    0.0    0.0
+    100.0    0.0    0.0
+    100.0  100.0    0.0 #Third fragment matched by precursor 1 and 2
+      0.0  100.0  100.0 #Fourgh fragment matched by precursor 2 and 3
+      0.0  100.0    0.0
+      0.0    0.0  100.0
+      0.0    0.0  100.0
+    100.0    0.0    0.0 #Missed fragments
+      0.0  100.0    0.0
+      0.0    0.0  100.0
+    =#
     @test length(X) == length(unique([getPeakInd(x) for x in matches])) + length(unique([getPeakInd(x) for x in misses]))
     Hs_mat = Matrix(Hs);
 

@@ -406,7 +406,7 @@ function load_detailed_frags(filename::String)
     
     jldopen(filename, "r") do file
         data = read(file, "data")
-        if eltype(data) == Pioneer.DetailedFrag{Float32}
+        if eltype(data) == DetailedFrag{Float32}
             return data
         else
             # Convert the loaded data to Pioneer.SplineDetailedFrag
