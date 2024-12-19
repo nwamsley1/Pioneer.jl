@@ -59,7 +59,7 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
    @testset "process_test" begin 
-        @test SearchDIA("./data/ecoli_test/ecoli_test_params.json")===nothing
+        @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
     end
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
