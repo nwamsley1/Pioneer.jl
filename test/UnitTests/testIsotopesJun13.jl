@@ -98,4 +98,4 @@ plotIsotopes(isotopes05, isotopes15, "(0, 5)", "(1, 5)", test_frag; title = "b3+
 b3_isotopes15 = copy(isotopes15)
 
 
-correctPrecursorAbundance(100.0f0, iso_splines, (0, 5), test_precursor[:mz]*test_precursor[:prec_charge], test_precursor[:sulfur_count])
+#correctPrecursorAbundance(100.0f0, iso_splines, (0, 5), test_precursor[:mz]*test_precursor[:prec_charge], test_precursor[:sulfur_count])

@@ -102,3 +102,25 @@ getFragmentBin(fi::FragmentIndex{T}, frag_bin_idx::I) where {T<:AbstractFloat,I<
 getRTBin(fi::FragmentIndex{T}, rt_bin_idx::I) where {T<:AbstractFloat,I<:Integer} = getRTBins(fi)[rt_bin_idx]
 getFragments(fi::FragmentIndex{T}) where {T<:AbstractFloat} = fi.fragments
 
+
+abstract type SpectralLibrary end
+
+struct FragmentIndexLibrary <: SpectralLibrary
+    presearch_fragment_index::FragmentIndex{Float32}
+    fragment_index::FragmentIndex{Float32}
+    precursors::BasicLibraryPrecursors
+    fragment_lookup_table::StandardFragmentLookup
+end
+
+struct SplineFragmentIndexLibrary <: SpectralLibrary
+    presearch_fragment_index::FragmentIndex{Float32}
+    fragment_index::FragmentIndex{Float32}
+    precursors::BasicLibraryPrecursors
+    fragment_lookup_table::SplineFragmentLookup
+end
+
+
+getPresearchFragmentIndex(sl::SpectralLibrary) = sl.presearch_fragment_index
+getFragmentIndex(sl::SpectralLibrary) = sl.fragment_index
+getPrecursors(sl::SpectralLibrary) = sl.precursors
+getFragmentLookupTable(sl::SpectralLibrary) = sl.fragment_lookup_table 

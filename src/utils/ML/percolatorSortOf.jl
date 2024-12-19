@@ -1,18 +1,3 @@
-function getQvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}) where {T,U<:AbstractFloat}
-
-    order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
-    targets = 0
-    decoys = 0
-    @inbounds @fastmath for i in order
-            targets += labels[i]
-            decoys += (1 - labels[i])
-            qvals[i] = decoys/(targets + decoys)
-    end
-    #PSMs[:,:q_value] = q_values;
-end
-
-getQvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = getQvalues!(PSMs, allowmissing(probs), allowmissing(labels))
-
 function getBestScorePerPrec!(
     prec_to_best_score_new::Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
     test_fold_filter::Function,

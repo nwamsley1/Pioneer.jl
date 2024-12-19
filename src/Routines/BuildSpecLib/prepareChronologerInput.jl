@@ -115,6 +115,6 @@ function prepareChronologerInput(
     end
     ##########
     #Write precursors out for chronologer irt prediction 
-    CSV.write(chronologer_out_path, fasta_df, delim = '\t')
+    Arrow.write(chronologer_out_path, fasta_df)
     return nothing
 end

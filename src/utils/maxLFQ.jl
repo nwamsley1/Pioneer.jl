@@ -19,12 +19,12 @@ was not seen in the i'th experiment, then S[i, j] == missing.
 ### Examples 
 
 """
-function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt32}, experiments_dict::Dict{UInt32, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
+function getS(peptides::AbstractVector{UInt32}, peptides_dict::Dict{UInt32, Int64}, experiments::AbstractVector{UInt16}, experiments_dict::Dict{UInt16, Int64}, abundance::AbstractVector{Union{T, Missing}}, M::Int, N::Int) where {T<:Real}
     #Initialize
     S = Array{Union{Missing,T}}(undef, (M, N))
     for i in eachindex(peptides)
             if !ismissing(abundance[i]) #Abundance of the the peptide 
-               if abundance[i] != 0.0
+               if abundance[i] > 0.0
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = abundance[i]
                else
                     S[peptides_dict[peptides[i]], experiments_dict[experiments[i]]] = missing
@@ -181,7 +181,7 @@ function getProtAbundance(protein::String,
                             target::Bool,
                             species::String,
                             peptides::AbstractVector{UInt32}, 
-                            experiments::AbstractVector{UInt32}, 
+                            experiments::AbstractVector{UInt16}, 
                             abundance::AbstractVector{Union{T, Missing}},
                             target_out::Vector{Union{Missing, Bool}},
                             species_out::Vector{Union{Missing, String}},
@@ -212,8 +212,8 @@ function getProtAbundance(protein::String,
                             protein_out::Vector{Union{Missing, String}}, 
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}}, 
-                            experiments_out::Vector{Union{Missing, UInt32}}, 
-                            S::Matrix{Union{Missing, T}}) where {T<:Real}
+                            experiments_out::Vector{Union{Missing, I}}, 
+                            S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
         function appendPeptides!(peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                                 row_idx::Int64,
@@ -283,7 +283,7 @@ end
 function LFQ(prot::DataFrame,
              protein_quant_path::String,
                 quant_col::Symbol,
-                file_id_to_parsed_name::Dict{Int64, String},
+                file_id_to_parsed_name::Vector{String},
                 q_value_threshold::Float32,
                 score_to_qval::Interpolations.Extrapolation;
                 batch_size = 100000)

@@ -1,5 +1,6 @@
 function BuildSpecLib(params_path::String)
     #Read library building parameters json
+    # params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/config.json"
     params = checkParams(read(params_path, String));
     println("chronologer_dir ", joinpath(@__DIR__, "../../../chronologer/Predict_RT.py"))
     #Directory in which to place library
@@ -86,6 +87,7 @@ function BuildSpecLib(params_path::String)
         #Predict the retention times for each precursor in the `fasta_df` and 
         #write to a .csv file
         println("Predicting Retention Times with chronologer (Wilburn et al. 2023)...")
+        chronologer_table = Arrow.Table(chronologer_out_path)
         #run(`python3.9 ../chronologer/Predict_RT.py $chronologer_out_path $chronologer_out_path`)
         chronologer_dir = joinpath(@__DIR__, "../../../chronologer/Predict_RT.py")
         run(`python3.9 $chronologer_dir $chronologer_out_path $chronologer_out_path`)
@@ -104,7 +106,7 @@ function BuildSpecLib(params_path::String)
         rm(chronologer_out_path, force = true)
         dir, filename = splitdir(precursors_arrow_path)
         name, _ = splitext(filename)
-        raw_fragments_arrow_path = joinpath(dir, name*"_raw_fragments.arrow")
+        raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
         rm(raw_fragments_arrow_path, force = true)
         ##########
         #Request fragment prediction from koina in batches 
@@ -117,28 +119,46 @@ function BuildSpecLib(params_path::String)
                         params["max_koina_batch"],
                         prediction_model)
         #=
-        basedir = "/Volumes/Active/Backpack/libraries/exploris/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_zCorrected/"
+        altimeter_dir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_bright-u10"
         predictFragments(
                         raw_fragments_arrow_path,
                         basedir)    
-        =#            
 
+        frags_out_path = raw_fragments_arrow_path
+        altimeter_dir = "/Volumes/d.goldfarb/Active/Backpack/libraries/astral/Altimeter101324_MixedSpecies_OlsenAstral_NoEntrapment_101324_smooth-b31/"
+        predictFragments(
+        frags_out_path,
+        altimeter_dir,
+        SplineCoefficientModel("test")
+        )   
+
+
+
+        df, frags_per_prec, knot_vec = parseBatchToTable(
+            JSON.parse(read(batch_path, String))["outputs"], 
+            model_type
+        )
+        batch_path = 
+        [parse(Int64, String(split(split(x,'_')[end], '.')[1])) for x in  ordered_altimeter_json_paths]
+        =#            
+        #raw_fragments_arrow_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/raw_fragments.arrow"
         precursors_table = Arrow.Table(precursors_arrow_path)
         fragments_table = Arrow.Table(raw_fragments_arrow_path)
         ion_annotation_set =  getIonAnnotationSet(fragments_table[:annotation])
         frag_name_to_idx = Dict(zip(collect(ion_annotation_set), collect(range(one(UInt16), UInt16(length(ion_annotation_set))))))
-        
+      
         parseKoinaFragments(
             precursors_table,
             fragments_table,
             frag_annotation_type,
             ion_annotation_set,
             frag_name_to_idx,
-            params["match_lib_build_batch"],
-            joinpath(@__DIR__, "../../../data/immonium.txt"),
+            10000,#params["match_lib_build_batch"],
+            joinpath(@__DIR__, "../data/immonium2.txt"),
             lib_dir,
             Dict{String, Int8}(), #mods to sulfur dict 
             iso_mod_to_mass,
+            SplineCoefficientModel("test")
         );
 
         fragments_table = nothing
@@ -226,7 +246,14 @@ function BuildSpecLib(params_path::String)
         UInt8.(_params[:library_params]["rank_to_score"]),
         frag_bounds,
         Float32(_params[:library_params]["frag_bin_tol_ppm"]),
-        Float32(_params[:library_params]["rt_bin_tol"])
+        Float32(_params[:library_params]["rt_bin_tol"]),
+        SplineCoefficientModel("TEST")
     )
+
+    jldsave(
+        joinpath(new_lib_dir, "spline_knots.jld2");
+        spl_knots
+    )
+
     return nothing
 end

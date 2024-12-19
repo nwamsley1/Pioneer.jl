@@ -5,6 +5,12 @@ end
 struct InstrumentAgnosticModel <: KoinaModelType
     model_name::String
 end
+struct RetentionTimeModel <: KoinaModelType
+    model_name::String
+end
+struct SplineCoefficientModel <: KoinaModelType
+    model_name::String
+end
 
 abstract type FragAnnotation end
 struct UniSpecFragAnnotation <: FragAnnotation

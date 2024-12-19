@@ -1,464 +1,200 @@
+"""
+    SearchDIA(params_path::String)
+
+Main entry point for DIA (Data-Independent Acquisition) search workflow.
+Executes a series of `SearchMethod`s and generates performance metrics.
+
+The workflow consists of:
+1. Parameter loading and validation
+2. Spectral library initialization
+3. Multiple search phases (parameter tuning, NCE tuning, etc.)
+4. Performance reporting
+
+Parameters:
+- params_path: Path to JSON configuration file containing search parameters
+
+Output:
+- Generates a log file in the results directory
+- Executes all search phases
+- Reports timing and memory usage statistics
+"""
 function SearchDIA(params_path::String)
-    #println("JLD2 version is: ", Pkg.installed()["JLD2"])
-    total_time = @timed begin
-    #params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/DATASETS_ARROW/OlsenMixedSpeciesAstral200ng/OlsenMixedPrositParams.json"
-    if !isabspath(params_path)
-        params_path = joinpath(@__DIR__, "../../", params_path)
-    end
-    params = JSON.parse(read(params_path, String));
-    MS_DATA_DIR = params["ms_data_dir"];
-    SPEC_LIB_DIR = params["library_folder"];
-    if !isabspath(SPEC_LIB_DIR)
-        SPEC_LIB_DIR =  joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
-    end
+    # === Initialize logging ===
+    checkParams(params_path)
+    params = parse_pioneer_parameters(params_path)
+    log_path = joinpath(params.paths[:results], "pioneer_search_log.txt")
+    mkpath(dirname(log_path))  # Ensure directory exists
 
-    #Get all files ending in ".arrow" that are in the MS_DATA_DIR folder. 
-    if isabspath(MS_DATA_DIR)
-        MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-    else
-        MS_DATA_DIR = joinpath(@__DIR__, "../../", MS_DATA_DIR)
-        MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) for file in filter(file -> isfile(joinpath(MS_DATA_DIR, file)) && match(r"\.arrow$", file) != nothing, readdir(MS_DATA_DIR))];
-    end
 
-    params_ = parseParams(params)
-
-    qc_plot_folder, rt_alignment_folder, mass_err_estimation_folder, results_folder, temp_folder = makeOutputDirectories(
-        joinpath(params_[:benchmark_params]["results_folder"], "RESULTS"),
-        params
-    )
-
-    first_search_psms_folder = joinpath(temp_folder, "first_search_psms")
-    if !isdir(first_search_psms_folder)
-        mkpath(first_search_psms_folder)
-    end
-
-    irt_indices_folder = joinpath(temp_folder, "irt_indices_folder")
-    if !isdir(irt_indices_folder)
-        mkpath(irt_indices_folder)
-    end
-
-    quant_psms_folder = joinpath(temp_folder, "quant_psms_folder")
-    if !isdir(quant_psms_folder )
-        mkpath(quant_psms_folder )
-    end
-
-    passing_psms_folder = joinpath(temp_folder, "passing_psms")
-    if !isdir( passing_psms_folder )
-    mkpath( passing_psms_folder )
-    end
-
-    passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
-    if !isdir( passing_proteins_folder )
-       mkpath( passing_proteins_folder )
-    end
-
-    second_quant_folder = joinpath(temp_folder, "second_quant")
-    if !isdir( second_quant_folder)
-        mkpath( second_quant_folder)
-    end
-    ###########
-    #Load Spectral Libraries
-    ###########
-    spec_lib = loadSpectralLibrary(SPEC_LIB_DIR);
-    precursors = spec_lib["precursors"];
-    unique_proteins = unique(precursors[:accession_numbers]);
-    accession_number_to_id = Dict(zip(unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))));
-    ###########
-    #Set CV Folds 
-    ###########
-    pid_to_cv_fold = getCVFolds(
-        collect(range(UInt32(1), UInt32(length(spec_lib["precursors"][:sequence])))),#precursor id's, 
-        spec_lib["precursors"][:accession_numbers]
-        );
-    ###########
-    #Load Pre-Allocated Data Structures. One of each for each thread. 
-    ###########
-    N = Threads.nthreads()
-    M = 250000
-    n_precursors = length(spec_lib["precursors"][:mz])
-    ionMatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    ionMisses = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    all_fmatches = [[FragmentMatch{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
-    ionTemplates = [[DetailedFrag{Float32}() for _ in range(1, M)] for _ in range(1, N)];
-    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
-    #iso_splines = parseIsoXML(joinpath(@__DIR__,"../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"));
-    scored_PSMs = [Vector{SimpleScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
-    unscored_PSMs = [[SimpleUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
-    spectral_scores = [Vector{SpectralScoresSimple{Float16}}(undef, 5000) for _ in range(1, N)];
-    precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
-    precs = [Counter(UInt32, UInt8,n_precursors ) for _ in range(1, N)];
-    chromatograms = [Vector{ChromObject}(undef, 5000) for _ in range(1, N)];
-    complex_scored_PSMs = [Vector{ComplexScoredPSM{Float32, Float16}}(undef, 5000) for _ in range(1, N)];
-    complex_unscored_PSMs = [[ComplexUnscoredPSM{Float32}() for _ in range(1, 5000)] for _ in range(1, N)];
-    complex_spectral_scores = [Vector{SpectralScoresComplex{Float16}}(undef, 5000) for _ in range(1, N)];
-    ###########
-    #File Names parsing
-    file_id_to_parsed_name, parsed_fnames,file_path_to_parsed_name = parseFileNames(MS_TABLE_PATHS)
-
-    ###########
-    #Tune Parameters
-    println("Parameter Tuning Search...")
-    RT_to_iRT_map_dict, frag_err_dist_dict, irt_errs = parameterTuningSearch(rt_alignment_folder, #ms_file_idx_to_remove, failed_ms_file_idxs
-                                                                            mass_err_estimation_folder,
-                                                                            MS_TABLE_PATHS,
-                                                                            params_,
-                                                                            spec_lib,
-                                                                            ionMatches,
-                                                                            ionMisses,
-                                                                            all_fmatches,
-                                                                            IDtoCOL,
-                                                                            ionTemplates,
-                                                                            iso_splines,
-                                                                            scored_PSMs,
-                                                                            unscored_PSMs,
-                                                                            spectral_scores,
-                                                                            precs);
-
-    println("Parameter Tuning Search...")
-    #Otherwise use a default quad transmission model
-    quad_model_dict = nothing
-    if params_[:presearch_params]["estimate_quad_transmission"]
-        IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors*3+1) for _ in range(1, N)];
-        precursor_weights = [zeros(Float32, n_precursors*3+1) for _ in range(1, N)];
-        quad_model_dict = quadTuningSearch(    RT_to_iRT_map_dict,
-                                        frag_err_dist_dict,
-                                        irt_errs,
-                                        MS_TABLE_PATHS,
-                                        params_,
-                                        spec_lib,
-                                        ionMatches,
-                                        ionMisses,
-                                        all_fmatches,
-                                        IDtoCOL,
-                                        ionTemplates,
-                                        iso_splines,
-                                        scored_PSMs,
-                                        unscored_PSMs,
-                                        spectral_scores,
-                                        precursor_weights,
-                                        precs);
-        IDtoCOL = [ArrayDict(UInt32, UInt16, n_precursors ) for _ in range(1, N)];
-        precursor_weights = [zeros(Float32, n_precursors ) for _ in range(1, N)];
-    else
-        quad_model_dict = Dict{Int64, QuadTransmissionModel}()
-        for (key, value) in pairs(frag_err_dist_dict)
-            quad_model_dict[key] = GeneralGaussModel(5.0f0, 0.0f0)
+    open(log_path, "w") do log_file
+        # Utility functions for dual console/file output
+        function dual_println(args...)
+            println(stdout, args...)  # Write to console
+            println(log_file, args...)  # Write to file
         end
-    end
+        
+        function dual_print(args...)
+            print(stdout, args...)  # Write to console
+            print(log_file, args...)  # Write to file
+        end
 
-    #=
-    p = plot()
-    plot_bins = LinRange(400-3, 400+3, 100)
-    for (key, value) in pairs(quad_model_dict)
-    
-       quad_func = getQuadTransmissionFunction(value, 400.0f0, 2.0f0)
-       plot!(p, plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5)
-    end
-    display(p)
-    =#
+        # === Initialize performance tracking ===
+        timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),Tuple{Nothing, Float64,Int64,Float64,Base.GC_Diff}}}()
+        
+        # === Load and validate data paths ===
+        @info "Loading Parameters..."
+        params_timing = @timed begin
+            # Setup MS data directory
+            MS_DATA_DIR = params.paths[:ms_data]
+            if !isabspath(MS_DATA_DIR)
+                MS_DATA_DIR = joinpath(@__DIR__, "../../", MS_DATA_DIR)
+            end
 
-    peak_fwhms, psms_paths = firstSearch(
-        first_search_psms_folder,
-        RT_to_iRT_map_dict,
-        frag_err_dist_dict,
-        irt_errs,
-        quad_model_dict,
-        file_id_to_parsed_name,
-        MS_TABLE_PATHS,
-        params_,
-        spec_lib,
-        ionMatches,
-        ionMisses,
-        all_fmatches,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        scored_PSMs,
-        unscored_PSMs,
-        spectral_scores,
-        precs);
+            # Setup spectral library directory
+            SPEC_LIB_DIR = params.paths[:library]
+            if !isabspath(SPEC_LIB_DIR)
+                SPEC_LIB_DIR = joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
+            end
 
-    first_psms = DataFrame(Arrow.Table([fname for fname in readdir(first_search_psms_folder,join=true) if endswith(fname, ".arrow")]));
-    first_psms = first_psms[first_psms[!,:q_value].<=0.01,:];
-    value_counts(df, col) = combine(groupby(df, col), nrow);
-    psms_counts = value_counts(first_psms, :ms_file_idx);
-    CSV.write(joinpath(results_folder, "first_search_psms_counts.csv"), psms_counts);
-    first_psms = nothing
-    ##########
-    #Combine First Search Results
-    ##########
-    println("Combining First Search Results...")
-    #Use high scoring psms to map library retention times (irt)
-    #onto the empirical retention times and vise-versa.
-    #uniform B-spline
-    irt_rt, rt_irt = mapLibraryToEmpiricalRT(
-    psms_paths,#Need to change this to a list of temporrary file paths]
-    RT_to_iRT_map_dict,
-    min_prob = Float64(params_[:irt_mapping_params]["min_prob"])
-    )
-    #Summarize list of best N precursors accross all runs. 
-    precursor_dict = getBestPrecursorsAccrossRuns(
-            psms_paths, 
-            spec_lib["precursors"][:mz],
-            rt_irt, 
-            max_q_val = Float32(params_[:summarize_first_search_params]["max_q_val_for_irt"]),
-            max_precursors = Int64(params_[:summarize_first_search_params]["max_precursors"])
-            );
+            # Find all Arrow files in MS data directory
+            MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) 
+                            for file in readdir(MS_DATA_DIR)
+                            if isfile(joinpath(MS_DATA_DIR, file)) && 
+                               match(r"\.arrow$", file) != nothing]
+            nothing
+        end
+        timings["Parameter Loading"] = params_timing
 
-    irt_errs = nothing
-    if length(keys(peak_fwhms)) > 1
-        irt_errs = getIrtErrs(
-            peak_fwhms,
-            precursor_dict,
-            params_
-        )
-    else
-        irt_errs = Dict(zip(keys(peak_fwhms), zeros(Float32, length(keys(peak_fwhms)))))
-    end
-    bin_rt_size =  params_[:summarize_first_search_params]["max_irt_bin_size"]
-    prec_to_irt =  map(x->(irt = x[:best_irt], mz = x[:mz]), precursor_dict)
-    rt_index_paths = makeRTIndices(
-         irt_indices_folder,
-         psms_paths,
-         prec_to_irt,
-         rt_irt,
-         min_prob = params_[:summarize_first_search_params]["max_prob_to_impute"])
-     
-    ############
-    #Estimate Optimal Huber Loss Smoothing Parameter
-    delta0 = params_[:deconvolution_params]["huber_delta0"];
-    delta_exp = params_[:deconvolution_params]["huber_delta_exp"];
-    delta_iters = params_[:deconvolution_params]["huber_delta_iters"];
-    huber_δs = Float32[delta0*(delta_exp^i) for i in range(1, delta_iters)];
+        # === Initialize spectral library and search context ===
+        @info "Loading Spectral Library..."
+        lib_timing = @timed begin
+            SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
+            nothing
+        end
+        timings["Spectral Library Loading"] = lib_timing
 
-    println("Optimize Huber Loss Smoothing Parameter...")
-    params_[:deconvolution_params]["huber_delta"] = getHuberLossParam(
-        huber_δs,
-        precursor_dict,
-        MS_TABLE_PATHS,
-        precursors[:is_decoy],
-        frag_err_dist_dict,
-        rt_index_paths,
-        bin_rt_size,
-        rt_irt,
-        irt_errs,
-        quad_model_dict,
-        chromatograms,
-        file_path_to_parsed_name,
-        params_,
-        spec_lib,
-        ionMatches,
-        ionMisses,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        complex_scored_PSMs,
-        complex_unscored_PSMs,
-        complex_spectral_scores,
-        precursor_weights);
- 
-    println("huber ", params_[:deconvolution_params]["huber_delta"])
-    ############
-    #Quantitative Search
-    println("Begining Quantitative Search...")
-    ms_table_path_to_psms_path = quantSearch(
-        frag_err_dist_dict,
-        pid_to_cv_fold,
-        prec_to_irt,
-        quant_psms_folder,
-        rt_index_paths,
-        bin_rt_size,
-        rt_irt,
-        irt_errs,
-        quad_model_dict,
-        chromatograms,
-        file_path_to_parsed_name,
-        MS_TABLE_PATHS,
-        params_,
-        spec_lib,
-        ionMatches,
-        ionMisses,
-        IDtoCOL,
-        ionTemplates,
-        iso_splines,
-        complex_scored_PSMs,
-        complex_unscored_PSMs,
-        complex_spectral_scores,
-        precursor_weights
-        );
+        # Initialize Search Context
+        @info "Initializing Search Context..."
+        context_timing = @timed begin
+            # Load isotope splines and initialize search context
+            SEARCH_CONTEXT = initSearchContext(
+                SPEC_LIB,
+                parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+                ArrowTableReference(MS_TABLE_PATHS),
+                Threads.nthreads(),
+                250000 # Default temp array batch size 
+            )
+            setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+            nothing
+        end
+        timings["Search Context Initialization"] = context_timing
 
-    println("Traning Target-Decoy Model...")
-    best_psms = samplePSMsForXgboost(quant_psms_folder, params_[:xgboost_params]["max_n_samples"]);
-    models = scoreTraces!(best_psms,readdir(quant_psms_folder, join=true), precursors);
-    #Wipe memory
-    best_psms = nothing
-    GC.gc()
-    best_traces = getBestTraces(
-        quant_psms_folder,
-        Float32(params_[:xgboost_params]["min_best_trace_prob"]));
-    #Path for merged quant psms scores 
-    merged_quant_path = joinpath(temp_folder, "merged_quant.arrow")
-    #Sort quant tables in descenging order of probability and remove 
-    #sub-optimal isotope traces 
-    sortAndFilterQuantTables(
-        quant_psms_folder,
-        merged_quant_path,
-        best_traces
-    )
-    #Merge sorted tables into a single list with two columns
-    #for "prob" and "target"
-    mergeSortedPSMScores(
-                    quant_psms_folder, 
-                    merged_quant_path
-                    )
-    #functions to convert "prob" to q-value and posterior-error-probability "pep" 
-    precursor_pep_spline = getPEPSpline(merged_quant_path, 
-                                        :prob, 
-                                        min_pep_points_per_bin = params_[:xgboost_params]["precursor_prob_spline_points_per_bin"], 
-                                        n_spline_bins = 5)
-    precursor_qval_interp = getQValueSpline(merged_quant_path, 
-                                            :prob, 
-                                            min_pep_points_per_bin = max(params_[:xgboost_params]["precursor_q_value_interpolation_points_per_bin"], 3))
+        # === Execute search pipeline ===
+        # Define search phases in order of execution
+        searches = [
+            ("Parameter Tuning", ParameterTuningSearch()),
+            ("NCE Tuning", NceTuningSearch()),
+            ("Quadrupole Tuning", QuadTuningSearch()),
+            ("First Pass Search", FirstPassSearch()),
+            ("Huber Tuning", HuberTuningSearch()),
+            ("Second Pass Search", SecondPassSearch()),
+            ("Scoring", ScoringSearch()),
+            ("Chromatogram Integration", IntegrateChromatogramSearch()),
+            ("MaxLFQ", MaxLFQSearch())
+        ]
 
-    getPSMsPassingQVal(
-                                    quant_psms_folder, 
-                                    passing_psms_folder,
-                                    precursor_pep_spline,
-                                    precursor_qval_interp,
-                                    0.01f0)
-    ###########
-    #Score Protein Groups
-    sorted_pg_score_path = getProteinGroups(
-            passing_psms_folder, 
-            passing_proteins_folder,
-            temp_folder,
-            precursors[:accession_numbers],
-            accession_number_to_id,
-            precursors[:sequence])
-    if params_[:output_params]["delete_temp"]
-        rm(passing_proteins_folder,recursive=true)
-    end
-    #=
-    pg_pep_spline = getPEPSpline(sorted_pg_score_path, 
-                                :max_pg_score, 
-                                min_pep_points_per_bin = params_[:xgboost_params]["pg_prob_spline_points_per_bin"], 
-                                n_spline_bins = 5)
-    =#
-    pg_qval_interp = getQValueSpline(sorted_pg_score_path, 
-                                    :max_pg_score, 
-                                    min_pep_points_per_bin = max(params_[:xgboost_params]["pg_q_value_interpolation_points_per_bin"], 3))
+        # Execute each search phase and record timing
+        for (name, search) in searches
+            @info "Executing $name..."
+            search_timing = @timed execute_search(search, SEARCH_CONTEXT, params)
+            timings[name] = search_timing
+        end
 
-    ###########
-    #Re-quantify with 1% fdr precursors 
-    println("Re-Quantifying Precursors at FDR Threshold...")
-    test_prop = secondQuantSearch!( 
-                    file_path_to_parsed_name,
-                    passing_psms_folder,
-                    second_quant_folder,
-                    frag_err_dist_dict,
-                    rt_index_paths,
-                    bin_rt_size,
-                    rt_irt,
-                    irt_errs,
-                    quad_model_dict,
-                    chromatograms,
-                    MS_TABLE_PATHS,
-                    params_,
-                    spec_lib["precursors"],
-                    accession_number_to_id,
-                    spec_lib,
-                    ionMatches,
-                    ionMisses,
-                    IDtoCOL,
-                    ionTemplates,
-                    iso_splines,
-                    complex_scored_PSMs,
-                    complex_unscored_PSMs,
-                    complex_spectral_scores,
-                    precursor_weights)
-
-    if params_[:output_params]["delete_temp"]
-        rm(passing_psms_folder,recursive=true)
+        # === Generate performance report ===
+        print_performance_report(timings, MS_TABLE_PATHS, dual_println)
     end
-    ###########
-    #Normalize Quant 
-    ###########
-    println("Normalization...")
-    normalizeQuant(
-            second_quant_folder,
-            :peak_area,
-            N = params_[:normalization_params]["n_rt_bins"],
-            spline_n_knots = params_[:normalization_params]["spline_n_knots"]
-        )
-
-    merged_second_quant_path = joinpath(temp_folder, "joined_second_quant.arrow")
-    if isfile(merged_second_quant_path)
-        rm(merged_second_quant_path, force = true)
-    end
-    if isfile(joinpath(results_folder, "precursors_long.arrow"))
-        rm(joinpath(results_folder, "precursors_long.arrow"), force=true)
-    end
-    mergeSortedArrowTables(
-        second_quant_folder,
-        joinpath(results_folder, "precursors_long.arrow"),
-        (:protein_idx,:precursor_idx),
-        N = 1000000
-    )
-    if params_[:output_params]["delete_temp"]
-        rm(second_quant_folder,recursive=true)
-    end
-    precursors_wide_arrow = writePrecursorCSV(
-        joinpath(results_folder, "precursors_long.arrow"),
-        sort(collect(values(file_id_to_parsed_name))),
-        false,#normalized
-        write_csv = params_[:output_params]["write_csv"],
-        )
-     #Summarize Precursor ID's
-    println("Max LFQ...")
-    if isfile( joinpath(results_folder, "protein_groups_long.arrow"))
-        rm( joinpath(results_folder, "protein_groups_long.arrow"), force=true)
-    end
-    LFQ(
-        DataFrame(Arrow.Table(joinpath(results_folder, "precursors_long.arrow"))),
-        joinpath(results_folder, "protein_groups_long.arrow"),
-        :peak_area,
-        file_id_to_parsed_name,
-        0.01f0,
-        pg_qval_interp,
-        batch_size = 100000
-    )
-    protein_groups_wide_arrow = writeProteinGroupsCSV(
-        joinpath(results_folder, "protein_groups_long.arrow"),
-        precursors[:sequence],
-        precursors[:isotopic_mods],
-        precursors[:structural_mods],
-        precursors[:prec_charge],
-        sort(collect(values(file_id_to_parsed_name))),
-        write_csv = params_[:output_params]["write_csv"],
-        )
-
-    println("QC Plots")
-    if isfile(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
-        rm(joinpath(qc_plot_folder, "QC_PLOTS.pdf"))
-    end
-    println("parsed_fnames $parsed_fnames")
-    println("file_id_to_parsed_name $file_id_to_parsed_name")
-    qcPlots(
-        precursors_wide_arrow,
-        protein_groups_wide_arrow,
-        params_,
-        precursors,
-        parsed_fnames,
-        qc_plot_folder,
-        file_id_to_parsed_name,
-        MS_TABLE_PATHS,
-        irt_rt,
-        frag_err_dist_dict
-    )
-    if params_[:output_params]["delete_temp"]
-        rm(temp_folder,recursive=true)
-    end
+    return nothing
 end
-    return 10
+
+
+"""
+Helper function to print formatted performance metrics
+"""
+function print_performance_report(timings, ms_table_paths, println_func)
+    # Header
+    println_func("\n" * repeat("=", 90))
+    println_func("DIA Search Performance Report")
+    println_func(repeat("=", 90))
+
+    # Detailed analysis
+    println_func("\nDetailed Step Analysis:")
+    println_func(repeat("-", 90))
+    println_func(rpad("Step", 30), " ", 
+            rpad("Time (s)", 12), " ",
+            rpad("Memory (GB)", 12), " ", 
+            rpad("GC Time (s)", 12), " ",
+            rpad("GC %", 12))
+    println_func(repeat("-", 90))
+
+    # Calculate totals
+    total_time = 0.0
+    total_memory = 0
+    total_gc = 0.0
+
+    # Print step-by-step metrics
+    sorted_steps = sort(collect(keys(timings)), by=x->timings[x][:time])
+    for step in sorted_steps
+        timing = timings[step]
+        time_s = timing.time
+        mem_gb = timing.bytes / (1024^3)
+        gc_s = timing.gctime
+        gc_pct = (gc_s / time_s) * 100
+
+        total_time += time_s
+        total_memory += timing.bytes
+        total_gc += gc_s
+
+        println_func(rpad(step, 30), " ",
+            rpad(@sprintf("%.2f", time_s), 12), " ",
+            rpad(@sprintf("%.2f", mem_gb), 12), " ",
+            rpad(@sprintf("%.2f", gc_s), 12), " ",
+            rpad(@sprintf("%.1f", gc_pct), 12))
+    end
+
+    # Print summary statistics
+    print_summary_statistics(
+        total_time, total_memory, total_gc,
+        length(timings), length(ms_table_paths),
+        println_func
+    )
+end
+
+"""
+Helper function to print summary statistics
+"""
+function print_summary_statistics(total_time, total_memory, total_gc, 
+                                n_steps, n_files, println_func)
+    # Print totals
+    println_func(repeat("-", 90))
+    println_func(rpad("TOTAL", 30), " ",
+            rpad(@sprintf("%.2f", total_time), 12), " ",
+            rpad(@sprintf("%.2f", total_memory/(1024^3)), 12), " ",
+            rpad(@sprintf("%.2f", total_gc), 12), " ",
+            rpad(@sprintf("%.1f",(total_gc/total_time)*100), 12))
+
+    # Memory summary
+    println_func("\nMemory Usage Summary:")
+    println_func(repeat("-", 90))
+    current_mem = Sys.total_memory() / 1024^3
+    println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
+    println_func("Total Available Memory: $(round(current_mem, digits=2)) GB")
+    
+    # Runtime summary
+    println_func("\nRuntime Summary:")
+    println_func(repeat("-", 90))
+    println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
+    println_func("Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds")
+    println_func("Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds")
+
+    println_func("\n" * repeat("=", 90))
 end
