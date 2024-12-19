@@ -99,7 +99,7 @@ function summarize_results!(
     params::ScoringSearchParameters,
     search_context::SearchContext
 )
-    temp_folder = getDataOutDir(search_context)
+    temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
     
     # Set up output folders for different stages
     second_pass_folder = joinpath(temp_folder, "second_pass_psms")

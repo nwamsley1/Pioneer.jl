@@ -68,7 +68,6 @@ Interface Implementation
 get_parameters(::MaxLFQSearch, params::Any) = MaxLFQSearchParameters(params)
 
 function init_search_results(::MaxLFQSearchParameters, search_context::SearchContext)
-    temp_folder = getDataOutDir(search_context)
     return MaxLFQSearchResults(
         joinpath(getDataOutDir(search_context), "precursors_long.arrow"),
         joinpath(getDataOutDir(search_context), "precursors_wide.arrow"),
@@ -119,7 +118,7 @@ function summarize_results!(
 )
     try
         # Get paths
-        temp_folder = getDataOutDir(search_context)
+        temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
         passing_psms_folder = joinpath(temp_folder, "passing_psms")
         qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
         precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
@@ -182,7 +181,7 @@ function summarize_results!(
         isfile(qc_plot_path) && rm(qc_plot_path)
         create_qc_plots(
             precursors_wide_path,
-            precursors_long_path,
+            proteins_wide_path,
             search_context,
             precursors,
             params

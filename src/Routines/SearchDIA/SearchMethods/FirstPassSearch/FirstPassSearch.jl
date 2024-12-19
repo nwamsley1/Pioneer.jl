@@ -151,7 +151,7 @@ function init_search_results(
     ::FirstPassSearchParameters,
     search_context::SearchContext
 )
-    temp_folder = joinpath(getDataOutDir(search_context), "first_pass_psms")
+    temp_folder = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
     !isdir(temp_folder) && mkdir(temp_folder)
     
     return FirstPassSearchResults(
@@ -350,7 +350,7 @@ function process_search_results!(
             mad_fwhm = 0.2f0))
     end
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    temp_path = joinpath(getDataOutDir(search_context), "first_pass_psms", parsed_fname * ".arrow")
+    temp_path = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms", parsed_fname * ".arrow")
     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     Arrow.write(
         temp_path,

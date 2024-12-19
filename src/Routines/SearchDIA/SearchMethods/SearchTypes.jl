@@ -161,7 +161,7 @@ end
 """
 Primary search context holding all data structures and state for search execution.
 """
-mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
+mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     # Core components
     spec_lib::L
     temp_structures::AbstractVector{<:SearchDataStructures}
@@ -202,7 +202,7 @@ mutable struct SearchContext{N,L<:FragmentIndexLibrary,M<:MassSpecDataReference}
         n_threads::Int64,
         n_precursors::Int64,
         buffer_size::Int64
-    ) where {L<:FragmentIndexLibrary,M<:MassSpecDataReference}
+    ) where {L<:SpectralLibrary,M<:MassSpecDataReference}
         N = length(temp_structures)
         new{N,L,M}(
             spec_lib, temp_structures, mass_spec_data_reference,

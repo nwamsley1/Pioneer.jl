@@ -128,7 +128,7 @@ Interface Implementation
 get_parameters(::SecondPassSearch, params::Any) = SecondPassSearchParameters(params)
 
 function init_search_results(::P, search_context::SearchContext) where {P<:SecondPassSearchParameters}
-    second_pass_psms = joinpath(getDataOutDir(search_context), "second_pass_psms")
+    second_pass_psms = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
         DataFrame()
@@ -251,7 +251,7 @@ function process_search_results!(
         
         # Save processed results
         temp_path = joinpath(
-            getDataOutDir(search_context),
+            getDataOutDir(search_context), "temp_data",
             "second_pass_psms",
             getParsedFileName(search_context, ms_file_idx) * ".arrow"
         )

@@ -124,7 +124,6 @@ function qcPlots(
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
-
         plotPrecursorIDBarPlot(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
@@ -133,7 +132,61 @@ function qcPlots(
         )
 
     end
+    ###############
+    #Plot Protein Group IDs
+    
+    function plotProteinGroupIDBarPlot(
+        protein_groups_wide::Arrow.Table,
+        parsed_fnames::Any;
+        title::String = "protein_abundance_qc",
+        f_out::String = "./test.pdf"
+        )
+        function getColumnIDs(
+            abundance::AbstractVector{Union{Missing, Float32}})
+            non_missing_count = 0
+            for i in range(1, length(abundance))
+                if !ismissing(abundance[i])
+                    non_missing_count += 1
+                end
+            end
+            return non_missing_count
+        end
+        ids = zeros(Int64, length(parsed_fnames))
+        for (i, fname) in enumerate(parsed_fnames)
+            try
+                ids[i] = getColumnIDs(protein_groups_wide[Symbol(fname)])
+            catch
+                continue
+            end
+        end
+        p = Plots.plot(title = title,
+                        legend=:none, layout = (1, 1), show = true)
 
+        Plots.bar!(p, 
+        parsed_fnames,
+        ids,
+        subplot = 1,
+        texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+        xrotation = 45,
+        )
+
+        savefig(p, f_out)
+    end
+
+
+    for n in 1:n_qc_plots
+        start = (n - 1)*n_files_per_plot + 1
+        stop = min(n*n_files_per_plot, length(parsed_fnames))
+
+        plotProteinGroupIDBarPlot(
+            protein_groups_wide,
+            [x for x in parsed_fnames[start:stop]],
+            title = "Protein Group ID's per File",
+            f_out = joinpath(qc_plot_folder, "protein_group_ids_barplot_"*string(n)*".pdf")
+        )
+
+    end
+    
     ###############
     #Plot missed cleavage rate
     function plotMissedCleavageRate(

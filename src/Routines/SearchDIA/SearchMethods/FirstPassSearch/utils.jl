@@ -400,7 +400,7 @@ function create_rt_indices!(
                       precursor_dict)
 
     # Set up indices folder
-    rt_indices_folder = joinpath(getDataOutDir(search_context), "rt_indices")
+    rt_indices_folder = joinpath(getDataOutDir(search_context), "temp_data", "rt_indices")
     !isdir(rt_indices_folder) && mkdir(rt_indices_folder)
 
     # Make RT indices

@@ -93,7 +93,7 @@ end
 Initialize a new search context with simple library search structures.
 """
 function initSearchContext(
-    spec_lib::FragmentIndexLibrary,
+    spec_lib::SpectralLibrary,
     iso_splines::IsotopeSplineModel,
     ms_data_reference::MassSpecDataReference,
     n_threads::Int64,
@@ -179,7 +179,6 @@ Creates the following directory hierarchy:
 setDataOutDir!(search_context, "/path/to/output")
 """
 function setDataOutDir!(s::SearchContext, dir::String)
-    s.data_out_dir[] = dir
     # Create QC plots directory
     qc_plot_folder = joinpath(dir, "qc_plots")
     !isdir(qc_plot_folder) && mkdir(qc_plot_folder)
@@ -194,6 +193,11 @@ function setDataOutDir!(s::SearchContext, dir::String)
     s.qc_plot_folder[] = qc_plot_folder
     s.rt_alignment_plot_folder[] = rt_alignment_folder
     s.mass_err_plot_folder[] = mass_error_folder
+
+    temp_data_dir = joinpath(dir, "temp_data")
+    !isdir(temp_data_dir) && mkdir(temp_data_dir)
+
+    s.data_out_dir[] = dir
 
     return nothing
 end
