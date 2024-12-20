@@ -194,6 +194,24 @@ end
 
 function parseBatchToTable(
     json_out::Vector{Any},
+    LibraryType:: RetentionTimeModel)::Tuple{DataFrame, Int64}
+
+    df = DataFrame()
+
+    n_precs, n_frags_per_prec = first(json_out)["shape"]
+    n_rows = n_precs*n_frags_per_prec
+    for col in json_out
+
+        col_name = Symbol(col["name"])
+        if col_name ∈[:rt]
+            df[!,col_name] = Float32.(col["data"])
+        end
+    end
+    return (df, Int64(last(first(json_out)["shape"])))
+end
+
+function parseBatchToTable(
+    json_out::Vector{Any},
     LibraryType::SplineCoefficientModel)
     df = DataFrame()
     knot_vec = Float32[]

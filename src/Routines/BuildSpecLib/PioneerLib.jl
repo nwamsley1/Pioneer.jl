@@ -1,6 +1,18 @@
 function BuildSpecLib(params_path::String)
     #Read library building parameters json
-    # params_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/config.json"
+    #=
+    params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
+    include("Routines/BuildSpecLib/paramsChecks.jl")
+    include("Routines/BuildSpecLib/fragBounds.jl")
+    include("Routines/BuildSpecLib/estimateCollisionEv.jl")
+    include("Routines/BuildSpecLib/prepareChronologerInput.jl")
+    include("Routines/BuildSpecLib/parseFasta.jl")
+    include("Routines/BuildSpecLib/buildUniSpecInput.jl")
+    include("Routines/BuildSpecLib/getMZ.jl")
+    include("Routines/BuildSpecLib/koinaRequests.jl")
+    include("Routines/BuildSpecLib/predictRetentionTimes.jl")
+    include("Routines/BuildSpecLib/parseChronologerResults.jl")
+    =#
     params = checkParams(read(params_path, String));
     println("chronologer_dir ", joinpath(@__DIR__, "../../../chronologer/Predict_RT.py"))
     #Directory in which to place library
@@ -18,7 +30,7 @@ function BuildSpecLib(params_path::String)
     if !isdir(chronologer_dir)
         mkpath(chronologer_dir)
     end
-    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.tsv")
+    chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.arrow")
 
     #Reformat key parameters
     _params = (
@@ -83,15 +95,56 @@ function BuildSpecLib(params_path::String)
                                 prec_mz_min,
                                 prec_mz_max,
                                 chronologer_out_path)
-
-        #Predict the retention times for each precursor in the `fasta_df` and 
-        #write to a .csv file
-        println("Predicting Retention Times with chronologer (Wilburn et al. 2023)...")
-        chronologer_table = Arrow.Table(chronologer_out_path)
-        #run(`python3.9 ../chronologer/Predict_RT.py $chronologer_out_path $chronologer_out_path`)
-        chronologer_dir = joinpath(@__DIR__, "../../../chronologer/Predict_RT.py")
-        run(`python3.9 $chronologer_dir $chronologer_out_path $chronologer_out_path`)
-
+        try
+            #=
+            Prohibitively slow until koina batch-size issue resoved. Use local chronologer for the time being. 
+            predictRetentionTimes(
+                chronologer_out_path,
+                RetentionTimeModel("chronologer"),
+                24,
+                1000,
+                "chronologer"
+            )
+            =#
+            throw("oops")
+        catch
+            @warn "Chronoloer failed through koina. Defaulting to local..."
+            #Predict the retention times for each precursor in the `fasta_df` and 
+            #write to a .csv file
+            println("Predicting Retention Times with chronologer (Wilburn et al. 2023)...")
+            function replace_unimod_codes!(sequences::Vector{String}, unimod_dict::Dict{String15, Float64})
+                # Create pattern that matches any UniMod code in brackets
+                for (code, mass) in unimod_dict
+                    for i in range(1, length(sequences))
+                        # Create the pattern [UniMod:XX] and replacement [mass]
+                        pattern = "[" * code * "]"
+                        replacement = "[+" * string(round(mass, digits=4)) * "]"
+                        sequences[i] = replace(sequences[i], pattern => replacement)
+                    end
+                end
+                return nothing
+            end
+            #run(`python3.9 ../chronologer/Predict_RT.py $chronologer_out_path $chronologer_out_path`)
+            try
+                chronologer_out_tsv = replace(chronologer_out_path, r"\.arrow$" => ".tsv")
+                test_chronologer = DataFrame(Tables.columntable(Arrow.Table(chronologer_out_path)))
+                unimod_df = DataFrame(CSV.File("../chronologer/data/UniModToMass.txt"))
+                unimod_dict = Dict(zip(unimod_df[!,:name], unimod_df[!,:mz]))
+                replace_unimod_codes!(test_chronologer[!,"chronologer_sequence"], unimod_dict)
+                CSV.write(chronologer_out_tsv, test_chronologer , delim = "\t")
+                chronologer_dir = joinpath(@__DIR__, "../../../chronologer/Predict_RT.py")
+                run(`python3.9 $chronologer_dir $chronologer_out_tsv $chronologer_out_tsv`)
+            catch
+                chronologer_out_tsv = replace(chronologer_out_path, r"\.arrow$" => ".tsv")
+                test_chronologer = DataFrame(Tables.columntable(Arrow.Table(chronologer_out_path)))
+                unimod_df = DataFrame(CSV.File("../chronologer/data/UniModToMass.txt"))
+                unimod_dict = Dict(zip(unimod_df[!,:name], unimod_df[!,:mz]))
+                replace_unimod_codes!(test_chronologer[!,"chronologer_sequence"], unimod_dict)
+                CSV.write(chronologer_out_tsv, test_chronologer , delim = "\t")
+                chronologer_dir = joinpath(@__DIR__, "../chronologer/Predict_RT.py")
+                run(`python3.9 $chronologer_dir $chronologer_out_tsv $chronologer_out_tsv`)               
+            end
+        end
         #Parse isotope mod groups into this dictionary
         iso_mod_to_mass = Dict{String, Float32}()
         #Convert to an arrow table and write to the main library folder 

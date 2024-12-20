@@ -145,7 +145,6 @@ function getSimpleFrags(
     return simple_frags[1:simple_frag_idx]
 end
 
-
 function buildFragmentIndex!(
                             folder_out::String,
                             frag_ions::Vector{SimpleFrag{T}}, 
@@ -649,7 +648,6 @@ function getDetailedFrags(
     prec_to_frag_idx_new[end] = UInt64(detailed_frag_idx)
     return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new
 end
-
 
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,

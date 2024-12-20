@@ -47,11 +47,11 @@ function predictRetentionTimes(
         #return batch_json_inputs[1]
         out_requests = multi_request(batch_json_inputs, model_url)
         #return out_requestsd
-        return vcat([first(parseBatchToTable(request["outputs"])) for request in out_requests]...)[!,:rt];
+        return vcat([first(parseBatchToTable(request["outputs"], model_type)) for request in out_requests]...)[!,:rt];
     end
         
-
-    peptides_df = DataFrame(Arrow.Table(peptide_table_path))
+    #test on first 5K for now
+    peptides_df = DataFrame(Arrow.Table(peptide_table_path))#[1:5000,:]
     retention_times = zeros(Float32, size(peptides_df, 1))
     nprecs = size(peptides_df, 1)
     batch_size = min(batch_size, 1000)
@@ -70,12 +70,12 @@ end
 
 
 
-
+#=
  cmd = `curl "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer" \
     -d '{
         "id": "0", "inputs": [
             {"name": "peptide_sequences", "shape": [1,1], "datatype": "BYTES", "data": [\"AEVTPSQHGNR\"]}]
-        }'``
+        }'`
 
 
         batch_json_inputs[1]
@@ -83,7 +83,40 @@ end
 model_url = "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
 json_data = "{\"id\":\"0\",\"inputs\":[{\"name\":\"peptide_sequences\",\"shape\":[5,1],\"data\":[\"AEVTPSQHGNR\",\"AEVTPSQHGNR\",\"AEVTPSQHGNRTFSYTLEDHTK\",\"AEVTPSQHGNRTFSYTLEDHTK\",\"AM[UNIMOD:35]FTNGLR\"],\"datatype\":\"BYTES\"}]}";
 cmd = `curl -s $model_url -d $json_data`;
-read(cmd, String)
-json_data = batch_json_inputs[1];
+first(JSON.parse(read(cmd, String))["outputs"])
+json_data = read(cmd, String)
 cmd = `curl -s $model_url -d $json_data`;
 read(cmd, String)
+
+parseBatchToTable(JSON.parse(read(cmd, String))["outputs"], 
+RetentionTimeModel(""))
+
+
+model_url = "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
+
+json_data =  predictRetentionTimes(
+            chronologer_out_path,
+            RetentionTimeModel("chronologer"),
+            24,
+            1000,
+            "chronologer"
+        )
+cmd = `curl -s $model_url -d $json_data`;
+@time parseBatchToTable(JSON.parse(read(cmd, String))["outputs"], 
+RetentionTimeModel(""))
+
+
+model_url = "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
+
+json_data =  predictRetentionTimes(
+            chronologer_out_path,
+            RetentionTimeModel("chronologer"),
+            24,
+            1000,
+            "chronologer"
+        )
+cmd = `curl -s $model_url -d $json_data`;
+@time parseBatchToTable(JSON.parse(read(cmd, String))["outputs"], 
+RetentionTimeModel(""))
+
+=#
