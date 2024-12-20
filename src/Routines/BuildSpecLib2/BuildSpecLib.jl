@@ -3,15 +3,10 @@
 """
 Main function to build a spectral library from parameters
 """
-function BuildSpecLib(params_path::String)
+function build_spec_lib(params_path::String)
     # Read and validate parameters
-    #=
-    include("Routines/BuildSpecLib2/types.jl")
-    include("Routines/BuildSpecLib2/build/build_types.jl")
-    include("Routines/BuildSpecLib2/build/build_lib.jl")
-    =#
     params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
-    params = checkParams(read(params_path, String));
+    params = check_params(read(params_path, String));
     # Create output directories
     lib_out_dir = params["out_dir"]
     mkpath(lib_out_dir)
@@ -186,6 +181,7 @@ function BuildSpecLib(params_path::String)
         frag_bounds,
         Float32(_params.library_params["frag_bin_tol_ppm"]),
         Float32(_params.library_params["rt_bin_tol"]),
+        koina_model_type
     )
 
     return nothing

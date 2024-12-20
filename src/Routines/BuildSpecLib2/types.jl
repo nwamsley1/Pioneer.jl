@@ -47,30 +47,10 @@ end
 abstract type FragAnnotation end
 struct UniSpecFragAnnotation <: FragAnnotation
     annotation::String
-    
-    # Internal constructor
-    function UniSpecFragAnnotation(annotation::String)
-        # If it starts with Int, keep only "Int"
-        if startswith(annotation, "Int")
-            new(annotation)
-        else
-            new(annotation)
-        end
-    end
 end
 
 struct GenericFragAnnotation <: FragAnnotation
     annotation::String
-    
-    # Internal constructor
-    function GenericFragAnnotation(annotation::String)
-        # If it starts with Int, keep only "Int"
-        if startswith(annotation, "Int")
-            new(annotation)
-        else
-            new(annotation)
-        end
-    end
 end
 getAnnotation(fa::FragAnnotation) = fa.annotation
 
@@ -83,24 +63,6 @@ struct GenericFragRegexIterator <: FragRegexIterator
     annotation_pieces::Base.RegexMatchIterator
 end
 getAnnotationPieces(fri::FragRegexIterator) = fri.annotation_pieces
-
-
-
-#Need this information for each distinct fragment type
-#Need this information for each distinct fragment type
-struct PioneerFragAnnotation
-    base_type::Char
-    frag_index::UInt8
-    charge::UInt8
-    isotope::UInt8
-    internal::Bool
-    immonium::Bool
-    neutral_diff::Bool
-    sulfur_diff::Int8
-end
-ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
-ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
-getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
 
 
 """

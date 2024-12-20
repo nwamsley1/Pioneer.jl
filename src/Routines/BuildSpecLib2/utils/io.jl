@@ -1,7 +1,7 @@
 """
 Save detailed fragment information to file.
 """
-function save_detailed_frags(filepath::String, fragments::Vector{T}) where T <: AbstractFragment
+function save_detailed_frags(filepath::String, fragments::Vector{T}) where T <: AbstractKoinaFragment
     if !endswith(filepath, ".jld2")
         throw(ArgumentError("Output file must have .jld2 extension"))
     end
@@ -15,7 +15,7 @@ end
 """
 Read fragments from a saved file.
 """
-function read_detailed_frags(filepath::String)::Vector{AbstractFragment}
+function read_detailed_frags(filepath::String)::Vector{AbstractKoinaFragment}
     if !isfile(filepath)
         error("Fragment file not found: $filepath")
     end

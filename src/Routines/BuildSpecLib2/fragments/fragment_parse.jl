@@ -613,12 +613,12 @@ function process_batch!(
             prec_sulfur_count[batch_pid] = count_sulfurs!(
                 seq_idx_to_sulfur,
                 precursor_table[:sequence][pid],
-                parse_mods(precursor_table[:mods][pid]),
+                parseMods(precursor_table[:mods][pid]),
                 mods_to_sulfur_diff
             )
             
             # Handle isotope modifications
-            iso_mods_iterator = parse_mods(precursor_table[:isotope_mods][pid])
+            iso_mods_iterator = parseMods(precursor_table[:isotope_mods][pid])
             fill_isotope_mods!(
                 seq_idx_to_iso_mod,
                 iso_mods_iterator,
@@ -762,12 +762,12 @@ function process_spline_batch!(
             prec_sulfur_count[batch_pid] = count_sulfurs!(
                 seq_idx_to_sulfur,
                 precursor_table[:sequence][pid],
-                parse_mods(precursor_table[:mods][pid]),
+                parseMods(precursor_table[:mods][pid]),
                 mods_to_sulfur_diff
             )
 
             # Process isotope modifications
-            iso_mods_iterator = parse_mods(precursor_table[:isotope_mods][pid])
+            iso_mods_iterator = parseMods(precursor_table[:isotope_mods][pid])
             fill_isotope_mods!(
                 seq_idx_to_iso_mod,
                 iso_mods_iterator,

@@ -56,7 +56,7 @@ end
 """
 Prepare batch request for instrument-agnostic models.
 """
-function prepare_koina_batch(model::InstrumentAgnosticModel,
+function prepare_koina_batch(model::KoinaModelType,
                            data::DataFrame;
                            batch_size::Int = 1000)::Vector{String}
     n_rows = nrow(data)

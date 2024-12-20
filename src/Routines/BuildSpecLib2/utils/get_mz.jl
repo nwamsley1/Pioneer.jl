@@ -52,7 +52,7 @@ end
 
 
 """
-    parse_mods(mods_string::AbstractString)::Base.RegexMatchIterator
+    parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
 
 Given the meta data line (starting in "Comment") for a preursor, parse out the fields. 
 
@@ -64,19 +64,19 @@ Given the meta data line (starting in "Comment") for a preursor, parse out the f
 
 ### Examples
 julia> collect(
-            parse_mods("1(7,M,Oxidation)(13,K,AnExampleMod)")
+            parseMods("1(7,M,Oxidation)(13,K,AnExampleMod)")
         )
 2-element Vector{RegexMatch}:
  RegexMatch("7,M,Oxidation")
  RegexMatch("13,K,AnExampleMod")
 """
-function parse_mods(mods_string::AbstractString)::Base.RegexMatchIterator
+function parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
     #Example: "1(7,M,Oxidation)(13,K,AnExampleMod)"
     mods_regex = r"(?<=\().*?(?=\))"
     return eachmatch(mods_regex, mods_string)
 end
 
-function parse_mods(mods_string::Missing)::Base.RegexMatchIterator
+function parseMods(mods_string::Missing)::Base.RegexMatchIterator
     #Example: "1(7,M,Oxidation)(13,K,AnExampleMod)"
     mods_regex = r"(?<=\().*?(?=\))"
     return eachmatch(mods_regex, "")
@@ -124,7 +124,7 @@ end
 
 function getModMass(mods::String, mod_to_mass::Dict{String, Float64})
     mass = zero(Float64)
-    for mod in parse_mods(mods)
+    for mod in parseMods(mods)
         mass += mod_to_mass[getModName(mod.match)]
     end
     return mass

@@ -27,3 +27,8 @@ function get_bounds(model::FragBoundModel, prec_mz::AbstractFloat)
     max_mz = model.high_mass_poly(prec_mz)
     return (min_mz, max_mz)
 end
+
+
+function (fbm::FragBoundModel)(x::AbstractFloat)
+    return fbm.low_mass_poly(x), fbm.high_mass_poly(x)
+end
