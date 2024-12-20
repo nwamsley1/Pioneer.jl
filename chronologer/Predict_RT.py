@@ -64,7 +64,6 @@ def main():
     args = parse_args(sys.argv[1:])
     
     device = 'cuda' if args.gpu else 'cpu'
-
     generate_df_with_pred( args.input_file,
                            args.output_file,
                            args.chronologer_model, 

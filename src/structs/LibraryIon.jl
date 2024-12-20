@@ -57,80 +57,8 @@ ArrowTypes.JuliaType(::Val{:SimpleFrag}) = SimpleFrag
 getScore(pbi::SimpleFrag)::UInt8 = pbi.score
 getIRT(pbi::SimpleFrag{T}) where {T<:AbstractFloat} = pbi.prec_irt
 
-
-struct PioneerFrag
-    mz::Float32
-    intensity::Float16
-    ion_type::UInt16 
-    is_y::Bool
-    is_b::Bool
-    is_p::Bool
-    is_axcz::Bool
-    has_neutral_diff::Bool
-    frag_index::UInt8 #posiiton of fragment
-    charge::UInt8
-    isotope::UInt8
-    internal::Bool
-    immonium::Bool
-    internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
-    sulfur_count::UInt8
-end
-ArrowTypes.arrowname(::Type{PioneerFrag}) = :PioneerFrag
-ArrowTypes.JuliaType(::Val{:PioneerFrag}) = PioneerFrag
-
-getIntensity(pf::PioneerFrag) = pf.intensity
-getMZ(pf::PioneerFrag) = pf.mz
-getType(pf::PioneerFrag) = pf.ion_type
-getIndex(pf::PioneerFrag) = pf.frag_index
-getCharge(pf::PioneerFrag) = pf.charge
-getSulfurCount(pf::PioneerFrag) = pf.sulfur_count
-isY(pf::PioneerFrag) = pf.is_y
-
-
-struct PioneerSplineFrag{N}
-    mz::Float32
-    spl_coef::NTuple{N, Float32}
-    intensity::Float16
-    ion_type::UInt16 
-    is_y::Bool
-    is_b::Bool
-    is_p::Bool
-    is_axcz::Bool
-    has_neutral_diff::Bool
-    frag_index::UInt8 #posiiton of fragment
-    charge::UInt8
-    isotope::UInt8
-    internal::Bool
-    immonium::Bool
-    internal_ind::Tuple{UInt8, UInt8} #If an internal ion, the start and stop. 0,0 if not internal
-    sulfur_count::UInt8
-end
-ArrowTypes.arrowname(::Type{PioneerSplineFrag}) = :PioneerSplineFrag
-ArrowTypes.JuliaType(::Val{:PioneerSplineFrag}) = PioneerSplineFrag
-
-getIntensity(pf::PioneerSplineFrag) = pf.intensity
-getMZ(pf::PioneerSplineFrag) = pf.mz
-getType(pf::PioneerSplineFrag) = pf.ion_type
-getIndex(pf::PioneerSplineFrag) = pf.frag_index
-getCharge(pf::PioneerSplineFrag) = pf.charge
-getSulfurCount(pf::PioneerSplineFrag) = pf.sulfur_count
-isY(pf::PioneerSplineFrag) = pf.is_y
-
 #Need this information for each distinct fragment type
 #Need this information for each distinct fragment type
-struct PioneerFragAnnotation
-    base_type::Char
-    frag_index::UInt8
-    charge::UInt8
-    isotope::UInt8
-    internal::Bool
-    immonium::Bool
-    neutral_diff::Bool
-    sulfur_diff::Int8
-end
-ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
-ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
-getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type
 
 """
    AltimeterFragment{T<:AbstractFloat} <: LibraryFragmentIon{T}
