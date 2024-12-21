@@ -1,3 +1,7 @@
+function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
+    return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
+end
+
 """
 Prepare input data for retention time prediction with chronologer.
 
@@ -147,10 +151,6 @@ function add_mods_and_filter(fasta_peptides::Vector{FastaEntry};
                            default_charge::Int = 3,
                            dynamic_nce::Bool = true
                            )
-
-    function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
-        return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
-    end
 
                         
     function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})

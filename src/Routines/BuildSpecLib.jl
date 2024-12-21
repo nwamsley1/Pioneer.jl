@@ -19,14 +19,16 @@ Output:
 - Returns nothing
 """
 function BuildSpecLib(params_path::String)
+
     # Initialize timing dictionary for performance tracking
-    params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
+    #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),
                                     Tuple{Nothing, Float64, Int64, Float64, Base.GC_Diff}}}()
     
     # Read and validate parameters
     params_timing = @timed begin
-        params = check_params(read(params_path, String))
+        params_string = read(params_path, String)
+        params = check_params_bsp(params_string)
         
         # Create output directories
         lib_out_dir = params["out_dir"]
@@ -38,12 +40,17 @@ function BuildSpecLib(params_path::String)
         
         # Setup logging
         log_path = joinpath(lib_dir, "build_log.txt")
+        params_out_path = joinpath(lib_dir, "config.json")
+        
+        write(params_out_path, params_string)
+        #dual_println("Saved parameter file to: ", params_out_path)
         nothing
     end
     timings["Parameter Loading"] = params_timing
 
     # Open log file for writing
     open(log_path, "w") do log_file
+
         # Utility functions for dual console/file output
         function dual_println(args...)
             println(stdout, args...)
@@ -55,6 +62,7 @@ function BuildSpecLib(params_path::String)
             print(log_file, args...)
         end
 
+    
         dual_println("\n", repeat("=", 90))
         dual_println("Spectral Library Building Process")
         dual_println(repeat("=", 90))
@@ -92,6 +100,10 @@ function BuildSpecLib(params_path::String)
         end
         timings["Fragment Bound Detection"] = bounds_timing
 
+        N_PRECURSORS = 0
+        N_FRAGMENTS = 0
+        N_TARGETS = 0
+        N_DECOYS = 0
         if params["predict_fragments"]
             # Fragment prediction workflow
             dual_println("\nStarting fragment prediction workflow...")
@@ -216,6 +228,10 @@ function BuildSpecLib(params_path::String)
                 )
 
                 # Process precursor table
+                N_FRAGMENTS = length(fragments_table[:mz])
+                N_PRECURSORS = length(precursors_table[:mz])
+                N_TARGETS = sum(precursors_table[:decoy])
+                N_DECOYS = N_PRECURSORS - N_TARGETS
                 fragments_table = nothing
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
@@ -283,7 +299,11 @@ function BuildSpecLib(params_path::String)
         timings["Index Building"] = index_timing
 
         # Print performance report
-        print_performance_report(timings, dual_println)
+        print_performance_report(timings, dual_println,
+        N_PRECURSORS = N_PRECURSORS,
+        N_FRAGMENTS = N_FRAGMENTS,
+        N_TARGETS = N_TARGETS,
+        N_DECOYS = N_DECOYS)
         
         dual_println("\nLibrary building completed at: ", Dates.now())
         dual_println("\nLibrary location: ", lib_dir)
@@ -294,12 +314,26 @@ end
 """
 Helper function to print formatted performance metrics
 """
-function print_performance_report(timings, println_func)
+function print_performance_report(timings, println_func; kwargs...)
     # Header
     println_func("\n", repeat("=", 90))
     println_func("Library Building Performance Report")
     println_func(repeat("=", 90))
 
+    println_func("\nDetailed Step Analysis:")
+
+    println_func(repeat("-", 90))
+    println_func(rpad("# Precursors", 12), " ",
+                rpad("# Fragments", 12), " ",
+                rpad("# Targets", 12), " ",
+                rpad("# Decoys", 12), " "
+    )
+    println_func(repeat("-", 90))
+    println_func(lpad(@sprintf("%.2f", kwargs[:N_PRECURSORS]), 12), " ",
+                 lpad(@sprintf("%.2f", kwargs[:N_FRAGMENTS]), 12), " ",
+                 lpad(@sprintf("%.2f", kwargs[:N_TARGETS]), 12), " ",
+                 lpad(@sprintf("%.2f", kwargs[:N_DECOYS]), 12), " ",
+    )
     # Print detailed analysis
     println_func("\nDetailed Step Analysis:")
     println_func(repeat("-", 90))

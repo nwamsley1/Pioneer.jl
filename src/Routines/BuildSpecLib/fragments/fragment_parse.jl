@@ -657,6 +657,7 @@ function process_batch!(
 
         # Calculate sulfur count for fragment
         sulfur_count = zero(UInt8)
+
         if !frag_data.immonium
             for i in start_idx:stop_idx
                 sulfur_count += seq_idx_to_sulfur[i]

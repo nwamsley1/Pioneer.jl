@@ -71,7 +71,7 @@ function score_precursor_isotope_traces!(
     file_paths::Vector{String},
     precursors::BasicLibraryPrecursors
 )
-    if size(best_psms, 1) > 0#1000000
+    if size(best_psms, 1) > 100000
     file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
     features = [ 
         :max_prob,

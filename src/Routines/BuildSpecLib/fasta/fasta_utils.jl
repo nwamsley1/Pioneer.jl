@@ -131,6 +131,7 @@ with_decoys = addReverseDecoys(entries)
 ```
 """
 function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
+    println("add_reverse_decoys")
     #Get the sequences for the target entries 
     target_sequences = (map(x->get_sequence(x), target_fasta_entries))
     #Pre-allocate space for entrapment fasta entries 
@@ -149,7 +150,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
         #If reversal fails to generate a unique sequence, then shuffle 
         if decoy_sequence ∈ sequences_set
             while n_shuffle_attempts < max_shuffle_attempts
-                decoy_sequence = shufflefast(get_sequence(target_entry))
+                decoy_sequence = shuffle_fast(get_sequence(target_entry))
                 if decoy_sequence ∉ sequences_set
                     break
                 end

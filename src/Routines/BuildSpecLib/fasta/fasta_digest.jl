@@ -57,7 +57,7 @@ function digest_fasta(fasta::Vector{FastaEntry},
         previous_sites[1] = 0
         n = 1
 
-        for site in eachmatch(regex, sequence)
+        for site in eachmatch(regex, sequence, overlap = true)
             n = add_peptide!(peptides, n, sequence, site.offset,
                            previous_sites, min_length, max_length,
                            missed_cleavages)

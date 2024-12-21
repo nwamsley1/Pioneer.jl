@@ -3,7 +3,7 @@ struct InvalidParametersError <: Exception
     params::Dict{String, Any}
 end
 
-function check_params(json_string::String)
+function check_params_bsp(json_string::String)
     params = JSON.parse(json_string)
     
     # Helper function to check if a key exists and has the correct type

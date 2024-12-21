@@ -48,12 +48,16 @@ function predict_fragments(
             batch_df,
             model_type,
             instrument_type,
-            batch_size
+            batch_size,
+            start_idx
         )
 
         # Write or append results
         if start_idx == 1
-            Arrow.write(frags_out_path, frags_out)
+            # Create file in stream format to support appending
+            open(frags_out_path, "w") do io
+                Arrow.write(io, frags_out; file=false)  # file=false creates stream format
+            end
         else
             Arrow.append(frags_out_path, frags_out)
         end
@@ -67,11 +71,12 @@ function predict_fragments_batch(
     peptides_df::DataFrame,
     model::InstrumentSpecificModel,
     instrument_type::String,
-    batch_size::Int
+    batch_size::Int,
+    first_prec_idx::UInt32
 )::DataFrame
     # Verify instrument compatibility
     if instrument_type ∉ MODEL_CONFIGS[model.name].instruments
-        error("Invalid instrument: $instrument_type for model $(model.name)")
+        error("Invalid instrument: $instrument_type for model $(model.name). Valid names are ", MODEL_CONFIGS[model.name].instruments)
     end
 
     # Prepare batches
@@ -87,7 +92,7 @@ function predict_fragments_batch(
     batch_dfs = []
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
-        start_idx = (i-1) * batch_size + 1
+        start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
         
         # Add precursor indices
         batch_df = batch_result.fragments
@@ -114,7 +119,8 @@ function predict_fragments_batch(
     peptides_df::DataFrame,
     model::InstrumentAgnosticModel,
     _::String,  # instrument type not used
-    batch_size::Int
+    batch_size::Int,
+    first_prec_idx::UInt32
 )::DataFrame
     # Prepare batches (no instrument type needed)
     json_batches = prepare_koina_batch(
@@ -130,19 +136,19 @@ function predict_fragments_batch(
     batch_dfs = []
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
-        start_idx = (i-1) * batch_size + 1
+        start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
         
+        # Add precursor indices
         batch_df = batch_result.fragments
-        batch_df[!, :precursor_idx] = repeat(
-            start_idx:(start_idx + batch_result.frags_per_precursor - 1),
-            inner=batch_result.frags_per_precursor
-        )
-        
+        n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)), 
+                                                inner=batch_result.frags_per_precursor)
+        # Filter and sort fragments
+        filter_fragments!(batch_df, model)
         push!(batch_dfs, batch_df)
     end
 
     fragments_df = vcat(batch_dfs...)
-    filter_fragments!(fragments_df, model)
     sort_fragments!(fragments_df)
 
     return fragments_df
@@ -155,7 +161,8 @@ function predict_fragments_batch(
     peptides_df::DataFrame,
     model::SplineCoefficientModel,
     instrument_type::String,
-    batch_size::Int
+    batch_size::Int,
+    first_prec_idx::UInt32
 )::DataFrame
     # Similar to InstrumentSpecificModel but handles spline coefficients
     json_batches = prepare_koina_batch(
@@ -172,7 +179,7 @@ function predict_fragments_batch(
     
     for (i, response) in enumerate(responses)
         batch_result = parse_koina_batch(model, response)
-        start_idx = (i-1) * batch_size + 1
+        start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
         
         batch_df = batch_result.fragments
         batch_df[!, :precursor_idx] = repeat(
