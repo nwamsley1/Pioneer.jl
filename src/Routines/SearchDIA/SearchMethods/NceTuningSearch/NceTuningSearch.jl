@@ -145,7 +145,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:NceTuningSearchParameters}
 
     try
@@ -234,7 +234,7 @@ function process_search_results!(
     ::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 ) where {P<:NceTuningSearchParameters}
     try
         setNceModel!(search_context, ms_file_idx, results.nce_models[ms_file_idx])

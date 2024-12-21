@@ -132,7 +132,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
 
     try
@@ -178,7 +178,7 @@ function process_search_results!(
     ::P, 
     ::SearchContext,
     ::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
     return nothing
 end

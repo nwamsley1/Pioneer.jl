@@ -70,7 +70,7 @@ function process_file!(
     params::ScoringSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 )
     # No per-file processing needed
     return results
@@ -81,7 +81,7 @@ function process_search_results!(
     params::ScoringSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 )
     # No per-file results processing needed
     return nothing

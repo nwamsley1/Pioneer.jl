@@ -261,13 +261,13 @@ function qcPlots(
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
             parsed_fname = parsed_fnames[id]
-            ms_table = Arrow.Table(ms_table_path)
-            ms1_scans = ms_table[:msOrder].==1
+            ms_table = BasicMassSpecData(ms_table_path)
+            ms1_scans = getMsOrders(ms_table).==1
 
-
+            
             Plots.plot!(p, 
-                    ms_table[:retentionTime][ms1_scans],
-                    ms_table[:TIC][ms1_scans],
+            [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
+            [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
                     xlabel = "retention time (min)",
                     label = parsed_fname,

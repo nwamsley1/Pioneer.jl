@@ -14,7 +14,7 @@ using NumericalIntegration
 using Optim
 using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars, Pkg
 using Tables, Test
-using StatsPlots
+using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics
 using XGBoost

@@ -53,7 +53,8 @@ function get_fragment_bounds(
                 MS_TABLE[:isolationWidthMz],
                 MS_TABLE[:msOrder],
                 MS_TABLE[:lowMz],
-                MS_TABLE[:highMz])
+                MS_TABLE[:highMz]
+            )
             prec_mz_min -= 1.0f0
             prec_mz_max += 1.0f0
             return (frag_bounds = frag_bounds, prec_mz_min = prec_mz_min, prec_mz_max = prec_mz_max)

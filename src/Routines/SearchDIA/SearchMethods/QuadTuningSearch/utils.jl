@@ -1,5 +1,5 @@
 """
-    check_window_widths(spectra::Arrow.Table) -> Set{String}
+    check_window_widths(spectra::MassSpecData) -> Set{String}
 
 Examine MS2 isolation window widths across all spectra.
 
@@ -10,11 +10,11 @@ Examine MS2 isolation window widths across all spectra.
 Set of unique isolation window widths (as strings) for MS2 spectra.
 Used to verify consistent window settings across runs.
 """
-function check_window_widths(spectra::Arrow.Table)
+function check_window_widths(spectra::MassSpecData)
     window_widths = Set{String}()
-    for i in 1:length(spectra[:isolationWidthMz])
-        if spectra[:msOrder][i] == 2 && !ismissing(spectra[:isolationWidthMz][i])
-            push!(window_widths, string(spectra[:isolationWidthMz][i]))
+    for i in 1:length(spectra)
+        if getMsOrder(spectra, i) == 2 && !ismissing(getIsolationWidthMz(spectra, i))
+            push!(window_widths, string(getIsolationWidthMz(spectra, i)))
         end
     end
     return window_widths
@@ -136,7 +136,7 @@ function add_columns!(
 end
 
 """
-    collect_psms(spectra::Arrow.Table, search_context::SearchContext,
+    collect_psms(spectra::MassSpecData, search_context::SearchContext,
                 results::QuadTuningSearchResults, params::QuadTuningSearchParameters,
                 ms_file_idx::Int64) -> DataFrame
 
@@ -160,7 +160,7 @@ Iteratively collect and process PSMs for quadrupole tuning analysis.
 DataFrame containing processed PSMs suitable for quad model fitting.
 """
 function collect_psms(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     search_context::SearchContext,
     results::QuadTuningSearchResults,
     params::QuadTuningSearchParameters,
@@ -216,8 +216,8 @@ function collect_psms(
         scan_idx_to_prec_idx = get_scan_to_prec_idx(
             processed_psms[!, :scan_idx],
             processed_psms[!, :precursor_idx],
-            spectra[:centerMz],
-            spectra[:isolationWidthMz]
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
         )
         
         quad_psms = perform_quad_transmission_search(
@@ -250,7 +250,7 @@ function collect_psms(
         )
         processed_psms[!,:half_width_mz] = zeros(Float32, size(processed_psms, 1))
         for (i, scan_idx) in enumerate(processed_psms[!,:scan_idx])
-            processed_psms[i,:half_width_mz] = spectra[:isolationWidthMz][scan_idx]/2
+            processed_psms[i,:half_width_mz] = getIsolationWidthMz(spectra, scan_idx)/2
         end
         keep_data = zeros(Bool, size(processed_psms, 1))
         for i in range(1, size(processed_psms, 1))
@@ -278,7 +278,7 @@ end
 
 
 """
-    process_initial_psms(psms::DataFrame, spectra::Arrow.Table,
+    process_initial_psms(psms::DataFrame, spectra::MassSpecData,
                         search_context::SearchContext) -> DataFrame
 
 Process initial PSMs from library search for quad tuning.
@@ -299,7 +299,7 @@ Filtered DataFrame containing high-confidence PSMs.
 """
 function process_initial_psms(
     psms::DataFrame,
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     search_context::SearchContext
 )
     add_tuning_search_columns!(
@@ -308,8 +308,8 @@ function process_initial_psms(
         getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
         getIrt(getPrecursors(getSpecLib(search_context))),#[:irt],
         getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
-        spectra[:retentionTime],
-        spectra[:TIC]
+        getRetentionTimes(spectra),
+        getTICs(spectra)
     )
     
     score_presearch!(psms)
@@ -477,7 +477,7 @@ end
 Quad Transmission Search
 =========================================================#
 """
-    perform_quad_transmission_search(spectra::Arrow.Table,
+    perform_quad_transmission_search(spectra::MassSpecData,
                                   results::QuadTuningSearchResults,
                                   scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
                                   search_context::SearchContext,
@@ -507,7 +507,7 @@ Execute quadrupole transmission search across MS data.
 DataFrame containing quad transmission search results.
 """
 function perform_quad_transmission_search(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     results::QuadTuningSearchResults,
     scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
     search_context::SearchContext,
@@ -623,7 +623,7 @@ function perform_quad_transmission_search(
     function process_scan!(
         scan_idx::Int,
         scan_idxs::Set{UInt32},
-        spectra::Arrow.Table,
+        spectra::MassSpecData,
         tuning_results::Vector{@NamedTuple{
             precursor_idx::UInt32,
             scan_idx::UInt32,
@@ -644,7 +644,7 @@ function perform_quad_transmission_search(
     )
         scan_idx ∉ scan_idxs && return
         
-        msn = spectra[:msOrder][scan_idx]
+        msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && return
         
         # Select transitions
@@ -660,7 +660,7 @@ function perform_quad_transmission_search(
             getIsoSplines(search_data),
             getPrecursorTransmission(search_data),
             getIsotopes(search_data),
-            (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
             block_size = 10000
         )
         
@@ -670,10 +670,10 @@ function perform_quad_transmission_search(
             getIonMisses(search_data),
             getIonTemplates(search_data),
             ion_idx,
-            spectra[:mz_array][scan_idx],
-            spectra[:intensity_array][scan_idx],
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            spectra[:highMz][scan_idx],
+            getHighMz(spectra, scan_idx),
             UInt32(scan_idx),
             UInt32(ms_file_idx)
         )
@@ -704,7 +704,7 @@ function perform_quad_transmission_search(
             weights,
             Hs,
             scan_idx,
-            spectra[:centerMz][scan_idx]
+            getCenterMz(spectra, scan_idx)
         )
         
         # Reset for next scan

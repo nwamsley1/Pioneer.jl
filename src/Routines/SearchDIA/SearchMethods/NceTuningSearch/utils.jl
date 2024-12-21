@@ -1,5 +1,5 @@
 """
-    process_psms!(psms::DataFrame, spectra::Arrow.Table, 
+    process_psms!(psms::DataFrame, spectra::MassSpecData, 
                  search_context::SearchContext, params::NceTuningSearchParameters)
 
 Process and filter peptide-spectrum matches (PSMs) from search results to identify high-confidence matches.
@@ -29,7 +29,7 @@ Modifies input `psms` DataFrame by adding columns and filtering rows.
 """
 function process_psms!(
     psms::DataFrame,
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     search_context::SearchContext,
     params::NceTuningSearchParameters
 )
@@ -41,8 +41,8 @@ function process_psms!(
         getIsDecoy(precursors),
         getIrt(precursors),
         getCharge(precursors),
-        spectra[:retentionTime],
-        spectra[:TIC]
+        getRetentionTimes(spectra),
+        getTICs(spectra)
     )
 
     # Score PSMs

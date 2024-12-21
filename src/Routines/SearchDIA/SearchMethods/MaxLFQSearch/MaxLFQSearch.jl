@@ -85,7 +85,7 @@ function process_file!(
     ::MaxLFQSearchParameters,
     ::SearchContext,
     ::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 )
     # No per-file processing needed
     return nothing
@@ -99,7 +99,7 @@ function process_search_results!(
     ::MaxLFQSearchParameters,
     ::SearchContext,
     ::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 )
     return nothing
 end

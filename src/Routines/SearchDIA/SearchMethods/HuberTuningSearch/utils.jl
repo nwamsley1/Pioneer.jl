@@ -86,7 +86,7 @@ end
 Core Search Functions 
 ==========================================================#
 """
-    perform_huber_search(spectra::Arrow.Table, scan_to_prec::Dict{UInt32, Vector{UInt32}},
+    perform_huber_search(spectra::MassSpecData, scan_to_prec::Dict{UInt32, Vector{UInt32}},
                         search_context::SearchContext, params::HuberTuningSearchParameters,
                         ms_file_idx::Int64) -> DataFrame
 
@@ -108,7 +108,7 @@ Execute Huber tuning search across MS data.
 DataFrame containing tuning results across all scans
 """
 function perform_huber_search(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     #scan_idxs::Set{UInt32},
     #prec_set::Set{Tuple{UInt32, UInt32}},
@@ -144,7 +144,7 @@ end
 
 """
     process_scans_for_huber!(scan_range::Vector{Int64}, scan_to_prec::Dict{UInt32, Vector{UInt32}},
-                            spectra::Arrow.Table, search_context::SearchContext,
+                            spectra::MassSpecData, search_context::SearchContext,
                             search_data::SearchDataStructures, params::HuberTuningSearchParameters,
                             ms_file_idx::Int64) -> Dict
 
@@ -168,7 +168,7 @@ function process_scans_for_huber!(
     #scan_idxs::Set{UInt32},
     scan_to_prec::Dict{UInt32, Vector{UInt32}},
     #prec_set::Set{Tuple{UInt32, UInt32}},
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     search_context::SearchContext,
     search_data::SearchDataStructures,
     params::HuberTuningSearchParameters,
@@ -201,16 +201,16 @@ function process_scans_for_huber!(
     for scan_idx in scan_range
         scan_idx ∉ keys(scan_to_prec) && continue
         
-        msn = spectra[:msOrder][scan_idx]
+        msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && continue
         
         # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(spectra[:retentionTime][scan_idx])
+        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
         
         # Check for m/z change
-        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
+        prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
         
         # Update transitions if RT window or m/z changed
@@ -263,7 +263,7 @@ Transition and Peak Matching Functions
 """
     select_transitions_for_huber!(search_data::SearchDataStructures, search_context::SearchContext,
                                 scan_idx::Int, rt_index::retentionTimeIndex, ms_file_idx::Int,
-                                scan_to_prec::Dict{UInt32, Vector{UInt32}}, spectra::Arrow.Table,
+                                scan_to_prec::Dict{UInt32, Vector{UInt32}}, spectra::MassSpecData,
                                 params::HuberTuningSearchParameters)
 
 Select ion transitions for Huber tuning analysis.
@@ -281,7 +281,7 @@ function select_transitions_for_huber!(
     search_context::SearchContext,
     scan_idx::Int,
     ms_file_idx::Int,
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     irt_start::Int64, irt_stop::Int64, rt_index::Any,
     params::HuberTuningSearchParameters
 )
@@ -298,8 +298,8 @@ function select_transitions_for_huber!(
         getIsoSplines(search_data),
         getQuadTransmissionFunction(
             getQuadTransmissionModel(search_context, ms_file_idx),
-            spectra[:centerMz][scan_idx],
-            spectra[:isolationWidthMz][scan_idx]
+            getCenterMz(spectra, scan_idx),
+            getIsolationWidthMz(spectra, scan_idx)
         ),
         getPrecursorTransmission(search_data),
         getIsotopes(search_data),
@@ -308,14 +308,14 @@ function select_transitions_for_huber!(
         rt_index,#getRtIndex(search_context),
         irt_start,
         irt_stop,
-        (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+        (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
         block_size = 10000
     )
 end
 
 """
     match_peaks_for_huber!(search_data::SearchDataStructures, ion_idx::Int,
-                          spectra::Arrow.Table, scan_idx::Int, search_context::SearchContext,
+                          spectra::MassSpecData, scan_idx::Int, search_context::SearchContext,
                           ms_file_idx::Int64)
 
 Match theoretical peaks to observed peaks for Huber tuning.
@@ -326,7 +326,7 @@ Tuple of (number of matches, number of misses)
 function match_peaks_for_huber!(
     search_data::SearchDataStructures,
     ion_idx::Int,
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     scan_idx::Int,
     search_context::SearchContext,
     ms_file_idx::Int64
@@ -336,10 +336,10 @@ function match_peaks_for_huber!(
         getIonMisses(search_data),
         getIonTemplates(search_data),
         ion_idx,
-        spectra[:mz_array][scan_idx],
-        spectra[:intensity_array][scan_idx],
+        getMzArray(spectra, scan_idx),
+        getIntensityArray(spectra, scan_idx),
         getMassErrorModel(search_context, ms_file_idx),
-        spectra[:highMz][scan_idx],
+        getHighMz(spectra, scan_idx),
         UInt32(scan_idx),
         UInt32(ms_file_idx)
     )

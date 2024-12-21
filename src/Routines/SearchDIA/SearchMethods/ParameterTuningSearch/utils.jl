@@ -25,7 +25,7 @@ Adds essential columns to PSM DataFrame for parameter tuning analysis.
 Uses parallel processing for efficiency through data chunking.
 """
 function add_tuning_search_columns!(psms::DataFrame, 
-                                MS_TABLE::Arrow.Table, 
+                                MS_TABLE::MassSpecData, 
                                 prec_is_decoy::Arrow.BoolVector{Bool},
                                 prec_irt::Arrow.Primitive{T, Vector{T}},
                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},
@@ -304,7 +304,7 @@ function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches:
 end
 
 """
-    mass_error_search(spectra::Arrow.Table, scan_idxs::Vector{UInt32},
+    mass_error_search(spectra::MassSpecData, scan_idxs::Vector{UInt32},
                      precursor_idxs::Vector{UInt32}, ms_file_idx::UInt32,
                      spec_lib::SpectralLibrary, search_data::AbstractVector{S},
                      mem::M, params::P) where {M<:MassErrorModel, S<:SearchDataStructures, P<:SearchParameters}
@@ -330,7 +330,7 @@ Performs mass error-focused fragment matching.
 Returns matched fragments for mass error analysis.
 """
 function mass_error_search(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     scan_idxs::Vector{UInt32},
     precursor_idxs::Vector{UInt32},
     ms_file_idx::UInt32,
@@ -349,7 +349,7 @@ function mass_error_search(
     scan_idxs = scan_idxs[sorted_indices]
     precursor_idxs = precursor_idxs[sorted_indices]
     
-    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra[:mz_array]))
+    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra))
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
     # Process mass errors in parallel
@@ -359,7 +359,7 @@ function mass_error_search(
             frag_err_idx = 0
             
             for scan_idx in last(thread_task)
-                (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
+                (scan_idx == 0 || scan_idx > length(spectra)) && continue
                 ismissing(scan_to_prec_idx[scan_idx]) && continue
 
                 # Select transitions for mass error estimation
@@ -379,10 +379,10 @@ function mass_error_search(
                     getIonMisses(search_data[thread_id]),
                     getIonTemplates(search_data[thread_id]),
                     ion_idx,
-                    spectra[:mz_array][scan_idx],
-                    spectra[:intensity_array][scan_idx],
+                    getMzArray(spectra, scan_idx),
+                    getIntensityArray(spectra, scan_idx),
                     mem,
-                    spectra[:highMz][scan_idx],
+                    getHighMz(spectra, scan_idx),
                     UInt32(scan_idx),
                     ms_file_idx
                 )
@@ -436,7 +436,7 @@ function fit_mass_err_model(
 end
 
 """
-    get_matched_fragments(spectra::Arrow.Table, psms::DataFrame,
+    get_matched_fragments(spectra::MassSpecData, psms::DataFrame,
                          results::ParameterTuningSearchResults,
                          search_context::SearchContext,
                          params::P, ms_file_idx::Int64) where {P<:FragmentIndexSearchParameters}
@@ -454,7 +454,7 @@ Collects matched fragments for mass error estimation.
 Returns vector of fragment matches using mass error search strategy.
 """
 function get_matched_fragments(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     psms::DataFrame,
     results::ParameterTuningSearchResults,
     search_context::SearchContext,

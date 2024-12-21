@@ -148,7 +148,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
     try
@@ -185,7 +185,7 @@ function process_search_results!(
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
 
     try
@@ -194,7 +194,7 @@ function process_search_results!(
         
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
-            spectra[:retentionTime],
+            getRetentionTimes(spectra),
             getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge], 
             getIsDecoy(getPrecursors(getSpecLib(search_context))),#[:is_decoy],
             getPrecursors(getSpecLib(search_context))
@@ -208,8 +208,8 @@ function process_search_results!(
             psms[!, :scan_idx],
             getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            spectra[:centerMz],
-            spectra[:isolationWidthMz]
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
         )
 
         # Remove PSMs where only M2+ isotopes are captured (expect poor quantification)
@@ -239,8 +239,8 @@ function process_search_results!(
         add_features!(
             psms,
             search_context,
-            spectra[:TIC],
-            spectra[:mz_array],
+            getTICs(spectra),
+            getMzArrays(spectra),
             ms_file_idx,
             getRtIrtModel(search_context, ms_file_idx),
             getPrecursorDict(search_context)

@@ -25,6 +25,7 @@ function importScripts()
 
     include(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
     [include(joinpath(package_root, "src", "structs", jl_file)) for jl_file in [
+                                                                    "MassSpecData.jl",
                                                                     "ChromObject.jl",
                                                                     "ArrayDict.jl",
                                                                     "Counter.jl",

@@ -53,11 +53,11 @@ function init_search_results(search_parameters::SearchParameters, search_context
     error("init_search_results not implemented for params of type $(typeof(search_parameters))")
 end
 
-function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::Arrow.Table)
+function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::MassSpecData)
     error("process_file! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
     end
 
-function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::Arrow.Table)
+function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::MassSpecData)
     error("process_file! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
 end
 
@@ -77,10 +77,10 @@ Partition MS data into chunks for parallel processing.
 """
 function partition_scans(ms_table, n_threads)
     thread_tasks, total_peaks = partitionScansToThreads(
-        ms_table[:mz_array],
-        ms_table[:retentionTime],
-        ms_table[:centerMz],
-        ms_table[:msOrder],
+        getMzArrays(ms_table),
+        getRetentionTimes(ms_table),
+        getCenterMzs(ms_table),
+        getMsOrders(ms_table),
         n_threads,
         1
     )

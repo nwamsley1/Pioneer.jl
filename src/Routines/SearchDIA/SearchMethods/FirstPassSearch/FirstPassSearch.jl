@@ -172,14 +172,14 @@ function process_file!(
     params::P, 
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:FirstPassSearchParameters}
 
     """
     Perform library search with current parameters.
     """
     function perform_library_search(
-        spectra::Arrow.Table,
+        spectra::MassSpecData,
         search_context::SearchContext,
         params::FirstPassSearchParameters,
         ms_file_idx::Int64
@@ -197,7 +197,7 @@ function process_file!(
     """
     function process_psms!(
         psms::DataFrame,
-        spectra::Arrow.Table,
+        spectra::MassSpecData,
         search_context::SearchContext,
         params::FirstPassSearchParameters,
         ms_file_idx::Int64
@@ -241,7 +241,7 @@ function process_file!(
     """
     function add_psm_columns!(
         psms::DataFrame,
-        spectra::Arrow.Table,
+        spectra::MassSpecData,
         search_context::SearchContext,
         rt_model::RtConversionModel,
         ms_file_idx::Int64
@@ -254,9 +254,9 @@ function process_file!(
             getIsDecoy(getPrecursors(getSpecLib(search_context))),
             getIrt(getPrecursors(getSpecLib(search_context))),
             getCharge(getPrecursors(getSpecLib(search_context))),
-            spectra[:retentionTime],
-            spectra[:TIC],
-            spectra[:mz_array]
+            getRetentionTimes(spectra),
+            getTICs(spectra),
+            getMzArrays(spectra)
         )
         
         # Calculate RT values
@@ -334,7 +334,7 @@ function process_search_results!(
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 ) where {P<:FirstPassSearchParameters}
     psms = results.psms[]
     fwhms = skipmissing(psms[!, :fwhm])

@@ -1,3 +1,6 @@
+using Pioneer 
+using Documenter 
+
 makedocs(
     modules = [Pioneer],
     authors = "N.T. Wamsley",
