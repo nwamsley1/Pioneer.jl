@@ -12,7 +12,7 @@ def patch_modseqs_with_cyclo_N_term( entries ):
     # The current version of EncyclopeDIA (1.12) currently does not provide monoisotopic masses for
     # cyclization of glutamate or carbamidocysteine, so need to include a patch to properly annotate
     # these ions
-    modseqs = list( entries.chronologer_sequence )
+    modseqs = list( entries.chronologer_sequence)
     modseqs = [ p.replace( 'E[-18.0]', 'E[-' + str(masses['H2O']) + ']' ) for p in modseqs ]
     modseqs = [ p.replace( 'C[-17.0]', 'C[+' + str(masses['Cam'] - masses['NH3']) + ']' ) for p in modseqs ]
     entries['PeptideModSeq'] = modseqs

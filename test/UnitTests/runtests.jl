@@ -67,7 +67,7 @@ include("../src/Routines/PRM/IS-PRM/getBestPSMs.jl")
 ##########
 using Arrow, JSON, Tables, DataFrames, Plots
     params = JSON.parse(read("../data/example_config/IS-PRM-SURVEY-TEST.json", String))
-    function parse_mods(fixed_mods)
+    function parseMods(fixed_mods)
         fixed_mods_parsed = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
         for mod in fixed_mods
             push!(fixed_mods_parsed, (p=Regex(mod[1]), r = mod[2]))
@@ -89,8 +89,8 @@ using Arrow, JSON, Tables, DataFrames, Plots
     fragments_to_select = UInt8(params["fragments_to_select"]),
     precursort_rt_window = Float32(params["precursor_rt_window"]),
     max_variable_mods = Int(params["max_variable_mods"]),
-    fixed_mods = parse_mods(params["fixed_mods"]),
-    variable_mods = parse_mods(params["variable_mods"]),
+    fixed_mods = parseMods(params["fixed_mods"]),
+    variable_mods = parseMods(params["variable_mods"]),
     modification_masses = Dict{String, Float32}(k => Float32(v) for (k, v) in params["modification_masses"]),
     ms_file_conditions = params["ms_file_conditions"]
     )
