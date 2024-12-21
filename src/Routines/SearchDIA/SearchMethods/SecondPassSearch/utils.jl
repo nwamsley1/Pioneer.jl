@@ -2,7 +2,7 @@
 Core Search Funtions
 ==========================================================#
 """
-    perform_second_pass_search(spectra::Arrow.Table, rt_index::retentionTimeIndex,
+    perform_second_pass_search(spectra::MassSpecData, rt_index::retentionTimeIndex,
                              search_context::SearchContext, params::SecondPassSearchParameters,
                              ms_file_idx::Int64) -> DataFrame
 
@@ -21,7 +21,7 @@ Execute second pass search across MS/MS data.
 3. Combines results into single DataFrame
 """
 function perform_second_pass_search(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     params::SecondPassSearchParameters,
@@ -50,7 +50,7 @@ function perform_second_pass_search(
 end
 
 """
-    process_scans!(scan_range::Vector{Int64}, spectra::Arrow.Table,
+    process_scans!(scan_range::Vector{Int64}, spectra::MassSpecData,
                   rt_index::retentionTimeIndex, search_context::SearchContext,
                   search_data::SearchDataStructures, params::SecondPassSearchParameters,
                   ms_file_idx::Int64) -> DataFrame
@@ -68,7 +68,7 @@ Process a batch of scans with RT bin caching.
 """
 function process_scans!(
     scan_range::Vector{Int64},
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     search_data::SearchDataStructures,
@@ -91,20 +91,20 @@ function process_scans!(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
 
     for scan_idx in scan_range
-        ((scan_idx < 1) || scan_idx > length(spectra[:mz_array])) && continue
-        msn = spectra[:msOrder][scan_idx]
+        ((scan_idx < 1) || scan_idx > length(spectra)) && continue
+        msn = getMsOrder(spectra, scan_idx)
         if msn < 2
             cycle_idx += 1
         end
         msn ∉ params.spec_order && continue
 
         # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(spectra[:retentionTime][scan_idx])
+        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Check for m/z change
-        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
+        prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
 
         # Update transitions if window changed
@@ -127,8 +127,8 @@ function process_scans!(
                 getIsoSplines(search_data),
                 getQuadTransmissionFunction(
                     getQuadTransmissionModel(search_context, ms_file_idx),
-                    spectra[:centerMz][scan_idx],
-                    spectra[:isolationWidthMz][scan_idx]
+                    getCenterMz(spectra, scan_idx),
+                    getIsolationWidthMz(spectra, scan_idx)
                 ),
                 getPrecursorTransmission(search_data),
                 getIsotopes(search_data),
@@ -137,7 +137,7 @@ function process_scans!(
                 rt_index,
                 irt_start,
                 irt_stop,
-                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
                 block_size = 10000
             )
         end
@@ -148,10 +148,10 @@ function process_scans!(
             getIonMisses(search_data),
             getIonTemplates(search_data),
             ion_idx,
-            spectra[:mz_array][scan_idx],
-            spectra[:intensity_array][scan_idx],
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            spectra[:highMz][scan_idx],
+            getHighMz(spectra, scan_idx),
             UInt32(scan_idx),
             UInt32(ms_file_idx)
         )
@@ -217,7 +217,7 @@ function process_scans!(
             nmatches/(nmatches + nmisses),
             last_val,
             Hs.n,
-            Float32(sum(spectra[:intensity_array][scan_idx])),
+            Float32(sum(getIntensityArray(spectra, scan_idx))),
             scan_idx;
             min_spectral_contrast = params.min_spectral_contrast,
             min_log2_matched_ratio = params.min_log2_matched_ratio,

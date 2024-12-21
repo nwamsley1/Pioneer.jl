@@ -207,7 +207,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table) where {P<:QuadTuningSearchParameters}
+    spectra::MassSpecData) where {P<:QuadTuningSearchParameters}
 
     setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(1.0f0))
     if params.fit_from_data == false
@@ -260,7 +260,7 @@ function process_search_results!(
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 ) where {P<:QuadTuningSearchParameters}
     if params.fit_from_data==true
         setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))

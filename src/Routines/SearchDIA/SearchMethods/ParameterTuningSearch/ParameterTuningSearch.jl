@@ -194,14 +194,14 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
 
     """
     Collect PSMs through multiple iterations until sufficient high-quality PSMs found.
     """
     function collect_psms(
-        spectra::Arrow.Table,
+        spectra::MassSpecData,
         search_context::SearchContext,
         params::P,
         ms_file_idx::Int64
@@ -213,7 +213,7 @@ function process_file!(
         function add_columns_and_concat!(
                 psms::DataFrame,
                 new_psms::DataFrame,
-                spectra::Arrow.Table,
+                spectra::MassSpecData,
                 precursors::BasicLibraryPrecursors,
                 params::P
             ) where {P<:ParameterTuningSearchParameters}
@@ -224,8 +224,8 @@ function process_file!(
                     getIsDecoy(precursors),#[:is_decoy],
                     getIrt(precursors),#[:irt],
                     getCharge(precursors),#[:prec_charge],
-                    spectra[:retentionTime],
-                    spectra[:TIC]
+                    getRetentionTimes(spectra),
+                    getTICs(spectra)
                 )
                 
                 if new_psms !== nothing
@@ -284,7 +284,7 @@ function process_search_results!(
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    ::Arrow.Table
+    ::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
     try
     rt_alignment_folder = getRtAlignPlotFolder(search_context)

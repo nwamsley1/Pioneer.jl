@@ -116,7 +116,7 @@ function process_file!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table) where {P<:IntegrateChromatogramSearchParameters}
+    spectra::MassSpecData) where {P<:IntegrateChromatogramSearchParameters}
 
     try
         # Set the NCE model from the search context for fragment matching
@@ -164,8 +164,8 @@ function process_file!(
             chromatograms[!, :scan_idx],
             getCharge(getPrecursors(getSpecLib(search_context))),
             getMz(getPrecursors(getSpecLib(search_context))),
-            spectra[:centerMz],
-            spectra[:isolationWidthMz]
+            getCenterMzs(spectra),
+            getIsolationWidthMzs(spectra)
         )
 
         # Remove chromatograms where M2+ isotopes are captured
@@ -207,7 +207,7 @@ function process_search_results!(
     params::P, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
-    spectra::Arrow.Table
+    spectra::MassSpecData
 ) where {P<:IntegrateChromatogramSearchParameters}
     try
         passing_psms = results.psms[]

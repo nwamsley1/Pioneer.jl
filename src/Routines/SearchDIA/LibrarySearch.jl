@@ -1,7 +1,7 @@
 function searchFragmentIndex(
                     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
                     frag_index::FragmentIndex{Float32},
-                    spectra::Arrow.Table,
+                    spectra::MassSpecData,
                     thread_task::Vector{Int64},
                     search_data::S,
                     params::P,
@@ -19,11 +19,11 @@ function searchFragmentIndex(
         #    continue
         #end
         # Skip invalid indices
-        (scan_idx <= 0 || scan_idx > length(spectra[:mz_array])) && continue
-        (spectra[:msOrder][scan_idx] ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
+        (scan_idx <= 0 || scan_idx > length(spectra)) && continue
+        (getMsOrder(spectra, scan_idx) ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
 
         # Update RT bin index based on iRT window
-        irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(spectra[:retentionTime][scan_idx]), irt_tol)
+        irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)), irt_tol)
 
         #=
         while rt_bin_idx <= length(getRTBins(frag_index)) && getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
@@ -44,12 +44,12 @@ function searchFragmentIndex(
             getRTBins(frag_index),
             getFragBins(frag_index),
             getFragments(frag_index),
-            spectra[:mz_array][scan_idx],
-            spectra[:intensity_array][scan_idx],
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
             rt_bin_idx,
             irt_hi,
             mem,
-            getQuadTransmissionFunction(qtm, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+            getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx)),
             getIsotopeErrBounds(params)
         )
         
@@ -98,7 +98,7 @@ end
 
 function getPSMS(
     ms_file_idx::UInt32,
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     thread_task::Vector{Int64},
     precursors::BasicLibraryPrecursors,
     ion_list::LibraryFragmentLookup,
@@ -117,11 +117,11 @@ function getPSMS(
     isotopes = zeros(Float32, 5)
     precursor_transmission = zeros(Float32, 5)
     for scan_idx in thread_task
-        (scan_idx == 0 || scan_idx > length(spectra[:mz_array])) && continue
+        (scan_idx == 0 || scan_idx > length(spectra)) && continue
         ismissing(scan_to_prec_idx[scan_idx]) && continue
 
         # Scan Filtering
-        msn = spectra[:msOrder][scan_idx]
+        msn = getMsOrder(spectra, scan_idx)
         msn ∉ getSpecOrder(params) && continue
         msn ∈ keys(msms_counts) ? msms_counts[msn] += 1 : msms_counts[msn] = 1
 
@@ -132,17 +132,17 @@ function getPSMS(
             getPrecEstimation(params),
             ion_list,
             scan_to_prec_idx[scan_idx], precursors_passed_scoring,
-            getMz(precursors),#[:mz], 
-            getCharge(precursors),#[:prec_charge], 
-            getSulfurCount(precursors),#[:sulfur_count],
-            getIrt(precursors),#[:irt],
+            getMz(precursors), 
+            getCharge(precursors),
+            getSulfurCount(precursors),
+            getIrt(precursors),
             getIsoSplines(search_data),
-            getQuadTransmissionFunction(qtm, spectra[:centerMz][scan_idx], spectra[:isolationWidthMz][scan_idx]),
+            getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx)),
             precursor_transmission, isotopes, getNFragIsotopes(params),
             getMaxFragRank(params),
-            Float32(rt_to_irt_spline(spectra[:retentionTime][scan_idx])),
+            Float32(rt_to_irt_spline(getRetentionTime(spectra, scan_idx))),
             Float32(irt_tol), 
-            (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+            (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
             isotope_err_bounds = getIsotopeErrBounds(params)
         )
 
@@ -155,10 +155,10 @@ function getPSMS(
             getIonMisses(search_data), 
             getIonTemplates(search_data), 
             ion_idx, 
-            spectra[:mz_array][scan_idx], 
-            spectra[:intensity_array][scan_idx], 
+            getMzArray(spectra, scan_idx), 
+            getIntensityArray(spectra, scan_idx), 
             mem,
-            spectra[:highMz][scan_idx],
+            getHighMz(spectra, scan_idx),
             UInt32(scan_idx), 
             ms_file_idx
         )
@@ -194,7 +194,7 @@ function getPSMS(
                 nmatches/(nmatches + nmisses),
                 last_val,
                 Hs.n,
-                Float32(sum(spectra[:intensity_array][scan_idx])), 
+                Float32(sum(getIntensityArray(spectra, scan_idx))), 
                 scan_idx,
                 min_spectral_contrast = getMinSpectralContrast(params),
                 min_log2_matched_ratio = getMinLog2MatchedRatio(params),
@@ -214,7 +214,7 @@ function getPSMS(
     return DataFrame(@view(getScoredPsms(search_data)[1:last_val]))
 end
 
-function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
+function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:ParameterTuningSearchParameters}
     return vcat(LibrarySearch(
                     spectra,
                     UInt32(ms_file_idx),
@@ -229,7 +229,7 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
                 )...)
 end
 
-function library_search(spectra::Arrow.Table, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
+function library_search(spectra::MassSpecData, search_context::SearchContext, search_parameters::P, ms_file_idx::Int64) where {P<:SearchParameters}
     
     return vcat(LibrarySearch(
                     spectra,
@@ -246,7 +246,7 @@ function library_search(spectra::Arrow.Table, search_context::SearchContext, sea
 end
 
 function library_search(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     search_context::SearchContext,
     search_parameters::P,
     ms_file_idx::Int64) where {P<:NceTuningSearchParameters}
@@ -267,7 +267,7 @@ function library_search(
 end
 
 function LibrarySearch(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     ms_file_idx::UInt32,
     fragment_index::FragmentIndex{Float32},
     spec_lib::SpectralLibrary,
@@ -283,7 +283,7 @@ function LibrarySearch(
         P<:FragmentIndexSearchParameters}
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
@@ -329,7 +329,7 @@ function LibrarySearch(
 end
 
 function LibrarySearchNceTuning(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     ms_file_idx::UInt32,
     fragment_index::FragmentIndex{Float32},
     spec_lib::SpectralLibrary,
@@ -346,7 +346,7 @@ function LibrarySearchNceTuning(
         P<:FragmentIndexSearchParameters}
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
-    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra[:msOrder]))
+    scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
 
     # Do fragment index search once
     tasks = map(thread_tasks) do thread_task

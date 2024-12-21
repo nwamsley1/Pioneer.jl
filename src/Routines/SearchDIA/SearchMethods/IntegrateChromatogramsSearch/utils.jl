@@ -110,7 +110,7 @@ end
 Chromatogram Building Functions
 ==========================================================#
 """
-    extract_chromatograms(spectra::Arrow.Table, passing_psms::DataFrame,
+    extract_chromatograms(spectra::MassSpecData, passing_psms::DataFrame,
                          rt_index::retentionTimeIndex, search_context::SearchContext,
                          params::IntegrateChromatogramSearchParameters,
                          ms_file_idx::Int64) -> DataFrame
@@ -120,7 +120,7 @@ Extract chromatograms for all passing PSMs.
 Uses parallel processing to build chromatograms across scan ranges.
 """
 function extract_chromatograms(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     passing_psms::DataFrame,
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
@@ -151,7 +151,7 @@ function extract_chromatograms(
 end
 
 """
-    build_chromatograms(spectra::Arrow.Table, scan_range::Vector{Int64},
+    build_chromatograms(spectra::MassSpecData, scan_range::Vector{Int64},
                        precursors_passing::Set{UInt32}, rt_index::retentionTimeIndex,
                        search_context::SearchContext, search_data::SearchDataStructures,
                        params::IntegrateChromatogramSearchParameters,
@@ -166,7 +166,7 @@ Build chromatograms for a range of scans with RT bin caching.
 4. Records chromatogram points with weights
 """
 function build_chromatograms(
-    spectra::Arrow.Table,
+    spectra::MassSpecData,
     scan_range::Vector{Int64},
     precursors_passing::Set{UInt32},
     rt_index::retentionTimeIndex,
@@ -192,18 +192,18 @@ function build_chromatograms(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     i = 1
     for scan_idx in scan_range
-        ((scan_idx<1) | (scan_idx > length(spectra[:mz_array]))) && continue
+        ((scan_idx<1) | (scan_idx > length(spectra))) && continue
         # Process MS2 scans
-        msn = spectra[:msOrder][scan_idx]
+        msn = getMsOrder(spectra, scan_idx)
         msn ∉ params.spec_order && continue
 
         # Calculate RT window
-        irt = getRtIrtModel(search_context, ms_file_idx)(spectra[:retentionTime][scan_idx])
+        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
         irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         # Check for m/z change
-        prec_mz_string_new = string(spectra[:centerMz][scan_idx])
+        prec_mz_string_new = string(getCenterMz(spectra, scan_idx))
         prec_mz_string_new = prec_mz_string_new[1:min(length(prec_mz_string_new), 6)]
 
         # Update transitions if window changed
@@ -214,8 +214,8 @@ function build_chromatograms(
             prec_temp_size = 0
             quad_func = getQuadTransmissionFunction(
                 getQuadTransmissionModel(search_context, ms_file_idx),
-                spectra[:centerMz][scan_idx],
-                spectra[:isolationWidthMz][scan_idx]
+                getCenterMz(spectra, scan_idx),
+                getIsolationWidthMz(spectra, scan_idx)
             )
 
             ion_idx, prec_temp_size = selectTransitions!(
@@ -236,7 +236,7 @@ function build_chromatograms(
                 rt_index,
                 irt_start,
                 irt_stop,
-                (spectra[:lowMz][scan_idx], spectra[:highMz][scan_idx]);
+                (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx));
                 precursors_passing = precursors_passing,
                 isotope_err_bounds = params.isotope_err_bounds,
                 block_size = 10000
@@ -249,10 +249,10 @@ function build_chromatograms(
             getIonMisses(search_data),
             getIonTemplates(search_data),
             ion_idx,
-            spectra[:mz_array][scan_idx],
-            spectra[:intensity_array][scan_idx],
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
             getMassErrorModel(search_context, ms_file_idx),
-            spectra[:highMz][scan_idx],
+            getHighMz(spectra, scan_idx),
             UInt32(scan_idx),
             UInt32(ms_file_idx)
         )
@@ -312,14 +312,14 @@ function build_chromatograms(
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][scan_idx]),
+                        Float16(getRetentionTime(spectra, scan_idx)),
                         weights[getIdToCol(search_data)[precs_temp[j]]],
                         scan_idx,
                         precs_temp[j]
                     )
                 else
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(spectra[:retentionTime][scan_idx]),
+                        Float16(getRetentionTime(spectra, scan_idx)),
                         zero(Float32),
                         scan_idx,
                         precs_temp[j]
@@ -342,7 +342,7 @@ function build_chromatograms(
                 end
 
                 chromatograms[rt_idx] = ChromObject(
-                    Float16(spectra[:retentionTime][scan_idx]),
+                    Float16(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),
                     scan_idx,
                     precs_temp[j]
