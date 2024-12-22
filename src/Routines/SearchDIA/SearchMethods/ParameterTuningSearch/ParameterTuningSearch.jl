@@ -98,14 +98,14 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         
         # Convert isotope error bounds
         isotope_bounds = haskey(global_params, :isotope_settings) ? 
-            global_params.isotope_settings.err_bounds : [1, 0]
+            global_params.isotope_settings.err_bounds : [1, 0]E
             
         # Create precursor estimation type
-        prec_estimation = PartialPrecCapture()
+        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
-            # Core parameters
+            # Core parameterse
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(frag_params.tol_ppm),
             Float32(search_params.frag_err_quantile),

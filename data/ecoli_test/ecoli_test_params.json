@@ -2,7 +2,8 @@
     "global": {
         "isotope_settings": {
             "err_bounds": [1, 0],
-            "combine_traces": false
+            "combine_traces": false,
+            "partial_capture": false
         },
         "scoring": {
             "q_value_threshold": 0.01

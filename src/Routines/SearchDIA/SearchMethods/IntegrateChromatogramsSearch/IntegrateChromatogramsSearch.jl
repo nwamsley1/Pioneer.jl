@@ -68,7 +68,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         end
 
         # Always use partial precursor capture for integrate chromatogram
-        prec_estimation = PartialPrecCapture()
+        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(3), UInt8(0)),  # Fixed isotope bounds
