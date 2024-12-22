@@ -107,7 +107,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             global_params.isotope_settings.err_bounds : [1, 0]
         
         # Determine precursor estimation strategy
-        prec_estimation = PartialPrecCapture()
+        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),

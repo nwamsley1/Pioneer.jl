@@ -79,9 +79,9 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         tuning_params = params.parameter_tuning
         frag_params = tuning_params.fragment_settings
         search_params = tuning_params.search_settings
-        
+        global_params = params.global_settings
         # Always use partial capture for NCE tuning
-        prec_estimation = PartialPrecCapture()
+        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         # Create NCE grid
         nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 30)

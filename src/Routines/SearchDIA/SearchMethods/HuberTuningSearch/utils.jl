@@ -289,7 +289,7 @@ function select_transitions_for_huber!(
     return selectTransitions!(
         getIonTemplates(search_data),
         RTIndexedTransitionSelection(),
-        PartialPrecCapture(),
+        params.prec_estimation,
         getFragmentLookupTable(getSpecLib(search_context)),
         getPrecIds(search_data),
         getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
