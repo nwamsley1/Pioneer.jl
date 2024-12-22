@@ -42,7 +42,7 @@ Pioneer exports two methods `SearchDIA` and `BuildSpecLib`.
 
 1) `SearchDIA` performs the Pioneer search algorithm on mass specrometry raw data given a spectral library in the `.pion` format.
 2) `BuildSpecLib` generates a `.pion` spectral library given a FASTA file of protein sequences using [Chronologer](https://github.com/searlelab/chronologer) and the [Koina project](https://koina.wilhelmlab.org/.).
-
+3) `GenerateParams` generates template .json parameter files for the `SearchDIA` and `BuildSpecLib` with standard default values. 
 Each method takes a single argument, that is a `.json` formatted parameter file. Example parameter files for both methods are included below in addition to a description of each paramter. 
 
 ## File Conversion
@@ -54,7 +54,27 @@ julia> using Pioneer
 julia> SearchDIA("/Users/n.t.wamsley/Projects/Pioneer.jl/data/ecoli_test/ecoli_test_params.json")
 ```
 # Parameters JSON
-Pioneer accepts parameters in a .json file format. Paramter descriptions and a .json template are provided. In most casees, the defaults are recommended. 
+Pioneer accepts parameters in a .json file format. In most casees, the defaults are recommended. 
+
+
+## Key Parameters Overview
+Important parameters that may require manual adjustement are as follows. 
+
+## Fragment Matching
+- **`fragment_settings.tol_ppm`** (Float)  
+  *Fragment mass tolerance in parts per million*  
+  This is the initial MS/MS mass tolerance. The parameter tuning search uses this guess, and then identifies a more optimal value. Setting this parameter too low, may . Setting the parameter too high, could result. The default is 20 ppm high-resolution instruments. If the mass tolerance quality control plots for a search, the initial guesss could be adjusted accordingly. 
+
+- **`fragment_settings.min_count`** (Int)  
+  *Minimum number of matching fragments required*  
+  Sets how many fragments must match to consider a peptide identification valid. Higher values increase confidence but may reduce sensitivity.
+
+## Path Configuration
+- **`library`** (String)  
+  *Path to spectral library file*  
+  This is a required parameter pointing to your input spectral library.
+
+These parameters often need to be adjusted based on your specific experimental setup and data quality. Other parameters can typically use their default values unless you have specific requirements.
 
 |Name|Type|Description|
 |---|---|---|
@@ -280,7 +300,7 @@ Parameters controlling protein digestion and peptide generation:
 | `max_length` | integer | Maximum peptide length (30 amino acids) |
 | `min_charge` | integer | Minimum charge state to consider (2+) |
 | `max_charge` | integer | Maximum charge state to consider (4+) |
-| `cleavage_regex` | string | Regular expression defining cleavage sites ("[KR][^_|$]" for trypsin) |
+| `cleavage_regex` | string | Regular expression defining cleavage sites ("[KR][^_\|$]" for trypsin) |
 | `missed_cleavages` | integer | Maximum number of allowed missed cleavages (1) |
 | `max_var_mods` | integer | Maximum number of variable modifications per peptide (1) |
 | `add_decoys` | boolean | Whether to generate decoy sequences |
