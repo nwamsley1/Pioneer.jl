@@ -34,7 +34,10 @@ makedocs(
             "Performance Tuning" => "advanced/performance.md",
             "Custom Extensions" => "advanced/extensions.md"
         ]
-    ]
+    ],
+    doctest = true,
+    clean = true,
+    checkdocs = :exports
 )
 
 deploydocs(

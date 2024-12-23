@@ -1,36 +1,7 @@
 
 ==========================================================================================
-DIA Search Performance Report
+Sarting SearchDIA
 ==========================================================================================
 
-Detailed Step Analysis:
-------------------------------------------------------------------------------------------
-Step                           Time (s)     Memory (GB)  GC Time (s)  GC %        
-------------------------------------------------------------------------------------------
-Parameter Loading              0.02         0.00         0.00         0.0         
-Search Context Initialization  0.66         0.71         0.19         28.6        
-NCE Tuning                     0.70         0.06         0.00         0.0         
-Quadrupole Tuning              3.44         0.86         0.14         4.1         
-Spectral Library Loading       4.55         0.27         0.05         1.0         
-Huber Tuning                   10.56        2.53         0.38         3.6         
-First Pass Search              16.09        2.13         0.10         0.6         
-Second Pass Search             16.78        1.73         0.14         0.9         
-MaxLFQ                         26.53        2.55         0.26         1.0         
-Chromatogram Integration       27.58        4.65         1.12         4.0         
-Parameter Tuning               32.89        6.03         0.65         2.0         
-Scoring                        89.66        6.92         0.97         1.1         
-------------------------------------------------------------------------------------------
-TOTAL                          229.45       28.43        4.00         1.7         
-
-Memory Usage Summary:
-------------------------------------------------------------------------------------------
-Total Memory Allocated: 28.43 GB
-Total Available Memory: 64.0 GB
-
-Runtime Summary:
-------------------------------------------------------------------------------------------
-Total Runtime: 3.82 minutes
-Average Runtime per Step: 19.12 seconds
-Average Runtime per Raw File: 76.48 seconds
-
-==========================================================================================
+Starting search at: 2024-12-23T14:25:21.994
+Output directory: ./../data/ecoli_test/ecoli_test_results

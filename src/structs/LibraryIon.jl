@@ -575,7 +575,7 @@ end
 
 
 # Add a setter for the NCE model in SplineFragmentLookup
-function setNceModel!(lookup::StandardFragmentLookup, new_nce_model::NceModel{T}) where {N,M,T<:AbstractFloat}
+function setNceModel!(lookup::StandardFragmentLookup, new_nce_model::NceModel{T}) where {T<:AbstractFloat}
     return nothing
 end
 

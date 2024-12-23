@@ -27,7 +27,6 @@ using Dates
 
 #Set Seed 
 Random.seed!(1776);
-println("set seed")
 
 #Inport Pioneer Files 
 include(joinpath(@__DIR__, "Routines","SearchDIA","importScripts.jl"))

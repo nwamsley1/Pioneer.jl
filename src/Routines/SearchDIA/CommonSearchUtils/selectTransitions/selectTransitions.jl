@@ -5,6 +5,7 @@ struct MassErrEstimationStrategy <: TransitionSelectionStrategy end
 struct RTIndexedTransitionSelection <: TransitionSelectionStrategy end
 struct QuadEstimationTransitionSelection <: TransitionSelectionStrategy end
 """
+    PrecEstimation
 Abstract type to specify precursor isotopes estimation strategy.
 Used to determine how fragment ion isotope patterns are calculated.
 """
