@@ -114,7 +114,8 @@ function summarize_results!(
         # Step 1: Train XGBoost Models
         @info "Training XGBoost models..."
         # Sample PSMs for training to avoid memory consumption issues
-        best_psms = sample_psms_for_xgboost(second_pass_folder, params.max_n_samples)
+        
+        best_psms, exceed_memory = sample_psms_for_xgboost(second_pass_folder, params.max_n_samples)
         # Train models on sampled PSMs
         models =  score_precursor_isotope_traces!(
             best_psms,

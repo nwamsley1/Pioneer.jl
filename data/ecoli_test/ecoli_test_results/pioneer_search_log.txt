@@ -3,5 +3,41 @@
 Sarting SearchDIA
 ==========================================================================================
 
-Starting search at: 2024-12-23T14:25:21.994
+Starting search at: 2024-12-23T16:51:17.065
 Output directory: ./../data/ecoli_test/ecoli_test_results
+
+==========================================================================================
+DIA Search Performance Report
+==========================================================================================
+
+Detailed Step Analysis:
+------------------------------------------------------------------------------------------
+Step                           Time (s)     Memory (GB)  GC Time (s)  GC %        
+------------------------------------------------------------------------------------------
+Parameter Loading              0.02         0.00         0.00         0.0         
+Search Context Initialization  0.68         0.71         0.20         29.2        
+NCE Tuning                     0.73         0.06         0.00         0.0         
+Quadrupole Tuning              3.53         0.86         0.06         1.6         
+Spectral Library Loading       4.45         0.27         0.04         0.9         
+Huber Tuning                   10.22        2.54         0.29         2.8         
+First Pass Search              17.45        2.17         0.32         1.9         
+Second Pass Search             18.46        1.75         0.20         1.1         
+Chromatogram Integration       27.78        4.56         1.03         3.7         
+MaxLFQ                         28.02        2.55         0.24         0.9         
+Parameter Tuning               34.21        6.00         0.68         2.0         
+Scoring                        56.71        4.59         0.60         1.1         
+------------------------------------------------------------------------------------------
+TOTAL                          202.27       26.04        3.66         1.8         
+
+Memory Usage Summary:
+------------------------------------------------------------------------------------------
+Total Memory Allocated: 26.04 GB
+Total Available Memory: 64.0 GB
+
+Runtime Summary:
+------------------------------------------------------------------------------------------
+Total Runtime: 3.37 minutes
+Average Runtime per Step: 16.86 seconds
+Average Runtime per Raw File: 67.42 seconds
+
+==========================================================================================

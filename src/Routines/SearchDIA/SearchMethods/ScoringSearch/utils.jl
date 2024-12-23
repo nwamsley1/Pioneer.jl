@@ -15,7 +15,7 @@ Sample PSMs from multiple files for XGBoost model training.
 2. Proportionally samples from each file
 3. Combines samples into single DataFrame
 """
-function sample_psms_for_xgboost(quant_psms_folder, max_psms)
+function sample_psms_for_xgboost(quant_psms_folder, max_psms_in_memory)
 
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
@@ -24,31 +24,34 @@ function sample_psms_for_xgboost(quant_psms_folder, max_psms)
     for file_path in file_paths
         psms_count += length(Arrow.Table(file_path)[1])
     end
+    if psms_count > max_psms_in_memory
+        # Initialize an empty DataFrame to store the results
+        result_df = DataFrame()
 
-    # Initialize an empty DataFrame to store the results
-    result_df = DataFrame()
+        for file_path in file_paths
+            # Read the Arrow table
+            arrow_table = Arrow.Table(file_path)
+            
+            # Get the number of rows
+            num_rows = length(arrow_table[1])
+            
+            # Calculate the number of rows to sample (1/N'th of the total)
+            sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
 
-    for file_path in file_paths
-        # Read the Arrow table
-        arrow_table = Arrow.Table(file_path)
-        
-        # Get the number of rows
-        num_rows = length(arrow_table[1])
-        
-        # Calculate the number of rows to sample (1/N'th of the total)
-        sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
+            # Generate sorted random indices for sampling
+            sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
+            
+            # Sample the rows and convert to DataFrame
+            sampled_df = DataFrame(arrow_table)[sampled_indices, :]
+            
+            # Append to the result DataFrame
+            append!(result_df, sampled_df)
+        end
 
-        # Generate sorted random indices for sampling
-        sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
-        
-        # Sample the rows and convert to DataFrame
-        sampled_df = DataFrame(arrow_table)[sampled_indices, :]
-        
-        # Append to the result DataFrame
-        append!(result_df, sampled_df)
+        return result_df, true
+    else
+       return DataFrame(Tables.columntable(Arrow.Table(file_paths))), false
     end
-
-    return result_df
 end
 
 
