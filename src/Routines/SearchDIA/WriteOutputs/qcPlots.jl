@@ -462,9 +462,17 @@ function qcPlots(
 
     end
     =#
+    output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
+    try
+        open(output_path, "w") do io
+            write(io, "") # Write empty content
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
     plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
     if length(plots_to_merge)>1
         merge_pdfs(plots_to_merge, 
-                    joinpath(qc_plot_folder, "QC_PLOTS.pdf"), cleanup=true)
+                    output_path, cleanup=true)
     end
 end

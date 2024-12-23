@@ -299,7 +299,7 @@ function build_chromatograms(
                 params.max_iter_outer,
                 params.accuracy_newton,
                 params.accuracy_bisection,
-                10.0f0,
+                search_context.deconvolution_stop_tolerance[],
                 params.max_diff
             )
 

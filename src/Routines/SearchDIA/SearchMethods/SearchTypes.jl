@@ -179,7 +179,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
     huber_delta::Base.Ref{Float32}
-
+    deconvolution_stop_tolerance::Base.Ref{Float32}
     # Results and paths
     irt_rt_map::Dict{Int64, RtConversionModel}
     rt_irt_map::Dict{Int64, RtConversionModel}
@@ -209,7 +209,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
             Dict{Int64, MassErrorModel}(),
-            Dict{Int64, NceModel}(), Ref(100000.0f0),
+            Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
             Dict{Int64, RtConversionModel}(), 
             Dict{Int64, RtConversionModel}(), 
             Ref{Dictionary}(), 

@@ -289,6 +289,7 @@ function LFQ(prot::DataFrame,
                 batch_size = 100000)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
+    n_writes = 0
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx,:protein_idx]
         while batch_end_idx < size(prot, 1)
@@ -361,14 +362,27 @@ function LFQ(prot::DataFrame,
         end
         filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
-        Arrow.append(
-            protein_quant_path,
-            select!(
-                out,
-                [:file_name,
-                 :target,
-                 :species,:protein,:peptides,:n_peptides,:abundance])
-        )
+        if iszero(n_writes)
+            open(protein_quant_path, "w") do io
+                Arrow.write(io, 
+                select!(
+                    out,
+                    [:file_name,
+                    :target,
+                    :species,:protein,:peptides,:n_peptides,:abundance]); 
+                file=false)  # file=false creates stream format
+            end
+        else
+            Arrow.append(
+                protein_quant_path,
+                select!(
+                    out,
+                    [:file_name,
+                    :target,
+                    :species,:protein,:peptides,:n_peptides,:abundance])
+            )
+        end
+        n_writes += 1
     end
 
     return nothing

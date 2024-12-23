@@ -97,9 +97,8 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         rt_params = params.rt_alignment
         
         # Convert isotope error bounds
-        isotope_bounds = haskey(global_params, :isotope_settings) ? 
-            global_params.isotope_settings.err_bounds : [1, 0]E
-            
+        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
+        
         # Create precursor estimation type
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
@@ -330,9 +329,20 @@ function summarize_results!(
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
     rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
                 if endswith(x, ".pdf")]
+
+    output_path = joinpath(rt_alignment_folder, "rt_alignment_plots.pdf")
+
+    try
+        open(output_path, "w") do io
+            write(io, "") # Write empty content
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
+    
     if !isempty(rt_plots)
         merge_pdfs(rt_plots, 
-                  joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), 
+                    output_path, 
                   cleanup=true)
     end
     
@@ -340,9 +350,21 @@ function summarize_results!(
     mass_error_folder = getMassErrPlotFolder(search_context)
     mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
                  if endswith(x, ".pdf")]
+
+
+    output_path = joinpath(mass_error_folder, "mass_error_plots.pdf")
+
+    try
+        open(output_path, "w") do io
+            write(io, "") # Write empty content
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
+
     if !isempty(mass_plots)
         merge_pdfs(mass_plots, 
-                  joinpath(mass_error_folder, "mass_error_plots.pdf"), 
+                  output_path, 
                   cleanup=true)
     end
     

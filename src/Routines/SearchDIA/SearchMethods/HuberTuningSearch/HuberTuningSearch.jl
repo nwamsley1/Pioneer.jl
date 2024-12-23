@@ -78,19 +78,22 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         # Extract relevant parameter groups
         deconv_params = params.optimization.deconvolution
         global_params = params.global_settings
+        frag_params = params.quant_search.fragment_settings
         # Calculate Huber delta grid
         delta0 = Float32(deconv_params.huber_delta)
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in 1:delta_iters]
         
+        isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         new{typeof(prec_estimation)}(
-            (UInt8(0), UInt8(2)), # Fixed isotope bounds for Huber tuning
-            2,  # Fixed n_frag_isotopes
-            UInt8(255),  # Using max possible rank
+            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            Int64(frag_params.n_isotopes),  # Fixed n_frag_isotopes
+            UInt8(frag_params.max_rank),  # Using max possible rank
             1.0f0,  # Full sampling
             Set{Int64}([2]),
             
@@ -202,7 +205,9 @@ function summarize_results!(
             params.delta_grid,
             params.min_pct_diff
         )
-        
+        search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/100)
+        println("test ", search_context.deconvolution_stop_tolerance[] )
+        println("_")
         # Store results
         results.huber_delta[] = optimal_delta
         setHuberDelta!(search_context, optimal_delta)

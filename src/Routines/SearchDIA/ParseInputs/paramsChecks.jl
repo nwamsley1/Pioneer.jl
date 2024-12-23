@@ -29,7 +29,8 @@ function checkParams(json_path::String)
     # Validate global parameters
     global_params = params["global"]
     check_param(global_params, "isotope_settings", Dict)
-    check_param(global_params["isotope_settings"], "err_bounds", Vector)
+    check_param(global_params["isotope_settings"], "err_bounds_first_pass", Vector)
+    check_param(global_params["isotope_settings"], "err_bounds_quant_search", Vector)
     check_param(global_params["isotope_settings"], "combine_traces", Bool)
     check_param(global_params["isotope_settings"], "partial_capture", Bool)
     check_param(global_params, "scoring", Dict)
@@ -72,8 +73,11 @@ function checkParams(json_path::String)
     check_param(score_settings, "n_train_rounds", Integer)
     check_param(score_settings, "max_iterations", Integer)
     check_param(score_settings, "max_q_value", Real)
-    check_param(score_settings, "max_precursors", Integer)
 
+    score_settings = first_search["irt_mapping"]
+    check_param(score_settings, "max_prob_to_impute_irt", Real)
+    check_param(score_settings, "fwhm_nstd", Real)
+    check_param(score_settings, "irt_nstd", Real)
     # Validate quant search parameters
     quant_search = params["quant_search"]
     check_param(quant_search, "fragment_settings", Dict)

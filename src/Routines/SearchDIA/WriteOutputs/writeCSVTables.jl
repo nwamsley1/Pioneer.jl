@@ -122,6 +122,7 @@ function writePrecursorCSV(
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
+            n_writes = 0
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
                 last_pid = precursors_long[batch_end_idx,:precursor_idx]
@@ -148,7 +149,14 @@ function writePrecursorCSV(
                 if write_csv
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
-                Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
+                if iszero(n_writes)
+                    open(wide_precursors_arrow_path, "w") do io
+                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
+                    end
+                else
+                    Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
+                end
+                n_writes += 1
             end
         end
     end
@@ -195,6 +203,7 @@ function writeProteinGroupsCSV(
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
+            n_writes = 0
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
                 last_protein_group = protein_groups_long[batch_end_idx,:protein]
@@ -239,7 +248,16 @@ function writeProteinGroupsCSV(
                 if write_csv
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
-                Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
+
+                if iszero(n_writes)
+                    open(wide_protein_groups_arrow, "w") do io
+                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
+                    end
+                else
+                    Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
+                end
+                n_writes += 1
+
             end
         end
         if write_csv == false

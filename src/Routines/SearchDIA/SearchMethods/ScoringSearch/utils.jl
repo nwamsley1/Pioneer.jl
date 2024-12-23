@@ -341,6 +341,7 @@ function merge_sorted_psms_scores(
         )
     end
     i = 1
+    n_writes = 0
     while length(psms_heap)>0
         _, table_idx = pop!(psms_heap)
         table = tables[table_idx]
@@ -368,10 +369,17 @@ function merge_sorted_psms_scores(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                psms_batch
-            )
+            if iszero(n_writes)
+                open(output_path, "w") do io
+                    Arrow.write(io, psms_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    psms_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end
@@ -783,6 +791,7 @@ function merge_sorted_protein_groups(
         )
     end
     i = 1
+    n_writes = 0
     while length(pg_heap) > 0
         _, table_idx = pop!(pg_heap)
         table = tables[table_idx]
@@ -810,10 +819,17 @@ function merge_sorted_protein_groups(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                pg_batch
-            )
+            if iszero(n_writes)
+                open(output_path, "w") do io
+                    Arrow.write(io, pg_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    pg_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end

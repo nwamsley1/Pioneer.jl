@@ -83,11 +83,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_q_value_probit_rescore::Float32
     
     # RT parameters
-    max_precursors_passing::Int64
     min_inference_points::Int64
     max_q_val_for_irt::Float32
     min_prob_for_irt_mapping::Float32
-    max_precursors::Int64
     max_irt_bin_size::Float32
     max_prob_to_impute::Float32
     fwhm_nstd::Float32
@@ -101,10 +99,9 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         frag_params = first_params.fragment_settings
         score_params = first_params.scoring_settings
         rt_params = params.rt_alignment
-        
+        irt_mapping_params = first_params.irt_mapping
         # Convert isotope error bounds
-        isotope_bounds = haskey(global_params, :isotope_settings) ? 
-            global_params.isotope_settings.err_bounds : [1, 0]
+        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
         
         # Determine precursor estimation strategy
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
@@ -127,15 +124,13 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             Int64(score_params.max_iterations),
             Float32(score_params.max_q_value),
             
-            Int64(score_params.max_precursors),
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
             Float32(rt_params.min_probability),
-            Int64(score_params.max_precursors),
             Float32(0.1), # Default max_irt_bin_size
-            0.75f0,  # Default max_prob_to_impute
-            4.0f0,   # Default fwhm_nstd
-            4.0f0,   # Default irt_nstd
+            Float32(irt_mapping_params.max_prob_to_impute_irt),  # Default max_prob_to_impute
+            Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd
+            Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd
             prec_estimation
         )
     end
