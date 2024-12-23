@@ -54,15 +54,11 @@ function init_search_results(search_parameters::SearchParameters, search_context
 end
 
 function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::MassSpecData)
-    error("process_file! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
-    end
-
-function process_file!(results::SearchResults, params::SearchParameters, search_context::SearchContext, ms_file_idx::Int64, spectra::MassSpecData)
-    error("process_file! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
+    error("process_file! not implemented for params of type $(typeof(params)) and results of type$(typeof(results)) ")
 end
 
 function summarize_results!(results::SearchResults, params::SearchParameters, search_context::SearchContext)
-    error("summarize_results! not implemented for params of type $(typeof(paarams)) and results of type$(typeof(results)) ")
+    error("summarize_results! not implemented for params of type $(typeof(params)) and results of type$(typeof(results)) ")
 end
 # ... other interface methods ...
 

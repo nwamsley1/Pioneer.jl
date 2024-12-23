@@ -214,8 +214,7 @@ function process_file!(
             get_best_psms!(
                 psms,
                 precursor_mzs,
-                max_q_val=params.max_q_val_for_irt,
-                max_psms=params.max_precursors_passing
+                max_q_val=params.max_q_val_for_irt
             )
         end
 
@@ -392,8 +391,7 @@ function summarize_results!(
             getFirstPassPsms(getMSData(search_context)),
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             getRtIrtMap(search_context),
-            max_q_val=params.max_q_val_for_irt,
-            max_precursors=params.max_precursors
+            max_q_val=params.max_q_val_for_irt
         )
     end
     #isempty(results.psms_paths) && return nothing

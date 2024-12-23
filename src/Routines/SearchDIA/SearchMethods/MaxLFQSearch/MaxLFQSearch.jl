@@ -86,7 +86,7 @@ function process_file!(
     ::SearchContext,
     ::Int64,
     ::MassSpecData
-)
+) 
     # No per-file processing needed
     return nothing
 end

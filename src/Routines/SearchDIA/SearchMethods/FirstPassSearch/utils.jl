@@ -213,8 +213,7 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                        max_q_val::Float32 = 0.01f0,
-                        max_psms::Int64 = 250000
+                        max_q_val::Float32 = 0.01f0
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
@@ -283,7 +282,17 @@ function get_best_psms!(psms::DataFrame,
     sort!(psms,:score, rev = true)
     n = size(psms, 1)
     select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
-    delete!(psms, min(n, max_psms + 1):n)
+    #Instead of max_psms, 2x the number at 10% fdr. 
+    psms_10fdr = 0
+    q_values = psms[!,:q_value]::Vector{Float16}
+    @inbounds for i in range(1, n)
+        psms_10fdr += 1
+        if q_values[i]>0.10
+            break
+        end
+    end
+    #delete!(psms, min(n, max_psms + 1):n)
+    delete!(psms, min(n, round(Int64, psms_10fdr*2.0) + 1):n)
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
