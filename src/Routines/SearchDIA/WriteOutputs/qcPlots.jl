@@ -29,6 +29,8 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
+        xlabel = "Log2(precursor rank)",
+        ylabel = "Log10(precursor abundance)",
         legend=:outertopright, layout = (1, 1), show = true)
         function getColumnECDF(
             abundance::AbstractVector{Union{Missing, Float32}})
@@ -48,13 +50,14 @@ function qcPlots(
             end
             sort!(sorted_precursor_abundances, rev=true)
             sampled_range = 1:20:length(sorted_precursor_abundances)
-            return sampled_range, [log2(x) for x in sorted_precursor_abundances[sampled_range]]
+            return log2.(sampled_range), [log10(x) for x in sorted_precursor_abundances[sampled_range]]
         end
 
         for parsed_fname in parsed_fnames
             try
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-            Plots.plot!(p, collect(sampled_range),
+            Plots.plot!(p, 
+                    collect(sampled_range),
                     sorted_precursor_abundances,
                     #ylim = (0, log2(maximum(sorted_precursor_abundances))),
                     subplot = 1,
@@ -464,7 +467,9 @@ function qcPlots(
     =#
     output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
     try
-        rm(output_path)
+        if isfile(output_path)
+            rm(output_path)
+        end
     catch e
         @warn "Could not clear existing file: $e"
     end

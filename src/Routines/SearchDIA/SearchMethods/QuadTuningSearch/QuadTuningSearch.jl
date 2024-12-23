@@ -286,8 +286,12 @@ function summarize_results!(
     models_path = joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf")
     data_path = joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf")
     try
-        rm(models_path)
-        rm(data_path)
+        if isfile(models_path)
+            rm(models_path)
+        end
+        if isfile(data_path)
+            rm(data_path)
+        end
     catch e
         @warn "Could not clear existing file: $e"
     end

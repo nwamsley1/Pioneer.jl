@@ -157,6 +157,9 @@ function mergeSortedArrowTables(
                 )
             end
             if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
                 open(output_path, "w") do io
                     Arrow.write(io, peptide_batch; file=false)  # file=false creates stream format
                 end
@@ -335,6 +338,9 @@ function mergeSortedArrowTables(
             end
 
             if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
                 open(output_path, "w") do io
                     Arrow.write(io, peptide_batch; file=false)  # file=false creates stream format
                 end

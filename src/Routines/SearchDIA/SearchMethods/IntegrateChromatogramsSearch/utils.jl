@@ -297,8 +297,8 @@ function build_chromatograms(
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 params.max_iter_outer,
-                params.accuracy_newton,
-                params.accuracy_bisection,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
                 params.max_diff
             )

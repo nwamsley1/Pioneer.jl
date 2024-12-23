@@ -285,7 +285,7 @@ function LibrarySearch(
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-    thread_rngs = Tuple([MersenneTwister(1776 + i) for i in 1:Threads.nthreads()])
+    thread_rngs = Tuple([MersenneTwister(rand(UInt64) + i) for i in 1:Threads.nthreads()])
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -349,7 +349,7 @@ function LibrarySearchNceTuning(
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-
+    thread_rngs = Tuple([MersenneTwister(rand(UInt64) + i) for i in 1:Threads.nthreads()])
     # Do fragment index search once
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
@@ -364,7 +364,8 @@ function LibrarySearchNceTuning(
                 qtm,
                 mem,
                 rt_to_irt_spline,
-                irt_tol
+                irt_tol,
+                thread_rngs[thread_id]
             )
         end
     end

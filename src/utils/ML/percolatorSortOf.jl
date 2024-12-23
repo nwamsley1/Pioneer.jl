@@ -115,8 +115,6 @@ function rankPSMs!(psms::DataFrame,
             ###################
             #Train a model on the n-1 training folds.
             _seed_ = rand(UInt32)
-            println("_seed_ $_seed_")
-            println(")")
             bst = xgboost((psms_train[!,features], psms_train[!,:target]), 
                             num_round=num_round, 
                             #monotone_constraints = monotone_constraints,

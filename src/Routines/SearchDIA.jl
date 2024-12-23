@@ -87,6 +87,8 @@ function SearchDIA(params_path::String)
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
             nothing
         end
+        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".tsv")]
+        [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".arrow")]
         timings["Search Context Initialization"] = context_timing
 
         # === Execute search pipeline ===

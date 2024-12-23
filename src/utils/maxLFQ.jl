@@ -362,7 +362,13 @@ function LFQ(prot::DataFrame,
         end
         filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
+        if size(out, 1) == 0
+            continue
+        end
         if iszero(n_writes)
+            if isfile(protein_quant_path)
+                rm(protein_quant_path)
+            end
             open(protein_quant_path, "w") do io
                 Arrow.write(io, 
                 select!(

@@ -205,9 +205,9 @@ function summarize_results!(
             params.delta_grid,
             params.min_pct_diff
         )
-        search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/100)
-        println("test ", search_context.deconvolution_stop_tolerance[] )
-        println("_")
+        search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/1000)
+        #println("test ", search_context.deconvolution_stop_tolerance[] )
+        #println("_")
         # Store results
         results.huber_delta[] = optimal_delta
         setHuberDelta!(search_context, optimal_delta)

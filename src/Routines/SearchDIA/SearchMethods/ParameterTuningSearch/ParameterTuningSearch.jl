@@ -327,18 +327,16 @@ function summarize_results!(
     
     # Merge RT alignment plots
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
-    rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
-                if endswith(x, ".pdf")]
-
     output_path = joinpath(rt_alignment_folder, "rt_alignment_plots.pdf")
-
     try
-        open(output_path, "w") do io
-            write(io, "") # Write empty content
+        if isfile(output_path)
+            rm(output_path)
         end
     catch e
         @warn "Could not clear existing file: $e"
     end
+    rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
+    if endswith(x, ".pdf")]
     
     if !isempty(rt_plots)
         merge_pdfs(rt_plots, 
@@ -348,17 +346,16 @@ function summarize_results!(
     
     # Merge mass error plots
     mass_error_folder = getMassErrPlotFolder(search_context)
-    mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
-                 if endswith(x, ".pdf")]
-
-
     output_path = joinpath(mass_error_folder, "mass_error_plots.pdf")
-
     try
-        rm(output_path)
+        if isfile(output_path)
+            rm(output_path)
+        end
     catch e
         @warn "Could not clear existing file: $e"
     end
+    mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
+                    if endswith(x, ".pdf")]
 
     if !isempty(mass_plots)
         merge_pdfs(mass_plots, 

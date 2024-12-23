@@ -103,7 +103,7 @@ function writePrecursorCSV(
     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
     if isfile(wide_precursors_arrow_path)
-        rm(wide_precursors_arrow_path, force=true)
+        rm(wide_precursors_arrow_path)
     end
     wide_columns = ["species"
     "accession_numbers"
@@ -150,6 +150,9 @@ function writePrecursorCSV(
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
                 if iszero(n_writes)
+                    if isfile(wide_precursors_arrow_path)
+                        rm(wide_precursors_arrow_path)
+                    end
                     open(wide_precursors_arrow_path, "w") do io
                         Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
                     end
@@ -190,7 +193,7 @@ function writeProteinGroupsCSV(
     wide_protein_groups_path = joinpath(out_dir,"protein_groups_wide.tsv")
     wide_protein_groups_arrow = joinpath(out_dir,"protein_groups_wide.arrow")
     if isfile(wide_protein_groups_arrow)
-        rm(wide_protein_groups_arrow, force=true)
+        rm(wide_protein_groups_arrow)
     end
     wide_columns = ["species","protein","target"]
 
@@ -250,6 +253,9 @@ function writeProteinGroupsCSV(
                 end
 
                 if iszero(n_writes)
+                    if isfile(wide_protein_groups_arrow)
+                        rm(wide_protein_groups_arrow)
+                    end
                     open(wide_protein_groups_arrow, "w") do io
                         Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
                     end

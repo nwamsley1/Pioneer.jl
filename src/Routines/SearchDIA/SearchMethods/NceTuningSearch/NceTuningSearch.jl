@@ -255,7 +255,9 @@ function summarize_results!(
     try
         output_path = joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf")
         try
-            rm(output_path)
+            if isfile(output_path)
+                rm(output_path)
+            end
         catch e
             @warn "Could not clear existing file: $e"
         end
