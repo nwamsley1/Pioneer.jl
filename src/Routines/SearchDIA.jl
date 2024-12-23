@@ -38,6 +38,13 @@ function SearchDIA(params_path::String)
             print(log_file, args...)  # Write to file
         end
 
+        dual_println("\n", repeat("=", 90))
+        dual_println("Sarting SearchDIA")
+        dual_println(repeat("=", 90))
+        dual_println("\nStarting search at: ", Dates.now())
+        dual_println("Output directory: ", params.paths[:results])
+        
+
         # === Initialize performance tracking ===
         timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),Tuple{Nothing, Float64,Int64,Float64,Base.GC_Diff}}}()
         
