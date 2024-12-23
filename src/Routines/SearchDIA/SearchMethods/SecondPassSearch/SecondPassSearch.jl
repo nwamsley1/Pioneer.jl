@@ -89,10 +89,12 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             SeperateTraces()
         end
 
+        isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
-            (UInt8(3), UInt8(0)),  # Fixed isotope bounds for second pass
+            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling rate

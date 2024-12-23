@@ -103,10 +103,10 @@ function rankPSMs!(psms::DataFrame,
     psms[!,:prob] = zeros(Float32, size(psms, 1))
     folds = psms[!,:cv_fold]
     unique_cv_folds = unique(folds)
-    Random.seed!(128);
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
     models = Dictionary{UInt8, Vector{Booster}}()
     pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
+    Random.seed!(1776);
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
         psms_train = psms[train_fold_idxs_all,:]
@@ -114,6 +114,7 @@ function rankPSMs!(psms::DataFrame,
         for (train_iter, num_round) in enumerate(iter_scheme)
             ###################
             #Train a model on the n-1 training folds.
+            _seed_ = rand(UInt32)
             bst = xgboost((psms_train[!,features], psms_train[!,:target]), 
                             num_round=num_round, 
                             #monotone_constraints = monotone_constraints,
@@ -125,7 +126,7 @@ function rankPSMs!(psms::DataFrame,
                             min_child_weight = min_child_weight, 
                             subsample = subsample, 
                             objective="binary:logistic",
-                            seed = rand(UInt32),
+                            seed = _seed_,
                             #max_bin = 128,
                             watchlist=(;)
                             )

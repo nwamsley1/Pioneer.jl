@@ -9,6 +9,7 @@ function searchFragmentIndex(
                     mem::M,
                     rt_to_irt_spline::Any,
                     irt_tol::AbstractFloat,
+                    rng::MersenneTwister
                     ) where {M<:MassErrorModel, Q<:QuadTransmissionModel, S<:SearchDataStructures, P<:FragmentIndexSearchParameters}
 
     prec_id = 0
@@ -20,7 +21,7 @@ function searchFragmentIndex(
         #end
         # Skip invalid indices
         (scan_idx <= 0 || scan_idx > length(spectra)) && continue
-        (getMsOrder(spectra, scan_idx) ∉ getSpecOrder(params) || rand() > getSampleRate(params)) && continue
+        (getMsOrder(spectra, scan_idx) ∉ getSpecOrder(params) || rand(rng) > getSampleRate(params)) && continue
 
         # Update RT bin index based on iRT window
         irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)), irt_tol)
@@ -284,7 +285,7 @@ function LibrarySearch(
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-
+    thread_rngs = Tuple([MersenneTwister(rand(UInt64) + i) for i in 1:Threads.nthreads()])
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
             thread_id = first(thread_task)
@@ -299,6 +300,7 @@ function LibrarySearch(
                         mem,
                         rt_to_irt_spline,
                         irt_tol,
+                        thread_rngs[thread_id],
                     )
         end
     end
@@ -347,7 +349,7 @@ function LibrarySearchNceTuning(
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, length(spectra))
-
+    thread_rngs = Tuple([MersenneTwister(rand(UInt64) + i) for i in 1:Threads.nthreads()])
     # Do fragment index search once
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin 
@@ -362,7 +364,8 @@ function LibrarySearchNceTuning(
                 qtm,
                 mem,
                 rt_to_irt_spline,
-                irt_tol
+                irt_tol,
+                thread_rngs[thread_id]
             )
         end
     end

@@ -2,8 +2,7 @@
     get_best_precursors_accross_runs(psms_paths::Vector{String}, 
                                     prec_mzs::AbstractVector{Float32},
                                     rt_irt::Dict{Int64, RtConversionModel};
-                                    max_q_val::Float32=0.01f0,
-                                    max_precursors::Int=250000) 
+                                    max_q_val::Float32=0.01f0) 
     -> Dictionary{UInt32, NamedTuple}
 
 Identify and collect best precursor matches across multiple runs for retention time calibration.
@@ -13,7 +12,6 @@ Identify and collect best precursor matches across multiple runs for retention t
 - `prec_mzs`: Vector of precursor m/z values
 - `rt_irt`: Dictionary mapping file indices to RT-iRT conversion models
 - `max_q_val`: Maximum q-value threshold for considering PSMs
-- `max_precursors`: Maximum number of precursors to retain
 
 # Returns
 Dictionary mapping precursor indices to NamedTuple containing:
@@ -35,8 +33,8 @@ function get_best_precursors_accross_runs(
                          psms_paths::Vector{String},
                          prec_mzs::AbstractVector{Float32},
                          rt_irt::Dict{Int64, RtConversionModel};
-                         max_q_val::Float32 = 0.01f0,
-                         max_precursors::Int = 250000)
+                         max_q_val::Float32 = 0.01f0
+                         )
 
     function readPSMs!(
         prec_to_best_prob::Dictionary{UInt32, @NamedTuple{ best_prob::Float32, 
@@ -55,6 +53,7 @@ function get_best_precursors_accross_runs(
         ms_file_idxs::AbstractVector{UInt32},
         rt_irt::SplineRtConversionModel,
         max_q_val::Float32)
+
         for row in eachindex(precursor_idxs)
             # Extract current PSM information
             q_value = q_values[row]
@@ -164,8 +163,12 @@ function get_best_precursors_accross_runs(
                                                         mz::Float32}}()
 
     # First pass: collect best matches and mean iRT
+
+    n_precursors_vec = Vector{UInt64}()
     for (key, psms_path) in enumerate(psms_paths) #For each data frame 
         psms = Arrow.Table(psms_path)
+
+        push!(n_precursors_vec, length(psms[:precursor_idx]))
         #One row for each precursor 
         readPSMs!(
             prec_to_best_prob,
@@ -179,7 +182,7 @@ function get_best_precursors_accross_runs(
             max_q_val
         )
     end
-
+    max_precursors = maximum(n_precursors_vec)
     # Filter to top N precursors by probability
     sort!(prec_to_best_prob, by = x->x[:best_prob], alg=PartialQuickSort(1:max_precursors), rev = true);
     N = 0

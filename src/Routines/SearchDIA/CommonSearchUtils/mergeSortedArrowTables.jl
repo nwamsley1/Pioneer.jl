@@ -81,7 +81,6 @@ function mergeSortedArrowTables(
         end
     end
 
-
     function fillColumn!(
         peptide_batch_col::Vector{Union{Missing, String}},
         col::Symbol,
@@ -94,7 +93,6 @@ function mergeSortedArrowTables(
             peptide_batch_col[i] = tables[table_idx][col][idx]::Union{String,Missing}
         end
     end
-
 
     function fillColumn!(
         peptide_batch_col::Vector{Tuple{R, R}},
@@ -129,6 +127,7 @@ function mergeSortedArrowTables(
         )
     end
     i = 1
+    n_writes = 0
     while length(precursor_heap) > 0
         _, _, table_idx = pop!( precursor_heap)
         table = tables[table_idx]
@@ -157,10 +156,20 @@ function mergeSortedArrowTables(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                peptide_batch
-            )
+            if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
+                open(output_path, "w") do io
+                    Arrow.write(io, peptide_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    peptide_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end
@@ -299,6 +308,7 @@ function mergeSortedArrowTables(
         )
     end
     i = 1
+    n_writes = 0
     while length(precursor_heap) > 0
         _, table_idx = pop!(precursor_heap)
         table = tables[table_idx]
@@ -326,10 +336,21 @@ function mergeSortedArrowTables(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                peptide_batch
-            )
+
+            if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
+                open(output_path, "w") do io
+                    Arrow.write(io, peptide_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    peptide_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end

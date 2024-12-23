@@ -1,7 +1,8 @@
 {
     "global": {
         "isotope_settings": {
-            "err_bounds": [1, 0],
+            "err_bounds_first_pass": [1, 0],
+            "err_bounds_quant_search": [2, 0],
             "combine_traces": false,
             "partial_capture": false
         },
@@ -44,8 +45,12 @@
         "scoring_settings": {
             "n_train_rounds": 2,
             "max_iterations": 20,
-            "max_q_value": 0.01,
-            "max_precursors": 200000
+            "max_q_value": 0.01
+        },
+        "irt_mapping": {
+            "max_prob_to_impute_irt": 0.75,
+            "fwhm_nstd": 4,
+            "irt_nstd": 4
         }
     },
     "quant_search": {

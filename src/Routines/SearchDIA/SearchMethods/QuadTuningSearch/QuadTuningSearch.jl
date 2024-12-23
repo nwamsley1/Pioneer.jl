@@ -281,17 +281,32 @@ function summarize_results!(
         savefig(p, joinpath(results.quad_plot_dir, "quad_models", fname*".pdf"))
     end
 
+
+
+    models_path = joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf")
+    data_path = joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf")
+    try
+        if isfile(models_path)
+            rm(models_path)
+        end
+        if isfile(data_path)
+            rm(data_path)
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
+
     qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_models"), join=true) if endswith(x, ".pdf")]
     if !isempty(qmp)
         merge_pdfs(qmp, 
-                  joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf"), 
+                  models_path, 
                   cleanup=true)
     end
 
     qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_data"), join=true) if endswith(x, ".pdf")]
     if !isempty(qmp)
         merge_pdfs(qmp, 
-                  joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf"), 
+                  data_path, 
                   cleanup=true)
     end
 

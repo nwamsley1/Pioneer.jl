@@ -80,6 +80,7 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         frag_params = tuning_params.fragment_settings
         search_params = tuning_params.search_settings
         global_params = params.global_settings
+
         # Always use partial capture for NCE tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
@@ -252,9 +253,17 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:NceTuningSearchParameters}
     try
+        output_path = joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf")
+        try
+            if isfile(output_path)
+                rm(output_path)
+            end
+        catch e
+            @warn "Could not clear existing file: $e"
+        end
         if !isempty(results.nce_plot_dir)
             merge_pdfs([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
-                    joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf"), 
+                    output_path, 
                     cleanup=true)
         end
     catch

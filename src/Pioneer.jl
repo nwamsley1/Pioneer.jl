@@ -6,7 +6,7 @@ using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries, Distributions 
+using DataFrames, DataStructures, Dictionaries#, Distributions 
 using FASTX
 using Interpolations
 using JSON, JLD2
@@ -24,6 +24,11 @@ using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
+
+#Set Seed 
+Random.seed!(1776);
+println("set seed")
+
 #Inport Pioneer Files 
 include(joinpath(@__DIR__, "Routines","SearchDIA","importScripts.jl"))
 importScripts()

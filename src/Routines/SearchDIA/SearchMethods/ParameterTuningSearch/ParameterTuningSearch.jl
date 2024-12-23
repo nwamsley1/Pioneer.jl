@@ -97,9 +97,8 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         rt_params = params.rt_alignment
         
         # Convert isotope error bounds
-        isotope_bounds = haskey(global_params, :isotope_settings) ? 
-            global_params.isotope_settings.err_bounds : [1, 0]E
-            
+        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
+        
         # Create precursor estimation type
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
@@ -328,21 +327,39 @@ function summarize_results!(
     
     # Merge RT alignment plots
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
+    output_path = joinpath(rt_alignment_folder, "rt_alignment_plots.pdf")
+    try
+        if isfile(output_path)
+            rm(output_path)
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
     rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
-                if endswith(x, ".pdf")]
+    if endswith(x, ".pdf")]
+    
     if !isempty(rt_plots)
         merge_pdfs(rt_plots, 
-                  joinpath(rt_alignment_folder, "rt_alignment_plots.pdf"), 
+                    output_path, 
                   cleanup=true)
     end
     
     # Merge mass error plots
     mass_error_folder = getMassErrPlotFolder(search_context)
+    output_path = joinpath(mass_error_folder, "mass_error_plots.pdf")
+    try
+        if isfile(output_path)
+            rm(output_path)
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
     mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
-                 if endswith(x, ".pdf")]
+                    if endswith(x, ".pdf")]
+
     if !isempty(mass_plots)
         merge_pdfs(mass_plots, 
-                  joinpath(mass_error_folder, "mass_error_plots.pdf"), 
+                  output_path, 
                   cleanup=true)
     end
     

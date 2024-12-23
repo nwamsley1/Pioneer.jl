@@ -665,6 +665,7 @@ struct BasicLibraryPrecursors
             #all precursors corresponding to a given protein-group end up in the same cross validation fold
             pg_to_cv_fold = Dictionary{String, UInt8}()
             cv_folds = UInt8[0, 1]
+            Random.seed!(1776)
             for pg in unique_proteins
                 insert!(pg_to_cv_fold, pg, rand(cv_folds))
             end

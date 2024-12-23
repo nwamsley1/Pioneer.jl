@@ -103,7 +103,7 @@ function writePrecursorCSV(
     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
     if isfile(wide_precursors_arrow_path)
-        rm(wide_precursors_arrow_path, force=true)
+        rm(wide_precursors_arrow_path)
     end
     wide_columns = ["species"
     "accession_numbers"
@@ -122,6 +122,7 @@ function writePrecursorCSV(
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
+            n_writes = 0
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
                 last_pid = precursors_long[batch_end_idx,:precursor_idx]
@@ -148,7 +149,17 @@ function writePrecursorCSV(
                 if write_csv
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
-                Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
+                if iszero(n_writes)
+                    if isfile(wide_precursors_arrow_path)
+                        rm(wide_precursors_arrow_path)
+                    end
+                    open(wide_precursors_arrow_path, "w") do io
+                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
+                    end
+                else
+                    Arrow.append(wide_precursors_arrow_path,subunstack[!,sorted_columns])
+                end
+                n_writes += 1
             end
         end
     end
@@ -182,7 +193,7 @@ function writeProteinGroupsCSV(
     wide_protein_groups_path = joinpath(out_dir,"protein_groups_wide.tsv")
     wide_protein_groups_arrow = joinpath(out_dir,"protein_groups_wide.arrow")
     if isfile(wide_protein_groups_arrow)
-        rm(wide_protein_groups_arrow, force=true)
+        rm(wide_protein_groups_arrow)
     end
     wide_columns = ["species","protein","target"]
 
@@ -195,6 +206,7 @@ function writeProteinGroupsCSV(
                 println(io2,join(sorted_columns,"\t"))
             end
             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
+            n_writes = 0
             while batch_start_idx <= n_rows
                 #For the wide format, can't split a precursor between two batches.
                 last_protein_group = protein_groups_long[batch_end_idx,:protein]
@@ -239,7 +251,19 @@ function writeProteinGroupsCSV(
                 if write_csv
                     CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim="\t")
                 end
-                Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
+
+                if iszero(n_writes)
+                    if isfile(wide_protein_groups_arrow)
+                        rm(wide_protein_groups_arrow)
+                    end
+                    open(wide_protein_groups_arrow, "w") do io
+                        Arrow.write(io, subunstack[!,sorted_columns]; file=false)  # file=false creates stream format
+                    end
+                else
+                    Arrow.append(wide_protein_groups_arrow,subunstack[!,sorted_columns])
+                end
+                n_writes += 1
+
             end
         end
         if write_csv == false

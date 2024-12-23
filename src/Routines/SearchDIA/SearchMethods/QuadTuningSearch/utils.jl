@@ -525,6 +525,7 @@ function perform_quad_transmission_search(
         search_data::SearchDataStructures,
         nmatches::Int,
         nmisses::Int,
+        stop_tolerance::Real,
         params::QuadTuningSearchParameters)
         buildDesignMatrix!(
             Hs,
@@ -694,6 +695,7 @@ function perform_quad_transmission_search(
             search_data,
             nmatches,
             nmisses,
+            search_context.deconvolution_stop_tolerance[],
             params
         )
         

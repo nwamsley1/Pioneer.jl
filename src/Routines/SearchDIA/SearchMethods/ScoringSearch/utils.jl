@@ -39,7 +39,7 @@ function sample_psms_for_xgboost(quant_psms_folder, max_psms)
         sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
 
         # Generate sorted random indices for sampling
-        sampled_indices = sort!(sample(1:num_rows, sample_size, replace=false))
+        sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
         
         # Sample the rows and convert to DataFrame
         sampled_df = DataFrame(arrow_table)[sampled_indices, :]
@@ -252,7 +252,7 @@ function sort_and_filter_quant_tables(
 
     #Remove if present 
     if isfile(merged_quant_path)
-        rm(merged_quant_path, force = true)
+        rm(merged_quant_path)
     end
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
@@ -341,6 +341,7 @@ function merge_sorted_psms_scores(
         )
     end
     i = 1
+    n_writes = 0
     while length(psms_heap)>0
         _, table_idx = pop!(psms_heap)
         table = tables[table_idx]
@@ -368,10 +369,20 @@ function merge_sorted_psms_scores(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                psms_batch
-            )
+            if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
+                open(output_path, "w") do io
+                    Arrow.write(io, psms_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    psms_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end
@@ -709,7 +720,7 @@ function get_protein_groups(
 
     sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
     if isfile(sorted_pg_scores_path)
-        rm(sorted_pg_scores_path, force = true)
+        rm(sorted_pg_scores_path)
     end
     merge_sorted_protein_groups(
         protein_groups_folder,
@@ -783,6 +794,7 @@ function merge_sorted_protein_groups(
         )
     end
     i = 1
+    n_writes = 0
     while length(pg_heap) > 0
         _, table_idx = pop!(pg_heap)
         table = tables[table_idx]
@@ -810,10 +822,20 @@ function merge_sorted_protein_groups(
                     i
                 )
             end
-            Arrow.append(
-                output_path,
-                pg_batch
-            )
+            if iszero(n_writes)
+                if isfile(output_path)
+                    rm(output_path)
+                end
+                open(output_path, "w") do io
+                    Arrow.write(io, pg_batch; file=false)  # file=false creates stream format
+                end
+            else
+                Arrow.append(
+                    output_path,
+                    pg_batch
+                )
+            end
+            n_writes += 1
             i = 1
         end
     end
