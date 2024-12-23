@@ -464,9 +464,7 @@ function qcPlots(
     =#
     output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
     try
-        open(output_path, "w") do io
-            write(io, "") # Write empty content
-        end
+        rm(output_path)
     catch e
         @warn "Could not clear existing file: $e"
     end

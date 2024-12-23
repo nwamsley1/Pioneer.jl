@@ -255,9 +255,7 @@ function summarize_results!(
     try
         output_path = joinpath(results.nce_plot_dir, "nce_alignment_plots.pdf")
         try
-            open(output_path, "w") do io
-                write(io, "") # Write empty content
-            end
+            rm(output_path)
         catch e
             @warn "Could not clear existing file: $e"
         end

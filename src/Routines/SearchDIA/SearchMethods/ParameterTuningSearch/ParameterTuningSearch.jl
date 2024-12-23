@@ -355,9 +355,7 @@ function summarize_results!(
     output_path = joinpath(mass_error_folder, "mass_error_plots.pdf")
 
     try
-        open(output_path, "w") do io
-            write(io, "") # Write empty content
-        end
+        rm(output_path)
     catch e
         @warn "Could not clear existing file: $e"
     end

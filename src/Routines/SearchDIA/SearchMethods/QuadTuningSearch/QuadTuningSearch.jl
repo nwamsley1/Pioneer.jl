@@ -286,19 +286,13 @@ function summarize_results!(
     models_path = joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf")
     data_path = joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf")
     try
-        open(models_path, "w") do io
-            write(io, "") # Write empty content
-        end
-        open(data_path, "w") do io
-            write(io, "") # Write empty content
-        end
+        rm(models_path)
+        rm(data_path)
     catch e
         @warn "Could not clear existing file: $e"
     end
 
     qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_models"), join=true) if endswith(x, ".pdf")]
-    println("qmp $qmp")
-    println("A")
     if !isempty(qmp)
         merge_pdfs(qmp, 
                   models_path, 

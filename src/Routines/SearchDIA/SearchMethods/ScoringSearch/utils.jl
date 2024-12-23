@@ -39,7 +39,7 @@ function sample_psms_for_xgboost(quant_psms_folder, max_psms)
         sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
 
         # Generate sorted random indices for sampling
-        sampled_indices = sort!(sample(1:num_rows, sample_size, replace=false))
+        sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
         
         # Sample the rows and convert to DataFrame
         sampled_df = DataFrame(arrow_table)[sampled_indices, :]
