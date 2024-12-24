@@ -1,4 +1,4 @@
-function getBestScorePerPrec(psms::DataFrame)
+function getBestScorePerPrec(psms::SubDataFrame)
     # Create dictionary to store scores per precursor
     prec_to_best_score = Dictionary{
         @NamedTuple{prec_idx::UInt32, isotopes::Tuple{Int8,Int8}}, 
@@ -64,22 +64,19 @@ function rankPSMs!(psms::DataFrame,
     psms[!, :max_prob] = zeros(Float32, size(psms, 1))
     psms[!, :mean_prob] = zeros(Float32, size(psms, 1))
     psms[!, :min_prob] = zeros(Float32, size(psms, 1))
-    
-    #Final prob estimates = 
+    #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
+
     #Subsample psms for training. 
-    psms_training_subset = psms[
+    psms_training_subset = @view(psms[
                                 sample(MersenneTwister(1776), #seed for reproducibility
                                 1:size(psms, 1), 
                                 min(10000000, size(psms, 1)), #Number of psms to use for training 
-                                replace=false),:]
-    println("size(psms_training_subset, 1) ", size(psms_training_subset, 1) )
-    println("size(psms, 1) ", size(psms, 1))
-    println("_")
+                                replace=false),:])
+
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, Vector{Booster}}()
     
-
     # Train models for each fold
     Random.seed!(1776)
     @info "Training psm models..."
@@ -91,12 +88,11 @@ function rankPSMs!(psms::DataFrame,
             psms[!, :mean_prob] .= zero(Float32)
             psms[!, :min_prob] .= zero(Float32)
         end
-
         # Get training data
-        psms_train = psms_training_subset[findall(x -> x != test_fold_idx, psms_training_subset[!, :cv_fold]), :]
+        psms_train = @view(psms_training_subset[findall(x -> x != test_fold_idx, psms_training_subset[!, :cv_fold]), :])
         # Train models for each iteration
         fold_models = Vector{Booster}()
-
+        #Each round updates, max_prob, mean_prob, and min_prob, and uses these as training features in the next round 
         for num_round in iter_scheme
             bst = xgboost(
                 (psms_train[!, features], psms_train[!, :target]),
@@ -112,32 +108,27 @@ function rankPSMs!(psms::DataFrame,
                 seed = rand(UInt32),
                 watchlist = (;)
             )
-            
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
             if true==true#rint_importance
                 println(collect(zip(importance(bst))))#[1:30])
-                println(")")
-                println(")")
-                println(")")
             end
             
             push!(fold_models, bst)
             println("1")
             test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
-            @time psms[test_fold_idxs, :prob] = XGBoost.predict(bst, psms[test_fold_idxs, features])
+            test_fold_psms = @view(psms[test_fold_idxs,:])
+            @time test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
             # Update best scores
-            println("2")
-            @time prec_scores = getBestScorePerPrec(psms[test_fold_idxs,:])
+            @time prec_scores = getBestScorePerPrec(test_fold_psms)
             # Update the main dataframe with computed scores
-            println("3")
-            @time for (i, row) in enumerate(eachrow(psms[test_fold_idxs, :]))
+            @time for (i, row) in enumerate(eachrow(test_fold_psms))
                 key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
                 if haskey(prec_scores, key)
                     scores = prec_scores[key]
-                    psms[i, :max_prob] = scores.max_prob
-                    psms[i, :mean_prob] = scores.mean_prob
-                    psms[i, :min_prob] = scores.min_prob
+                    test_fold_psms[i, :max_prob] = scores.max_prob
+                    test_fold_psms[i, :mean_prob] = scores.mean_prob
+                    test_fold_psms[i, :min_prob] = scores.min_prob
                 end
             end
 
