@@ -27,7 +27,7 @@ Parameters for scoring search.
 """
 struct ScoringSearchParameters <: SearchParameters
     # XGBoost parameters
-    max_n_samples::Int64
+    max_psms_in_memory::Int64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
@@ -39,7 +39,7 @@ struct ScoringSearchParameters <: SearchParameters
         ml_params = params.optimization.machine_learning
         
         new(
-            Int64(ml_params.max_samples),
+            Int64(ml_params.max_psms_in_memory),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),

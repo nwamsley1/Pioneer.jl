@@ -96,7 +96,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_samples": 10000000,
+            "max_psms_in_memory": 50000000,
             "min_trace_prob": 0.75,
             "spline_points": 500,
             "interpolation_points": 10

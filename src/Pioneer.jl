@@ -57,6 +57,7 @@ importScripts()
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
 include(joinpath(@__DIR__, "Routines","BuildSpecLib.jl"))
+include(joinpath(@__DIR__, "Routines","GenerateParams.jl"))
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 const H2O::Float64 = Float64(18.010565)
@@ -107,5 +108,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, ThreeProteomeAnalysis, BuildSpecLib
+export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams
 end

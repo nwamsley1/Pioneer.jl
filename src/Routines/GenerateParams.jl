@@ -8,7 +8,6 @@ The function reads a template JSON configuration file and creates a new 'search_
 in the current working directory with updated paths while preserving all other settings.
 
 Arguments:
-- template_path: Path to the template JSON configuration file
 - lib_path: Path to the library file (.poin)
 - ms_data_path: Path to the MS data directory
 - results_path: Path where results will be stored
@@ -19,7 +18,6 @@ Returns:
 Example:
 ```julia
 output_file = getBuildLibParams(
-    "/path/to/template.json",
     "/path/to/output/dir",
     "/path/to/library/name",
     "/path/to/fasta/directory"
@@ -29,7 +27,7 @@ output_file = getBuildLibParams(
 Note: The function preserves all configuration settings from the template 
 (fragment settings, search settings, etc.) while only modifying the paths section.
 """
-function getSearchParams(lib_path::String, ms_data_path::String, results_path::String)
+function GetSearchParams(lib_path::String, ms_data_path::String, results_path::String)
     # Read the JSON template
     config = JSON.parsefile(joinpath(@__DIR__, "../../data/example_config/defaultSearchParams.json"))
     
@@ -47,6 +45,7 @@ function getSearchParams(lib_path::String, ms_data_path::String, results_path::S
 
     # Write the modified configuration to search_parameters.json in current directory
     output_path = joinpath(pwd(), "search_parameters.json")
+    @info "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
@@ -55,32 +54,26 @@ function getSearchParams(lib_path::String, ms_data_path::String, results_path::S
 end
 
 """
-    getBuildLibParams(template_path::String, out_dir::String, lib_name::String, fasta_dir::String)
+    GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String)
 
-Creates a new library build parameter file based on a template, with updated paths and FASTA files.
+Creates a new library build parameter file with updated paths and automatically discovered FASTA files.
+Uses a default template from data/example_config/defaultBuildLibParams.json.
 
 Arguments:
-- template_path: Path to the template JSON file
-- out_dir: New output directory path
-- lib_name: New library name path
+- out_dir: Output directory path
+- lib_name: Library name path
 - fasta_dir: Directory to search for FASTA files
 
 Returns:
-- Path to the newly created parameters file
-
-Example:
-```julia
-output_file = getSearchParams(
-    "/path/to/template.json",
-    "/path/to/library.poin",
-    "/path/to/ms_data",
-    "/path/to/results"
-)
-```
+- String: Path to the newly created parameters file
 """
-function getBuildLibParams(template_path::String, out_dir::String, lib_name::String, fasta_dir::String)
-    # Read the JSON template
-    config = JSON.parsefile(template_path)
+function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String)
+    # Read the template file
+    template_path = joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json")
+    template_text = read(template_path, String)
+    
+    # Parse JSON
+    config = JSON.parse(template_text)
     
     # Find all FASTA files in the specified directory
     fasta_files = String[]
@@ -89,28 +82,29 @@ function getBuildLibParams(template_path::String, out_dir::String, lib_name::Str
     for file in readdir(fasta_dir, join=true)
         if endswith(lowercase(file), ".fasta") || endswith(lowercase(file), ".fasta.gz")
             push!(fasta_files, file)
-            # Get base name without extension and directory
             base_name = uppercase(splitext(basename(splitext(file)[1]))[1])
             push!(fasta_names, base_name)
         end
     end
     
-    # Update paths and FASTA information in the configuration
+    # Update values while maintaining structure
     config["out_dir"] = out_dir
     config["lib_name"] = lib_name
-    config["new_lib_name"] = lib_name  # Update both lib_name and new_lib_name
+    config["new_lib_name"] = lib_name
     config["fasta_paths"] = fasta_files
     config["fasta_names"] = fasta_names
-    
-    # Set output name based on the library name
     config["out_name"] = basename(lib_name) * ".tsv"
     
-    # Write the modified configuration to build_parameters.json in current directory
+    # Write output using the same formatting as template
     output_path = joinpath(pwd(), "build_parameters.json")
     open(output_path, "w") do io
-        JSON.print(io, config, 4)  # indent with 4 spaces for readability
+        # Extract indentation from template
+        indent_match = match(r"\n(\s+)\"", template_text)
+        indent = indent_match === nothing ? "    " : indent_match[1]
+        
+        # Write with matching format
+        JSON.print(io, config, length(indent))
     end
     
     return output_path
 end
-
