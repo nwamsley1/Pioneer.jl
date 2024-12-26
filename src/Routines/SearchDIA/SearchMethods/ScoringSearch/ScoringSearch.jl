@@ -117,23 +117,22 @@ function summarize_results!(
         psms_count = get_psms_count(getSecondPassPsms(getMSData(search_context)))
 
         if psms_count > params.max_psms_in_memory #Use out-of-memory algorithm
-            best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, params.max_psms_train)#params.max_n_samples)
-            # Train models on sampled PSMs
-            models = score_precursor_isotope_traces!(
+            #Sample psms for xgboost training. Only the sampled psms are stored in-memory
+            best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, params.max_psms_in_memory)#params.max_n_samples)
+            models = score_precursor_isotope_traces_out_of_memory!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
                 getPrecursors(getSpecLib(search_context))
             )
-            best_psms = nothing # Free memory
         else #In memory algorithm
             best_psms = load_psms_for_xgboost(second_pass_folder)#params.max_n_samples)
-            # Train models on sampled PSMs
-            models = score_precursor_isotope_traces!(
+            models = score_precursor_isotope_traces_in_memory!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
                 getPrecursors(getSpecLib(search_context))
             )
         end
+        best_psms = nothing
         GC.gc()
 
         # Step 2: Find Best Isotope Traces

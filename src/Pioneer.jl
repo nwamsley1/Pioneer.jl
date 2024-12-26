@@ -101,8 +101,8 @@ const KOINA_URLS = Dict(
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "AlphaPeptDeep" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPeptDeep_ms2_generic/infer",
     "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
-    "altimeter_4m" => "127.0.0.1:8501/v2/models/Altimeter_2024_splines_4M/infer",
-    "altimeter_13m" => "127.0.0.1:8501/v2/models/Altimeter_2024_splines/infer",
+    "altimeter_4m" => "127.0.0.1:8000/v2/models/Altimeter_2024_splines_4M/infer",
+    "altimeter_13m" => "127.0.0.1:8000/v2/models/Altimeter_2024_splines/infer",
 )
 
 
