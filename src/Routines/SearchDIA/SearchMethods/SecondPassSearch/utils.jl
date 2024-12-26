@@ -446,13 +446,19 @@ function get_isotopes_captured!(chroms::DataFrame,
                                                     charge, 
                                                     low_mz, high_mz
                                                     )
-                               
+                #=           
                 if first(isotopes) >= 2         
                     isotopes_captured[i] = isotopes
                 elseif seperateTraces(isotope_trace_type)
                     isotopes_captured[i] = isotopes
                 else
                     isotopes_captured[i] = (Int8(-1), Int8(-1))
+                end
+                =#
+                if first(isotopes) >= 2         
+                    isotopes_captured[i] = (Int8(-1), Int8(-1))
+                else
+                    isotopes_captured[i] = isotopes
                 end
             end
         end

@@ -382,7 +382,14 @@ function getRtIrtModel(s::SearchContext, index::I) where {I<:Integer}
    end
 end
 
-setRtIrtModel!(s::SearchContext, index::I, model::Any) where {I<:Integer} = (s.rt_irt_map[index] = model)
+"""
+   getRtIrtModel(s::SearchContext, index::Integer)
+
+Get RT to iRT conversion model for MS file index. Returns identity model if not found.
+"""
+function getRtIrtModel(s::SearchContext)
+   return s.rt_irt_map
+end
 
 """
    getNceModelModel(s::SearchContext, index::Integer)

@@ -2,21 +2,17 @@
 PSM sampling and scoring 
 ==========================================================#
 """
-    sample_psms_for_xgboost(quant_psms_folder::String, max_psms::Int) -> DataFrame
+     get_psms_count(quant_psms_folder::String)::Integer
 
 Sample PSMs from multiple files for XGBoost model training.
 
 # Arguments
 - `quant_psms_folder`: Folder containing PSM Arrow files
-- `max_psms`: Maximum number of PSMs to sample
 
 # Process
-1. Counts total PSMs across files
-2. Proportionally samples from each file
-3. Combines samples into single DataFrame
+1. Counts total PSMs across .arrow files in the directory
 """
-function sample_psms_for_xgboost(quant_psms_folder, max_psms_in_memory)
-
+function get_psms_count(quant_psms_folder::String)
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
     psms_count = 0
@@ -24,36 +20,64 @@ function sample_psms_for_xgboost(quant_psms_folder, max_psms_in_memory)
     for file_path in file_paths
         psms_count += length(Arrow.Table(file_path)[1])
     end
-    if psms_count > max_psms_in_memory
-        # Initialize an empty DataFrame to store the results
-        result_df = DataFrame()
 
-        for file_path in file_paths
-            # Read the Arrow table
-            arrow_table = Arrow.Table(file_path)
-            
-            # Get the number of rows
-            num_rows = length(arrow_table[1])
-            
-            # Calculate the number of rows to sample (1/N'th of the total)
-            sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
-
-            # Generate sorted random indices for sampling
-            sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
-            
-            # Sample the rows and convert to DataFrame
-            sampled_df = DataFrame(arrow_table)[sampled_indices, :]
-            
-            # Append to the result DataFrame
-            append!(result_df, sampled_df)
-        end
-
-        return result_df, true
-    else
-       return DataFrame(Tables.columntable(Arrow.Table(file_paths))), false
-    end
+    return psms_count
 end
 
+
+"""
+    sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer max_psms::Integer) -> DataFrame
+
+Sample PSMs from multiple files for XGBoost model training.
+
+# Arguments
+- `quant_psms_folder`: Folder containing PSM Arrow files
+- `psms_count`: number of psms across all the arrow files
+- `max_psms`: Maximum number of PSMs to sample for training
+
+# Process
+1. Proportionally samples from each file
+2. Combines samples into single DataFrame
+"""
+function sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer, max_psms::Integer)
+
+    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+
+    # Initialize an empty DataFrame to store the results
+    result_df = DataFrame()
+
+    for file_path in file_paths
+        # Read the Arrow table
+        arrow_table = Arrow.Table(file_path)
+        
+        # Get the number of rows
+        num_rows = length(arrow_table[1])
+        
+        # Calculate the number of rows to sample (1/N'th of the total)
+        sample_size = min(ceil(Int, (num_rows/psms_count)*max_psms), num_rows) #ceil(Int, num_rows / N)
+
+        # Generate sorted random indices for sampling
+        sampled_indices = sort!(sample(MersenneTwister(1776), 1:num_rows, sample_size, replace=false))
+        
+        # Sample the rows and convert to DataFrame
+        sampled_df = DataFrame(arrow_table)[sampled_indices, :]
+        
+        # Append to the result DataFrame
+        append!(result_df, sampled_df)
+    end
+
+    return result_df
+end
+
+"""
+     get_psms_count(quant_psms_folder::String)::Integer
+
+Loads all PSMs from multiple files for XGBoost model training.
+"""
+function load_psms_for_xgboost(quant_psms_folder::String)
+    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+    return DataFrame(Tables.columntable(Arrow.Table(file_paths)))
+end
 
 """
     score_precursor_isotope_traces!(best_psms::DataFrame, file_paths::Vector{String},

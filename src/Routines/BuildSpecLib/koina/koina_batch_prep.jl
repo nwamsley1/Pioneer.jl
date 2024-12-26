@@ -97,6 +97,44 @@ function prepare_koina_batch(model::KoinaModelType,
 end
 
 """
+Prepare batch request for instrument-agnostic models.
+"""
+function prepare_koina_batch(model::SplineCoefficientModel,
+                           data::DataFrame,
+                           ::String;
+                           batch_size::Int = 1000)::Vector{String}
+    n_rows = nrow(data)
+    n_batches = ceil(Int, n_rows/batch_size)
+    json_batches = Vector{String}(undef, n_batches)
+    
+    for i in 1:n_batches
+        start_idx = (i-1) * batch_size + 1
+        end_idx = min(i * batch_size, n_rows)
+        batch_data = data[start_idx:end_idx, :]
+        batch_dict = Dict(
+            "id" => "0",
+            "inputs" => [
+                Dict(
+                    "name" => "peptide_sequences",
+                    "shape" => [nrow(batch_data), 1],
+                    "datatype" => "BYTES",
+                    "data" => batch_data.koina_sequence
+                ),
+                Dict(
+                    "name" => "precursor_charges",
+                    "shape" => [nrow(batch_data), 1],
+                    "datatype" => "FP32",
+                    "data" => batch_data.precursor_charge
+                )
+            ]
+        )
+        json_batches[i] = JSON.json(batch_dict)
+    end
+    
+    return json_batches
+end
+
+"""
 Prepare batch request for retention time predictions.
 """
 function prepare_koina_batch(model::RetentionTimeModel,

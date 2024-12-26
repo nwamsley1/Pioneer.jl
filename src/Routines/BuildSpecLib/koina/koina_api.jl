@@ -7,7 +7,6 @@ function make_koina_request(json_data::String,
                           retry_delay::Float64 = 1.0)
     attempt = 1
     cmd = `curl -s $model_url -d $json_data`
-    
     while attempt <= max_attempts
         try
             response = JSON.parse(read(cmd, String))

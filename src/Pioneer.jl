@@ -73,6 +73,16 @@ const MODEL_CONFIGS = Dict(
         model_type = InstrumentSpecificModel("unispec"),
         instruments = Set(["QE","QEHFX","LUMOS","ELITE","VELOS","NONE"])
     ),
+    "altimeter_13m" => (
+        annotation_type = UniSpecFragAnnotation("y1^1"),
+        model_type = SplineCoefficientModel("altimeter_13m"),
+        instruments = Set([])
+    ),
+    "altimeter_4m" => (
+        annotation_type = UniSpecFragAnnotation("y1^1"),
+        model_type = SplineCoefficientModel("altimeter_4m"),
+        instruments = Set([])
+    ),
     "prosit_2020_hcd" => (
         annotation_type = GenericFragAnnotation("y1+1"), 
         model_type = InstrumentAgnosticModel("prosit_2020_hcd"),
@@ -90,7 +100,9 @@ const KOINA_URLS = Dict(
     "unispec" => "https://koina.wilhelmlab.org:443/v2/models/UniSpec/infer",
     "prosit_2020_hcd" => "https://koina.wilhelmlab.org:443/v2/models/Prosit_2020_intensity_HCD/infer",
     "AlphaPeptDeep" => "https://koina.wilhelmlab.org:443/v2/models/AlphaPeptDeep_ms2_generic/infer",
-    "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer"
+    "chronologer" => "https://koina.wilhelmlab.org:443/v2/models/Chronologer_RT/infer",
+    "altimeter_4m" => "127.0.0.1:8501/v2/models/Altimeter_2024_splines_4M/infer",
+    "altimeter_13m" => "127.0.0.1:8501/v2/models/Altimeter_2024_splines/infer",
 )
 
 

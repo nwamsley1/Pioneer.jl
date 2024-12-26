@@ -300,7 +300,7 @@ function process_search_results!(
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-    setRtIrtModel!(search_context, ms_file_idx, getRtToIrtModel(results))
+    setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
     catch
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         nothing

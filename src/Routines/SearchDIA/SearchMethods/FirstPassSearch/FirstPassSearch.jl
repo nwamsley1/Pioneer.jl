@@ -385,7 +385,7 @@ function summarize_results!(
         return get_best_precursors_accross_runs(
             getFirstPassPsms(getMSData(search_context)),
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            getRtIrtMap(search_context),
+            getRtIrtModel(search_context),
             max_q_val=params.max_q_val_for_irt
         )
     end

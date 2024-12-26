@@ -182,11 +182,10 @@ function predict_fragments_batch(
         start_idx = (i-1) * batch_size + 1 + first_prec_idx - 1
         
         batch_df = batch_result.fragments
-        batch_df[!, :precursor_idx] = repeat(
-            start_idx:(start_idx + batch_result.frags_per_precursor - 1),
-            inner=batch_result.frags_per_precursor
-        )
-        
+        n_precursors_in_batch = UInt32(fld(size( batch_df , 1), batch_result.frags_per_precursor))
+        batch_df[!, :precursor_idx] = repeat(start_idx:(start_idx + n_precursors_in_batch - one(UInt32)), 
+                                                inner=batch_result.frags_per_precursor)
+        filter_fragments!(batch_df, model)
         push!(batch_dfs, batch_df)
         push!(knot_vectors, batch_result.extra_data)  # Store knot vectors
     end
@@ -200,9 +199,8 @@ function predict_fragments_batch(
     
     # Store knot vector with the data
     fragments_df[!, :knot_vector] .= Ref(first(knot_vectors))
-    
-    filter_fragments!(fragments_df, model)
-    sort_fragments!(fragments_df)
+    #For altimeter fragments are already sorted 
+    #sort_fragments!(f)
 
     return fragments_df
 end
@@ -222,8 +220,27 @@ function filter_fragments!(df::DataFrame, model::KoinaModelType)
 end
 
 """
+Filter fragments based on intensity and other criteria.
+"""
+function filter_fragments!(df::DataFrame, model::SplineCoefficientModel)
+    # Basic filtering common to all models
+    #filter!(:coefficients => x -> x > zero(Float32), df)  # Remove very low intensity
+    filter!(:mz => x -> x > 0, df)  # Remove invalid m/z
+    
+    # Model-specific filtering
+    if model isa InstrumentSpecificModel
+        filter!(row -> !occursin('i', row.annotation), df)  # Remove isotope peaks
+    end
+end
+
+
+"""
 Sort fragments by intensity within each precursor group.
 """
+function sort_fragments!(df::DataFrame)
+    sort!(df, [:precursor_idx, order(:intensities, rev=true)])
+end
+
 function sort_fragments!(df::DataFrame)
     sort!(df, [:precursor_idx, order(:intensities, rev=true)])
 end

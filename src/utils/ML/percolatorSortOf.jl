@@ -42,6 +42,24 @@ function getBestScorePerPrec(psms::SubDataFrame)
     return prec_to_best_score
 end
 
+function summarize_precursors!(
+    psms::SubDataFrame)
+    function set_column!(vals::AbstractVector{Float32}, value::Float32) 
+        for i in range(1, length(vals))
+            vals[i] = value
+        end
+    end
+    function summarize_prob(probs::AbstractVector{Float32})
+        minimum(probs), maximum(probs), mean(probs)
+    end
+    for (key, sub_psms) in pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
+        min_prob, max_prob, mean_prob = summarize_prob(sub_psms[!,:prob])
+        set_column!(sub_psms[!,:min_prob], min_prob)
+        set_column!(sub_psms[!,:max_prob], max_prob)
+        set_column!(sub_psms[!,:mean_prob], mean_prob)
+    end
+end
+
 function rankPSMs!(psms::DataFrame, 
                   file_paths::Vector{String},
                   features::Vector{Symbol};
@@ -64,6 +82,9 @@ function rankPSMs!(psms::DataFrame,
     psms[!, :max_prob] = zeros(Float32, size(psms, 1))
     psms[!, :mean_prob] = zeros(Float32, size(psms, 1))
     psms[!, :min_prob] = zeros(Float32, size(psms, 1))
+    #Faster if sorted first 
+    @info "sort time..."
+    @time sort!(psms, [:precursor_idx, :isotopes_captured])
     #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
 
@@ -79,15 +100,12 @@ function rankPSMs!(psms::DataFrame,
     
     # Train models for each fold
     Random.seed!(1776)
-    @info "Training psm models..."
     for test_fold_idx in unique_cv_folds
         #Clear prob stats 
-        @time begin
-            psms[!, :prob] .= zero(Float32)
-            psms[!, :max_prob] .= zero(Float32)
-            psms[!, :mean_prob] .= zero(Float32)
-            psms[!, :min_prob] .= zero(Float32)
-        end
+        psms[!, :prob] .= zero(Float32)
+        psms[!, :max_prob] .= zero(Float32)
+        psms[!, :mean_prob] .= zero(Float32)
+        psms[!, :min_prob] .= zero(Float32)
         # Get training data
         psms_train = @view(psms_training_subset[findall(x -> x != test_fold_idx, psms_training_subset[!, :cv_fold]), :])
         # Train models for each iteration
@@ -110,40 +128,18 @@ function rankPSMs!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
-            if true==true#rint_importance
-                println(collect(zip(importance(bst))))#[1:30])
+            if print_importance
+                println(collect(zip(importance(bst))))
             end
             
             push!(fold_models, bst)
-            println("1")
             test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
             test_fold_psms = @view(psms[test_fold_idxs,:])
-            @time test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
-            # Update best scores
-            @time prec_scores = getBestScorePerPrec(test_fold_psms)
-            # Update the main dataframe with computed scores
-            @time for (i, row) in enumerate(eachrow(test_fold_psms))
-                key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
-                if haskey(prec_scores, key)
-                    scores = prec_scores[key]
-                    test_fold_psms[i, :max_prob] = scores.max_prob
-                    test_fold_psms[i, :mean_prob] = scores.mean_prob
-                    test_fold_psms[i, :min_prob] = scores.min_prob
-                end
-            end
 
+            test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
+            summarize_precursors!(test_fold_psms)
             psms_train[!,:prob] =  XGBoost.predict(bst, psms_train[!, features])
-            @time prec_scores = getBestScorePerPrec(psms_train)
-            for (i, row) in enumerate(eachrow(psms_train))
-                key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
-                if haskey(prec_scores, key)
-                    scores = prec_scores[key]
-                    psms_train[i, :max_prob] = scores.max_prob
-                    psms_train[i, :mean_prob] = scores.mean_prob
-                    psms_train[i, :min_prob] = scores.min_prob
-                end
-            end
-
+            summarize_precursors!(psms_train)
         end
         # Make predictions on hold out data.
         test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
