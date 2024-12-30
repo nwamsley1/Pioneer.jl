@@ -12,8 +12,9 @@ Sample PSMs from multiple files for XGBoost model training.
 # Process
 1. Counts total PSMs across .arrow files in the directory
 """
-function get_psms_count(quant_psms_folder::String)
-    file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+function get_psms_count(file_paths::Vector{String})
+
+    #file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
     psms_count = 0
 
@@ -183,7 +184,6 @@ function score_precursor_isotope_traces_in_memory!(
         #Train XGBoost model to score each precursor trace. Target-decoy descrimination
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
-                                max_train_psms,
                                 file_paths,
                                 features,
                                 colsample_bytree = 1.0, 

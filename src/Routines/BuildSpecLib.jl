@@ -208,12 +208,21 @@ function BuildSpecLib(params_path::String)
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
                 fragments_table = Arrow.Table(raw_fragments_arrow_path)
-
+                #Record the spline knots 
+                try
+                    spl_knots = copy(fragments_table[:knot_vector][1])
+                    jldsave(
+                        joinpath(lib_dir, "spline_knots.jld2");
+                        spl_knots
+                    )
+                catch
+                    println("No spline knots. static library")
+                end
                 # Process ion annotations
                 ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
                 frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
 
-                parse_koina_fragments(
+                ion_annotation_dict = parse_koina_fragments(
                     precursors_table,
                     fragments_table,
                     frag_annotation_type,
@@ -233,6 +242,7 @@ function BuildSpecLib(params_path::String)
                 N_TARGETS = sum(precursors_table[:decoy])
                 N_DECOYS = N_PRECURSORS - N_TARGETS
                 fragments_table = nothing
+                rm(raw_fragments_arrow_path)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -293,7 +303,8 @@ function BuildSpecLib(params_path::String)
                 Float32(_params.library_params["frag_bin_tol_ppm"]),
                 Float32(_params.library_params["rt_bin_tol"]),
                 koina_model_type
-            )
+            )          
+
             nothing
         end
         timings["Index Building"] = index_timing

@@ -385,6 +385,8 @@ function parse_koina_fragments(
         DataFrame((start_idx = UInt64[frag_idx - 1],))
     )
 
+    jldsave(joinpath(out_dir, "frag_name_to_idx.jld2"); frag_name_to_idx)
+    jldsave(joinpath(out_dir, "ion_annotations.jld2"); ion_annotation_to_features_dict)
     return ion_annotation_to_features_dict
 end
 

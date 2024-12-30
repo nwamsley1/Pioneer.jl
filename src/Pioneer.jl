@@ -24,7 +24,7 @@ using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
-
+using InlineStrings
 #Set Seed 
 Random.seed!(1776);
 

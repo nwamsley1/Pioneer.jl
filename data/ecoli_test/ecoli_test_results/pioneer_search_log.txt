@@ -3,7 +3,7 @@
 Sarting SearchDIA
 ==========================================================================================
 
-Starting search at: 2024-12-23T16:51:17.065
+Starting search at: 2024-12-30T14:01:01.510
 Output directory: ./../data/ecoli_test/ecoli_test_results
 
 ==========================================================================================
@@ -15,29 +15,30 @@ Detailed Step Analysis:
 Step                           Time (s)     Memory (GB)  GC Time (s)  GC %        
 ------------------------------------------------------------------------------------------
 Parameter Loading              0.02         0.00         0.00         0.0         
-Search Context Initialization  0.68         0.71         0.20         29.2        
-NCE Tuning                     0.73         0.06         0.00         0.0         
-Quadrupole Tuning              3.53         0.86         0.06         1.6         
-Spectral Library Loading       4.45         0.27         0.04         0.9         
-Huber Tuning                   10.22        2.54         0.29         2.8         
-First Pass Search              17.45        2.17         0.32         1.9         
-Second Pass Search             18.46        1.75         0.20         1.1         
-Chromatogram Integration       27.78        4.56         1.03         3.7         
-MaxLFQ                         28.02        2.55         0.24         0.9         
-Parameter Tuning               34.21        6.00         0.68         2.0         
-Scoring                        56.71        4.59         0.60         1.1         
+Search Context Initialization  0.56         0.57         0.14         24.0        
+NCE Tuning                     0.75         0.06         0.00         0.0         
+Quadrupole Tuning              3.63         0.86         0.13         3.5         
+Spectral Library Loading       4.89         0.27         0.04         0.9         
+Huber Tuning                   9.59         2.46         0.32         3.3         
+First Pass Search              16.97        2.09         0.19         1.1         
+Second Pass Search             18.24        1.70         0.15         0.8         
+Chromatogram Integration       25.93        3.96         0.87         3.3         
+MaxLFQ                         27.63        2.58         0.26         0.9         
+Parameter Tuning               35.04        5.86         0.75         2.1         
+Scoring                        56.42        4.61         0.67         1.2         
 ------------------------------------------------------------------------------------------
-TOTAL                          202.27       26.04        3.66         1.8         
+TOTAL                          199.68       25.01        3.51         1.8         
 
 Memory Usage Summary:
 ------------------------------------------------------------------------------------------
-Total Memory Allocated: 26.04 GB
+Total Memory Allocated: 25.01 GB
 Total Available Memory: 64.0 GB
 
 Runtime Summary:
 ------------------------------------------------------------------------------------------
-Total Runtime: 3.37 minutes
-Average Runtime per Step: 16.86 seconds
-Average Runtime per Raw File: 67.42 seconds
+Total Runtime: 3.33 minutes
+Average Runtime per Step: 16.64 seconds
+Average Runtime per Raw File: 66.56 seconds
 
 ==========================================================================================
+Huber δ: 5340.0

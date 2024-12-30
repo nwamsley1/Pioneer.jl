@@ -158,6 +158,181 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
         pid_to_fid
     )
+
+    rm(joinpath(spec_lib_path,"fragments_table.arrow"));
+    rm(joinpath(spec_lib_path,"prec_to_frag.arrow"));
+    rm(joinpath(spec_lib_path,"precursors.arrow"));
+
+    return nothing
+end
+
+
+"""
+    buildPionLib(spec_lib_path::String,
+                y_start_index::UInt8,
+                y_start::UInt8,
+                b_start_index::UInt8,
+                b_start::UInt8,
+                include_p_index::Bool,
+                include_p::Bool,
+                include_isotope::Bool,
+                include_immonium::Bool,
+                include_internal::Bool,
+                include_neutral_diff::Bool,
+                max_frag_charge::UInt8,
+                max_frag_rank::UInt8,
+                min_frag_intensity::Float32,
+                rank_to_score::Vector{UInt8},
+                frag_bounds::FragBoundModel,
+                frag_bin_tol_ppm::Float32,
+                rt_bin_tol_ppm::Float32,
+                model_type::KoinaModelType = InstrumentSpecificModel("default"))
+
+Build Pioneer spectral library including fragment indices.
+
+Parameters:
+- spec_lib_path: Path to library directory
+- y/b_start_index: Minimum index for index-building
+- y/b_start: Minimum index for detailed fragments 
+- include_*: Flags for fragment type inclusion
+- max_frag_charge: Maximum fragment charge to include
+- max_frag_rank: Maximum number of fragments per precursor
+- min_frag_intensity: Minimum relative intensity threshold
+- rank_to_score: Mapping from rank to scoring value
+- frag_bounds: Model for fragment m/z bounds
+- frag/rt_bin_tol_ppm: Binning tolerances
+- model_type: Type of prediction model used
+"""
+function buildPionLib(spec_lib_path::String,
+                      y_start_index::UInt8,
+                      y_start::UInt8,
+                      b_start_index::UInt8,
+                      b_start::UInt8,
+                      include_p_index::Bool,
+                      include_p::Bool,
+                      include_isotope::Bool,
+                      include_immonium::Bool,
+                      include_internal::Bool,
+                      include_neutral_diff::Bool,
+                      max_frag_charge::UInt8,
+                      max_frag_rank::UInt8,
+                      min_frag_intensity::Float32,
+                      rank_to_score::Vector{UInt8},
+                      frag_bounds::FragBoundModel,
+                      frag_bin_tol_ppm::Float32,
+                      rt_bin_tol_ppm::Float32,
+                      model_type::SplineCoefficientModel,
+                      )
+    fragments_table, prec_to_frag, precursors_table = nothing, nothing, nothing
+    try
+        fragments_table = Arrow.Table(joinpath(spec_lib_path,"fragments_table.arrow"));
+        prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
+        precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
+    catch e 
+        @error "could not find library..."
+        return nothing
+    end
+
+    #Simple fragments that go into the fragment index 
+    println("Get index fragments...")
+    simple_frags = getSimpleFrags(
+        fragments_table[:mz],
+        fragments_table[:is_y],
+        fragments_table[:is_b],
+        fragments_table[:is_p],
+        fragments_table[:fragment_index],
+        fragments_table[:charge],
+        fragments_table[:isotope],
+        fragments_table[:is_internal],
+        fragments_table[:is_immonium],
+        fragments_table[:has_neutral_diff],
+        precursors_table[:mz],
+        precursors_table[:irt],
+        precursors_table[:prec_charge],#precursor_charge],
+        prec_to_frag[:start_idx],
+        y_start_index,
+        b_start_index,
+        include_p_index,
+        include_isotope,
+        include_immonium,
+        include_internal,
+        include_neutral_diff,
+        max_frag_charge,
+        frag_bounds,
+        rank_to_score
+    );
+
+    println("Build fragment index...")
+    ##########
+    #Builds fragment indexes and saves them for the spec_lib_path
+    sort!(simple_frags, by = x->x.prec_irt)
+    buildFragmentIndex!(
+        spec_lib_path,
+        simple_frags,
+        frag_bin_tol_ppm, #frag_tol_ppm
+        rt_bin_tol_ppm,  #irt_bin_width
+        index_name = ""
+    );
+    println("Build presearch fragment index...")
+    sort!(simple_frags, by = x->x.prec_irt)
+    buildFragmentIndex!(
+        spec_lib_path,
+        simple_frags,
+        frag_bin_tol_ppm, #frag_tol_ppm
+        typemax(Float32),  #irt_tol
+        index_name = "presearch_"
+    );
+    simple_frags = nothing
+    GC.gc()
+
+    println("Get full fragments list...")
+    detailed_frags, pid_to_fid = getDetailedFrags(
+    fragments_table[:mz],
+    fragments_table[:coefficients],
+    fragments_table[:intensity],
+    fragments_table[:is_y],
+    fragments_table[:is_b],
+    fragments_table[:is_p],
+    fragments_table[:fragment_index],
+    fragments_table[:charge],
+    fragments_table[:sulfur_count],
+    fragments_table[:ion_type],
+    fragments_table[:isotope],
+    fragments_table[:is_internal],
+    fragments_table[:is_immonium],
+    fragments_table[:has_neutral_diff],
+    precursors_table[:mz],
+    precursors_table[:prec_charge],#:precursor_charge],
+    prec_to_frag[:start_idx],
+    y_start,
+    b_start,
+    include_p,
+    include_isotope,
+    include_immonium,
+    include_internal,
+    include_neutral_diff,
+    max_frag_charge,
+    frag_bounds,
+    max_frag_rank,
+    min_frag_intensity,
+    model_type
+    );
+    
+    save_detailed_frags(
+        joinpath(spec_lib_path, "detailed_fragments.jld2"),
+        detailed_frags
+    )
+
+    jldsave(
+        joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
+        pid_to_fid
+    )
+
+    #rm(joinpath(spec_lib_path,"fragments_table.arrow"));
+    #rm(joinpath(spec_lib_path,"prec_to_frag.arrow"));
+    #rm(joinpath(spec_lib_path,"precursors.arrow"));
+    
+
     return nothing
 end
 
@@ -183,6 +358,7 @@ function fragFilter(
     include_neutral_diff::Bool,
     max_frag_charge::UInt8)
     
+    #println("frag_neutral_diff $frag_neutral_diff")
     min_frag_mz, max_frag_mz = frag_bounds(prec_mz)
     if (frag_mz < min_frag_mz) | (frag_mz > max_frag_mz)
         return false
@@ -191,36 +367,40 @@ function fragFilter(
         if frag_index < y_start
             return false
         end
-    elseif frag_is_b
-        if frag_index < b_start
-            return false
-        end
-    elseif frag_is_p
-        if !include_p
-            return false
-        end
-    elseif frag_immonium
-        if !include_immonium
-            return false
-        end
-    elseif frag_internal
-        if !include_internal
-            return false
-        end
-    elseif frag_neutral_diff
-        if !include_neutral_diff
-            return false
-        end
-    elseif include_isotope
-        if !iszero(frag_isotope)
-            return false
-        end
-    else
+    end
+    if frag_is_b
         if frag_index < b_start
             return false
         end
     end
-
+    if frag_is_p
+        if !include_p
+            return false
+        end
+    end
+    if frag_immonium
+        if !include_immonium
+            return false
+        end
+    end
+    if frag_internal
+        if !include_internal
+            return false
+        end
+    end
+    if frag_neutral_diff
+        if !include_neutral_diff
+            return false
+        end
+    end
+    if include_isotope
+        if !iszero(frag_isotope)
+            return false
+        end
+    end
+    if frag_index < b_start
+        return false
+    end
     if frag_charge > max_frag_charge
         return false
     end
@@ -535,7 +715,7 @@ function getDetailedFrags(
     max_frag_rank::UInt8,
     min_frag_intensity::AbstractFloat,
     koina_model::KoinaModelType)
-
+    println("in this function yo")
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         println("mistake")
     end
@@ -691,7 +871,6 @@ function getDetailedFrags(
     min_frag_intensity::AbstractFloat,
     koina_model::SplineCoefficientModel) where {N}
 
-    println("TESTING")
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         println("mistake")
     end

@@ -40,9 +40,9 @@
     "include_isotope": false,
     "include_internal": false,
     "include_immonium": false,
-    "include_neutral_diff": true,
+    "include_neutral_diff": false,
     "instrument_type": "NONE",
-    "prediction_model": "altimeter_13m"
+    "prediction_model": "altimeter_4m"
     },
     "variable_mods": 
     {

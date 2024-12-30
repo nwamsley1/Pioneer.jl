@@ -23,9 +23,6 @@ output_file = getBuildLibParams(
     "/path/to/fasta/directory"
 )
 ```
-
-Note: The function preserves all configuration settings from the template 
-(fragment settings, search settings, etc.) while only modifying the paths section.
 """
 function GetSearchParams(lib_path::String, ms_data_path::String, results_path::String)
     # Read the JSON template
