@@ -17,10 +17,10 @@ Returns:
 
 Example:
 ```julia
-output_file = getBuildLibParams(
-    "/path/to/output/dir",
-    "/path/to/library/name",
-    "/path/to/fasta/directory"
+output_path = getSearchParams(
+    "/path/to/speclib.poin",
+    "/path/to/ms/data/dir",
+    "/path/to/output/dir"
 )
 ```
 """

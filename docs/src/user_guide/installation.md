@@ -2,8 +2,8 @@
 
 ## System Requirements
 * **Julia**: 1.10 or higher
-* **CPU**: Multi-core processor recommended. Increasing the number of threads substatnaily reduces computation time. 
-* **RAM**: 16-64GB recommended. RAM availability should exceed the spectral library size by at least 4GB + the size of the largest .arrow formmated RAW file. 
+* **CPU**: Increasing the number of threads reduces computation time.
+* **RAM**: >=16GB recommended. RAM availability should exceed the spectral library size by at least 4GB.
 * **Storage**: SSD recommended. Available disk space at least double the total size of the `.arrow` formmated raw files to search. 
 * **Operating System**: Windows, Linux, or macOS
 

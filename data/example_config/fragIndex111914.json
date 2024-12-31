@@ -42,7 +42,7 @@
     "include_immonium": false,
     "include_neutral_diff": false,
     "instrument_type": "NONE",
-    "prediction_model": "altimeter_4m"
+    "prediction_model": "altimeter_13m"
     },
     "variable_mods": 
     {
