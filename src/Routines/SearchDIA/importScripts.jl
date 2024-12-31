@@ -12,57 +12,89 @@ function importScripts()
         end
         return julia_files
     end
-    [include(joinpath(package_root, "src","utils", "quadTransmissionModeling", jl_file)) for jl_file in [
-        "quadTransmissionModel.jl",
-        "generalGaussModel.jl",
-        "noQuadModel.jl",
-        "RazoQuadModel.jl",
-        "SplineQuadModel.jl",
-        "binIsotopeRatioData.jl",
-        "squareQuadModel.jl",
+    function include_files!(files_loded::Set{String}, file_dir::String, file_names::Vector{String})
+        file_paths = [joinpath(file_dir, fname) for fname in file_names]
+        [include(fpath) for fpath in file_paths if fpath ∉ files_loaded]
+        push!(files_loaded, file_paths...)
+        return nothing 
+    end
+    files_loaded = Set{String}()
+    include_files!(
+        files_loaded, 
+        joinpath(package_root, "src","utils", "quadTransmissionModeling"),
+        [
+            "quadTransmissionModel.jl",
+            "generalGaussModel.jl",
+            "noQuadModel.jl",
+            "RazoQuadModel.jl",
+            "SplineQuadModel.jl",
+            "binIsotopeRatioData.jl",
+            "squareQuadModel.jl",
+        ]
+    )
     
-    ]];   
-
     include(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
-    [include(joinpath(package_root, "src", "structs", jl_file)) for jl_file in [
-                                                                    "MassSpecData.jl",
-                                                                    "ChromObject.jl",
-                                                                    "ArrayDict.jl",
-                                                                    "Counter.jl",
-                                                                    "Ion.jl",
-                                                                    "LibraryIon.jl",
-                                                                    "LibraryFragmentIndex.jl",                                                                    
-                                                                    "IsotopeTraceType.jl",
-                                                                    "MatchIon.jl",
-                                                                    "SparseArray.jl",
-                                                                    "fragBoundModel.jl",
-                                                                    "RetentionTimeIndex.jl",
-                                                                    "MassErrorModel.jl",                                                                  
-                                                                    "RetentionTimeConversionModel.jl"
-                                                                    ]];
-  
-        #Utilities
-        [include(joinpath(package_root, "src","utils", "ML", jl_file)) for jl_file in [
-                "percolatorSortOf.jl",
-                "piecewiseLinearFunction.jl",
-                "probitRegression.jl",
-                "spectralLinearRegression.jl",
-                "uniformBasisCubicSpline.jl",
-                "wittakerHendersonSmoothing.jl",
-                "libraryBSpline.jl"
-                ]]; 
 
-    [include(joinpath(package_root, "src","utils", jl_file)) for jl_file in [
-        "isotopes.jl",
-        "isotopeSplines.jl",
-        "maxLFQ.jl"
-    ]];   
+    include_files!(
+        files_loaded, 
+        joinpath(package_root, "src","structs"),
+        [
+            "MassSpecData.jl",
+            "ChromObject.jl",
+            "ArrayDict.jl",
+            "Counter.jl",
+            "Ion.jl",
+            "LibraryIon.jl",
+            "LibraryFragmentIndex.jl",                                                                    
+            "IsotopeTraceType.jl",
+            "MatchIon.jl",
+            "SparseArray.jl",
+            "fragBoundModel.jl",
+            "RetentionTimeIndex.jl",
+            "MassErrorModel.jl",                                                                  
+            "RetentionTimeConversionModel.jl"
+            ]
+    )
 
-    [include(joinpath(package_root,"src","Routines","SearchDIA","PSMs", jl_file)) for jl_file in [
-        "PSM.jl",
-        "spectralDistanceMetrics.jl",
-        "UnscoredPSMs.jl",
-        "ScoredPSMs.jl"]];
+    
+    # Utilities/ML
+    include_files!(
+        files_loaded,
+        joinpath(package_root, "src", "utils", "ML"),
+        [
+            "percolatorSortOf.jl",
+            "piecewiseLinearFunction.jl",
+            "probitRegression.jl",
+            "spectralLinearRegression.jl",
+            "uniformBasisCubicSpline.jl",
+            "wittakerHendersonSmoothing.jl",
+            "libraryBSpline.jl"
+        ]
+    )
+
+
+    # Utils
+    include_files!(
+        files_loaded,
+        joinpath(package_root, "src", "utils"),
+        [
+            "isotopes.jl",
+            "isotopeSplines.jl",
+            "maxLFQ.jl"
+        ]
+    )
+
+    # PSMs
+    include_files!(
+        files_loaded,
+        joinpath(package_root, "src", "Routines", "SearchDIA", "PSMs"),
+        [
+            "PSM.jl",
+            "spectralDistanceMetrics.jl",
+            "UnscoredPSMs.jl",
+            "ScoredPSMs.jl"
+        ]
+    )
 
         
     #Search Method 
@@ -70,13 +102,15 @@ function importScripts()
 
     include(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))]
+    #[println(fpath) for fpath in collect(files_loaded)]
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))]
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils")) if jfile ∉ files_loaded]
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods"))]
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs")) if jfile ∉ files_loaded]
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))]
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")) if jfile ∉ files_loaded]
+
+    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs")) if jfile ∉ files_loaded]
 
     include(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
 end

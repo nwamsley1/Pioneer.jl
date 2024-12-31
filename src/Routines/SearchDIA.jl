@@ -1,22 +1,58 @@
 """
     SearchDIA(params_path::String)
 
-Main entry point for DIA (Data-Independent Acquisition) search workflow.
+Main entry point for the DIA (Data-Independent Acquisition) search workflow.
 Executes a series of `SearchMethod`s and generates performance metrics.
-
-The workflow consists of:
-1. Parameter loading and validation
-2. Spectral library initialization
-3. Multiple search phases (parameter tuning, NCE tuning, etc.)
-4. Performance reporting
 
 Parameters:
 - params_path: Path to JSON configuration file containing search parameters
 
 Output:
 - Generates a log file in the results directory
-- Executes all search phases
+- Long and wide-formatted tables (.arrow and .csv) for protein-group and precursor level id's and quantitation.
 - Reports timing and memory usage statistics
+
+Example:
+```julia
+julia> SearchDIA("/path/to/config.json")
+==========================================================================================
+Sarting SearchDIA
+==========================================================================================
+
+Starting search at: 2024-12-30T14:01:01.510
+Output directory: ./../data/ecoli_test/ecoli_test_results
+[ Info: Loading Parameters...
+[ Info: Loading Spectral Library...
+ .
+ .
+ .
+```
+If it does not already exist, SearchDIA creates the user-specified results_dir and generates quality control plots, data tables, and logs.
+```
+results_dir/
+├── pioneer_search_log.txt
+├── qc_plots/
+│   ├── collision_energy_alignment/
+│   │   └── nce_alignment_plots.pdf
+│   ├── quad_transmission_model/
+│   │   ├── quad_data
+│   │   │   └── quad_data_plots.pdf
+│   │   └── quad_models
+│   │       └── quad_model_plots.pdf
+│   ├── rt_alignment_plots/
+│   │   └── rt_alignment_plots.pdf
+│   ├── mass_error_plots/
+│   │   └── mass_error_plots.pdf
+│   └── QC_PLOTS.pdf
+├── precursors_long.arrow
+├── precursors_long.tsv
+├── precursors_wide.arrow
+├── precurosrs_wide.tsv
+├── protein_groups_long.arrow
+├── protein_groups_long.tsv
+├── protein_groups_wide.arrow
+└── protein_groups_wide.tsv
+```
 """
 function SearchDIA(params_path::String)
     # === Initialize logging ===
@@ -120,7 +156,7 @@ function SearchDIA(params_path::String)
         end
 
         # === Generate performance report ===
-        print_performance_report(timings, MS_TABLE_PATHS, dual_println)
+        print_performance_report(timings, MS_TABLE_PATHS, SEARCH_CONTEXT, dual_println)
     end
     return nothing
 end
@@ -129,7 +165,7 @@ end
 """
 Helper function to print formatted performance metrics
 """
-function print_performance_report(timings, ms_table_paths, println_func)
+function print_performance_report(timings, ms_table_paths, search_context, println_func)
     # Header
     println_func("\n" * repeat("=", 90))
     println_func("DIA Search Performance Report")
@@ -174,7 +210,7 @@ function print_performance_report(timings, ms_table_paths, println_func)
     print_summary_statistics(
         total_time, total_memory, total_gc,
         length(timings), length(ms_table_paths),
-        println_func
+        println_func, search_context
     )
 end
 
@@ -182,7 +218,7 @@ end
 Helper function to print summary statistics
 """
 function print_summary_statistics(total_time, total_memory, total_gc, 
-                                n_steps, n_files, println_func)
+                                n_steps, n_files, println_func, search_context)
     # Print totals
     println_func(repeat("-", 90))
     println_func(rpad("TOTAL", 30), " ",
@@ -204,6 +240,6 @@ function print_summary_statistics(total_time, total_memory, total_gc,
     println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
     println_func("Average Runtime per Step: $(round(total_time/n_steps, digits=2)) seconds")
     println_func("Average Runtime per Raw File: $(round(total_time/n_files, digits=2)) seconds")
-
     println_func("\n" * repeat("=", 90))
+    println_func("Huber δ: ", getHuberDelta(search_context))
 end

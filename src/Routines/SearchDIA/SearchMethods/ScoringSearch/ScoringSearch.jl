@@ -27,7 +27,7 @@ Parameters for scoring search.
 """
 struct ScoringSearchParameters <: SearchParameters
     # XGBoost parameters
-    max_n_samples::Int64
+    max_psms_in_memory::Int64
     min_best_trace_prob::Float32
     precursor_prob_spline_points_per_bin::Int64
     precursor_q_value_interpolation_points_per_bin::Int64
@@ -39,7 +39,7 @@ struct ScoringSearchParameters <: SearchParameters
         ml_params = params.optimization.machine_learning
         
         new(
-            Int64(ml_params.max_samples),
+            Int64(ml_params.max_psms_in_memory),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
@@ -114,14 +114,25 @@ function summarize_results!(
         # Step 1: Train XGBoost Models
         @info "Training XGBoost models..."
         # Sample PSMs for training to avoid memory consumption issues
-        best_psms = sample_psms_for_xgboost(second_pass_folder, params.max_n_samples)
-        # Train models on sampled PSMs
-        models =  score_precursor_isotope_traces!(
-            best_psms,
-            getSecondPassPsms(getMSData(search_context)),
-            getPrecursors(getSpecLib(search_context))
-        )
-        best_psms = nothing # Free memory
+        psms_count = get_psms_count(getSecondPassPsms(getMSData(search_context)))
+
+        if psms_count > params.max_psms_in_memory #Use out-of-memory algorithm
+            #Sample psms for xgboost training. Only the sampled psms are stored in-memory
+            best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, params.max_psms_in_memory)#params.max_n_samples)
+            models = score_precursor_isotope_traces_out_of_memory!(
+                best_psms,
+                getSecondPassPsms(getMSData(search_context)),
+                getPrecursors(getSpecLib(search_context))
+            )
+        else #In memory algorithm
+            best_psms = load_psms_for_xgboost(second_pass_folder)#params.max_n_samples)
+            models = score_precursor_isotope_traces_in_memory!(
+                best_psms,
+                getSecondPassPsms(getMSData(search_context)),
+                getPrecursors(getSpecLib(search_context))
+            )
+        end
+        best_psms = nothing
         GC.gc()
 
         # Step 2: Find Best Isotope Traces

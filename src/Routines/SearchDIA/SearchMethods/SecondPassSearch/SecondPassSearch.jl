@@ -84,7 +84,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         # Determine isotope trace type based on global settings
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
                                global_params.isotope_settings.combine_traces
-            CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            SeperateTraces()#CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
             SeperateTraces()
         end
@@ -214,7 +214,8 @@ function process_search_results!(
         )
 
         # Remove PSMs where only M2+ isotopes are captured (expect poor quantification)
-        filter!(row -> first(row.isotopes_captured) < 2, psms)
+        excluded_isotopes = (Int8(-1), Int8(-1))
+        filter!(row -> row.isotopes_captured != excluded_isotopes, psms)
 
         # Initialize columns for best scan selection and summary statistics
         psms[!,:best_scan] = zeros(Bool, size(psms, 1));

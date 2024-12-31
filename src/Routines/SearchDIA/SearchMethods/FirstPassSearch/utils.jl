@@ -352,7 +352,7 @@ function map_retention_times!(
             )
             #Build rt=>irt and irt=> rt mappings for the file and add to the dictionaries 
             setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
-            setIrtRtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)
+            setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)
         catch
             throw("add a default option here...")
             #sensible default here?
@@ -464,7 +464,6 @@ function get_irt_errs(
     #n is a user-defined paramter. 
     fwhms = map(x->x[:median_fwhm] + params.fwhm_nstd*x[:mad_fwhm],
     fwhms)
-
     #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold
     #in more than two runs .
     irt_std = median(
@@ -473,7 +472,7 @@ function get_irt_errs(
     #Number of standard deviations to cover 
     irt_std *= params.irt_nstd
     #dictionary maping file name to irt tolerance. 
-    return map(x->Float32(x+irt_std)::Float32, fwhms)::Dictionary{Int64, Float32}
+    return map(x->Float32((x+irt_std))::Float32, fwhms)::Dictionary{Int64, Float32}
 end
 
 

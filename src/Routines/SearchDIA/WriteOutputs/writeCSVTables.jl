@@ -9,7 +9,7 @@ end
 function getModName(mod_string::AbstractString)::String
     match(r"[^,]+(?=$)", mod_string).match
 end
-function insert_at_indices(original::String, insertions::Vector{Tuple{String, UInt8}})
+function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}) where {S<:AbstractString}
     # Convert the original string into an array of characters for easier manipulation
     char_array = collect(original)
 
@@ -33,20 +33,20 @@ function insert_at_indices(original::String, insertions::Vector{Tuple{String, UI
     return join(char_array)
 end
 function getModifiedSequence(
-    sequence::String,
+    sequence::S,
     isotope_mods::String,
     structural_mods::String,
-    charge::UInt8)
+    charge::UInt8) where {S<:AbstractString}
 
     mods = structural_mods*isotope_mods
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
 function getModifiedSequence(
-    sequence::String,
+    sequence::S,
     isotope_mods::String,
     structural_mods::Missing,
-    charge::UInt8)
+    charge::UInt8) where {S<:AbstractString}
 
     mods = isotope_mods
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
@@ -54,20 +54,20 @@ function getModifiedSequence(
 end
 
 function getModifiedSequence(
-    sequence::String,
+    sequence::S,
     isotope_mods::Missing,
     structural_mods::String,
-    charge::UInt8)
+    charge::UInt8) where {S<:AbstractString}
 
     mods = structural_mods
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
 function getModifiedSequence(
-    sequence::String,
+    sequence::S,
     isotope_mods::Missing,
     structural_mods::Missing,
-    charge::UInt8)
+    charge::UInt8) where {S<:AbstractString}
 
     mods = ""
     mods = [("("*getModName(mod.match)*")", getModIndex(mod.match)) for mod in parseMods(mods)]
@@ -171,7 +171,7 @@ function writePrecursorCSV(
 end
 function writeProteinGroupsCSV(
     long_pg_path::String,
-    sequences::AbstractVector{String},
+    sequences::AbstractVector{<:AbstractString},
     isotope_mods::AbstractVector{Union{Missing, String}},
     structural_mods::AbstractVector{Union{String,Missing}},
     precursor_charge::AbstractVector{UInt8},

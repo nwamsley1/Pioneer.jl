@@ -208,12 +208,21 @@ function BuildSpecLib(params_path::String)
                 # Load tables
                 precursors_table = Arrow.Table(precursors_arrow_path)
                 fragments_table = Arrow.Table(raw_fragments_arrow_path)
-
+                #Record the spline knots 
+                try
+                    spl_knots = copy(fragments_table[:knot_vector][1])
+                    jldsave(
+                        joinpath(lib_dir, "spline_knots.jld2");
+                        spl_knots
+                    )
+                catch
+                    println("No spline knots. static library")
+                end
                 # Process ion annotations
                 ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
                 frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
 
-                parse_koina_fragments(
+                ion_annotation_dict = parse_koina_fragments(
                     precursors_table,
                     fragments_table,
                     frag_annotation_type,
@@ -233,6 +242,7 @@ function BuildSpecLib(params_path::String)
                 N_TARGETS = sum(precursors_table[:decoy])
                 N_DECOYS = N_PRECURSORS - N_TARGETS
                 fragments_table = nothing
+                rm(raw_fragments_arrow_path)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -293,7 +303,8 @@ function BuildSpecLib(params_path::String)
                 Float32(_params.library_params["frag_bin_tol_ppm"]),
                 Float32(_params.library_params["rt_bin_tol"]),
                 koina_model_type
-            )
+            )          
+
             nothing
         end
         timings["Index Building"] = index_timing
@@ -403,3 +414,124 @@ function print_performance_report(timings, println_func; kwargs...)
     
     println_func("\n", repeat("=", 90))
 end
+
+
+#=
+using Test 
+old_prec = Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/precursors_table.arrow")
+new_prec = Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter4M_ThreeProteome_NoNL_122624.poin/precursors.arrow")
+
+new_seqs_sorted = sort(new_prec[:sequence]);
+old_seqs_sorted = sort(old_prec[:sequence]);
+new_seqs_set = Set(new_seqs_sorted);
+old_seqs_set = Set(old_seqs_sorted);
+length(setdiff(old_seqs_set, new_seqs_set))/length(new_seqs_set)
+length(setdiff(old_seqs_set, new_seqs_set))/length(old_seqs_set)
+length((old_seqs_set ∩ new_seqs_set))/length(old_seqs_set)
+
+seqs_mismatch = (new_seqs_sorted.==old_seqs_sorted).==false;
+
+findall(seqs_mismatch)
+
+setdiff(Set(new_seqs_sorted), Set(old_seqs_sorted))
+
+setdiff(Set(old_seqs_sorted), Set(new_seqs_sorted))
+
+any((sort(old_prec[:sequence]).==sort(new_prec[:sequence])).==false)
+
+
+
+
+precursors_table = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/precursors_table.arrow"))
+findall((precursors_table[!,:sequence].=="NTGDFGGVAYLLRNLVAVGVGIR").&(precursors_table[!,:prec_charge].==3))
+pid_to_fid = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/precursor_to_fragment_indices.jld2")["pid_to_fid"]
+frags = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/detailed_fragments.jld2")["data"]
+knots = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/spline_knots.jld2")["spl_knots"]
+function getIntensity(
+                    pf::Pioneer.SplineDetailedFrag{N, T},
+                    intensity_type::SplineType{M, T}
+                    ) where {M, N, T<:AbstractFloat}
+   return splevl(getNCE(intensity_type), getKnots(intensity_type), pf.intensity, getDegree(intensity_type))::T
+end
+spline_features = SplineType(Tuple(knots), 25.0f0, 3)
+frag_name_to_idx = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/frag_name_to_idx.jld2")["frag_name_to_idx"];
+frag_idx_to_name = Dict(zip(values(frag_name_to_idx), keys(frag_name_to_idx)))
+intensities = []
+frag_name = []
+mz = []
+for i in range(pid_to_fid[474],pid_to_fid[475]-1)
+    push!(intensities, getIntensity(frags[i], spline_features))
+    push!(frag_name, frag_idx_to_name[frags[i].ion_type])
+    push!(mz, frags[i].mz)
+end
+test_data = DataFrame(Dict(:intensity=>intensities,:annotation=>frag_name,:mz=>mz))
+CSV.write("/Users/n.t.wamsley/Desktop/test_NTGDFGGVAYLLRNLVAVGVGIR_3_13m.csv", test_data)
+
+
+x = test_data[!,:mz]
+y = test_data[!,:intensity]
+p = plot()
+for i in 1:length(x)
+    plot!([x[i], x[i]], [0, y[i]], 
+          color=:black, 
+          label=false,
+          linewidth=2)
+end
+
+# Add labels and title
+plot!(
+    xlabel="m/z",
+    ylabel="intensity",
+    title="NTGDFGGVAYLLRNLVAVGVGIR_3"
+)
+
+
+
+#===========================================
+old model
+===========================================#
+
+
+precursors_table = DataFrame(Arrow.Table("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/precursors_table.arrow"))
+prec_idx = findall((precursors_table[!,:sequence].=="NTGDFGGVAYLLRNLVAVGVGIR").&(precursors_table[!,:prec_charge].==3))[1]
+pid_to_fid = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/precursor_to_fragment_indices.jld2")["pid_to_fid"]
+frags = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/detailed_fragments.jld2")["data"]
+knots = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Altimeter111124_MixedSpecies_OlsenAstral_NoEntrapment_SplineTest.poin/spline_knots.jld2")["spl_knots"]
+function getIntensity(
+                    pf::Pioneer.SplineDetailedFrag{N, T},
+                    intensity_type::SplineType{M, T}
+                    ) where {M, N, T<:AbstractFloat}
+   return splevl(getNCE(intensity_type), getKnots(intensity_type), pf.intensity, getDegree(intensity_type))::T
+end
+spline_features = SplineType(Tuple(knots), 25.0f0, 3)
+#frag_name_to_idx = load("/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter.poin/frag_name_to_idx.jld2")["frag_name_to_idx"];
+#frag_idx_to_name = Dict(zip(values(frag_name_to_idx), keys(frag_name_to_idx)))
+intensities = []
+#frag_name = []
+mz = []
+for i in range(pid_to_fid[prec_idx],pid_to_fid[prec_idx + 1]-1)
+    push!(intensities, getIntensity(frags[i], spline_features))
+    #push!(frag_name, frag_idx_to_name[frags[i].ion_type])
+    push!(mz, frags[i].mz)
+end
+test_data = DataFrame(Dict(:intensity=>intensities,:mz=>mz))
+CSV.write("/Users/n.t.wamsley/Desktop/test_NTGDFGGVAYLLRNLVAVGVGIR_3_old_model.csv", test_data)
+
+
+x = test_data[!,:mz]
+y = test_data[!,:intensity]
+p = plot()
+for i in 1:length(x)
+    plot!([x[i], x[i]], [0, y[i]], 
+          color=:black, 
+          label=false,
+          linewidth=2)
+end
+
+# Add labels and title
+plot!(
+    xlabel="m/z",
+    ylabel="intensity",
+    title="NTGDFGGVAYLLRNLVAVGVGIR_3"
+)
+=#

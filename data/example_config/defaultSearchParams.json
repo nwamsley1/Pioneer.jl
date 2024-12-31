@@ -2,9 +2,9 @@
     "global": {
         "isotope_settings": {
             "err_bounds_first_pass": [1, 0],
-            "err_bounds_quant_search": [2, 0],
+            "err_bounds_quant_search": [3, 0],
             "combine_traces": false,
-            "partial_capture": false
+            "partial_capture": true
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -28,6 +28,8 @@
         "search_settings": {
             "sample_rate": 0.02,
             "min_samples": 3500,
+            "min_quad_tuning_psms": 5000,
+            "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.01
         }
@@ -72,7 +74,7 @@
     "acquisition": {
         "nce": 25,
         "quad_transmission": {
-            "fit_from_data": false,
+            "fit_from_data": true,
             "overhang": 0.25,
             "smoothness": 5.0
         }
@@ -94,7 +96,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psms_in_memory": 10000000,
+            "max_psms_in_memory": 50000000,
             "min_trace_prob": 0.75,
             "spline_points": 500,
             "interpolation_points": 10
@@ -106,8 +108,8 @@
         "plots_per_page": 12
     },
     "paths": {
-        "library": "./data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin",
-        "ms_data": "./data/ecoli_test/raw",
-        "results": "./../data/ecoli_test/ecoli_test_results"
+        "library": "/path/to/lib.poin",
+        "ms_data": "/path/to/msdata",
+        "results": "/path/to/out_dir"
     }
 }

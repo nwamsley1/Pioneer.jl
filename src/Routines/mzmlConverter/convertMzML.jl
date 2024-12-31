@@ -230,7 +230,10 @@ function readMzML(
     arrow_path = joinpath(dir, "$(base_name).arrow")
     Arrow.write(arrow_path, DataFrame(pairedSpectra))
 end
-
+"""
+    convertMzML(mzml_dir::String, skip_scan_header = true, mzml_paths = missing)
+test docs 
+"""
 function convertMzMl(
     mzml_dir::String;
     skip_scan_header= true)

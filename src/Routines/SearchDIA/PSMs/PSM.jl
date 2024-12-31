@@ -23,4 +23,3 @@ Score!(PSM_dict, `Vector{T<:PSMFeatures}`)
                 )
 """
 abstract type PSM end
-export PSM

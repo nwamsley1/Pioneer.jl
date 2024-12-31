@@ -385,6 +385,8 @@ function parse_koina_fragments(
         DataFrame((start_idx = UInt64[frag_idx - 1],))
     )
 
+    jldsave(joinpath(out_dir, "frag_name_to_idx.jld2"); frag_name_to_idx)
+    jldsave(joinpath(out_dir, "ion_annotations.jld2"); ion_annotation_to_features_dict)
     return ion_annotation_to_features_dict
 end
 
@@ -750,7 +752,9 @@ function process_spline_batch!(
         pid = fragment_table[:precursor_idx][actual_frag_idx]
 
         # Handle new precursor
+        rank = Float16(255)
         if pid != last_pid
+            rank -= one(Float16)
             batch_pid += 1
             frag_idx_start = actual_frag_idx
             last_pid = pid
@@ -792,7 +796,7 @@ function process_spline_batch!(
         # Get basic fragment information
         frag_mz = fragment_table[:mz][actual_frag_idx]
         frag_coef = fragment_table[:coefficients][actual_frag_idx]
-        frag_intensity = fragment_table[:intensities][actual_frag_idx]
+        frag_intensity = rank #- one(Float32)#fragment_table[:intensities][actual_frag_idx]
 
         # Calculate sequence bounds
         start_idx, stop_idx = get_fragment_indices(
