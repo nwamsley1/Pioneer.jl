@@ -221,11 +221,7 @@ function process_search_results!(
             ms_file_idx
         )
         # Save results
-        
-        Arrow.write(
-            getPassingPsms(getMSData(search_context))[ms_file_idx],
-            passing_psms)
-        
+        writeArrow(getPassingPsms(getMSData(search_context))[ms_file_idx], passing_psms)
     catch e
         @warn "Chromatogram processing failed" ms_file_idx exception=e
         rethrow(e)

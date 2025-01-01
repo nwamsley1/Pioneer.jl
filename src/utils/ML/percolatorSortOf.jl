@@ -143,7 +143,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     end
     psms[!,:prob] = prob_estimates
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
-        Arrow.write(file_paths[ms_file_idx[:ms_file_idx]], gpsms)
+        fpath = file_paths[ms_file_idx[:ms_file_idx]]
+        writeArrow(fpath, gpsms)
     end
     return models
 end

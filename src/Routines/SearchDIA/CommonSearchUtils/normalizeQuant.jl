@@ -80,10 +80,7 @@ function applyNormalization!(
             hc = correction_spline(psms[i,:irt_obs])
             psms[i,norm_quant_col] = 2^(log2(max(psms[i,quant_col], 0.0)) - hc)
         end
-        Arrow.write(
-            fpath,
-            psms
-        )
+        writeArrow(fpath, psms)
     end
 end
 

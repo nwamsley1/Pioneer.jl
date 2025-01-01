@@ -94,9 +94,9 @@ using Test
 results_dir = joinpath(@__DIR__, "../data/ecoli_test/ecoli_test_results")
 if isdir(results_dir)
     # Delete all files and subdirectories within the directory
-    for item in readdir(results_dir, join=true)
-        rm(item, force=true, recursive=true)
-    end
+    #for item in readdir(results_dir, join=true)
+    #    rm(item, force=true, recursive=true)
+    #end
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)

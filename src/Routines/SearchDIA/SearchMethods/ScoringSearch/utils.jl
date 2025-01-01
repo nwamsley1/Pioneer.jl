@@ -100,9 +100,7 @@ function sort_and_filter_quant_tables(
         #Sort in descending order of probability
         sort!(psms_table, :prob, rev = true, alg=QuickSort)
         #write back
-        Arrow.write(fpath, 
-                    psms_table
-                    )
+        writeArrow(fpath, psms_table)
     end
     return nothing
 end
@@ -537,9 +535,7 @@ function get_protein_groups(
         )
         psms_table = DataFrame(Tables.columntable(psms_table))
         psms_table[!,:max_pg_score] = max_pg_score
-        Arrow.write(
-            file_path,psms_table
-        )
+        writeArrow(file_path, psms_table)
         pg_count += writeProteinGroups(
             protein_groups,
             protein_groups_path
