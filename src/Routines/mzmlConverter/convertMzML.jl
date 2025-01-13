@@ -260,6 +260,6 @@ end
 #=
 using Arrow, EzXML, CodecZlib, ProgressBars, Base64, DataFrames
 include("src/Routines/mzmlConverter/convertMzMl.jl")
-mzml_path = "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SCIEX_PXD050030"
+mzml_path = "C:\\Users\\n.t.wamsley\\Desktop\\SCIEX_CONVERT"
 convertMzMl(mzml_path; skip_scan_header = true)
 =#

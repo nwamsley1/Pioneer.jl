@@ -463,8 +463,8 @@ function estimate_optimal_delta(
 )
     # Group by precursor/scan
     gpsms = groupby(psms, [:precursor_idx, :scan_idx])
-    
     # Process each curve
+    jldsave("/Users/n.t.wamsley/Desktop/huber_gpsms.jld2"; psms)
     curves = combine(gpsms) do sdf
         process_huber_curve(sdf[!, :weight], sdf[!, :huber_δ])
     end
@@ -514,6 +514,8 @@ function process_huber_curve(
         for i in 1:(length(weights)-1)
             if (w50 >= weights[i]) && (w50 <= weights[i + 1])
                 huber50 = huber_δs[i] + (huber_δs[i + 1] - huber_δs[i])/2
+            elseif (w50 <= weights[i]) && (w50 >= weights[i + 1])
+                huber50 = huber_δs[i] + (huber_δs[i + 1] - huber_δs[i])/2
             end
         end
     end
@@ -527,7 +529,6 @@ function process_huber_curve(
         wdiff = (max_w - min_w)/min_w
     )
 end
-
 
 """
     get_median_huber_delta(cum_prob::Vector{Float32}, δ::Vector{Int64};

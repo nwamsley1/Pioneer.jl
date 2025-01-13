@@ -264,6 +264,8 @@ function process_search_results!(
 ) where {P<:QuadTuningSearchParameters}
     if params.fit_from_data==true
         setQuadTransmissionModel!(search_context, ms_file_idx, getQuadModel(results))
+    else
+        setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
     end
 end
 

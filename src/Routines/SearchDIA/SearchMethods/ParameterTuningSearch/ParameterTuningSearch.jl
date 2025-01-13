@@ -239,7 +239,8 @@ function process_file!(
             
             add_columns_and_concat!(psms, new_psms, spectra, 
                                 getPrecursors(getSpecLib(search_context)), params)
-            
+            #Arrow.write("C:\\Users\\n.t.wamsley\\Desktop\\testpsms.arrow", psms)
+            #[println(x) for x in names(psms)]
             try 
                 filter_and_score_psms!(psms, params) >= getMinPsms(params) && break
             catch e
@@ -250,21 +251,36 @@ function process_file!(
     end
 
     try
-        results.mass_err_model[] =  MassErrorModel(zero(Float32), (getFragTolPpm(params), getFragTolPpm(params)))
-        setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-        setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
+        mass_err_passing = false
+        results.mass_err_model[] =  MassErrorModel(
+            0.0f0, 
+            (getFragTolPpm(params), getFragTolPpm(params)))
+        ppm_errs = nothing
+        prev_mass_err = 0.0f0
+        for i in range(0, 1)
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
-        # Collect PSMs through iterations
-        psms = collect_psms(spectra, search_context, params, ms_file_idx)
-        
-        # Fit RT alignment model
-        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                            fit_irt_model(params, psms))
+            # Collect PSMs through iterations
+            psms = collect_psms(spectra, search_context, params, ms_file_idx)
+            
+            # Fit RT alignment model
+            set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                fit_irt_model(params, psms))
 
-        # Get fragments and fit mass error model
-        fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
-        mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
-        results.mass_err_model[] = mass_err_model
+            # Get fragments and fit mass error model
+            fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
+            mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
+            #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
+            if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
+                prev_mass_err = getMassOffset(mass_err_model)
+                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
+            else
+                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+                break
+            end
+        end
+
         append!(results.ppm_errs, ppm_errs)
     catch e
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)

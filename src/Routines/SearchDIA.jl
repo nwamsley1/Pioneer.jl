@@ -57,6 +57,8 @@ results_dir/
 function SearchDIA(params_path::String)
     # === Initialize logging ===
     checkParams(params_path)
+    params_string = read(params_path, String)
+
     params = parse_pioneer_parameters(params_path)
     log_path = joinpath(params.paths[:results], "pioneer_search_log.txt")
     mkpath(dirname(log_path))  # Ensure directory exists
@@ -114,6 +116,8 @@ function SearchDIA(params_path::String)
             SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
             nothing
         end
+
+
         timings["Spectral Library Loading"] = lib_timing
 
         # Initialize Search Context
@@ -128,6 +132,8 @@ function SearchDIA(params_path::String)
                 250000 # Default temp array batch size 
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+           
+            write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
             nothing
         end
         [rm(fpath) for fpath in readdir(getDataOutDir(SEARCH_CONTEXT), join=true) if endswith(fpath, ".tsv")]
