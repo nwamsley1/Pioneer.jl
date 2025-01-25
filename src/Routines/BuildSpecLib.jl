@@ -22,8 +22,7 @@ function BuildSpecLib(params_path::String)
 
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
-    timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),
-                                    Tuple{Nothing, Float64, Int64, Float64, Base.GC_Diff}}}()
+    timings = Dict{String, Any}()
     
     # Read and validate parameters
     params_timing = @timed begin
@@ -229,7 +228,7 @@ function BuildSpecLib(params_path::String)
                     ion_annotation_set,
                     frag_name_to_idx,
                     10000,
-                    joinpath(@__DIR__, "../../data/immonium.txt"),
+                    joinpath(@__DIR__, "..", "..", "data", "immonium.txt"),
                     lib_dir,
                     Dict{String, Int8}(),
                     iso_mod_to_mass,
