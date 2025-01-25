@@ -33,10 +33,6 @@ Parse results for spline coefficient models.
 function parse_koina_batch(model::SplineCoefficientModel,
                           response::Dict{String,Any})::KoinaBatchResult{Vector{Float32}}
     df = DataFrame()
-    #open("/Users/n.t.wamsley/Desktop/test.json", "w") do io  
-    #    write(io, response)
-    #end
-    jldsave("/Users/n.t.wamsley/Desktop/test.jld2"; response)
     n_precs, n_coef_per_frag, n_frags = response["outputs"][4]["shape"]
     knot_vector = Float32[]
     

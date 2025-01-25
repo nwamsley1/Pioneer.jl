@@ -463,8 +463,6 @@ function estimate_optimal_delta(
 )
     # Group by precursor/scan
     gpsms = groupby(psms, [:precursor_idx, :scan_idx])
-    # Process each curve
-    jldsave("/Users/n.t.wamsley/Desktop/huber_gpsms.jld2"; psms)
     curves = combine(gpsms) do sdf
         process_huber_curve(sdf[!, :weight], sdf[!, :huber_δ])
     end
