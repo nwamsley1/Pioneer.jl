@@ -13,7 +13,6 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "User Guide" => [
-            "Overview" => "user_guide/overview.md",
             "Installation Guide" => "user_guide/installation.md",
             "Quick Start Tutorial" => "user_guide/quickstart.md",
             "Parameter Configuration" => "user_guide/parameters.md",

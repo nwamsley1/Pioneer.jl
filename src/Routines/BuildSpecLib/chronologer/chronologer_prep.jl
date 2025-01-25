@@ -76,11 +76,11 @@ function prepare_chronologer_input(
         UInt8(_params.fasta_digest_params["entrapment_r"])
     )
 
-    # Add decoy sequences
-    fasta_entries = add_reverse_decoys(fasta_entries)
-
     # Combine shared peptides
     fasta_entries = combine_shared_peptides(fasta_entries)
+    
+    # Add decoy sequences
+    fasta_entries = add_reverse_decoys(fasta_entries)
 
     # Build UniSpec input dataframe
     fasta_df = add_mods_and_filter(
