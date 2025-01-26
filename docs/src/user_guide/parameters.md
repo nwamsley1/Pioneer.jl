@@ -1,47 +1,195 @@
 # Parameter Configuration
 
-Pioneer.jl uses a JSON configuration file to control all aspects of the analysis. This guide explains each parameter section and its impact on the analysis.
+Pioneer.jl uses JSON configuration files to control analysis. This guide explains the parameters for both SearchDIA and BuildSpecLib functions.
 
-## Configuration File Structure
+## SearchDIA Configuration
+Only a few parameters need be edited manually. The most common examples are given here and following that is a complete list of the parameters. 
 
-The configuration file is organized into several main sections:
-
-- Global Parameters
-- Parameter Tuning
-- Search Configuration
-- Quantification Settings
-- Output Options
-
-## Parameter Reference
+* **test** some more text
 
 ### Global Parameters
-[Your parameter documentation table here]
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `isotope_settings.err_bounds` | [Int, Int] | Precursor monoisotope may lie this many isotopes outside the quadrupole isolation window [before, after] |
+| `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification |
+| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
+| `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
+| `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
 
 ### Parameter Tuning Settings
-[Parameter tuning documentation table here]
 
-### Search Parameters
-[Search parameters documentation table here]
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fragment_settings.min_count` | Int | Minimum number of matching fragments required (default: 7) |
+| `fragment_settings.max_rank` | Int | Maximum rank of fragments to consider (default: 25) |
+| `fragment_settings.tol_ppm` | Float | Fragment mass tolerance in parts per million (default: 20.0) |
+| `fragment_settings.min_score` | Int | Minimum score threshold for fragment matches (default: 22) |
+| `fragment_settings.min_spectral_contrast` | Float | Minimum spectral contrast score (default: 0.9) |
+| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched intensities (default: 1.5) |
+| `fragment_settings.min_top_n` | [Int, Int] | Minimum number of top N matches - [requirement, denominator]. Default: `[3, 3]` |
+| `fragment_settings.n_isotopes` | Int | Number of isotopes to consider in matching (default: 1) |
+| `search_settings.sample_rate` | Float | Fraction of spectra to sample during parameter tuning (default: 0.02) |
+| `search_settings.min_samples` | Int | Minimum number of samples required for tuning (default: 3500) |
+| `search_settings.max_presearch_iters` | Int | Maximum number of parameter tuning iterations (default: 10) |
+| `search_settings.frag_err_quantile` | Float | Quantile for fragment error estimation (default: 0.01) |
 
-[Continue with other parameter sections...]
+### First Search Parameters 
 
-## Example Configuration
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fragment_settings.min_count` | Int | Minimum number of matching fragments (default: 4) |
+| `fragment_settings.max_rank` | Int | Maximum fragment rank to consider (default: 25) |
+| `fragment_settings.min_score` | Int | Minimum score for fragment matches (default: 15) |
+| `fragment_settings.min_spectral_contrast` | Float | Minimum spectral contrast required (default: 0.5) |
+| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched intensities (default: 0.0) |
+| `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
+| `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
+| `scoring_settings.n_train_rounds` | Int | Number of training rounds for scoring model (default: 2) |
+| `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
+| `scoring_settings.max_q_value` | Float | Maximum q-value threshold (default: 0.01) |
+| `scoring_settings.max_precursors` | Int | Maximum number of precursors to consider (default: 200000) |
 
-```json
-{
-    "global": {
-        "isotope_settings": {
-            "err_bounds": [1, 0],
-            "combine_traces": false
-        },
-        // ... more parameters
-    }
-}
-```
+### Quantification Search Parameters
 
-## Best Practices
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fragment_settings.min_count` | Int | Minimum fragment count for quantification (default: 3) |
+| `fragment_settings.min_y_count` | Int | Minimum number of y-ions required (default: 2) |
+| `fragment_settings.max_rank` | Int | Maximum fragment rank (default: 255) |
+| `fragment_settings.min_spectral_contrast` | Float | Minimum spectral contrast score (default: 0.0) |
+| `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of intensities (default: -1.7) |
+| `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
+| `fragment_settings.n_isotopes` | Int | Number of isotopes for quantification (default: 2) |
+| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 1.0) |
+| `chromatogram.padding` | Int | Number of points to pad chromatograms (default: 20) |
+| `chromatogram.max_apex_offset` | Int | Maximum allowed apex offset (default: 2) |
 
-- Start with default parameters
-- Adjust based on your specific needs
-- Monitor performance metrics
-- Save working configurations
+### Acquisition Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `nce` | Int | Normalized collision energy (default: 25) |
+| `quad_transmission.fit_from_data` | Boolean | Whether to fit quadrupole transmission from data |
+| `quad_transmission.overhang` | Float | Quadrupole transmission curve overhang (default: 0.25) |
+| `quad_transmission.smoothness` | Float | Smoothness parameter for transmission curve (default: 5.0) |
+
+### RT Alignment Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `n_bins` | Int | Number of retention time bins (default: 200) |
+| `bandwidth` | Float | Kernel bandwidth for RT alignment (default: 0.25) |
+| `sigma_tolerance` | Int | Number of standard deviations for tolerance (default: 4) |
+| `min_probability` | Float | Minimum probability for alignment matches (default: 0.95) |
+
+### Optimization Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deconvolution.lambda` | Float | Regularization parameter for deconvolution (default: 0.0) |
+| `deconvolution.huber_delta` | Float | Delta parameter for Huber loss (default: 300) |
+| `deconvolution.huber_exp` | Float | Exponent for Huber delta progression (default: 1.5) |
+| `deconvolution.huber_iters` | Int | Number of Huber iterations (default: 15) |
+| `deconvolution.newton_iters` | Int | Maximum Newton iterations (default: 100) |
+| `deconvolution.newton_accuracy` | Float | Convergence threshold for Newton method (default: 10) |
+| `deconvolution.max_diff` | Float | Maximum allowed difference in optimization (default: 0.01) |
+| `machine_learning.max_samples` | Int | Maximum number of samples for ML training (default: 10000000) |
+| `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
+| `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
+| `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
+
+### Output Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `write_csv` | Boolean | Whether to write results to CSV |
+| `delete_temp` | Boolean | Whether to delete temporary files |
+| `plots_per_page` | Int | Number of plots per page in reports (default: 12) |
+
+### Path Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `library` | String | Path to spectral library file |
+| `ms_data` | String | Path to mass spectrometry data directory |
+| `results` | String | Path to output results directory |
+
+## BuildSpecLib Configuration
+
+### FASTA Digest Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `min_length` | Int | Minimum peptide length (default: 7) |
+| `max_length` | Int | Maximum peptide length (default: 30) |
+| `min_charge` | Int | Minimum charge state (default: 2) |
+| `max_charge` | Int | Maximum charge state (default: 4) |
+| `cleavage_regex` | String | Regular expression for cleavage sites (default: "[KR][^_\|$]") |
+| `missed_cleavages` | Int | Maximum allowed missed cleavages (default: 1) |
+| `max_var_mods` | Int | Maximum variable modifications per peptide (default: 1) |
+| `add_decoys` | Boolean | Generate decoy sequences (default: true) |
+| `entrapment_r` | Float | Ratio of entrapment sequences (default: 0) |
+
+### NCE Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `nce` | Float | Base normalized collision energy (default: 25.0) |
+| `default_charge` | Int | Default charge state for NCE calculations (default: 2) |
+| `dynamic_nce` | Boolean | Use charge-dependent NCE adjustments (default: true) |
+
+### Library Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `rt_bin_tol` | Float | Retention time binning tolerance in minutes (default: 1.0) |
+| `frag_bin_tol_ppm` | Float | Fragment mass tolerance in PPM (default: 10.0) |
+| `rank_to_score` | [Int] | Intensity multipliers for ranked peaks (default: [8,4,4,2,2,1,1]) |
+| `y_start_index` | Int | Starting index for y-ion annotation (default: 4) |
+| `b_start_index` | Int | Starting index for b-ion annotation (default: 3) |
+| `y_start` | Int | Minimum y-ion to consider (default: 3) |
+| `b_start` | Int | Minimum b-ion to consider (default: 2) |
+| `include_p_index` | Boolean | Include proline-containing index fragments (default: false) |
+| `include_p` | Boolean | Include proline-containing fragments (default: false) |
+| `auto_detect_frag_bounds` | Boolean | Auto-detect fragment mass bounds (default: true) |
+| `calibration_raw_file` | String | Path to calibration raw file |
+| `frag_mz_min` | Float | Minimum fragment m/z (default: 150.0) |
+| `frag_mz_max` | Float | Maximum fragment m/z (default: 2020.0) |
+| `prec_mz_min` | Float | Minimum precursor m/z (default: 390.0) |
+| `prec_mz_max` | Float | Maximum precursor m/z (default: 1010.0) |
+| `max_frag_charge` | Int | Maximum fragment ion charge (default: 3) |
+| `max_frag_rank` | Int | Maximum fragment rank (default: 255) |
+| `min_frag_intensity` | Float | Minimum relative fragment intensity (default: 0.00) |
+| `include_isotope` | Boolean | Include isotope peak annotations (default: false) |
+| `include_internal` | Boolean | Include internal fragment annotations (default: false) |
+| `include_immonium` | Boolean | Include immonium ion annotations (default: false) |
+| `include_neutral_diff` | Boolean | Include neutral loss annotations (default: true) |
+| `instrument_type` | String | Instrument type for predictions (default: "NONE") |
+| `prediction_model` | String | Model for fragment predictions (default: "altimeter") |
+
+### Modification Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `variable_mods.pattern` | [String] | Amino acids to modify (default: ["M"]) |
+| `variable_mods.mass` | [Float] | Modification masses (default: [15.99491]) |
+| `variable_mods.name` | [String] | Modification identifiers (default: ["Unimod:35"]) |
+| `fixed_mods.pattern` | [String] | Amino acids to modify (default: ["C"]) |
+| `fixed_mods.mass` | [Float] | Modification masses (default: [57.021464]) |
+| `fixed_mods.name` | [String] | Modification identifiers (default: ["Unimod:4"]) |
+
+### Processing Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `max_koina_requests` | Int | Maximum concurrent Prosit API requests (default: 24) |
+| `max_koina_batch` | Int | Maximum batch size for API requests (default: 1000) |
+| `match_lib_build_batch` | Int | Batch size for library building (default: 100000) |
+
+### Path Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fasta_paths` | [String] | List of FASTA file paths |
+| `fasta_names` | [String] | Names for each FASTA file |
+| `out_dir` | String | Output directory path |
+| `lib_name` | String | Base name for library files |
+| `new_lib_name` | String | Name for updated library files |
+| `out_name` | String | Output filename |
+| `predict_fragments` | Boolean | Predict fragment intensities (default: true) |
+
