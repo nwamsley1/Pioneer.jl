@@ -521,7 +521,7 @@ function buildFragmentIndex!(
                 stop_idx = i - 1 #i - 1 fragment is the last that should be incluced in the bin
                 stop_irt = getIRT(frag_ions[stop_idx])
                 #Within the fragment bin Sort by IRT
-                sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getMZ(x), alg=QuickSort)
+                sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getMZ(x))#Try stable sorting algorithm for now, alg=QuickSort)
                 #Add new fragbin
                 #Build fragment bins for the retention time bin 
                 first_frag_bin_idx = frag_bin_idx
@@ -547,7 +547,7 @@ function buildFragmentIndex!(
         #Last bin is special case 
         if start_idx != length(frag_ions)
             stop_irt =  getIRT(frag_ions[stop_idx])
-            sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getMZ(x), alg=QuickSort)
+            sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getMZ(x))# Try stable sorting for now, alg=QuickSort)
             #Add new fragbin
             #Build RT bins for the frag bin
             first_frag_bin_idx = frag_bin_idx
@@ -601,7 +601,7 @@ function buildFragmentIndex!(
             if (diff_mz/(mean_mz/1e6) > frag_bin_tol_ppm) & (stop_idx != start_idx)
                 stop_idx = i - 1
                 stop_fragmz =  getMZ(frag_ions[stop_idx]) #Need to set before sorting 
-                sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getPrecMZ(x), alg=QuickSort)
+                sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getPrecMZ(x))# Try stable sorting for now, alg=QuickSort)
                 #Add new rt bin
                 frag_bins[frag_bin_idx] = FragIndexBin(start_fragmz, 
                                                         stop_fragmz, #important that stop_idx is i - 1 and not i
@@ -625,7 +625,7 @@ function buildFragmentIndex!(
         #Last bin is special case 
         if start_idx != stop
             stop_fragmz = getMZ(frag_ions[stop_idx])
-            sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getPrecMZ(x), alg=QuickSort)
+            sort!(@view(frag_ions[start_idx:stop_idx]), by = x->getPrecMZ(x))# Try stable sorting for now, alg=QuickSort), alg=QuickSort)
             #Add new fragbin
             frag_bins[frag_bin_idx] = FragIndexBin(start_fragmz, 
                         stop_fragmz, #important that stop_idx is i - 1 and not i
@@ -658,7 +658,7 @@ function buildFragmentIndex!(
         return frag_bin_idx
     end
 
-    sort!(frag_ions, by = x->getIRT(x), alg=QuickSort)
+    sort!(frag_ions, by = x->getIRT(x))# Try stable sorting for now, alg=QuickSort), alg=QuickSort)
     #diff = getPPM(getMZ(frag_ions[start]), bin_ppm) #ppm tolerance of the current fragment bin
     #Get smallest iRT in the library
     index_fragments = Vector{IndexFragment{T}}(undef, length(frag_ions))
