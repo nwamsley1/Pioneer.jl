@@ -61,10 +61,9 @@ function parse_chronologer_output(
     end
     # Read chronologer output
     precursors_df = DataFrame(Arrow.Table(path_to_precursors))
-
     # Rename columns to match Pioneer format
     rename!(precursors_df, Dict(
-        :iRT => :irt,
+        :rt => :irt,
         :upid => :proteome_identifiers
     ))
 

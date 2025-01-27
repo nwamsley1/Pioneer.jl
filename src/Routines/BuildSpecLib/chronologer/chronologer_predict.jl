@@ -27,10 +27,11 @@ function predict_retention_times(chronologer_out_path::String)
         return
     catch e
         @warn "Chronologer failed through Koina. Falling back to local installation..." exception=e
+        rethrow(e)
     end
-
     # Fall back to local Chronologer
-    predict_rt_local(chronologer_out_path)
+    # no longer included. See commits before 
+    #predict_rt_local(chronologer_out_path)
 end
 
 """
