@@ -3,7 +3,7 @@ Make a request to the Koina API with retries.
 """
 function make_koina_request(json_data::String, 
                           model_url::String; 
-                          max_attempts::Int = 100,
+                          max_attempts::Int = 10,
                           retry_delay::Float64 = 1.0)
     attempt = 1
     cmd = `curl -s $model_url -d $json_data`
