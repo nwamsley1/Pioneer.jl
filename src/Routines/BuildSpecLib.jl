@@ -165,7 +165,6 @@ function BuildSpecLib(params_path::String)
                 nothing
             end
             timings["Retention Time Prediction"] = rt_timing
-
             # Parse results and prepare for fragment prediction
             parse_timing = @timed begin
                 iso_mod_to_mass = Dict{String, Float32}()

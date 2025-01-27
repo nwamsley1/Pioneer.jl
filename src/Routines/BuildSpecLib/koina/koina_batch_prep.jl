@@ -156,7 +156,7 @@ function prepare_koina_batch(model::RetentionTimeModel,
                     "name" => "peptide_sequences",
                     "shape" => [nrow(batch_data), 1],
                     "datatype" => "BYTES",
-                    "data" => strip.(batch_data.chronologer_sequence)
+                    "data" => strip.(batch_data.koina_sequence)
                 )
             ]
         )
