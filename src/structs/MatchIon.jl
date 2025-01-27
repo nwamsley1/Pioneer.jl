@@ -62,7 +62,7 @@ FragmentMatch{Float32}() = FragmentMatch(Float32(0), Float32(0), Float32(0), Flo
 
 getMZ(f::FragmentMatch) = f.theoretical_mz
 getMatchMZ(f::FragmentMatch) = f.match_mz
-getPredictedIntenisty(f::FragmentMatch) = f.predicted_intensity
+getPredictedIntensity(f::FragmentMatch) = f.predicted_intensity
 getIntensity(f::FragmentMatch) = f.intensity
 
 getPeakInd(f::FragmentMatch) = f.peak_ind
@@ -88,7 +88,7 @@ end
 getPrecID(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.prec_id
 getIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.intensity
 getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
-getPredictedIntenisty(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
+getPredictedIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
 PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Int64), zero(UInt32))
 getFragInd(::PrecursorMatch{Float32}) = Inf
 getIonType(::PrecursorMatch{Float32}) = 'y'
