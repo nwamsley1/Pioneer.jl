@@ -53,7 +53,6 @@ function searchFragmentIndex(
             getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx)),
             getIsotopeErrBounds(params)
         )
-        
         # Filter precursor matches based on score
         match_count, prec_count = filterPrecursorMatches!(getPrecursorScores(search_data), getMinIndexSearchScore(params))
         #=

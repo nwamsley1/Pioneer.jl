@@ -466,9 +466,18 @@ function get_irt_errs(
     fwhms)
     #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold
     #in more than two runs .
-    irt_std = median(
-                skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt))
-                )
+    irt_std = nothing
+    variance_  = collect(skipmissing(map(x-> (x[:n] > 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt)))
+    if !iszero(length(variance_))
+        irt_std = median(variance_)
+    else
+        #This could happen if only two files are being searched 
+        variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_irt]) : missing, prec_to_irt)))
+        irt_std = median(variance_)
+        if !iszero(length(variance_)) #only searching one file so 
+            irt_std = 0.0f0
+        end
+    end
     #Number of standard deviations to cover 
     irt_std *= params.irt_nstd
     #dictionary maping file name to irt tolerance. 

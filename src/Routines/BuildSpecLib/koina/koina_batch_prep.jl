@@ -123,7 +123,7 @@ function prepare_koina_batch(model::SplineCoefficientModel,
                 Dict(
                     "name" => "precursor_charges",
                     "shape" => [nrow(batch_data), 1],
-                    "datatype" => "FP32",
+                    "datatype" => "INT32",
                     "data" => batch_data.precursor_charge
                 )
             ]

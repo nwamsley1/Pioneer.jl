@@ -117,7 +117,6 @@ function SearchDIA(params_path::String)
             nothing
         end
 
-
         timings["Spectral Library Loading"] = lib_timing
 
         # Initialize Search Context
