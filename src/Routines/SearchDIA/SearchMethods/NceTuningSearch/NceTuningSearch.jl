@@ -124,7 +124,7 @@ function init_search_results(
     out_dir = getDataOutDir(search_context)
     qc_dir = joinpath(out_dir, "qc_plots")
     !isdir(qc_dir) && mkdir(qc_dir)
-    nce_model_plots_path = joinpath(qc_dir, "collision_energy_alignemnt")
+    nce_model_plots_path = joinpath(qc_dir, "collision_energy_alignment")
     !isdir(nce_model_plots_path) && mkdir(nce_model_plots_path)
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),

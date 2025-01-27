@@ -60,7 +60,7 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32},
         end
         H.colval[j] = col
         H.rowval[j] = row
-        H.nzval[j] += getPredictedIntenisty(match)
+        H.nzval[j] += getPredictedIntensity(match)
         H.x[j] = getIntensity(match)
         H.matched[j] = true
         H.isotope[j] = UInt8(match.is_isotope)
@@ -80,7 +80,7 @@ function buildDesignMatrix!(H::SparseArray{UInt32,Float32},
             row += 1
             H.colval[i] = precID_to_col[getPrecID(miss)]
             H.rowval[i] = row
-            H.nzval[i] += getPredictedIntenisty(miss)
+            H.nzval[i] += getPredictedIntensity(miss)
             H.x[i] = zero(Float32)
             H.matched[i] = false
             H.isotope[i] = UInt8(miss.is_isotope)
