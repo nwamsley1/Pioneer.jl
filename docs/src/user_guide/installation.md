@@ -2,9 +2,9 @@
 
 ## System Requirements
 * **Julia**: 1.10 or higher
-* **CPU**: Increasing the number of threads reduces computation time.
-* **RAM**: >=16GB recommended. RAM availability should exceed the spectral library size by at least 4GB.
-* **Storage**: SSD recommended. Available disk space at least double the total size of the `.arrow` formmated raw files to search. 
+* **CPU**: Multiple cores and threads recommended. Increasing the number of threads reduces computation time.
+* **RAM**: >=16GB recommended. RAM availability should exceed the spectral library size by at least 4GB. For searching against the yeast proteome, as little as 6-8 GB may suffice.  
+* **Storage**: SSD recommended. Available disk space at least double the total size of the `.arrow` formmated raw files to search. The `.arrow` files are usually ~1/2 the size of the vendor files. 
 * **Operating System**: Windows, Linux, or macOS
 
 ## Installation Steps
@@ -29,7 +29,7 @@ Julia Version 1.10.0
    pkg> activate .
    pkg> develop ./
    ```
-3. Return from package mode (backspace) Verify installation:
+3. Return from package mode (backspace) and verify installation:
    ```@julia
    julia> using Pioneer
    ```

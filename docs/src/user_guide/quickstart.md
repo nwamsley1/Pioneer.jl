@@ -3,11 +3,11 @@
 ## Basic Workflow
 Pioneer.jl performs two functions
 1. Builds in silico spectral libraries using FASTA files and the [Koina](https://koina.wilhelmlab.org/) server.
-2. Searches RAW data-independent aquisition experiments given a spectral library  
+2. Searches DIA experiments given a spectral library and the MS data files 
 
 
 ## Pioneer Converter
-Pioneer.jl cannot search Thermo RAW files directly, and instead searches MS/MS data in from the [Apache Arrow IPC format](https://arrow.apache.org/docs/python/ipc.html). [Pioneer Converter](https://github.com/nwamsley1/PioneerConverter/releases/tag/v0.1.0) converts the vendor files to the the IPC format. The conversion tool accepts either a path to a single .raw file or a directory containing .raw files. In the later case Pioneer Converter converts all .raw files in the directory. To convert .raw files, navigate to the PioneerConverter folder and use the following commands. See [Installation Guide](@ref) for instructions on downloading the Pioneer Converter tool. 
+Pioneer.jl cannot search Thermo RAW files directly, and instead searches MS/MS data in from the [Apache Arrow IPC format](https://arrow.apache.org/docs/python/ipc.html). [Pioneer Converter](https://github.com/nwamsley1/PioneerConverter/releases/tag/v0.1.0) converts the vendor files to the the IPC format. The conversion tool accepts either a path to a single .raw file or a directory containing .raw files. In the later case PioneerConverter converts all .raw files in the directory. To convert .raw files, navigate to the PioneerConverter folder and use the following commands. See [Installation Guide](@ref) for instructions on downloading the Pioneer Converter tool. 
 ###### POSIX
 ```
 bin/Release/net8.0/PioneerConverter /path/to/raw/file.raw -b 5000
@@ -26,7 +26,7 @@ cmd bin\Release\net8.0\PioneerConverter.exe \directory\containing\raw\files\ -b 
      * **-b --batch-size** batch size. Number of scans to convert per-batch. It is not recommended to change this parameter. Setting too high will cause significant memory allocation. Defaults to 10000
      * **-o** path to folder where the converted files will be saved. Defaults to 'arrow_out' directory within the directory of the input.
 ## Starting Julia
-Pioneer runs from within the julia [REPL](https://docs.julialang.org/en/v1/stdlib/REPL/). For optimal performance, it is important to start an instance of julia with multiple threads. It is recommended to set the total number of threads to one fewer than the number of threads available and to then set the number of threads for garbage collection to half of that number. For example, on a desktop computer with 16 threads, the REPL should be oppened as follows: 
+Pioneer runs from within the julia [REPL](https://docs.julialang.org/en/v1/stdlib/REPL/). For optimal performance, start each instance of julia with multiple threads. Set the total number of threads to one fewer than the number of threads available and to then set the number of threads for garbage collection to half of that number. For example, on a desktop computer with 16 threads, open the REPL as follows: 
 ```
 julia --threads 15 --gcthreads 7,1
 ```
@@ -36,10 +36,11 @@ If Pioneer has already been installed, then open the REPL and enter the followin
 ```@julia
 julia> using Pioneer
 ```  
-The Pioneer.jl package exports four methods, `GetBuildLibParams`, `BuildSpecLib`, `GetSearchParams`, and `SearchDIA`. The first two methods build the in silico spectral libraries. The later two search data-independent aquisition (DIA) proteomics data given a spectral library and raw data. 
+The Pioneer.jl package exports four methods, `GetBuildLibParams`, `BuildSpecLib`, `GetSearchParams`, and `SearchDIA`. The first two methods build the in silico spectral libraries. The later two search DIA experiments given a spectral library and MS data files. 
 
 ## Spectral Library Building
 Pioneer.jl includes two methods for building spectral libraries. These are `GetBuildLibParams` and `BuildSpecLib`.
+
 ### Set Library Building Parameters
 `GetBuildLibParams` generates a `.json` formated config file with default parameters for running `BuildSpecLib`. `GetBuildLibParams` requires an output directory path,
 a library name, and a path to a folder containing one or more `.fasta` or `fasta.gz` formated files of protein sequences from [UniProt](https://www.uniprot.org/). It inserts these options into the template configuration file, `buildspeclib_parameters.json`.
@@ -60,13 +61,14 @@ params_path = GetBuildLibParams(
 To build a spectral library, simply pass a path to a valid `.json` parameters file to the `BuildSpecLib` function from within the REPL. 
 ```@julia
 # Build the library
+julia> params = "path/to/buildspeclib_parameters.json"
 julia> BuildSpecLib(params)
 ```
 
-Given a `json` configuration file, `BuildSpecLib` generates a spectral library in the `.pion` format.  `BuildSpecLib` builds spectral libraries in three steps:
+Given a `json` configuration file, `BuildSpecLib` generates a spectral library in the `.pion` format. BuildSpecLib` builds these spectral libraries in three steps:
 
 1. In silico digestion the all `.fasta` or `.fasta.gz` files in the directory specified by the configuration file according to a user-defined enzymatic cleavage rule. 
-2. Retention time and fragment ion prediction using `chronologer` and a user-specified library prediction tool. Both `chronologer` and the predictions tools are hosted on [Koina](https://koina.wilhelmlab.org/). `BuildSpecLib` currently supports the following spectral library prediction tools:
+2. Retention time and fragment ion prediction using `chronologer` and a user-specified library prediction tool (Altimeter by default and strongly recommended). Both `chronologer` and the predictions tools are hosted on [Koina](https://koina.wilhelmlab.org/). `BuildSpecLib` currently supports the following spectral library prediction tools:
     * Altimeter (recommended)
     * Prosit 2020 HCD
     * AlphaPeptDeep MS2 Generic
@@ -92,13 +94,15 @@ ExampleLibrary.poin/
 ├── presearch_f_index_fragments.arrow
 ├── presearch_f_index_rt_bins.arrow
 ├── raw_fragments.arrow
-└── spline_knots.jld2
+└── spline_knots.jld2 #Altimeter only
 ```
 
 !!! note "'note'"
      `BuildSpecLib` does not generate spectral libraries locally. It uses the Koina servers and will fail without an internet connection. 
 !!! note "'note'"
      `BuildSpecLib` performs field and type checking on the paramters file and returns warnings in case of missing parameters or invalid values.
+!!! note "'note'"
+     For most applications, `detailed_fragments.jld2` is the largest file in the `.poin` folder. This file needs to fit in RAM. Verify that available RAM exceeds this file size by 3-4 GB. 
 
 
 ## Search Raw Files

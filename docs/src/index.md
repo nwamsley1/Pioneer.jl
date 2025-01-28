@@ -4,10 +4,9 @@ CurrentModule = Pioneer
 
 ## Introduction
 
-Pioneer.jl is a search engine for processing data-independent aquisition (DIA) proteomics data. Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data. 
+Pioneer and its companion tool Altimeter were desinged to be an open-source and performant solution for DIA analyses. Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data. 
 
 ## Design Goals
-Pioneer was desinged to be an open source and performant solution for DIA analyses that third-parties can easily adapt to special use cases and experimental techniques. 
 
 - **Open-Source:** Pioneer is completely open source. 
 - **Cross-Platform:** Pioneer and the vendor-specific file conversion tool run on Linux, MacOS, and Windows
@@ -16,12 +15,21 @@ Pioneer was desinged to be an open source and performant solution for DIA analys
 - **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools in our benchmarks. 
 
 ## Features
-Pioneer builds on previous search engines and introduces several new concepts:
+Pioneer and Altimeter build on previous search engines and introduce several new concepts:
 
-* **Intensity-Aware Fragment Index Search** Pioneer implements a fragment index search (see [MSFragger](https://pubmed.ncbi.nlm.nih.gov/28394336/) and [Sage](https://pubmed.ncbi.nlm.nih.gov/37819886/)) to quickly limit the precursor search space for more intensive computation. The Pioneer implementation leverages fragment intensity information from in silico spectral libraries for faster and more specific indexing. 
-* **Linear Regrssion onto Library Templates** Pioneer regresses observed mass spectra onto template fragment spectra from in an silico spectral library. To reduce quantitative bias from interfering signals, Pioneer minimizes the [pseudo-Huber](https://en.wikipedia.org/wiki/Huber_loss) loss function rather than squared error. The pseudo-Huber loss behaves like absolute error for large errors and like squared error for small errors. For other examples of linear regression as applied to DIA analyses, see [Specter](https://pubmed.ncbi.nlm.nih.gov/29608554/) and [Chimerys](https://www.biorxiv.org/content/10.1101/2024.05.27.596040v2).
-* **Fragment Isotope Correction** Fragment isotope distributions are conditional on the precursor isotope distributions as distorted by a quadrupole mass filter. To account for this, Pioneer uses a spectral library tool, Altimeter, that predicts total fragment ion abundances rather than mono-isotopic abundances. Pioneer uses methods from [Goldfarb et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC6166224/) to re-isotope these library spectra. For narrow-window data, Pioneer can optionally estimate a quadrupole-transmission efficiency function for more accurate re-isotoping. 
+* **Spectral Library Prediction with Koina** Using [Koina](https://koina.wilhelmlab.org/) Pioneer can construct fully predicted spectral libraries given an internet connection and a FASTA file with protein sequences. Pioneer uses Chronologer to predict peptide retention times and is optimized to use Altimeter for fragment ion intensity predictions.
 
+* **Collision Energy Independent Spectral Libraries** Rather than predicting a single intensity value for each fragment ion, Altimeter predicts 4 B-spline coefficients. Evaluating the fragment splines at a given collision energy gives a fragment ion intensity. Pioneer calibrates the library to find the optimal collision energy value to use for each MS data file in an experiment. In this way, it is possible to use a single spectral library for different instruments and scan settings. 
+
+* **Fragment Isotope Correction** Fragment isotope distributions depend on precursor isotope distributions as distorted by quadrupole mass filtering. Altimeter addresses this by predicting total fragment ion intensities rather than monoisotopic ones. Pioneer then accurately re-isotopes these library spectra using methods from [Goldfarb et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC6166224/). This is particularly important for narrow-window DIA methods where precursor isotopic envelopes frequently straddle multiple windows.
+
+* **Qaudrupole Transmission Modeling** For narrow-window data, Pioneer can optionally estimate a quadrupole-transmission efficiency function for more accurate re-isotoping. 
+
+* **Intensity-Aware Fragment Index Search** Pioneer implements a fast fragment index search inspired by [MSFragger](https://pubmed.ncbi.nlm.nih.gov/28394336/) and [Sage](https://pubmed.ncbi.nlm.nih.gov/37819886/). Pioneer's implementation uniquely leverages accurate fragment intensity predictions from in silico libraries to improve both speed and specificity of the search.
+
+* **Linear Regression onto Library Templates** Pioneer explains each observed mass spectrum as a linear combination of template spectra from the library. To reduce quantitative bias from interfering signals, Pioneer minimizes the [pseudo-Huber](https://en.wikipedia.org/wiki/Huber_loss) loss rather than squared error. This provides robust quantification even in complex spectra. For other examples of linear regression applied to DIA analyses, see [Specter](https://pubmed.ncbi.nlm.nih.gov/29608554/) and [Chimerys](https://www.biorxiv.org/content/10.1101/2024.05.27.596040v2).
+
+* **Scalability** Pioneer was designed to scale to large experiments with many MS data files. Memory consumption remains constant as the number of data files in an experiment grows large. 
 
 ## Quick Links
 
