@@ -225,7 +225,6 @@ function process_file!(
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             params
         )
-        println("\n")
         return psms
     end
 
