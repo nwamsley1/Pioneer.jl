@@ -49,7 +49,7 @@ function importScripts()
             "IsotopeTraceType.jl",
             "MatchIon.jl",
             "SparseArray.jl",
-            "fragBoundModel.jl",
+            "FragBoundModel.jl",
             "RetentionTimeIndex.jl",
             "MassErrorModel.jl",                                                                  
             "RetentionTimeConversionModel.jl"
