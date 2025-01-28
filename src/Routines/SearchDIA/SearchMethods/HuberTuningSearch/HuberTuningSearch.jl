@@ -206,9 +206,9 @@ function summarize_results!(
             params.min_pct_diff
         )
         #optimal_delta = 100000.0f0
-        println("optimal_delta $optimal_delta")
+        #println("optimal_delta $optimal_delta")
         #stop_tolerance = 10.0f0#Float32(quantile(all_psms[!,:weight], 0.01)/1000)
-        println("would be ", Float32(quantile(all_psms[!,:weight], 0.01)/100000))
+        #println("would be ", Float32(quantile(all_psms[!,:weight], 0.01)/100000))
         search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/100000)
         #println("test ", search_context.deconvolution_stop_tolerance[] )
         #println("_")
