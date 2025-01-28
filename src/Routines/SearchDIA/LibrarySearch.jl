@@ -25,20 +25,14 @@ function searchFragmentIndex(
 
         # Update RT bin index based on iRT window
         irt_lo, irt_hi = getRTWindow(rt_to_irt_spline(getRetentionTime(spectra, scan_idx)), irt_tol)
-
-        #=
         while rt_bin_idx <= length(getRTBins(frag_index)) && getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
             rt_bin_idx += 1
         end
-        rt_bin_idx = min(rt_bin_idx, length(getRTBins(frag_index)))
-        =#
-        while getHigh(getRTBin(frag_index, rt_bin_idx)) < irt_lo
-            rt_bin_idx += 1
-            if rt_bin_idx >length(getRTBins(frag_index))
-                rt_bin_idx = length(getRTBins(frag_index))
-                break
-            end 
+        while rt_bin_idx > 1 && getLow(getRTBin(frag_index, rt_bin_idx)) > irt_lo
+            rt_bin_idx -= 1
         end
+        rt_bin_idx = min(rt_bin_idx, length(getRTBins(frag_index)))
+        
         # Fragment index search for matching precursors
         searchScan!(
             getPrecursorScores(search_data),
@@ -53,6 +47,22 @@ function searchFragmentIndex(
             getQuadTransmissionFunction(qtm, getCenterMz(spectra, scan_idx), getIsolationWidthMz(spectra, scan_idx)),
             getIsotopeErrBounds(params)
         )
+
+        #=
+        my_scan_idx = 50138 
+        my_prec_idx = 1420683
+        if scan_idx == my_scan_idx
+            println("irt_lo $irt_lo irt_hi $irt_hi, getRetentionTime(spectra, scan_idx) ", getRetentionTime(spectra, scan_idx))
+
+            println("getHigh(getRTBin(frag_index, rt_bin_idx-2)) ", getHigh(getRTBin(frag_index, max(rt_bin_idx-2, 1))))
+            println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[max(rt_bin_idx-2, 1)]))
+            println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[max(rt_bin_idx-1, 1)]))
+            println("getLow(rt_bins[rt_bin_idx]): ", getLow(getRTBins(frag_index)[rt_bin_idx]))
+
+            println("\n Precursor $my_prec_idx for scan $my_scan_idx has index score: ",getPrecursorScores(search_data).counts[my_prec_idx])
+            println("\n")
+        end
+        =#
         # Filter precursor matches based on score
         match_count, prec_count = filterPrecursorMatches!(getPrecursorScores(search_data), getMinIndexSearchScore(params))
         #=

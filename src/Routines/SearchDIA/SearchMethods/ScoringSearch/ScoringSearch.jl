@@ -169,6 +169,7 @@ function summarize_results!(
         )
 
         # Create q-value interpolation
+        println("results.merged_quant_path ", results.merged_quant_path)
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :prob,

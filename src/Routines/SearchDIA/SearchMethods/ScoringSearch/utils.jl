@@ -147,6 +147,7 @@ function merge_sorted_psms_scores(
         )
     end
 
+    ##println("psms input_paths $input_paths")
     #input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
     tables = [Arrow.Table(path) for path in input_paths]
     table_idxs = ones(Int64, length(tables))
@@ -156,9 +157,11 @@ function merge_sorted_psms_scores(
     psms_batch[!,:prob] = zeros(Float32, N)
     psms_batch[!,:target] = zeros(Bool, N)
 
-
+    
     #Load psms_heap
     for (i, table) in enumerate(tables)
+        ##println("i $i")
+        ##println("size(table) ", size(DataFrame(table)))
         addPrecursorToHeap!(
             psms_heap,
             table[:prob],
@@ -225,6 +228,7 @@ function merge_sorted_psms_scores(
         output_path,
         psms_batch[range(1, max(1, i - 1)),:]
     )
+    #println("output_path $output_path")
     return nothing
 end
 
@@ -391,8 +395,12 @@ function get_psms_passing_qval(
             :isotopes_captured,
             :scan_idx,
             :ms_file_idx])
+        ###println("size(passing_psms) ", size(passing_psms))
+        ###println("q_val_threshold $q_val_threshold")
         filter!(x->x.qval<=q_val_threshold, passing_psms)
+        ##println("size(passing_psms) ", size(passing_psms))
         # Append to the result DataFrame
+        ##println("joinpath(passing_psms_folder, basename(file_path)) ", joinpath(passing_psms_folder, basename(file_path)))
         Arrow.write(
             joinpath(passing_psms_folder, basename(file_path)),
             passing_psms
@@ -598,6 +606,7 @@ function merge_sorted_protein_groups(
 
     #Get all .arrow files in the input 
     input_paths = [path for path in readdir(input_dir, join=true) if endswith(path, ".arrow")]
+    #println("input_paths protein ", input_paths)
     #Keep track of which tables have 
     tables = [Arrow.Table(path) for path in input_paths]
     table_idxs = ones(Int64, length(tables))
