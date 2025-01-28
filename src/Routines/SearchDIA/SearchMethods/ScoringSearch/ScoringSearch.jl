@@ -167,9 +167,7 @@ function summarize_results!(
             min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
             n_spline_bins = 5
         )
-
         # Create q-value interpolation
-        println("results.merged_quant_path ", results.merged_quant_path)
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :prob,
@@ -187,7 +185,6 @@ function summarize_results!(
             results.precursor_qval_interp[],
             0.01f0
         )
-
         # Step 7: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores

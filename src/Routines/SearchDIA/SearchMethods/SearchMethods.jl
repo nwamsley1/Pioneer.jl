@@ -28,7 +28,7 @@ function execute_search(
     n_files=length(msdr.file_paths)
     
     search_parameters = get_parameters(search_type, params)
-
+    Random.seed!(1844)
     search_results = init_search_results(search_parameters, search_context)
     for (ms_file_idx, spectra) in ProgressBar(enumerate(msdr))
         process_file!(search_results, search_parameters, search_context, ms_file_idx, spectra)

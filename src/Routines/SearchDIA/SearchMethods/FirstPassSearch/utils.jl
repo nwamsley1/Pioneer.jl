@@ -473,9 +473,10 @@ function get_irt_errs(
     else
         #This could happen if only two files are being searched 
         variance_  = collect(skipmissing(map(x-> (x[:n] == 2) ? sqrt(x[:var_irt]) : missing, prec_to_irt)))
-        irt_std = median(variance_)
-        if !iszero(length(variance_)) #only searching one file so 
+        if iszero(length(variance_)) #only searching one file so 
             irt_std = 0.0f0
+        else
+            irt_std = median(variance_)
         end
     end
     #Number of standard deviations to cover 
