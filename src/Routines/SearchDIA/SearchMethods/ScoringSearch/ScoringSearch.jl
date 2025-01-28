@@ -187,7 +187,6 @@ function summarize_results!(
             results.precursor_qval_interp[],
             0.01f0
         )
-
         # Step 7: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores

@@ -219,14 +219,13 @@ function process_file!(
         
         # Score PSMs
         score_psms!(psms, params)
-        
         # Get best PSMs
         select_best_psms!(
             psms,
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             params
         )
-        
+        println("\n")
         return psms
     end
 
