@@ -1,5 +1,5 @@
 <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.jpg" align="right" width="150px"/>
-<h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Aquisition Proteomics Experiments
+<h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/dev)
 [![Build Status](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml?query=branch%3Amain)
@@ -7,10 +7,10 @@
 </h1>
 
 ## Documentation 
-See [documentation for installation and usage intructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
+See [documentation for installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
 
 ## Status
-- Prelinary results shown below
+- Preliminary results shown below
 - Pioneer is in an early stage of development and not yet ready for use in research. If curious, please contact us at n.t.wamsley@wustl.edu.
 - Updates will be continuously added to github as the project progresses.
 - Cross-platform conversion of Thermo RAW files to Pioneer compatible Apache Arrow tables [here](https://github.com/nwamsley1/PioneerConverter).
