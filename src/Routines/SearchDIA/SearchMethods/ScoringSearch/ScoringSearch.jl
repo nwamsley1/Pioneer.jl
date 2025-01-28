@@ -106,7 +106,6 @@ function summarize_results!(
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
     
-    println("TEST ", length(unique(Arrow.Table(readdir(second_pass_folder, join=true)[1])[:prob])))
     for folder in [passing_psms_folder, passing_proteins_folder]
         !isdir(folder) && mkdir(folder)
     end
@@ -168,10 +167,7 @@ function summarize_results!(
             min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
             n_spline_bins = 5
         )
-        println("TEST ", length(unique(Arrow.Table(readdir(second_pass_folder, join=true)[1])[:prob])))
-  
         # Create q-value interpolation
-        println("results.merged_quant_path ", results.merged_quant_path)
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :prob,
