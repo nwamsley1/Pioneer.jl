@@ -273,8 +273,9 @@ function searchScan!(prec_id_to_score::Counter{UInt32, UInt8},
                     ) where {U<:AbstractFloat}
     prec_min = U(getPrecMinBound(quad_transmission_func) - NEUTRON*first(isotope_err_bounds)/2)
     prec_max = U(getPrecMaxBound(quad_transmission_func) + NEUTRON*last(isotope_err_bounds)/2)
-    @inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
 
+    #@inbounds @fastmath while getLow(rt_bins[rt_bin_idx]) < irt_high
+    while getLow(rt_bins[rt_bin_idx]) < irt_high
         #BinRanges
         sub_bin_range = getSubBinRange(rt_bins[rt_bin_idx])
         min_frag_bin, max_frag_bin = first(sub_bin_range), last(sub_bin_range)

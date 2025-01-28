@@ -85,8 +85,8 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         # Create NCE grid
-        nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 30)
-        
+        #nce_grid = LinRange{Float32}(21.0f0, 40.0f0, 30)
+        nce_grid = LinRange{Float32}(13.0f0, 31.0f0, 200)
         new{typeof(prec_estimation)}(
             # Core parameters
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for NCE tuning
