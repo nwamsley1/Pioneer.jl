@@ -43,7 +43,6 @@ function checkParams(json_path::String)
     check_param(frag_settings, "min_count", Integer)
     check_param(frag_settings, "max_rank", Integer)
     check_param(frag_settings, "tol_ppm", Real)
-    check_param(frag_settings, "max_ppm_tol", Real)
     check_param(frag_settings, "min_score", Integer)
     check_param(frag_settings, "min_spectral_contrast", Real)
     check_param(frag_settings, "min_log2_ratio", Real)
@@ -109,8 +108,6 @@ function checkParams(json_path::String)
 
     # Validate RT alignment parameters
     rt_params = params["rt_alignment"]
-    check_param(rt_params, "n_bins", Integer)
-    check_param(rt_params, "bandwidth", Real)
     check_param(rt_params, "sigma_tolerance", Integer)
     check_param(rt_params, "min_probability", Real)
 
