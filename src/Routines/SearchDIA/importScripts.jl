@@ -29,7 +29,7 @@ function importScripts()
             "RazoQuadModel.jl",
             "SplineQuadModel.jl",
             "binIsotopeRatioData.jl",
-            "squareQuadModel.jl",
+            "SquareQuadModel.jl",
         ]
     )
     println("hey")
