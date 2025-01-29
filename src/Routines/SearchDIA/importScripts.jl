@@ -32,7 +32,7 @@ function importScripts()
             "SquareQuadModel.jl",
         ]
     )
-    println("hey")
+
     include(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
 
     include_files!(
