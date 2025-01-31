@@ -309,6 +309,7 @@ function process_file!(
     try
         # Get models and update fragment lookup table
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
+        
         #=
         println("any(psms[!,:precursor_idx].== 576761): ", any(psms[!,:precursor_idx].== 576760))
         println("sum(psms[!,:precursor_idx].== 576761): ", sum(psms[!,:precursor_idx].== 576760))

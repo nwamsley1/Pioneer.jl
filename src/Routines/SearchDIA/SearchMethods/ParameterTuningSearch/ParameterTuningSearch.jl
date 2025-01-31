@@ -287,7 +287,8 @@ function process_file!(
         @warn "Could not tune parameters for $ms_file_idx"
         throw(e)
     end
-    
+    println("ln 290: results.mass_err_model[]: ", results.mass_err_model[])
+    #results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
     return results
 end
 
