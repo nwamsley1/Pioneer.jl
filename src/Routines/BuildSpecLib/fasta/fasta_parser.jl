@@ -11,7 +11,16 @@ Returns:
 """
 function parse_fasta(fasta_path::String, 
                     proteome_id::String,
-                    parse_identifier::Function = x -> split(x,"|")[2])::Vector{FastaEntry}
+                    #parse_identifier::Function = x -> split(x,"|")[2]
+                    )::Vector{FastaEntry}
+    
+    function parse_identifier(header::String)
+        if occursin("|", x)
+            return split(x,"|")[2]
+        else
+            return first(split(x, " "))
+        end
+    end
     
     function get_reader(fasta_path::String)
         if endswith(fasta_path, ".fasta.gz")
