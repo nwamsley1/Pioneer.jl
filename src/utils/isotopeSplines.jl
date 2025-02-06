@@ -408,7 +408,7 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
                                 min_prec_mz::Float32, 
                                 max_prec_mz::Float32;
                                 max_iso::Int64 = 5)
-    first_iso, last_iso = -1, 0
+    first_iso, last_iso = -1, -1
     for iso_count in range(0, max_iso) #Arbitrary cutoff after 5 
         iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
         if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz) 
@@ -426,7 +426,7 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
                                 prec_charge::UInt8, 
                                 qtf::QuadTransmissionFunction;
                                 max_iso::Int64 = 5)
-    first_iso, last_iso = -1, 0
+    first_iso, last_iso = -1, -1
     min_prec_mz = getPrecMinBound(qtf)
     max_prec_mz = getPrecMaxBound(qtf)
     for iso_count in range(0, max_iso) #Arbitrary cutoff after 5 

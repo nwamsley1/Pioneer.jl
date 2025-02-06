@@ -214,8 +214,7 @@ function process_search_results!(
         )
 
         # Remove PSMs where only M2+ isotopes are captured (expect poor quantification)
-        excluded_isotopes = (Int8(-1), Int8(-1))
-        filter!(row -> row.isotopes_captured != excluded_isotopes, psms)
+        filter!(row -> first(row.isotopes_captured) > 2, psms)
 
         # Initialize columns for best scan selection and summary statistics
         psms[!,:best_scan] = zeros(Bool, size(psms, 1));
