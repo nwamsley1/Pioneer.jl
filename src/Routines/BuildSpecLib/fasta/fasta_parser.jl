@@ -14,11 +14,11 @@ function parse_fasta(fasta_path::String,
                     #parse_identifier::Function = x -> split(x,"|")[2]
                     )::Vector{FastaEntry}
     
-    function parse_identifier(header::String)
-        if occursin("|", x)
-            return split(x,"|")[2]
+    function parse_identifier(header::AbstractString)
+        if count("|", header) == 2
+            return split(header,"|")[2]
         else
-            return first(split(x, " "))
+            return first(split(header, " "))
         end
     end
     

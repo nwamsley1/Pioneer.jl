@@ -225,9 +225,11 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
             a += 1
             fasta_entry = seq_to_fasta_entry[sequence]
             accession = get_id(peptide)*";"*get_id(fasta_entry)
+            proteome = get_proteome(peptide)*";"*get_proteome(fasta_entry)
+            description = get_description(peptide)*";"*get_description(fasta_entry)
             seq_to_fasta_entry[sequence] = FastaEntry(accession, 
-                                                        get_description(fasta_entry), 
-                                                        get_proteome(fasta_entry),
+                                                        description, 
+                                                        proteome,
                                                         get_sequence(fasta_entry),
                                                         get_base_pep_id(fasta_entry),
                                                         get_entrapment_group_id(fasta_entry), 

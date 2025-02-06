@@ -76,14 +76,15 @@ Returns:
 """
 function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String; params_path::Union{String, Missing} = missing)
     if ismissing(params_path)
-        output_path = joinpath(pwd(), "buildspeclib_params.json")
+        output_path = pwd()
     elseif isdir(params_path)
-        output_path = joinpath(params_path, "buildspeclib_params.json")
+        output_path = joinpath(params_path)
     elseif isfile(params_path)
         output_path = params_path
     else
         throw("User supplied `params_path` is not a path to a file or a directory")
     end
+
     # Read the template file
     template_path = joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json")
     template_text = read(template_path, String)
@@ -112,7 +113,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     config["out_name"] = basename(lib_name) * ".tsv"
     
     # Write output using the same formatting as template
-    output_path = joinpath(pwd(), "build_parameters.json")
+    output_path = joinpath(output_path, "buildspeclib_params.json")
     open(output_path, "w") do io
         # Extract indentation from template
         indent_match = match(r"\n(\s+)\"", template_text)
