@@ -22,8 +22,7 @@ function BuildSpecLib(params_path::String)
 
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
-    timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),
-                                    Tuple{Nothing, Float64, Int64, Float64, Base.GC_Diff}}}()
+    timings = Dict{String, Any}()
     
     # Read and validate parameters
     params_timing = @timed begin

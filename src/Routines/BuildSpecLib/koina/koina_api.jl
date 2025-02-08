@@ -6,14 +6,11 @@ function make_koina_request(json_data::String,
                           max_attempts::Int = 10,
                           retry_delay::Float64 = 1.0)
     attempt = 1
-    cmd = `curl -s $model_url -d $json_data`
-    #cmd_str = "curl -s $model_url -d $json_data"
-    #open("/Users/n.t.wamsley/Desktop/test_command.txt", "w") do io
-    #    write(io, String(cmd_str))  # Convert Cmd to String before writing
-    #end
+    
+
     while attempt <= max_attempts
         try
-            response = JSON.parse(read(cmd, String))
+            response = JSON.parse(String(HTTP.post(model_url, body=json_data).body))
             if !haskey(response, "error")
                 return response
             end
