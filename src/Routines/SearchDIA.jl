@@ -84,7 +84,7 @@ function SearchDIA(params_path::String)
         
 
         # === Initialize performance tracking ===
-        timings = Dict{String, NamedTuple{(:value, :time, :bytes, :gctime, :gcstats),Tuple{Nothing, Float64,Int64,Float64,Base.GC_Diff}}}()
+        timings = Dict{String, Any}()
         
         # === Load and validate data paths ===
         @info "Loading Parameters..."
