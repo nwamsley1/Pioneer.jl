@@ -442,10 +442,24 @@ function get_isotopes_captured!(chroms::DataFrame,
                 #Needs to be based on the scan definition and not the fitted model
                 #because the isotopes_captured annotation must be consistent between runs 
                 low_mz, high_mz = Float32(scan_mz - window_width/2), Float32(scan_mz + window_width/2)#getQuadTransmissionBounds(quad_transmission_model, scan_mz, window_width)
-                isotopes_captured[i] = getPrecursorIsotopeSet(mz, 
+                isotopes = getPrecursorIsotopeSet(mz,  
                                                     charge, 
                                                     low_mz, high_mz
                                                     )
+                            #=           
+                if first(isotopes) >= 2         
+                    isotopes_captured[i] = isotopes
+                elseif seperateTraces(isotope_trace_type)
+                    isotopes_captured[i] = isotopes
+                else
+                    isotopes_captured[i] = (Int8(-1), Int8(-1))
+                end
+                =#
+                if first(isotopes) >= 2         
+                    isotopes_captured[i] = (Int8(-1), Int8(-1))
+                else
+                    isotopes_captured[i] = isotopes
+                end                                        
             end
         end
     end
