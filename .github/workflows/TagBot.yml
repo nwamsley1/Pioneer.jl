@@ -1,5 +1,7 @@
 name: TagBot
 on:
+  push:
+    tags: ['*']
   issue_comment:
     types:
       - created
