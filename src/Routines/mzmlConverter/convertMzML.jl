@@ -19,6 +19,7 @@ end
 function parseBinaryDataList(binary_data_list::EzXML.Node)
     mz_array, intensity_array = nothing, nothing
     is_mz_array, is_intensity_array = false, false
+    precision = zero(Float32)
     for nl in eachelement(binary_data_list)
         is_mz_array, is_intensity_array = false, false
         for sl in eachelement(nl)
@@ -28,11 +29,14 @@ function parseBinaryDataList(binary_data_list::EzXML.Node)
                 elseif sl["name"] == "intensity array"
                         is_intensity_array = true
                 end
+                if sl["name"] == "64-bit float"
+                    precision = zero(Float64)
+                end
             elseif sl.name=="binary"
                 if is_mz_array == true
-                    mz_array = decodeBinaryArray(sl.content)
+                    mz_array = decodeBinaryArray(sl.content, precision)
                 elseif is_intensity_array == true
-                    intensity_array = decodeBinaryArray(sl.content)
+                    intensity_array = decodeBinaryArray(sl.content, precision)
                 end
             end
         end
@@ -40,7 +44,7 @@ function parseBinaryDataList(binary_data_list::EzXML.Node)
     return mz_array, intensity_array
 end
 
-function decodeBinaryArray(encoded_data::String)
+function decodeBinaryArray(encoded_data::String, ::Float32)
     if length(encoded_data) > 0
         # Decode base64
         decoded_data = base64decode(encoded_data)
@@ -52,6 +56,20 @@ function decodeBinaryArray(encoded_data::String)
         return Vector{Float32}(undef, 0)
     end
 end
+
+function decodeBinaryArray(encoded_data::String, ::Float64)
+    if length(encoded_data) > 0
+        # Decode base64
+        decoded_data = base64decode(encoded_data)
+        # Decompress (since your data appears to be zlib compressed based on the cvParam)
+        decompressed_data = transcode(ZlibDecompressor, decoded_data)   
+        # Convert to float array
+        return [Float32(x) for x in reinterpret(Float64, decompressed_data)]::Vector{Float32}
+    else
+        return Vector{Float32}(undef, 0)
+    end
+end
+
 
 function parseScanDictToScanElement(
     spectrum_dict::Dict{String, String},
@@ -171,7 +189,7 @@ function parseSpectrumElement!(
     mz_array, intensity_array = missing, missing
     for scanElement in eachelement(spectrumElement)
         if scanElement.name=="binaryDataArrayList"
-            mz_array, intensity_array =  parseBinaryDataList(scanElement)
+            mz_array, intensity_array = parseBinaryDataList(scanElement)
         elseif scanElement.name=="cvParam"
             parseScanCvParam!(spectrum_dict, scanElement)
         elseif scanElement.name == "scanList"
