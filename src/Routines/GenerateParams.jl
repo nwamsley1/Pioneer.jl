@@ -35,9 +35,12 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
     else
         throw("User supplied `params_path` is not a path to a file or a directory")
     end
-    # Read the JSON template
-    config = JSON.parsefile(joinpath(@__DIR__, "../../data/example_config/defaultSearchParams.json"))
     
+    # Read the JSON template and convert to OrderedDict
+    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultSearchParams.json"), String)
+    config = JSON.parse(config_text, dicttype=OrderedDict)
+
+        
     # Update paths in the configuration
     if !isdir(results_path)
         mkdir(results_path)
@@ -85,13 +88,10 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
         throw("User supplied `params_path` is not a path to a file or a directory")
     end
 
-    # Read the template file
-    template_path = joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json")
-    template_text = read(template_path, String)
-    
     # Parse JSON
-    config = JSON.parse(template_text)
-    
+    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json"), String)
+    config = JSON.parse(config_text, dicttype=OrderedDict)
+
     # Find all FASTA files in the specified directory
     fasta_files = String[]
     fasta_names = String[]
