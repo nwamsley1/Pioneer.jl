@@ -19,6 +19,7 @@ end
 function parseBinaryDataList(binary_data_list::EzXML.Node)
     mz_array, intensity_array = nothing, nothing
     is_mz_array, is_intensity_array = false, false
+    #Assumption here is that the intensities and m/z arrays both have the same precision
     precision = zero(Float32)
     for nl in eachelement(binary_data_list)
         is_mz_array, is_intensity_array = false, false
