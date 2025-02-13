@@ -64,3 +64,6 @@ BuildSpecLib
 ```@docs
 GetBuildLibParams
 ```
+```@docs
+convertMzML
+```
