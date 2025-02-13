@@ -74,6 +74,10 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
     q_value_threshold::Float32
     prec_estimation::P
 
+    # Override Parameters
+    huber_override_bool::Bool
+    huber_override_delta::Float32
+
     function HuberTuningSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         deconv_params = params.optimization.deconvolution
@@ -108,7 +112,11 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             huber_δs,
             10.0f0,  # Default min_pct_diff
             0.001f0, # Default q_value_threshold
-            prec_estimation
+            prec_estimation,
+
+            global_params.huber_override.override_huber_delta_fit,
+            Float32(global_params.huber_override.huber_delta)
+
         )
     end
 end
@@ -213,6 +221,9 @@ function summarize_results!(
         #println("test ", search_context.deconvolution_stop_tolerance[] )
         #println("_")
         # Store results
+        if params.huber_override_bool #If overriding the fit
+            optimal_delta = params.huber_override_delta
+        end
         results.huber_delta[] = optimal_delta
         setHuberDelta!(search_context, optimal_delta)
         

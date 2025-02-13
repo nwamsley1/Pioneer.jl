@@ -5,7 +5,7 @@ struct InvalidParametersError <: Exception
     params::Dict{String, Any}
 end
 
-function checkParams(json_path::String)
+function (json_path::String)
     params = JSON.parsefile(json_path)
     # Helper function to check if a key exists and has the correct type
     function check_param(dict, key, expected_type)
@@ -36,6 +36,9 @@ function checkParams(json_path::String)
     check_param(global_params, "scoring", Dict)
     check_param(global_params["scoring"], "q_value_threshold", Real)
 
+    check_param(global_params["huber_override"], "override_huber_bool", Bool)
+    check_param(global_params["huber_override"], "override_huber_delta", Real)
+    
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
     check_param(tuning_params, "fragment_settings", Dict)
