@@ -192,7 +192,7 @@ end
 function readMzML(
     mzML_path::String,
     skip_scan_header::Bool)
-    root_elements = root(EzXML.readxml(mzML_path))
+    root_elements = EzXML.root(EzXML.readxml(mzML_path))
     # Create a namespace map
     ns = Dict("ms" => "http://psi.hupo.org/ms/mzml")
     # Use the namespace prefix in the XPath query
