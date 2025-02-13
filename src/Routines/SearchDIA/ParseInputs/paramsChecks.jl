@@ -36,6 +36,9 @@ function checkParams(json_path::String)
     check_param(global_params, "scoring", Dict)
     check_param(global_params["scoring"], "q_value_threshold", Real)
 
+    check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
+    check_param(global_params["huber_override"], "huber_delta", Real)
+
     # Validate parameter tuning parameters
     tuning_params = params["parameter_tuning"]
     check_param(tuning_params, "fragment_settings", Dict)

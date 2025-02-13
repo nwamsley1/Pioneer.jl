@@ -12,6 +12,10 @@
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
+        },
+        "huber_override": {
+            "override_huber_delta_fit": true,
+            "huber_delta": 1500.0
         }
     },
     "parameter_tuning": {

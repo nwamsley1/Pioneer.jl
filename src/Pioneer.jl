@@ -7,6 +7,7 @@ using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries#, Distributions 
+using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
@@ -59,6 +60,7 @@ const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
 include(joinpath(@__DIR__, "Routines","BuildSpecLib.jl"))
 include(joinpath(@__DIR__, "Routines","GenerateParams.jl"))
+include(joinpath(@__DIR__, "Routines","mzmlConverter", "convertMzML.jl"))
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 const H2O::Float64 = Float64(18.010565)
@@ -103,5 +105,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams
+export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
 end

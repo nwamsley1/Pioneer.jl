@@ -234,7 +234,7 @@ end
     convertMzML(mzml_dir::String, skip_scan_header = true, mzml_paths = missing)
 test docs 
 """
-function convertMzMl(
+function convertMzML(
     mzml_dir::String;
     skip_scan_header= true)
     mzml_paths = missing
