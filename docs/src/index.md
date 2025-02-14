@@ -4,7 +4,7 @@ CurrentModule = Pioneer
 
 ## Introduction
 
-Pioneer and its companion tool Altimeter were desinged to be an open-source and performant solution for DIA analyses. Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data. 
+Pioneer and its companion tool Altimeter are an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data. 
 
 ## Design Goals
 
@@ -12,7 +12,7 @@ Pioneer and its companion tool Altimeter were desinged to be an open-source and 
 - **Cross-Platform:** Pioneer and the vendor-specific file conversion tool run on Linux, MacOS, and Windows
 - **High-Performance:** Pioneer achieves high sensitivity, FDR control, quantitative precision and accuracy on benhcmark datat-sets 
 - **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an anslysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
-- **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools in our benchmarks. 
+- **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools.
 
 ## Features
 Pioneer and Altimeter build on previous search engines and introduce several new concepts:

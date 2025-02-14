@@ -251,8 +251,37 @@ function readMzML(
 end
 
 """
-    convertMzML(mzml_dir::String, skip_scan_header = true, mzml_paths = missing)
-test docs 
+    convertMzML(mzml_dir::String; skip_scan_header::Bool=true)
+
+Convert mzML mass spectrometry data files to Arrow IPC format.
+
+Takes either a directory containing mzML files or a path to a single mzML file and converts them to 
+Arrow format, preserving scan data including m/z arrays, intensity arrays, and scan metadata.
+
+# Arguments
+- `mzml_dir::String`: Path to either a directory containing mzML files or a path to a single mzML file
+- `skip_scan_header::Bool=true`: When true, omits scan header information from the output to reduce file size
+
+# Returns
+`nothing`
+
+# Output
+Creates Arrow (.arrow) files in the same directory as the input mzML files and with the same base filename.
+
+# Examples
+```julia
+# Convert all mzML files in a directory
+convertMzML("path/to/mzml/files")
+
+# Convert a single mzML file
+convertMzML("path/to/single/file.mzML")
+
+# Include scan headers in output
+convertMzML("path/to/mzml/files", skip_scan_header=false)
+```
+# Notes
+
+Each mzML file is converted to a corresponding Arrow IPC (.arrow) file in the same directory. This is particularly useful for Sciex data where direct .wiff/.wiff2 conversion is not supported
 """
 function convertMzML(
     mzml_dir::String;
