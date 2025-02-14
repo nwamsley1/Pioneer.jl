@@ -114,13 +114,9 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     
     # Write output using the same formatting as template
     output_path = joinpath(output_path, "buildspeclib_params.json")
+    @info "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
-        # Extract indentation from template
-        indent_match = match(r"\n(\s+)\"", template_text)
-        indent = indent_match === nothing ? "    " : indent_match[1]
-        
-        # Write with matching format
-        JSON.print(io, config, length(indent))
+        JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
     
     return output_path
