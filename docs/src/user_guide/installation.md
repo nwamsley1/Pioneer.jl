@@ -19,6 +19,21 @@ Julia Version 1.10.0
 ```
 
 ### 2. Install Pioneer.jl
+#### Standard Instructions 
+1. Start the Julia REPL and install 
+```@julia
+julia> using Pioneer
+[ Info: Precompiling Pioneer [585db54e-1982-41c9-ae07-9e9eb56c7d61]
+┌ Info: Skipping precompilation due to precompilable error. Importing Pioneer [585db54e-1982-41c9-ae07-9e9eb56c7d61].
+└ exception = Error when precompiling module, potentially caused by a __precompile__(false) declaration in the module.
+```
+2. Test your installation. From the REPL, enter package mode (press ]), then:
+```@julia
+(@v1.11) pkg> test Pioneer
+```
+
+#### Developeer Instructions
+To install Pioneer for development, clone the github repository and use in a local environment according to these instructions. 
 1. Open Command Prompt (Windows) or Terminal (MacOSX/Linux) and clone the repository:
    ```@julia
    git clone https://github.com/nwamsley1/Pioneer.jl.git
@@ -40,6 +55,9 @@ Julia Version 1.10.0
 
 !!! note "'note'"
     On the first attempt ```using Pioneer``` requires an internet connection, and it may take several minutes to download and install dependencies.
+
+!!! note "'note'"
+    The best way to develop Pioneer is with the help of the [`Revise` package](https://timholy.github.io/Revise.jl/stable/).
 
 ### 3. Install PioneerConverter
 

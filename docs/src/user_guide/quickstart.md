@@ -25,6 +25,10 @@ cmd bin\Release\net8.0\PioneerConverter.exe \directory\containing\raw\files\ -b 
      * **-n --threads** flag specifies the number of threads to use. Defaults to 2.
      * **-b --batch-size** batch size. Number of scans to convert per-batch. It is not recommended to change this parameter. Setting too high will cause significant memory allocation. Defaults to 10000
      * **-o** path to folder where the converted files will be saved. Defaults to 'arrow_out' directory within the directory of the input.
+
+## MzML to Arrow IPC (Sciex)
+Pioneer can also convert mzML formatted MS data files to the Arrow IPC format. To do so, use the [`Pioneer.convertMzML`](@ref) method exported by the Pioneer package. This is useful for Sciex data, since .wiff/.wiff2 files are not directly supported, but these can be converted to the .mzML format. 
+
 ## Starting Julia
 Pioneer runs from within the julia [REPL](https://docs.julialang.org/en/v1/stdlib/REPL/). For optimal performance, start each instance of julia with multiple threads. Set the total number of threads to one fewer than the number of threads available and to then set the number of threads for garbage collection to half of that number. For example, on a desktop computer with 16 threads, open the REPL as follows: 
 ```
