@@ -1,6 +1,7 @@
 *.jl.*.cov
 *.jl.cov
 *.jl.mem
-/Manifest.toml
-/docs/Manifest.toml
-/docs/build/
+Manifest.toml
+docs/Manifest.toml
+docs/build/
+data/ecoli_test/ecoli_test_results/
