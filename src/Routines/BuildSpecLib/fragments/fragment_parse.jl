@@ -606,7 +606,6 @@ function process_batch!(
         if pid != last_pid
             batch_pid += 1
             last_pid = pid
-            
             # Reset and update sulfur tracking
             fill!(seq_idx_to_sulfur, zero(UInt8))
             fill!(seq_idx_to_iso_mod, zero(Float32))

@@ -65,5 +65,8 @@ BuildSpecLib
 GetBuildLibParams
 ```
 ```@docs
+Pioneer.ParseSpecLib
+```
+```@docs
 Pioneer.convertMzML
 ```
