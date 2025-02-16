@@ -415,7 +415,7 @@ isotope coverage.
 function get_isotopes_captured!(chroms::DataFrame, 
                                 isotope_trace_type::IsotopeTraceType,
                                 quad_transmission_model::QuadTransmissionModel,
-                                search_data::Vector{Pioneer.SimpleLibrarySearch{Pioneer.IsotopeSplineModel{40, Float32}}},
+                                search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
                                 scan_idx::AbstractVector{UInt32},
                                 prec_charge::AbstractArray{UInt8},
                                 prec_mz::AbstractArray{Float32},
