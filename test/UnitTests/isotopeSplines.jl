@@ -91,7 +91,7 @@ end
     )
 
     #No isotopes in the range given 
-    @test (-1, 0) == getPrecursorIsotopeSet(
+    @test (-1, -1) == getPrecursorIsotopeSet(
         400.0f0, #precursor m/z
         UInt8(3), #precursor charge state
         400.75f0, #minimum quadrupole m/z
