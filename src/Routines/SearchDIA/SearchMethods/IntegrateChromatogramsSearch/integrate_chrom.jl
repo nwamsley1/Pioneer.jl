@@ -62,9 +62,10 @@ Integrate a single chromatographic peak.
 """
 function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, 
                                 apex_scan::Int64,
-                                linsolve::LinearSolve.LinearCache,
+                                b::Vector{Float32},
                                 u2::Vector{Float32},
-                                state::Chromatogram; 
+                                state::Chromatogram,
+                                λ::Float32;
                                 max_apex_offset = 2,
                                 n_pad::Int64 = 0,
                                 isplot::Bool = false)
@@ -72,22 +73,61 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     #########
     #Helper Functions  
     #########
-    function WHSmooth!( linsolve::LinearSolve.LinearCache, 
+    function WHSmooth!( b::Vector{Float32}, 
                         intensities::AbstractVector{Float32},
                         n_pad::Int64)
-        #Reset linsolve and second derivative 
-        @inbounds for i in range(1, length(linsolve.b))
-            linsolve.b[i] = zero(Float32)
-            linsolve.u[i] = zero(Float32)
+        
+        n = length(b)
+
+        # Reset b and second derivative 
+        @inbounds for i in range(1, n)
+            b[i] = zero(Float32)
             u2[i] = zero(Float32)
         end
-        #Copy data to linsolve
+       
+        # Copy data to b
         @inbounds for i in range(1, size(chrom, 1))
-            linsolve.b[i+n_pad] = intensities[i]
+            b[i+n_pad] = intensities[i]
         end
-        #WH smoothing 
-        solve!(linsolve)
-        return
+
+        # Create weight matrix of precursor isolated percentage
+        max_isolation = maximum(chrom[!, :precursor_fraction_transmitted])
+        
+        w = max_isolation*ones(Float32, n)
+        @inbounds for i in range(1, size(chrom, 1))
+            w[i+n_pad] = chrom[!, :precursor_fraction_transmitted][i]
+        end
+        
+        # Get RT spacing 
+        rts = chrom[!, :rt]
+        start_rt = rts[1]
+        last_rt = rts[end]
+        default_spacing = size(chrom, 1) < 2 ? 1.0f0 : rts[2] - start_rt
+
+        # Fill RT differences
+        x = zeros(Float32, n)
+
+        # left padding
+        for i in range(1, n_pad)
+            x[i] = start_rt - (default_spacing * ((n_pad - i) + 1))
+        end
+        # real values
+        for i in range(1, size(chrom, 1)-1 )
+            x[i + n_pad] = rts[i]
+        end
+        # right padding
+        for i in range(n_pad + size(chrom, 1), n-1)
+            x[i] = last_rt + (default_spacing * (i - (n_pad + size(chrom, 1))))
+        end
+
+        # normalize by RT width so the same smoothing parameter is about optimal for all cases
+        rt_width = last_rt-start_rt
+        x = x / rt_width
+
+        # solve
+        z = whitsmddw(x, b, w, λ)
+
+        return z
     end
 
     function fillU2!(
@@ -95,7 +135,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         u::Vector{Float32})
         #Get second-order descrete derivative 
         u2[1], u2[end] = zero(Float32), zero(Float32)
-        @inbounds @fastmath for i in range(2, length(linsolve.b) - 1)
+        @inbounds @fastmath for i in range(2, length(b) - 1)
             u2[i] = u[i + 1] - 2*u[i] + u[i - 1]
         end
     end
@@ -130,13 +170,13 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
 
             for i in range(stop_search, N-1)
                 if (u2[i-1] < u2[i]) & (u2[i+1]<u2[i])
-                    stop = min(i, N)
+                    stop = i
                     break
                 end
             end
 
             for i in range(stop, N-1)
-                if u[i + 1] > u[i]
+                if u[i + 1] >= u[i]
                     break
                 else
                     stop = i
@@ -146,13 +186,13 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
             #get LH boundary 
             for i in reverse(range(2, start_search))
                 if (u2[i] > u2[i - 1]) & (u2[i+1]<u2[i])
-                    start = max(i, 1)
+                    start = i
                     break
                 end
             end
 
             for i in reverse(range(2, start))
-                if u[i - 1] > u[i]
+                if u[i - 1] >= u[i]
                     break
                 else
                     start = i
@@ -240,15 +280,15 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         return (1//2)*retval
     end
     #Whittaker Henderson Smoothing
-    WHSmooth!(
-        linsolve,
+    z = WHSmooth!(
+        b,
         chrom[!,:intensity],
         n_pad
     )
     #Second discrete derivative of smoothed data
     fillU2!(
         u2,
-        linsolve.u,
+        z,
     )
     
     apex_scan = getApexScan(
@@ -259,14 +299,14 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     #Integration boundaries based on smoothed second derivative 
     scan_range = getIntegrationBounds!(
         u2,
-        linsolve.u,
+        z,
         size(chrom, 1),
         apex_scan,
         n_pad
     )
 
     subtractBaseline!(
-        linsolve.u,
+        z,
         apex_scan,
         scan_range,
         n_pad
@@ -275,7 +315,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     #File `state` to fit EGH function. Get the inensity, and rt normalization factors 
     norm_factor, start_rt, rt_norm, best_rt = fillState!(
         state,
-        linsolve.u,
+        z,
         chrom[!,:rt],
         first(scan_range),
         last(scan_range),

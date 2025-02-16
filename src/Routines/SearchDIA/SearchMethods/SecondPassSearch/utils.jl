@@ -415,13 +415,16 @@ isotope coverage.
 function get_isotopes_captured!(chroms::DataFrame, 
                                 isotope_trace_type::IsotopeTraceType,
                                 quad_transmission_model::QuadTransmissionModel,
+                                search_data::Vector{SimpleLibrarySearch{IsotopeSplineModel{40, Float32}}},
                                 scan_idx::AbstractVector{UInt32},
                                 prec_charge::AbstractArray{UInt8},
                                 prec_mz::AbstractArray{Float32},
+                                sulfur_count::AbstractArray{UInt8},
                                 centerMz::AbstractVector{Union{Missing, Float32}},
                                 isolationWidthMz::AbstractVector{Union{Missing, Float32}})
     #sum(MS2_CHROMS.weight.!=0.0)
     isotopes_captured = Vector{Tuple{Int8, Int8}}(undef, size(chroms, 1))
+    precursor_fraction_transmitted = Vector{Float32}(undef, size(chroms, 1))
     
     tasks_per_thread = 5
     chunk_size = max(1, size(chroms, 1) ÷ (tasks_per_thread * Threads.nthreads()))
@@ -429,11 +432,15 @@ function get_isotopes_captured!(chroms::DataFrame,
 
     tasks = map(data_chunks) do chunk
         Threads.@spawn begin
+            thread_id = (first(chunk) % Threads.nthreads()) + 1
+            iso_splines = getIsoSplines(search_data[thread_id])
+
             for i in chunk
                 
                 prec_id = chroms[i,:precursor_idx]
                 mz = prec_mz[prec_id]
                 charge = prec_charge[prec_id]
+                sulfur = sulfur_count[prec_id]
 
                 scan_id = scan_idx[i]
                 scan_mz = coalesce(centerMz[scan_id], zero(Float32))::Float32
@@ -441,30 +448,24 @@ function get_isotopes_captured!(chroms::DataFrame,
 
                 #Needs to be based on the scan definition and not the fitted model
                 #because the isotopes_captured annotation must be consistent between runs 
-                low_mz, high_mz = Float32(scan_mz - window_width/2), Float32(scan_mz + window_width/2)#getQuadTransmissionBounds(quad_transmission_model, scan_mz, window_width)
-                isotopes = getPrecursorIsotopeSet(mz,  
-                                                    charge, 
-                                                    low_mz, high_mz
-                                                    )
-                            #=           
-                if first(isotopes) >= 2         
-                    isotopes_captured[i] = isotopes
-                elseif seperateTraces(isotope_trace_type)
-                    isotopes_captured[i] = isotopes
-                else
-                    isotopes_captured[i] = (Int8(-1), Int8(-1))
-                end
-                =#
-                if first(isotopes) >= 2         
-                    isotopes_captured[i] = (Int8(-1), Int8(-1))
-                else
-                    isotopes_captured[i] = isotopes
-                end                                        
+                low_mz, high_mz = Float32(scan_mz - window_width/2), Float32(scan_mz + window_width/2)
+                isotopes = getPrecursorIsotopeSet(mz, charge, low_mz, high_mz)
+                ## get precursor transmission precent
+                precursor_fraction_transmitted[i] = getPrecursorFractionTransmitted!(
+                    iso_splines,
+                    (1,5),
+                    getQuadTransmissionFunction(quad_transmission_model, scan_mz, window_width),
+                    mz,
+                    charge,
+                    sulfur)
+
+                isotopes_captured[i] = isotopes
             end
         end
     end
     fetch.(tasks)
     chroms[!,:isotopes_captured] = isotopes_captured
+    chroms[!,:precursor_fraction_transmitted] = precursor_fraction_transmitted
     return nothing
 end
 

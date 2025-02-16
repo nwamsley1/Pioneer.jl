@@ -47,7 +47,7 @@
     },
     "quant_search_params":
     {
-        "WH_smoothing_strength": 1.0,
+        "WH_smoothing_strength": 0.0002,
         "min_frag_count": 3,
         "min_y_count": 2,
         "min_log2_matched_ratio": -1.7,

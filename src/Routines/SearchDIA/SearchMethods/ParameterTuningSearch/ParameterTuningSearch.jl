@@ -66,6 +66,7 @@ Configures fragment matching, RT alignment, and general search behavior.
 struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     # Core parameters from the original struct
     isotope_err_bounds::Tuple{UInt8, UInt8}
+    min_fraction_transmitted::Float32
     frag_tol_ppm::Float32
     frag_err_quantile::Float32
     min_psms::Int64
@@ -104,8 +105,9 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
-            # Core parameterse
+            # Core parameters
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            Float32(global_params.isotope_settings.min_fraction_transmitted),
             Float32(frag_params.tol_ppm),
             Float32(search_params.frag_err_quantile),
             Int64(search_params.min_samples),

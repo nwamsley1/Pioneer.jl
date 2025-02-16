@@ -11,7 +11,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
+using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, SparseArrays
 using Measures
 using NumericalIntegration
 using Optim

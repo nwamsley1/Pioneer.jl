@@ -2,7 +2,9 @@
     "global": {
         "isotope_settings": {
             "err_bounds": [1, 0],
-            "combine_traces": false
+            "combine_traces": false,
+            "partial_capture": true,
+            "min_fraction_transmitted" : 0.25
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -58,7 +60,7 @@
             "n_isotopes": 2
         },
         "chromatogram": {
-            "smoothing_strength": 1.0,
+            "smoothing_strength": 0.0002,
             "padding": 20,
             "max_apex_offset": 2
         }

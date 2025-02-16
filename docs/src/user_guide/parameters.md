@@ -37,7 +37,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `isotope_settings.err_bounds_first_pass` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [1, 0]) |
 | `isotope_settings.err_bounds_second_pass` | [Int, Int] | Precursor monoisotope may lie NEUTRON/charge Thompsons (left, right) outside the quadrupole isolation window (default: [3, 1]) |
 | `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification. Experimental, so set to false (default: false) |
-| `isotope_settings.partial_capture` | Boolean | Whether to estimae the conditional fragment isotope distribution (true) or assume complete transmission the entire precursor isotopic envelope (default: true) |
+| `isotope_settings.partial_capture` | Boolean | Whether to estimate the conditional fragment isotope distribution (true) or assume complete transmission the entire precursor isotopic envelope (default: true) |
+| `isotope_settings.min_fraction_transmitted` | Float | Minimum fraction of the precursor isotope distribution that must be isolated for scoring and quantitation (default: 0.25) |
 | `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
 | `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
 | `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
@@ -91,7 +92,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of intensities (default: -1.7) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of isotopes for quantification (default: 2, include the M1 and M2 isotopes) |
-| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 1.0) |
+| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 0.0002) |
 | `chromatogram.padding` | Int | Number of zeros to pad chromatograms on either side (default: 20) |
 | `chromatogram.max_apex_offset` | Int | Maximum allowed apex offset in #scans where the precursor could have been detected between the second-pass search and re-integration with 1 percent FDR precursors (default: 2) |
 

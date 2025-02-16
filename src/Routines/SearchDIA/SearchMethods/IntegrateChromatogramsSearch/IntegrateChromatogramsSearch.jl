@@ -28,6 +28,7 @@ Parameters for chromatogram integration search.
 struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
+    min_fraction_transmitted::Float32
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
@@ -68,11 +69,13 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         end
 
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
+        min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling
@@ -162,22 +165,24 @@ function process_file!(
             chromatograms,
             params.isotope_tracetype,
             getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
             chromatograms[!, :scan_idx],
             getCharge(getPrecursors(getSpecLib(search_context))),
             getMz(getPrecursors(getSpecLib(search_context))),
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
 
-        # Remove chromatograms where M2+ isotopes are captured
-        # These can interfere with accurate quantification
-        filter!(row -> first(row.isotopes_captured) < 2, chromatograms)
-
+        # Assuming scans that isolated too little of the precursor are not reliable to quantify
+        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, chromatograms)
+        
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms        
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
+            params.min_fraction_transmitted,
             passing_psms[!, :precursor_idx],
             passing_psms[!, :isotopes_captured],
             passing_psms[!, :scan_idx],
