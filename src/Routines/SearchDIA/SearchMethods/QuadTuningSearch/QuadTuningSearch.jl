@@ -243,8 +243,11 @@ function process_file!(
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
 
-        fitted_model = fit_quad_model(total_psms, window_width)
-        setQuadModel(results, RazoQuadModel(fitted_model))
+        fitted_model = RazoQuadModel(fit_quad_model(total_psms, window_width))
+        setQuadModel(results, fitted_model)
+
+        # Plot quad model
+        plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx))
         
     catch e
         throw(e)
@@ -275,16 +278,6 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:QuadTuningSearchParameters}
     
-    plot_bins = LinRange(0-3, 0+3, 100)
-    for (ms_file_idx, quad_model) in pairs(search_context.quad_transmission_model)
-        fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-        quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
-        p = plot(plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, title = "$fname")
-        savefig(p, joinpath(results.quad_plot_dir, "quad_models", fname*".pdf"))
-    end
-
-
-
     models_path = joinpath(results.quad_plot_dir, "quad_models", "quad_model_plots.pdf")
     data_path = joinpath(results.quad_plot_dir, "quad_data", "quad_data_plots.pdf")
     try
