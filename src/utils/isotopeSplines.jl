@@ -455,6 +455,26 @@ function getPrecursorIsotopeTransmission!(
 end
 
 
+function getPrecursorFractionTransmitted!(
+    iso_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::Tuple{I, I},
+    qtf::QuadTransmissionFunction,
+    prec_mono_mz::Float32,
+    prec_charge::UInt8,
+    sulfur_count::UInt8,
+    ) where {I<:Real}
+
+    precursor_transmission = zeros(Float32, last(precursor_isotopes))
+    getPrecursorIsotopeTransmission!(precursor_transmission, prec_mono_mz, prec_charge, qtf)
+    probability = 0.0f0
+    for iso in range(first(precursor_isotopes), last(precursor_isotopes))
+        probability += iso_splines(min(Int64(sulfur_count), 5), Int64(iso-1), (prec_mono_mz*prec_charge) - prec_charge) * precursor_transmission[iso]
+    end
+
+    return probability
+end
+
+
 #=
 function correctPrecursorAbundance(
     abundance::Float32,
