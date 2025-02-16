@@ -844,6 +844,32 @@ end
 
 
 """
+    plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float32, results::QuadTuningSearchResults, fname::String)
+
+Generate visualization of quadrupole transmission fit.
+
+# Arguments
+- `quad_model`: fitted quad model
+- `window_width`: isolation width used to model the quad
+- `results`: Quad tuning results containing plot directory
+- `fname`: Filename for plot
+
+Creates line plot of m/z offset vs transmission for the fitted model.
+Saves plot to quad_plot_dir/quad_models directory.
+"""
+
+function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float64, results::QuadTuningSearchResults, fname::String)
+    padding = 2
+    half_width = padding + window_width/2
+    plot_bins = LinRange(-half_width, half_width, 100)
+
+    quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
+    p = plot(plot_bins, quad_func.(plot_bins), lw = 2, alpha = 0.5, title = "$fname")
+    savefig(p, joinpath(results.quad_plot_dir, "quad_models", fname*".pdf"))
+end
+
+
+"""
     fit_quad_model(psms::DataFrame, window_width::Float64) -> QuadTransmissionModel
 
 Fit quadrupole transmission model to binned PSM data.
