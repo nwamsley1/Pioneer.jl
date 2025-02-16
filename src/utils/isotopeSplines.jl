@@ -67,7 +67,7 @@ function parseIsoXML(iso_xml_path::String)
     xdoc = parse_file(iso_xml_path)
 
     max_S, max_iso = 0, 0
-    for model in root(xdoc)["model"]
+    for model in LightXML.root(xdoc)["model"]
         #Use only sulfur-specific models
         if (haskey(attributes_dict(model),"S"))
             if parse(Int64, attributes_dict(model)["S"])+1 > max_S
@@ -97,7 +97,7 @@ function parseIsoXML(iso_xml_path::String)
     end
 
     #Fill Splines 
-    for model in root(xdoc)["model"]
+    for model in LightXML.root(xdoc)["model"]
         if (haskey(attributes_dict(model),"S"))
             S = parse(Int64, attributes_dict(model)["S"])
             iso =  parse(Int64, attributes_dict(model)["isotope"]) 
