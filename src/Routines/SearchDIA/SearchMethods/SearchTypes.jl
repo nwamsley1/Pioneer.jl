@@ -268,6 +268,7 @@ getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile
 getFragTolPpm(fsp::SearchParameters)           = fsp.frag_tol_ppm
 getIRTTol(fsp::SearchParameters)               = fsp.irt_tol
 getIsotopeErrBounds(fsp::SearchParameters)      = fsp.isotope_err_bounds
+getMinFractionTransmitted(fsp::SearchParameters) = fsp.min_fraction_transmitted
 getMaxBestRank(fsp::SearchParameters)           = fsp.max_best_rank
 getMaxFragRank(fsp::SearchParameters)           = fsp.max_frag_rank
 getMaxPresearchIters(fsp::SearchParameters)    = fsp.max_presearch_iters

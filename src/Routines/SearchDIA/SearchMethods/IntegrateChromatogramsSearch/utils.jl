@@ -9,6 +9,7 @@ Integrate chromatographic peaks for multiple precursors in parallel.
 
 # Arguments
 - `chromatograms`: DataFrame containing chromatogram data
+- `min_fraction_transmitted`: Min precursor isotope distribution transmitted
 - `isotope_trace_type`: Strategy for handling isotope traces
 - `precursor_idx`: Vector of precursor indices
 - `isotopes_captured`: Isotopes captured for each precursor
@@ -24,6 +25,7 @@ Smooths and integrates chromatograms in parallel batches
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
+                             min_fraction_transmitted::Float32,
                              precursor_idx::AbstractVector{UInt32},
                              isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
                              apex_scan_idx::AbstractVector{UInt32},
@@ -56,10 +58,7 @@ function integrate_precursors(chromatograms::DataFrame,
         Threads.@spawn begin
             #chromdf = DataFrame()
             b = zeros(Float32, N);
-            A = getWittakerHendersonDesignMat(length(b), λ);
-            prob = LinearProblem(A, b);
-            linsolve = init(prob);
-            u2 = zeros(Float32, length(linsolve.b));
+            u2 = zeros(Float32, length(b));
 
             state = Chromatogram(
                 zeros(dtype, N), #t
@@ -78,26 +77,26 @@ function integrate_precursors(chromatograms::DataFrame,
                     (precursor_idx = prec_id,) ∉ group_keys ? continue : nothing
                     chrom = grouped_chroms[(precursor_idx = prec_id,)]
                 end
-                sort!(chrom,
-                        :scan_idx, 
-                        alg = QuickSort) #Could alternatively sort by :rt
-                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
+
+                sort!(chrom, :rt, alg = QuickSort)
+                first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
+                last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
+                chrom = view(chrom, first_pos:last_pos, :)
+                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
                 isnothing(apex_scan) ? continue : nothing
                 
                 peak_area[i], new_best_scan[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
-                                linsolve,
+                                b,
                                 u2,
                                 state,
+                                λ,
                                 n_pad = n_pad,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-                #df = DataFrame((t = state.t[1:state.max_index], intensity = state.data[1:state.max_index]))
-                #df[!,:precursor_idx] .= chrom[1,:precursor_idx]
-                #append!(chromdf, df)
-                #println("peak_area $peak_area i $i")
+
                 reset!(state)
             end
             return #chromdf

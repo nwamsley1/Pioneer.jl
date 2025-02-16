@@ -48,6 +48,7 @@ Parameters for second pass search.
 struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
+    min_fraction_transmitted::Float32
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
@@ -84,17 +85,18 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         # Determine isotope trace type based on global settings
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
                                global_params.isotope_settings.combine_traces
-            SeperateTraces()#CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            SeperateTraces() #CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
             SeperateTraces()
         end
 
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
-
+        min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
 
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            Float32(min_fraction_transmitted),
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling rate
@@ -206,16 +208,19 @@ function process_search_results!(
             psms,
             getIsotopeTraceType(params),#.isotope_tracetype,
             getQuadTransmissionModel(search_context, ms_file_idx),
+            getSearchData(search_context),
             psms[!, :scan_idx],
             getCharge(getPrecursors(getSpecLib(search_context))),#[:prec_charge],
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
+            getSulfurCount(getPrecursors(getSpecLib(search_context))),
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
 
         # Remove PSMs where only M2+ isotopes are captured (expect poor quantification)
-        excluded_isotopes = (Int8(-1), Int8(-1))
-        filter!(row -> row.isotopes_captured != excluded_isotopes, psms)
+        #excluded_isotopes = (Int8(-1), Int8(-1))
+        #filter!(row -> row.isotopes_captured != excluded_isotopes, psms)
+        filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, psms)
         #filter!(row -> first(row.isotopes_captured) > 2, psms)
 
         # Initialize columns for best scan selection and summary statistics

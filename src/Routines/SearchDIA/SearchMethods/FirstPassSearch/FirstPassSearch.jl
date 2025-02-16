@@ -65,6 +65,7 @@ Configures PSM identification, scoring, and RT calibration.
 struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
     # Core parameters
     isotope_err_bounds::Tuple{UInt8, UInt8}
+    min_fraction_transmitted::Float32
     frag_tol_ppm::Float32
     min_index_search_score::UInt8
     min_frag_count::Int64
@@ -108,6 +109,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
+            0.0f0,  # No transmission threshold for first pass
             0.0f0,  # No fragment tolerance for first pass
             UInt8(frag_params.min_score),
             Int64(frag_params.min_count),

@@ -33,6 +33,7 @@ function checkParams(json_path::String)
     check_param(global_params["isotope_settings"], "err_bounds_quant_search", Vector)
     check_param(global_params["isotope_settings"], "combine_traces", Bool)
     check_param(global_params["isotope_settings"], "partial_capture", Bool)
+    check_param(global_params["isotope_settings"], "min_fraction_transmitted", Real)
     check_param(global_params, "scoring", Dict)
     check_param(global_params["scoring"], "q_value_threshold", Real)
 
