@@ -75,7 +75,7 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
     return test_lib
 end
 
-#=
+
 function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
     speclib_df = getDF(speclib)
     n_precursors = maximum(speclib_df[!,:precursor_idx])
@@ -125,7 +125,7 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
             base_pep_id[prec_idx] = base_pep_id
             prec_mz[prec_idx] = getPrecMz(speclib, frag_idx)
             seq_length[prec_idx] = getLength(speclib, frag_idx)
-            #missed_cleavages[prec_idx] = getMissedCleavages(speclib, frag_idx) will need to have specific and en
+            missed_cleavages[prec_idx] = getMissedCleavages(speclib, frag_idx) #will need to have specific and en
             irt[prec_idx] = getIrt(speclib, frag_idx)
             sulfur_count[prec_idx] = getSulfurCount(speclib, frag_idx)
         end
@@ -203,7 +203,7 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
         )
     )
 end
-=#
+
 #=
 using Random, DataFrames
 

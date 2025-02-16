@@ -167,6 +167,27 @@ function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
     return collision_energies(proteome_idx, frag_idx)
 end
 
+function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
+    collision_energies = sl.libdf[!,:collision_energy]
+    function _collision_energy(collision_energy::Vector{Missing}, frag_idx::Integer)
+        return zero(Float32)
+    end
+    function _collision_energy(collision_energy::Vector{Float32}, frag_idx::Integer)
+        return collision_energy[frag_idx]
+    end
+    return collision_energies(proteome_idx, frag_idx)
+end
+
+function getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
+    missed_cleavages = sl.libdf[!,:missed_cleavages]
+    function _missed_cleavage(missed_cleavage::Vector{Missing}, frag_idx::Integer)
+        return zero(Float32)
+    end
+    function _missed_cleavage(missed_cleavage::Vector{Float32}, frag_idx::Integer)
+        return missed_cleavage[frag_idx]
+    end
+    return missed_cleavages(proteome_idx, frag_idx)
+end
 
 getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:sequence]::Vector{String}[frag_idx]
 getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:prec_charge]::Vector{UInt8}[frag_idx]
@@ -176,4 +197,6 @@ function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
 end
 getPrecMz(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:prec_mz]::Vector{Float32}[frag_idx]
 getSeqLength(sl::EmpiricalLibrary, frag_idx::Integer) = length(getSequence(sl, frag_idx))
+getIrt(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:irt]::Vector{Float32}[frag_idx]
+getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:sulfur_count]::Vector{UInt8}[frag_idx]
 #getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
