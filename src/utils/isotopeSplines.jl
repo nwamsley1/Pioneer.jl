@@ -408,7 +408,7 @@ function getPrecursorIsotopeSet(prec_mz::Float32,
                                 min_prec_mz::Float32, 
                                 max_prec_mz::Float32;
                                 max_iso::Int64 = 5)
-    first_iso, last_iso = -1, 0
+    first_iso, last_iso = -1, -1
     for iso_count in range(0, max_iso) #Arbitrary cutoff after 5 
         iso_mz = iso_count*NEUTRON/prec_charge + prec_mz
         if (iso_mz > min_prec_mz) & (iso_mz < max_prec_mz) 
@@ -452,6 +452,26 @@ function getPrecursorIsotopeTransmission!(
         prec_isotope_transmission[i] = qtf(prec_iso_mz)
         prec_iso_mz += Float32(NEUTRON/prec_charge)
     end
+end
+
+
+function getPrecursorFractionTransmitted!(
+    iso_splines::IsotopeSplineModel{40, Float32},
+    precursor_isotopes::Tuple{I, I},
+    qtf::QuadTransmissionFunction,
+    prec_mono_mz::Float32,
+    prec_charge::UInt8,
+    sulfur_count::UInt8,
+    ) where {I<:Real}
+
+    precursor_transmission = zeros(Float32, last(precursor_isotopes))
+    getPrecursorIsotopeTransmission!(precursor_transmission, prec_mono_mz, prec_charge, qtf)
+    probability = 0.0f0
+    for iso in range(first(precursor_isotopes), last(precursor_isotopes))
+        probability += iso_splines(min(Int64(sulfur_count), 5), Int64(iso-1), (prec_mono_mz*prec_charge) - prec_charge) * precursor_transmission[iso]
+    end
+
+    return probability
 end
 
 
