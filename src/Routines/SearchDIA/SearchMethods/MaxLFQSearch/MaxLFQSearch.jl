@@ -34,6 +34,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     # Normalization parameters
     n_rt_bins::Int64
     spline_n_knots::Int64
+    run_to_run_normalization::Bool
     
     # LFQ parameters
     q_value_threshold::Float32
@@ -48,10 +49,12 @@ struct MaxLFQSearchParameters <: SearchParameters
         norm_params = params.global_settings.normalization
         output_params = params.output
         global_params = params.global_settings
+        maxLFQ_params = params.maxLFQ
         
         new(
             Int64(norm_params.n_rt_bins),
             Int64(norm_params.spline_n_knots),
+            Bool(maxLFQ_params.run_to_run_normalization),
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
             Bool(output_params.write_csv),
@@ -146,16 +149,18 @@ function summarize_results!(
         precursors_wide_path = writePrecursorCSV(
             precursors_long_path,
             sort(collect(getParsedFileNames(getMSData(search_context)))),
-            false,  # normalized
+            params.run_to_run_normalization,
             write_csv = params.write_csv
         )
 
         @info "Performing MaxLFQ..."
         # Perform MaxLFQ protein quantification
+        precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
+
         LFQ(
             DataFrame(Arrow.Table(precursors_long_path)),
             protein_long_path,
-            :peak_area,
+            precursor_quant_col,
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
             search_context.pg_score_to_qval[],#getPGQValueInterp(search_context),
