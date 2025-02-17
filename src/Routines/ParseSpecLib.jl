@@ -72,6 +72,7 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
     #test_lib = BasicEmpiricalLibrary("/Users/nathanwamsley/Desktop/testdf.csv")
     test_lib = BasicEmpiricalLibrary(path)
     nestedLibrarySort!(test_lib, rt_bin_tol = rt_bin_tol)
+    parseLib(test_lib, "/Users/nathanwamsley/temp")
     return test_lib
 end
 
@@ -147,8 +148,7 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
             length = seq_length,
             missed_cleavages = missed_cleavages,
             irt = irt,
-            sulfur_count = sulfur_count,
-            isotopic_mods
+            sulfur_count = sulfur_count
         )
     )
     Arrow.write(
