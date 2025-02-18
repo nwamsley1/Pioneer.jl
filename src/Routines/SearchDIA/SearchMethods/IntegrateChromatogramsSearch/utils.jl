@@ -311,14 +311,14 @@ function build_chromatograms(
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(getRetentionTime(spectra, scan_idx)),
+                        Float32(getRetentionTime(spectra, scan_idx)),
                         weights[getIdToCol(search_data)[precs_temp[j]]],
                         scan_idx,
                         precs_temp[j]
                     )
                 else
                     chromatograms[rt_idx] = ChromObject(
-                        Float16(getRetentionTime(spectra, scan_idx)),
+                        Float32(getRetentionTime(spectra, scan_idx)),
                         zero(Float32),
                         scan_idx,
                         precs_temp[j]
@@ -341,7 +341,7 @@ function build_chromatograms(
                 end
 
                 chromatograms[rt_idx] = ChromObject(
-                    Float16(getRetentionTime(spectra, scan_idx)),
+                    Float32(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),
                     scan_idx,
                     precs_temp[j]
