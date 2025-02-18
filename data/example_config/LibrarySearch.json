@@ -96,6 +96,9 @@
             "interpolation_points": 10
         }
     },
+    "maxLFQ": {
+        "run_to_run_normalization": true
+    },
     "output": {
         "write_csv": true,
         "delete_temp": true,

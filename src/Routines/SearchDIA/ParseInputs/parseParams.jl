@@ -6,6 +6,7 @@ struct PioneerParameters
     acquisition::NamedTuple
     rt_alignment::NamedTuple
     optimization::NamedTuple
+    maxLFQ::NamedTuple
     output::NamedTuple
     paths::NamedTuple
 end
@@ -52,6 +53,7 @@ function parse_pioneer_parameters(json_path::String)
     acquisition = dict_to_namedtuple(params["acquisition"])
     rt_alignment = dict_to_namedtuple(params["rt_alignment"])
     optimization = dict_to_namedtuple(params["optimization"])
+    maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
     paths = dict_to_namedtuple(params["paths"])
 
@@ -63,6 +65,7 @@ function parse_pioneer_parameters(json_path::String)
         acquisition,
         rt_alignment,
         optimization,
+        maxLFQ,
         output,
         paths
     )

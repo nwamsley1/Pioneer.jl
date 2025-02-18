@@ -128,6 +128,12 @@ Most parameters should not be changed, but the following may need adjustement.
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 
+### MaxLFQ Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `run_to_run_normalization` | Boolean | Whether to use run-to-run normalized abundances for precursor and protein quantification (default: true) |
+
 ### Output Parameters
 
 | Parameter | Type | Description |
