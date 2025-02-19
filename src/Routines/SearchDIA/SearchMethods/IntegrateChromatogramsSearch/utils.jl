@@ -81,6 +81,7 @@ function integrate_precursors(chromatograms::DataFrame,
                 sort!(chrom, :rt, alg = QuickSort)
                 first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
+                isnothing(first_pos) ? continue : nothing
                 chrom = view(chrom, first_pos:last_pos, :)
                 apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
                 isnothing(apex_scan) ? continue : nothing
