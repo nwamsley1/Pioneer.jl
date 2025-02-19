@@ -204,7 +204,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
 
     function fillState!(state::Chromatogram,
                         u::Vector{Float32},
-                        rt::AbstractVector{Float16},
+                        rt::AbstractVector{Float32},
                         start::Int64, 
                         stop::Int64,
                         apex_scan::Int64,

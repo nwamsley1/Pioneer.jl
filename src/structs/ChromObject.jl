@@ -1,5 +1,5 @@
 struct ChromObject
-    rt::Float16
+    rt::Float32
     intensity::Float32
     scan_idx::UInt32
     precursor_idx::UInt32
