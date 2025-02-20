@@ -43,7 +43,9 @@ function nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Float64
     end
     
     # Sort final bin by prec_mz
-    sort!(@view(df[start_idx:end, :]), :prec_mz)
+    sort!(@view(df[start_idx:end, :]),  
+    [:prec_mz, :precursor_idx, :library_intensity], 
+    rev=[false, false, true])
     
     return nothing
 end
@@ -72,17 +74,29 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
     #test_lib = BasicEmpiricalLibrary("/Users/nathanwamsley/Desktop/testdf.csv")
     test_lib = BasicEmpiricalLibrary(path)
     nestedLibrarySort!(test_lib, rt_bin_tol = rt_bin_tol)
+    test_lib.libdf[!,:is_decoy] = zeros(Bool, size(test_lib.libdf, 1))
+    test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
+    #return test_lib.libdf
     parseLib(test_lib, "/Users/nathanwamsley/temp")
     return test_lib
 end
 
 
-function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
+function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     speclib_df = getDF(speclib)
-    n_precursors = maximum(speclib_df[!,:precursor_idx])
-    n_frags = UInt64(size(speclib_df, 1))
+    println("unique(speclib_df[!,:precursor_idx]), ", length(unique(speclib_df[!,:precursor_idx])))
+    println("maximum(speclib_df[!,:precursor_idx]), ", maximum(speclib_df[!,:precursor_idx]))
+    n_precursors = maximum(speclib_df[!,:precursor_idx]) #Unique precursors in the data fraqme
+    n_frags = UInt64(size(speclib_df, 1)) #Total number of fragments
     pid_to_fid = zeros(UInt64, n_precursors) #Maps precursor idx to fragment idx range
-    prec_idx = one(UInt32) #Precursor idx of current precursor
+    prec_idx = zero(UInt32) #Precursor idx of current precursor
+    prev_prec_idx = zero(UInt32) #Previous precursor idx
+    #Use to normalize fragment intensities to base peak 
+    max_frag_intensities = zeros(Float16, n_precursors)
+    new_precursor_idxs = zeros(UInt32, n_frags)
+
+    _base_pep_id_ = one(UInt32) #Base peptide id of current precursor
+    base_pep_ids = zeros(UInt32, n_precursors) #Base peptide id of each precursor
     unique_base_pep_seqs = Set{String}()
     #Initialize precursor columns
     proteome_identifiers = Vector{String}(undef, n_precursors)
@@ -94,22 +108,20 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
     collision_energy = zeros(Float32, n_precursors)
     is_decoy = zeros(Bool, n_precursors)
     entrapment_group_id = zeros(UInt8, n_precursors)
-    base_pep_id = zeros(UInt32, n_precursors)
     prec_mz = zeros(Float32, n_precursors)
     seq_length = zeros(UInt8, n_precursors)
     missed_cleavages = zeros(UInt8, n_precursors)
     irt = zeros(Float32, n_precursors)
     sulfur_count = zeros(UInt8, n_precursors)
-    old_prec_idx = first(speclib_df[!,:precursor_idx])
-    pid_to_fid[one(UInt32)] = one(UInt64)
+
     for frag_idx in ProgressBar(range(one(UInt64), UInt64(n_frags)))
-        prec_idx = speclib_df[frag_idx, :precursor_idx]
+        current_prec_idx = speclib_df[frag_idx, :precursor_idx]
         #Encountered a new precursor
-        if prec_idx .!= old_prec_idx
-            old_prec_idx = prec_idx 
-            start_idx = frag_idx
+        if current_prec_idx != prev_prec_idx 
+            prev_prec_idx = current_prec_idx
+            prec_idx += one(UInt32)
             #Index for first fragment corresponding to the precursor
-            pid_to_fid[prec_idx] = start_idx
+            pid_to_fid[prec_idx] = frag_idx
             proteome_identifiers[prec_idx] = getProteomeId(speclib, frag_idx)
             accession_numbers[prec_idx] = getProteinGroupId(speclib, frag_idx)
             sequence[prec_idx] = getSequence(speclib, frag_idx)
@@ -120,15 +132,19 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
             is_decoy[prec_idx] = getIsDecoy(speclib, frag_idx)
             entrapment_group_id[prec_idx] = getEntrapmentGroupIdx(speclib, frag_idx)
             if getSequence(speclib, frag_idx) ∉ unique_base_pep_seqs
-                base_pep_id += one(UInt32)
+                _base_pep_id_ += one(UInt32)
                 push!(unique_base_pep_seqs, getSequence(speclib, frag_idx))
             end
-            base_pep_id[prec_idx] = base_pep_id
+            base_pep_ids[prec_idx] = _base_pep_id_
             prec_mz[prec_idx] = getPrecMz(speclib, frag_idx)
-            seq_length[prec_idx] = getLength(speclib, frag_idx)
+            seq_length[prec_idx] = getSeqLength(speclib, frag_idx)
             missed_cleavages[prec_idx] = getMissedCleavages(speclib, frag_idx) #will need to have specific and en
             irt[prec_idx] = getIrt(speclib, frag_idx)
             sulfur_count[prec_idx] = getSulfurCount(speclib, frag_idx)
+        end
+        new_precursor_idxs[frag_idx] = prec_idx
+        if speclib_df[frag_idx, :library_intensity] > max_frag_intensities[prec_idx]
+            max_frag_intensities[prec_idx] = speclib_df[frag_idx, :library_intensity]
         end
         #Otherwise, this precursor has already been encountered so ignore
     end
@@ -143,7 +159,7 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
             collision_energy = collision_energy,
             is_decoy = is_decoy,
             entrapment_group_id = entrapment_group_id,
-            base_pep_id = base_pep_id,
+            base_pep_id = base_pep_ids,
             mz = prec_mz,
             length = seq_length,
             missed_cleavages = missed_cleavages,
@@ -178,9 +194,12 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
     immonium = zeros(Bool, n_frags)
     internal_ind = Vector{Tuple{UInt8, UInt8}}(undef, n_frags)
     frag_sulfur_count = zeros(UInt8, n_frags)
+    println("minimum(max_frag_intensities) ", minimum(max_frag_intensities))
+    println("minimum(new_precursor_idxs) ", minimum(new_precursor_idxs))
     for frag_idx in range(one(UInt64), n_frags)
+        max_frag_intensity = max_frag_intensities[new_precursor_idxs[frag_idx]]
         frag_mz[frag_idx] = getFragMz(speclib, frag_idx)
-        frag_intensity[frag_idx] = getFragIntensity(speclib, frag_idx)
+        frag_intensity[frag_idx] = Float16(getFragIntensity(speclib, frag_idx)/max_frag_intensity)
         ion_type[frag_idx] = getIonType(speclib, frag_idx)
         is_y[frag_idx] = getIsY(speclib, frag_idx)
         is_b[frag_idx] = getIsB(speclib, frag_idx)
@@ -195,10 +214,23 @@ function parseLib(speclib::BasicEmpericalLibrary, speclib_dir::String)
         frag_sulfur_count[frag_idx] = getFragSulfurCount(speclib, frag_idx)
     end
     Arrow.write(
-        joinpath(speclib_dir, "prec_to_frag.arrow"),
+        joinpath(speclib_dir, "fragments_table.arrow"),
         DataFrame(
             (
-                start_idx = pid_to_fid,
+                mz = frag_mz,
+                intensity = frag_intensity,
+                ion_type = ion_type,
+                is_y = is_y,
+                is_b = is_b,
+                is_p = is_p,
+                is_axcz = is_axcz,
+                has_neutral_diff = has_neutral_diff,
+                frag_index = frag_series_number,
+                charge = frag_charge,
+                internal = internal,
+                immonium = immonium,
+                internal_ind = internal_ind,
+                sulfur_count = frag_sulfur_count
             )
         )
     )

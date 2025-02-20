@@ -44,6 +44,40 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
             "Genes" => "genes"
         )
         
+        # Add proteome_idx column if missing
+        if !hasproperty(new_df, :ProteomeIdentifier)
+            new_df[!,:proteome_idx] = zeros(Missing, nrow(new_df))
+        else
+            rename!(new_df, 
+                "ProteomeIdentifier" => "proteome_idx"
+            )
+        end
+
+        # Add collision_energy  column if missing
+        if !hasproperty(new_df, :CollisionEnergy)
+            new_df[!,:collision_energy] = zeros(Missing, nrow(new_df))
+        else
+            rename!(new_df, 
+                "CollisionEnergy" => "collision_energy"
+            )
+        end
+
+        # Add collision_energy  column if missing
+        if !hasproperty(new_df, :MissedCleavages)
+            new_df[!,:missed_cleavages] = zeros(Missing, nrow(new_df))
+        else
+            rename!(new_df, 
+                "MissedCleavages" => "missed_cleavages"
+            )
+        end
+        
+        # Convert columns to the correct types
+        new_df[!,:prec_charge] = convert(Vector{UInt8}, new_df[!,:prec_charge])
+        new_df[!,:frag_charge] = convert(Vector{UInt8}, new_df[!,:frag_charge])
+        new_df[!,:frag_series_number] = convert(Vector{UInt8}, new_df[!,:frag_series_number])
+        new_df[!,:prec_mz] = convert(Vector{Float32}, new_df[!,:prec_mz])
+        new_df[!,:frag_mz] = convert(Vector{Float32}, new_df[!,:frag_mz])
+        new_df[!,:irt] = convert(Vector{Float32}, new_df[!,:irt])
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)
@@ -134,23 +168,26 @@ function BasicEmpiricalLibrary(csv_file::String)
     return BasicEmpiricalLibrary(df)
 end
 
+##########
+#Precursor Getter Methods
+##########
 function getProteomeId(sl::EmpiricalLibrary, frag_idx::Integer)
-    proteome_ids = sl.libdf[!,:proteome_ids]
-    function proteome_id(proteome_ids::Vector{Missing}, frag_idx::Integer)
+    proteome_idx = sl.libdf[!,:proteome_idx]
+    function proteome_id(proteome_idx::AbstractVector{Missing}, frag_idx::Integer)
         return ""
     end
-    function proteome_id(proteome_ids::Vector{String}, frag_idx::Integer)
-        return proteome_ids[frag_idx]
+    function proteome_id(proteome_idx::AbstractVector{String}, frag_idx::Integer)
+        return proteome_idx[frag_idx]
     end
-    return proteome_id(proteome_ids, frag_idx)
+    return proteome_id(proteome_idx, frag_idx)
 end
 
 function getProteinGroupId(sl::EmpiricalLibrary, frag_idx::Integer)
     protein_groups = sl.libdf[!,:protein_group]
-    function proteome_id(protein_group::Vector{Missing}, frag_idx::Integer)
+    function proteome_id(protein_group::AbstractVector{Missing}, frag_idx::Integer)
         return ""
     end
-    function proteome_id(protein_group::Vector{String}, frag_idx::Integer)
+    function proteome_id(protein_group::AbstractVector{String}, frag_idx::Integer)
         return protein_group[frag_idx]
     end
     return proteome_id(protein_groups, frag_idx)
@@ -158,21 +195,21 @@ end
 
 function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
     collision_energies = sl.libdf[!,:collision_energy]
-    function _collision_energy(collision_energy::Vector{Missing}, frag_idx::Integer)
+    function _collision_energy(collision_energy::AbstractVector{Missing}, frag_idx::Integer)
         return zero(Float32)
     end
-    function _collision_energy(collision_energy::Vector{Float32}, frag_idx::Integer)
+    function _collision_energy(collision_energy::AbstractVector{Float32}, frag_idx::Integer)
         return collision_energy[frag_idx]
     end
-    return collision_energies(proteome_idx, frag_idx)
+    return _collision_energy(collision_energies, frag_idx)
 end
 
 function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
     collision_energies = sl.libdf[!,:collision_energy]
-    function _collision_energy(collision_energy::Vector{Missing}, frag_idx::Integer)
+    function _collision_energy(collision_energy::AbstractVector{Missing}, frag_idx::Integer)
         return zero(Float32)
     end
-    function _collision_energy(collision_energy::Vector{Float32}, frag_idx::Integer)
+    function _collision_energy(collision_energy::AbstractVector{Float32}, frag_idx::Integer)
         return collision_energy[frag_idx]
     end
     return collision_energies(proteome_idx, frag_idx)
@@ -180,23 +217,96 @@ end
 
 function getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
     missed_cleavages = sl.libdf[!,:missed_cleavages]
-    function _missed_cleavage(missed_cleavage::Vector{Missing}, frag_idx::Integer)
+    function _missed_cleavage(missed_cleavage::AbstractVector{Missing}, frag_idx::Integer)
         return zero(Float32)
     end
-    function _missed_cleavage(missed_cleavage::Vector{Float32}, frag_idx::Integer)
+    function _missed_cleavage(missed_cleavage::AbstractVector{Float32}, frag_idx::Integer)
         return missed_cleavage[frag_idx]
     end
-    return missed_cleavages(proteome_idx, frag_idx)
+    return _missed_cleavage(missed_cleavages, frag_idx)
 end
 
-getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:sequence]::Vector{String}[frag_idx]
-getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:prec_charge]::Vector{UInt8}[frag_idx]
-getIsDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:is_decoy]::Vector{Bool}[frag_idx]
-function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
-    sl.libdf[!,:entrapment_group_id]::Vector{UInt8}[frag_idx]
+#Placeholder functions
+function parseStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer)
+    return ""
 end
-getPrecMz(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:prec_mz]::Vector{Float32}[frag_idx]
+function parseIsotopicMods(sl::EmpiricalLibrary, frag_idx::Integer)
+    return ""
+end
+function getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer)
+    return zero(UInt8)
+end
+getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:sequence]::String
+getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_charge]::UInt8
+getIsDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:is_decoy]::Bool
+function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
+    sl.libdf[frag_idx,:entrapment_group_id]::UInt8
+end
+getPrecMz(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_mz]::Float32
 getSeqLength(sl::EmpiricalLibrary, frag_idx::Integer) = length(getSequence(sl, frag_idx))
-getIrt(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:irt]::Vector{Float32}[frag_idx]
-getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[!,:sulfur_count]::Vector{UInt8}[frag_idx]
+getIrt(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:irt]::Float32
 #getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
+##########
+#Fragment Getter Methods
+##########
+getFragMz(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_mz]::Float32
+
+getFragIntensity(sl::EmpiricalLibrary, frag_idx::Integer) = Float16(sl.libdf[frag_idx, :library_intensity])
+
+function getIonType(sl::EmpiricalLibrary, frag_idx::Integer)
+    #frag_type = sl.libdf[frag_idx, :frag_type]::String
+    #return UInt16(get(ION_TYPE_DICT, frag_type, 0))
+    return zero(UInt16)
+end
+
+getIsY(sl::EmpiricalLibrary, frag_idx::Integer) = startswith(sl.libdf[frag_idx, :frag_type], "y")::Bool
+
+getIsB(sl::EmpiricalLibrary, frag_idx::Integer) = startswith(sl.libdf[frag_idx, :frag_type], "b")::Bool
+
+getIsP(sl::EmpiricalLibrary, frag_idx::Integer) = startswith(sl.libdf[frag_idx, :frag_type], "p")::Bool
+
+function getAXCZ(sl::EmpiricalLibrary, frag_idx::Integer)
+    ftype = first(sl.libdf[frag_idx, :frag_type])
+    return (ftype == 'a' || ftype == 'x' || ftype == 'c' || ftype == 'z')::Bool
+end
+
+function getNeutralDiff(sl::EmpiricalLibrary, frag_idx::Integer)
+    if !hasproperty(sl.libdf, :frag_loss_type)
+        return false
+    end
+    loss = sl.libdf[frag_idx, :frag_loss_type]
+    return (!ismissing(loss) && !isempty(loss))::Bool
+end
+
+getFragIndex(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_series_number]::UInt8
+
+getFragCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_charge]::UInt8
+
+function isInternal(sl::EmpiricalLibrary, frag_idx::Integer)
+    #ftype = sl.libdf[frag_idx, :frag_type]::String
+    #return startswith(ftype, "Int")::Bool
+    return false
+end
+
+function isImmonium(sl::EmpiricalLibrary, frag_idx::Integer)
+    #ftype = sl.libdf[frag_idx, :frag_type]::String
+    #return startswith(ftype, "Imm")::Bool
+    return false
+end
+
+function getInternalInd(sl::EmpiricalLibrary, frag_idx::Integer)
+    #=
+    if !isInternal(sl, frag_idx)
+        return (zero(UInt8), zero(UInt8))
+    end
+    ftype = sl.libdf[frag_idx, :frag_type]::String
+    m = match(r"Int/(\d+)-(\d+)", ftype)
+    if isnothing(m)
+        return (zero(UInt8), zero(UInt8))
+    end
+    return (parse(UInt8, m[1]), parse(UInt8, m[2]))
+    =#
+    return (zero(UInt8), zero(UInt8))
+end
+
+getFragSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = zero(UInt8)  # Placeholder implementation
