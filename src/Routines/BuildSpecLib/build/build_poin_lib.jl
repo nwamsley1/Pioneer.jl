@@ -328,9 +328,9 @@ function buildPionLib(spec_lib_path::String,
         pid_to_fid
     )
 
-    #rm(joinpath(spec_lib_path,"fragments_table.arrow"));
-    #rm(joinpath(spec_lib_path,"prec_to_frag.arrow"));
-    #rm(joinpath(spec_lib_path,"precursors.arrow"));
+    rm(joinpath(spec_lib_path,"fragments_table.arrow"); force=true);
+    rm(joinpath(spec_lib_path,"prec_to_frag.arrow"); force=true);
+    rm(joinpath(spec_lib_path,"precursors.arrow"); force=true);
     
 
     return nothing

@@ -283,10 +283,10 @@ the respective number of Sulfur's in the ion. See Examples below.
 ### Examples
 julia> getImmoniumToFormulaDict("data/immonium.txt")
 Dict{String, Int8} with 64 entries:
-  "IQA" => 0x0
-  "IWF" => 0x0
-  "ILC" => 0x0
-  "IQB" => 0x0
+  "IQ" => 0x0
+  "IW" => 0x0
+  "IL" => 0x0
+  "IQ" => 0x0
 """
 function get_immonium_sulfur_dict(
     immonium_table_path::String
