@@ -17,10 +17,10 @@ Notes:
 - Handles UniMod code conversion for local Chronologer
 - Updates the input file in place with RT predictions
 """
-function predict_retention_times(chronologer_out_path::String)
+function predict_retention_times(chronologer_in_path::String, chronologer_out_path::String)
     # Try Koina service first
     try
-        chronologer_table = DataFrame(Tables.columntable(Arrow.Table(chronologer_out_path)))
+        chronologer_table = DataFrame(Tables.columntable(Arrow.Table(chronologer_in_path)))
         predictions = predict_rt_koina(chronologer_table)
         chronologer_table[!, :rt] = predictions
         Arrow.write(chronologer_out_path, chronologer_table)

@@ -26,6 +26,9 @@ output_path = getSearchParams(
 ```
 """
 function GetSearchParams(lib_path::String, ms_data_path::String, results_path::String; params_path::Union{String, Missing} = missing)
+    # Clean up any old file handlers in case the program crashed
+    GC.gc()
+    
     if ismissing(params_path)
         output_path = joinpath(pwd(), "search_parameters.json")
     elseif isdir(params_path)
@@ -78,6 +81,9 @@ Returns:
 - String: Path to the newly created parameters file
 """
 function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String; params_path::Union{String, Missing} = missing)
+    # Clean up any old file handlers in case the program crashed
+    GC.gc()
+
     if ismissing(params_path)
         output_path = pwd()
     elseif isdir(params_path)

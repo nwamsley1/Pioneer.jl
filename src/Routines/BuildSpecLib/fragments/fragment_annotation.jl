@@ -296,7 +296,7 @@ function parse_fragment_annotation(frag_annotation::UniSpecFragAnnotation;
         getAnnotationPieces(frag_annotation),
         immonium_to_sulfur_count,
         is_internal_fragment,
-        occursin(r"I[A-Z]{2,}", annotation),#Is immonium ion 
+        occursin(r"I[A-Z]{1,}", annotation),#Is immonium ion 
     )
 end
 
