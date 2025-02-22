@@ -286,6 +286,10 @@ Each mzML file is converted to a corresponding Arrow IPC (.arrow) file in the sa
 function convertMzML(
     mzml_dir::String;
     skip_scan_header= true)
+
+    # Clean up any old file handlers in case the program crashed
+    GC.gc()
+
     mzml_paths = missing
     if isdir(mzml_dir)
         mzml_paths = [fpath for fpath in readdir(mzml_dir, join=true) if endswith(fpath, ".mzML")]

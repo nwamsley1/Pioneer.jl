@@ -19,7 +19,8 @@ Output:
 - Returns nothing
 """
 function BuildSpecLib(params_path::String)
-
+    # Clean up any old file handlers in case the program crashed
+    GC.gc()
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, Any}()
@@ -72,7 +73,8 @@ function BuildSpecLib(params_path::String)
         setup_timing = @timed begin
             chronologer_dir = joinpath(lib_dir, "chronologer_temp")
             mkpath(chronologer_dir)
-            chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer.arrow")
+            chronologer_in_path = joinpath(chronologer_dir, "precursors_for_chronologer.arrow")
+            chronologer_out_path = joinpath(chronologer_dir, "precursors_for_chronologer_rt.arrow")
             
             # Format parameters into named tuple
             _params = (
@@ -153,14 +155,14 @@ function BuildSpecLib(params_path::String)
                                         mz_to_ev_interp,
                                         prec_mz_min,
                                         prec_mz_max,
-                                        chronologer_out_path)
+                                        chronologer_in_path)
                 nothing
             end
             timings["Chronologer Preparation"] = chrono_prep_timing
 
             dual_println("Predicting retention times...")
             rt_timing = @timed begin
-                predict_retention_times(chronologer_out_path)
+                predict_retention_times(chronologer_in_path, chronologer_out_path)
                 nothing
             end
             timings["Retention Time Prediction"] = rt_timing
@@ -177,6 +179,8 @@ function BuildSpecLib(params_path::String)
                 )
                 
                 # Cleanup temporary files
+                GC.gc()
+                rm(chronologer_in_path, force=true)
                 rm(chronologer_out_path, force=true)
                 dir, filename = splitdir(precursors_arrow_path)
                 raw_fragments_arrow_path = joinpath(dir, "raw_fragments.arrow")
@@ -240,7 +244,6 @@ function BuildSpecLib(params_path::String)
                 N_TARGETS = sum(precursors_table[:decoy])
                 N_DECOYS = N_PRECURSORS - N_TARGETS
                 fragments_table = nothing
-                rm(raw_fragments_arrow_path)
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
@@ -317,6 +320,14 @@ function BuildSpecLib(params_path::String)
         dual_println("\nLibrary building completed at: ", Dates.now())
         dual_println("\nLibrary location: ", lib_dir)
     end
+
+    # cleanup temp files
+    GC.gc()
+    rm(joinpath(lib_dir, "raw_fragments.arrow"), force=true)
+    rm(joinpath(lib_dir,"fragments_table.arrow"), force=true);
+    rm(joinpath(lib_dir,"prec_to_frag.arrow"), force=true);
+    rm(joinpath(lib_dir,"precursors.arrow"), force=true);
+
     return nothing
 end
 
