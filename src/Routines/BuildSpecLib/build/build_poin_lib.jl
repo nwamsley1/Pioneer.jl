@@ -93,7 +93,7 @@ function buildPionLib(spec_lib_path::String,
         frag_bounds,
         rank_to_score
     );
-
+    println("length(simple_frags) a ", length(simple_frags))
     println("Build fragment index...")
     ##########
     #Builds fragment indexes and saves them for the spec_lib_path
@@ -159,9 +159,10 @@ function buildPionLib(spec_lib_path::String,
         pid_to_fid
     )
 
-    rm(joinpath(spec_lib_path,"fragments_table.arrow"));
-    rm(joinpath(spec_lib_path,"prec_to_frag.arrow"));
-    rm(joinpath(spec_lib_path,"precursors.arrow"));
+    for file in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
+        filepath = joinpath(spec_lib_path, file)
+        isfile(filepath) && rm(filepath)
+    end
 
     return nothing
 end
@@ -440,7 +441,8 @@ function getSimpleFrags(
     max_rank_index = length(rank_to_score)
     #Number of precursors 
     n_precursors = UInt32(length(precursor_mz))
-    simple_frags = Vector{SimpleFrag{Float32}}(undef, n_precursors*max_rank_index)
+    simple_frags = Vector{SimpleFrag{Float32}}(undef, prec_to_frag_idx[end])#n_precursors*max_rank_index)
+    println("length(simple_frags) b ", length(simple_frags))
     simple_frag_idx = 0
     for pid in range(one(UInt32), n_precursors)
         prec_mz = precursor_mz[pid]
@@ -486,6 +488,7 @@ function getSimpleFrags(
         end
 
     end
+    println("simple_frag_idx $simple_frag_idx")
     return simple_frags[1:simple_frag_idx]
 end
 
@@ -664,6 +667,7 @@ function buildFragmentIndex!(
     index_fragments = Vector{IndexFragment{T}}(undef, length(frag_ions))
     rt_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
     frag_bins = Vector{FragIndexBin{T}}(undef, length(frag_ions))
+    println("length(frag_ions) ", length(frag_ions))
     println("building fragment index...")
     frag_bin_idx, rt_bin_idx = buildFragIndex!(index_fragments,
                     rt_bins,

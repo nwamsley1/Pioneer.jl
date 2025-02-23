@@ -282,7 +282,7 @@ function add_mods_and_filter(fasta_peptides::Vector{FastaEntry};
         #Get each instance of a variable mod
         var_mod_matches = matchVarMods(sequence, var_mods)
         #Count number of unique variable mod combinations 
-        n_var_mod_combinations = countVarModCombinations(var_mod_matches, max_var_mods)
+        n_var_mod_s = countVarModCombinations(var_mod_matches, max_var_mods)
         var_mod_strings = Vector{String}(undef, n_var_mod_combinations)
         #Build modification strings for all combinations of variable mods 
         fillVarModStrings!(var_mod_strings,

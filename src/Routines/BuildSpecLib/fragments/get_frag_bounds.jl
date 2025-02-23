@@ -67,7 +67,7 @@ function get_fragment_bounds(
             Using default values. Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
         end
     end
-    frag_bounds = FragBoundModel(
+    frag_bounds = (
         ImmutablePolynomial(first(default_frag_bounds)),
         ImmutablePolynomial(last(default_frag_bounds)) 
     )

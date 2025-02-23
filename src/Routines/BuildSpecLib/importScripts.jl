@@ -36,6 +36,7 @@ function importScripts()
     include(joinpath(root_path, "utils", "get_mz.jl"))
     include(joinpath(root_path, "utils", "parse_isotope_mods.jl"))
     include(joinpath(root_path, "utils", "check_params.jl"))
+    include(joinpath(root_path, "utils", "parse_mods.jl"))
     #structs 
     include(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
     # Library building

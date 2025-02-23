@@ -1,4 +1,129 @@
 abstract type EmpiricalLibrary end
+"""
+    convert_to_n_term(sequence::String)
+
+Move the first modification of the first residue to be an n-terminal modification.
+Any additional modifications on the first residue remain in place.
+
+# Arguments
+- `sequence::String`: Input sequence potentially with modifications in brackets
+
+# Returns
+- `String`: Modified sequence with first modification moved to n-terminal position
+
+# Examples
+```julia
+# Single modification on first residue
+seq = "K(tag6)PEPTIDE" 
+convert_to_n_term(seq)  # Returns "n(tag6)KPEPTIDE"
+
+# Multiple modifications on first residue - only first moves
+seq = "K(tag6)(tag5)PEPTIDE"
+convert_to_n_term(seq)  # Returns "n(tag6)K(tag5)PEPTIDE"
+
+# No modifications
+seq = "KPEPTIDE"
+convert_to_n_term(seq)  # Returns "KPEPTIDE"
+@assert convert_to_n_term("K(tag6)PEPTIDE") == "n(tag6)KPEPTIDE" "Single modification failed"
+@assert convert_to_n_term("K(tag6)(tag5)PEPTIDE") == "n(tag6)K(tag5)PEPTIDE" "Multiple modifications failed"
+@assert convert_to_n_term("KPEPTIDE") == "KPEPTIDE" "No modifications failed"
+@assert convert_to_n_term("K(tag6)(tag5)PEPTIDE(mytag)") == "n(tag6)K(tag5)PEPTIDE(mytag)" "Complex case failed"
+@assert convert_to_n_term("K") == "K" "Single letter failed"
+@assert convert_to_n_term("") == "" "Empty string failed"
+println("All tests passed!")
+
+```
+"""
+function convert_to_n_term(sequence::String)
+    # If no sequence or no brackets, return as is
+    if isempty(sequence) || !occursin('(', sequence)
+        return sequence
+    end
+    
+    # Find first modification on first residue
+    first_letter = sequence[1]
+    
+    # Match first modification after first letter
+    regex = Regex("^$first_letter(\\([^()]+\\))")
+    m = match(regex, sequence)
+    
+    if m === nothing
+        # No modifications on first letter
+        return sequence
+    else
+        # Extract first modification
+        first_mod = match(r"\([^()]+\)", m.match).match
+        
+        # Get rest of sequence after first letter but before rest of string
+        remaining = sequence[length(first_letter)+length(first_mod)+1:end]
+        
+        # Construct new sequence
+        return "n" * first_mod * first_letter * remaining
+    end
+end
+
+"""
+    add_cysteine_mods(sequence::String)
+
+Add "(Unimod:4)" modification to all unmodified cysteines in the sequence.
+Ignores cysteines that appear within existing modification brackets.
+
+# Arguments
+- `sequence::String`: Input peptide sequence
+
+# Returns
+- `String`: Sequence with "(Unimod:4)" added to unmodified cysteines
+
+# Examples
+```julia
+# Basic case
+seq = "PEPTCIDE(tagWithCInit)"
+@assert "PEPTC(Unimod:4)IDE(tagWithCInit)" == add_cysteine_mods(seq)  # Returns "PEPTC(Unimod:4)IDE(tagWithCInit)"
+
+# Multiple cysteines
+seq = "CPEPCTICD"
+@assert "C(Unimod:4)PEPC(Unimod:4)TIC(Unimod:4)D" == add_cysteine_mods(seq)  # Returns "C(Unimod:4)PEPC(Unimod:4)TIC(Unimod:4)D"
+
+# Cysteine in existing modification
+seq = "PEPC(MyMod)TIDE"
+add_cysteine_mods(seq)  # Returns "PEPC(MyMod)TIDE"
+    @assert add_cysteine_mods("PEPTCIDE") == "PEPTC(Unimod:4)IDE"
+    @assert add_cysteine_mods("CPEPCTICD") == "C(Unimod:4)PEPC(Unimod:4)TIC(Unimod:4)D"
+    @assert add_cysteine_mods("PEPC(MyMod)TIDE") == "PEPC(Unimod:4)(MyMod)TIDE"
+    @assert add_cysteine_mods("PEPC(ModWithCInIt)TIDE") == "PEPC(Unimod:4)(ModWithCInIt)TIDE"
+    @assert add_cysteine_mods("PEPTIDE") == "PEPTIDE"
+    @assert add_cysteine_mods("C") == "C(Unimod:4)"
+    @assert add_cysteine_mods("") == ""
+```
+"""
+function add_cysteine_mods(sequence::String)
+    # Result buffer
+    result = IOBuffer()
+    
+    in_brackets = false
+    i = 1
+    while i ≤ length(sequence)
+        char = sequence[i]
+        
+        if char == '('
+            in_brackets = true
+            write(result, char)
+        elseif char == ')'
+            in_brackets = false
+            write(result, char)
+        elseif char == 'C' && !in_brackets
+            write(result, "C(Unimod:4)")
+        else
+            write(result, char)
+        end
+        i += 1
+    end
+    
+    return String(take!(result))
+end
+
+
+
 
 """
     BasicEmpiricalLibrary
@@ -78,10 +203,18 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         new_df[!,:prec_mz] = convert(Vector{Float32}, new_df[!,:prec_mz])
         new_df[!,:frag_mz] = convert(Vector{Float32}, new_df[!,:frag_mz])
         new_df[!,:irt] = convert(Vector{Float32}, new_df[!,:irt])
+        new_df[!,:isotopic_mods] = Vector{Union{Missing, String}}(missing, nrow(new_df))
+        new_df[!,:is_decoy] = zeros(Bool, nrow(new_df))
+        ###########
+        #Temporary. Should fix input formatting so that this is no longer required. 
+        new_df[!,:modified_sequence] = convert_to_n_term.(new_df[!,:modified_sequence])
+        new_df[!,:modified_sequence] = add_cysteine_mods.(new_df[!,:modified_sequence])
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)
 
+
+        #Temporarily need to modify input until standardized. Need to specify the n-term tags and also add Carb mods. 
         # Create dictionary mapping unique combinations to indices
         unique_precursors = unique(new_df.precursor_key)
         precursor_dict = Dict(key => UInt32(i) for (i, key) in enumerate(unique_precursors))
@@ -204,17 +337,6 @@ function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
     return _collision_energy(collision_energies, frag_idx)
 end
 
-function getCollisionEnergy(sl::EmpiricalLibrary, frag_idx::Integer)
-    collision_energies = sl.libdf[!,:collision_energy]
-    function _collision_energy(collision_energy::AbstractVector{Missing}, frag_idx::Integer)
-        return zero(Float32)
-    end
-    function _collision_energy(collision_energy::AbstractVector{Float32}, frag_idx::Integer)
-        return collision_energy[frag_idx]
-    end
-    return collision_energies(proteome_idx, frag_idx)
-end
-
 function getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
     missed_cleavages = sl.libdf[!,:missed_cleavages]
     function _missed_cleavage(missed_cleavage::AbstractVector{Missing}, frag_idx::Integer)
@@ -226,10 +348,7 @@ function getMissedCleavages(sl::EmpiricalLibrary, frag_idx::Integer)
     return _missed_cleavage(missed_cleavages, frag_idx)
 end
 
-#Placeholder functions
-function parseStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer)
-    return ""
-end
+
 function parseIsotopicMods(sl::EmpiricalLibrary, frag_idx::Integer)
     return ""
 end
@@ -237,7 +356,9 @@ function getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer)
     return zero(UInt8)
 end
 getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:sequence]::String
+getStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:structural_mods]::Union{Missing, String}
 getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_charge]::UInt8
+getPrecSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_sulfur_count]::UInt8
 getIsDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:is_decoy]::Bool
 function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
     sl.libdf[frag_idx,:entrapment_group_id]::UInt8
@@ -271,16 +392,21 @@ function getAXCZ(sl::EmpiricalLibrary, frag_idx::Integer)
 end
 
 function getNeutralDiff(sl::EmpiricalLibrary, frag_idx::Integer)
+    return false
     if !hasproperty(sl.libdf, :frag_loss_type)
         return false
     end
     loss = sl.libdf[frag_idx, :frag_loss_type]
+    if ismissing(loss)
+        return false
+    end
     return (!ismissing(loss) && !isempty(loss))::Bool
 end
 
 getFragIndex(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_series_number]::UInt8
 
 getFragCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_charge]::UInt8
+getFragSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx, :frag_sulfur_count]::UInt8 # Placeholder implementation
 
 function isInternal(sl::EmpiricalLibrary, frag_idx::Integer)
     #ftype = sl.libdf[frag_idx, :frag_type]::String
@@ -309,4 +435,3 @@ function getInternalInd(sl::EmpiricalLibrary, frag_idx::Integer)
     return (zero(UInt8), zero(UInt8))
 end
 
-getFragSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = zero(UInt8)  # Placeholder implementation
