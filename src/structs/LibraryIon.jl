@@ -673,6 +673,12 @@ struct BasicLibraryPrecursors
             for pid in range(1, n)
                 pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
             end
+            if length(keys(accession_number_to_pgid)) <= 1
+                @warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+                for pid in range(1, n)
+                    pid_to_cv_fold[pid] = rand(cv_folds)
+                end
+            end
             new(
                 precursor_table, n, accession_number_to_pgid, pid_to_cv_fold
             )
