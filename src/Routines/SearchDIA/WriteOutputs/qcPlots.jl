@@ -31,7 +31,7 @@ function qcPlots(
         p = Plots.plot(title = title,
         xlabel = "Log2(precursor rank)",
         ylabel = "Log10(precursor abundance)",
-        legend=:outertopright, layout = (1, 1), show = true)
+        legend=:outertopright, layout = (1, 1))
         function getColumnECDF(
             abundance::AbstractVector{Union{Missing, Float32}})
             non_missing_count = 0
@@ -110,7 +110,7 @@ function qcPlots(
             end
         end
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
         parsed_fnames,
@@ -163,7 +163,7 @@ function qcPlots(
             end
         end
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
         parsed_fnames,
@@ -224,7 +224,7 @@ function qcPlots(
             end
         end
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
         parsed_fnames,
@@ -260,7 +260,7 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
-        legend=:outertopright, layout = (1, 1), show = true)
+        legend=:outertopright, layout = (1, 1))
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
             parsed_fname = parsed_fnames[id]
@@ -301,7 +301,7 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
-        legend=:outertopright, show = true)
+        legend=:outertopright)
 
         for key in keys
 
@@ -341,7 +341,7 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
         for parsed_fname in parsed_fnames
             Plots.boxplot!(p, 
@@ -386,7 +386,7 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
         parsed_fnames = [parsed_fnames[file_id] for file_id in file_ids]
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
@@ -429,7 +429,7 @@ function qcPlots(
         )
 
         p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1), show = true)
+                        legend=:none, layout = (1, 1))
 
 
         for parsed_fname in parsed_fnames
