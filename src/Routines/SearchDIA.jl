@@ -103,11 +103,21 @@ function SearchDIA(params_path::String)
                 SPEC_LIB_DIR = joinpath(@__DIR__, "../../", SPEC_LIB_DIR)
             end
 
+            if !isdir(MS_DATA_DIR)
+                @error "ms_data directory does not exist: " * MS_DATA_DIR
+                return
+            end
+
             # Find all Arrow files in MS data directory
             MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) 
                             for file in readdir(MS_DATA_DIR)
                             if isfile(joinpath(MS_DATA_DIR, file)) && 
                                match(r"\.arrow$", file) != nothing]
+
+            if length(MS_TABLE_PATHS) <= 0
+                @error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
+                return
+            end
             nothing
         end
         timings["Parameter Loading"] = params_timing
