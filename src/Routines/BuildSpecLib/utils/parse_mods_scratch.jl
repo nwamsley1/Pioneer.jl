@@ -202,6 +202,14 @@ srows = (test_lib[!,:sequence].=="ETEELHHDR").&(test_lib[!,:isotopic_mods].=="(1
 test_lib[srows,[:is_decoy,:precursor_idx,:sequence,:prec_charge,:structural_mods,:isotopic_mods,:prec_mz,:frag_mz,:frag_type,:frag_series_number,:library_intensity]]
 kl[kl[!,:PeptideSequence].=="ETEELHHDR",[:ModifiedPeptide,:PeptideSequence,:PrecursorCharge,:PrecursorMz,:ProductMz,:FragmentType,:FragmentCharge,:FragmentSeriesNumber]]
 
+
+
+
+test_df = DataFrame(Arrow.Table("/Users/nathanwamsley/temp/test.poin/precursors_table.arrow"))
+test_df[test_df[!,:sequence].=="ETEELHHDR",[:precursor_idx,:mz]]
+kl[kl[!,:PeptideSequence].=="ETEELHHDR",[:ModifiedPeptide,:PeptideSequence,:PrecursorCharge,:PrecursorMz,:ProductMz,:FragmentType,:FragmentCharge,:FragmentSeriesNumber]]
+
+
 #=
 if abspath(PROGRAM_FILE) == @__FILE__
     using DataFrames

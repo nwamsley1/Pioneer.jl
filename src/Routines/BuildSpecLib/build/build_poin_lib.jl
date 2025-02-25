@@ -159,10 +159,10 @@ function buildPionLib(spec_lib_path::String,
         pid_to_fid
     )
 
-    for file in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
-        filepath = joinpath(spec_lib_path, file)
-        isfile(filepath) && rm(filepath)
-    end
+    #for file in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
+    #    filepath = joinpath(spec_lib_path, file)
+    #    isfile(filepath) && rm(filepath)
+    #end
 
     return nothing
 end

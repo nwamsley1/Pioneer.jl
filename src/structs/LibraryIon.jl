@@ -660,7 +660,6 @@ struct BasicLibraryPrecursors
             accession_number_to_pgid = Dictionary(
                 unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))
             );
-
             #precursor idxs to cross-validation folds
             #all precursors corresponding to a given protein-group end up in the same cross validation fold
             pg_to_cv_fold = Dictionary{String, UInt8}()
@@ -672,6 +671,12 @@ struct BasicLibraryPrecursors
             pid_to_cv_fold = Vector{UInt8}(undef, n)
             for pid in range(1, n)
                 pid_to_cv_fold[pid] = pg_to_cv_fold[accession_numbers[pid]]
+            end
+            if length(keys(accession_number_to_pgid)) <= 1
+                @warn "Library did not include protein accession numbers. Seeting cross-validation folds based on precursor_idx"
+                for pid in range(1, n)
+                    pid_to_cv_fold[pid] = rand(cv_folds)
+                end
             end
             new(
                 precursor_table, n, accession_number_to_pgid, pid_to_cv_fold

@@ -32,7 +32,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              ms_file_idx::Int64; 
                              λ::Float32 = 1.0f0,
                              n_pad::Int64 = 20,
-                             max_apex_offset::Int64 = 2,
+                             max_apex_offset::Int64 = 1000,
 )
     chromatogram_keys = [:precursor_idx]
     if seperateTraces(isotope_trace_type)
@@ -79,7 +79,7 @@ function integrate_precursors(chromatograms::DataFrame,
                     chrom = grouped_chroms[(precursor_idx = prec_id,)]
                 end
                 sort!(chrom,
-                        :scan_idx, 
+                        :rt, 
                         alg = QuickSort) #Could alternatively sort by :rt
                 apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) 
                 isnothing(apex_scan) ? continue : nothing

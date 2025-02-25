@@ -77,7 +77,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     # Helper functions for fold selection
     selectTestFold(cv_fold::UInt8, test_fold::UInt8)::Bool = cv_fold == test_fold
     excludeTestFold(cv_fold::UInt8, test_fold::UInt8)::Bool = cv_fold != test_fold
-    
+    println("size(psms) ", size(psms))
     # Initialize probability columns
     psms[!, :prob] = zeros(Float32, size(psms, 1))
     psms[!, :max_prob] = zeros(Float32, size(psms, 1))
@@ -132,7 +132,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
             test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
             summarize_precursors!(test_fold_psms)
-            psms_train[!,:prob] =  XGBoost.predict(bst, psms_train[!, features])
+            println("size(psms_train) ", size(psms_train))
+            psms_train[!,:prob] = XGBoost.predict(bst, psms_train[!, features])
             summarize_precursors!(psms_train)
         end
         # Make predictions on hold out data.

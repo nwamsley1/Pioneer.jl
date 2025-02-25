@@ -9,8 +9,9 @@
                 3,
                 0
             ],
-            "combine_traces": false,
-            "partial_capture": true
+            "combine_traces": true,
+            "partial_capture": false,
+            "min_fraction_transmitted": 0.25
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -26,13 +27,13 @@
     },
     "parameter_tuning": {
         "fragment_settings": {
-            "min_count": 7,
+            "min_count": 4,
             "max_rank": 25,
             "tol_ppm": 20.0,
             "max_ppm_tol": 20.0,
-            "min_score": 22,
+            "min_score": 15,
             "min_spectral_contrast": 0.9,
-            "min_log2_ratio": 1.5,
+            "min_log2_ratio": 0.0,
             "min_top_n": [
                 3,
                 3
@@ -50,7 +51,7 @@
     },
     "first_search": {
         "fragment_settings": {
-            "min_count": 4,
+            "min_count": 3,
             "max_rank": 25,
             "min_score": 15,
             "min_spectral_contrast": 0.5,
@@ -83,7 +84,7 @@
                 2,
                 3
             ],
-            "n_isotopes": 2
+            "n_isotopes": 1
         },
         "chromatogram": {
             "smoothing_strength": 1.0,
@@ -94,7 +95,7 @@
     "acquisition": {
         "nce": 25,
         "quad_transmission": {
-            "fit_from_data": true,
+            "fit_from_data": false,
             "overhang": 0.25,
             "smoothness": 5.0
         }
@@ -122,6 +123,9 @@
             "interpolation_points": 10
         }
     },
+    "maxLFQ": {
+        "run_to_run_normalization": true
+    },
     "output": {
         "write_csv": true,
         "delete_temp": true,
@@ -129,7 +133,7 @@
     },
     "paths": {
         "ms_data": "/Users/nathanwamsley/Desktop/test_data",
-        "library": "/Users/nathanwamsley/temp/",
+        "library": "/Users/nathanwamsley/temp/test.poin",
         "results": "/Users/nathanwamsley/Desktop/test_data/test_out"
     }
 }

@@ -135,10 +135,10 @@ function process_file!(
         # Load PSMs that passed previous filtering steps
         # Convert to DataFrame for processing
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(getPassingPsms(getMSData(search_context), ms_file_idx))))#load_passing_psms(search_context, parsed_fname)
-        
+        println("size(passing_psms) a: ", size(passing_psms))
         # Keep only target (non-decoy) PSMs
         filter!(row -> row.target, passing_psms)
-
+        println("size(passing_psms) b: ", size(passing_psms))
         # Initialize columns to store integration results
         # peak_area: Integrated area of chromatographic peak
         # new_best_scan: Updated apex scan after refinement
@@ -168,11 +168,11 @@ function process_file!(
             getCenterMzs(spectra),
             getIsolationWidthMzs(spectra)
         )
-
+        println("size(chromatograms) a: ", size(chromatograms))
         # Remove chromatograms where M2+ isotopes are captured
         # These can interfere with accurate quantification
         filter!(row -> first(row.isotopes_captured) < 2, chromatograms)
-
+        println("size(chromatograms) b: ", size(chromatograms))
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms        
         integrate_precursors(
@@ -188,10 +188,11 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-
+        println("size(chromatograms) c: ", size(chromatograms))
+        println("\n")
         # Clear chromatograms to free memory
         chromatograms = nothing
-
+        Arrow.write("/Users/nathanwamsley/Desktop/passing_psms.arrow", passing_psms)
         # Store processed PSMs in results
         results.psms[] = passing_psms
     catch e

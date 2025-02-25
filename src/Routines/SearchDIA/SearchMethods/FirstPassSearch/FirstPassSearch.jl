@@ -184,7 +184,11 @@ function process_file!(
             getNceModelModel(search_context, ms_file_idx)
         )
         
-        return library_search(spectra, search_context, params, ms_file_idx)
+        #return library_search(spectra, search_context, params, ms_file_idx)
+
+        psms =  library_search(spectra, search_context, params, ms_file_idx)
+        Arrow.write("/Users/nathanwamsley/Desktop/test_psms2.arrow", psms)
+        return psms 
     end
 
     """
@@ -216,7 +220,7 @@ function process_file!(
         rt_model = getRtIrtModel(search_context, ms_file_idx)
         # Add columns
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
-        
+    
         # Score PSMs
         score_psms!(psms, params)
         # Get best PSMs

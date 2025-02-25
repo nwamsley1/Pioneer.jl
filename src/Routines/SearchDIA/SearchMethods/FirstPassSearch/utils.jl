@@ -399,7 +399,8 @@ function create_rt_indices!(
     # Calculate iRT errors
     @info "Calculating iRT errors..."
     irt_errs = get_irt_errs(results.fwhms, precursor_dict, params)
-
+    #println("describe(irt_errs) ", describe(values(values(irt_errs))))
+    #println("typeof(irt_errs) ", irt_errs)
 
     setIrtErrors!(search_context, irt_errs)
 

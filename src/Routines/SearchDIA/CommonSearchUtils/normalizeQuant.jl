@@ -6,6 +6,7 @@ function getQuantSplines(psms_paths::Vector{String},
     min_rt, max_rt = typemax(Float32), typemin(Float32)
     for fpath in psms_paths
         psms = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        println("getQuantSplines norm psms size: ", size(psms, 1))
         #psms = psms[psms[!,:species].=="HUMAN",:]
         sort!(psms, :irt_obs, alg = QuickSort)
         if minimum(psms[!,:irt_obs])<min_rt

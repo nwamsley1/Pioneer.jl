@@ -87,12 +87,13 @@ function parseMods(mod_string::Union{String, Missing})::Vector{Tuple{String, Int
     return mods
 end
 
-
+#=
 sequence = "PEPMTIDME"
 
 # Create the variable modifications vector
 var_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
 push!(var_mods, (p=r"M", r="Unimod:35"))
+=#
 
 # Function to match variable modifications (from your code)
 function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
@@ -104,7 +105,7 @@ function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tu
     end
     return var_mod_matches
 end
-
+#=
 # Get the matches
 matches = matchVarMods(sequence, var_mods)
 
@@ -117,7 +118,7 @@ for (i, match) in enumerate(matches)
     mods_matched[i] = "($index,$aa,$mod_name)"
 end
 mods_matched = join(mods_matched,"")
-
+=#
 """
     ParseSpecLib(params_path::String)
 
@@ -244,25 +245,25 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
 
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-    entrapment_r = 1
-    for i in range(1, entrapment_r)
-        getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
-    end
+    #entrapment_r = 1
+    #for i in range(1, entrapment_r)
+    #    getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
+    #end
     getRevDecoys!(test_lib)
     #return test_lib
 
     mod_channels =  Dict(
         "tag6" => [
-            (channel = "d0", mass = -8.02684222281249f0),
-            (channel = "d4", mass = -4.010959582812518f0),
+            #(channel = "d0", mass = -8.02684222281249f0),
+            #(channel = "d4", mass = -4.010959582812518f0),
             (channel = "d8", mass = 0.0f0)
         ]
     )
 
     iso_mods_dict =  Dict(
         "tag6" => Dict(
-            "d0" => -8.02684222281249f0,
-            "d4" => -4.010959582812518f0,
+            #"d0" => -8.02684222281249f0,
+            #"d4" => -4.010959582812518f0,
             "d8" => 0.0f0
         )
     )
@@ -295,17 +296,17 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
                             iso_mods_dict,
                             Dict{String, Int8}()
                             )
+                                #Make new precursor ids 
+    create_precursor_idx!(test_lib.libdf)
     nestedLibrarySort!(test_lib, rt_bin_tol = rt_bin_tol)
-    #Make new precursor ids 
-    #create_precursor_idx!(test_lib.libdf)=
 
 
     #return test_lib.libdf
-    @time parseLib(test_lib, "/Users/nathanwamsley/temp")
+    @time parseLib(test_lib, "/Users/nathanwamsley/temp/test.poin")
 
     buildPionLib(
-        "/Users/nathanwamsley/temp",
-        UInt8(2),#UInt8(_params.library_params["y_start_index"]),
+        "/Users/nathanwamsley/temp/test.poin",
+        UInt8(3),#UInt8(_params.library_params["y_start_index"]),
         UInt8(2),#UInt8(_params.library_params["y_start"]),
         UInt8(2),#UInt8(_params.library_params["b_start_index"]),
         UInt8(2),#UInt8(_params.library_params["b_start"]),
@@ -324,7 +325,7 @@ function ParseSpecLib(path; rt_bin_tol = 1.0)
             ImmutablePolynomial(Float32(10000.0f0)) 
         ),#frag_bounds,
         Float32(10),#Float32(_params.library_params["frag_bin_tol_ppm"]),
-        Float32(1.0),#Float32(_params.library_params["rt_bin_tol"]),
+        Float32(1),#Float32(1000.0),#Float32(_params.library_params["rt_bin_tol"]),
         InstrumentSpecificModel("empirical")
     )       
 
