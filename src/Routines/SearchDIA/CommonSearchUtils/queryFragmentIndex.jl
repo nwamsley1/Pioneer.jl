@@ -33,7 +33,7 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
                                         frag_mz_min::Float32,
                                         frag_mz_max::Float32,
                                         step_size::UInt32)
-    
+    #return lower_bound_guess, upper_bound_guess
     initial_lower_bound_guess = lower_bound_guess
     n = zero(UInt8)
     step = one(UInt32)
@@ -44,10 +44,10 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
         upper_bound_guess += step #Exponentially increasing guess 
         if upper_bound_guess > frag_bin_max_idx #If guess exceeds limits
             upper_bound_guess = frag_bin_max_idx #then set to maximum 
-            if (getHigh(frag_index_bins[lower_bound_guess]) < frag_mz_min)
-                return upper_bound_guess, upper_bound_guess
-            end
-
+            #This was a mistake 
+            #if (getHigh(frag_index_bins[lower_bound_guess]) < frag_mz_min)
+            #    return upper_bound_guess, upper_bound_guess
+            #end
             break
         end
         n += one(UInt8)
@@ -55,15 +55,24 @@ function exponentialFragmentBinSearch(frag_index_bins::AbstractArray{FragIndexBi
     #If this condition is met, it is possible for the next observed 
     #fragment to match to fragment bins below `lower_bound_guess`
     #If this is the case, use the original lower bound. 
+    #=
     n = one(UInt8)
     while (getHigh(frag_index_bins[lower_bound_guess]) > frag_mz_min)
         step = step >> one(UInt8)
+        #if (step === zero(UInt32))# (step > lower_bound_guess) | (step === zero(UInt32))
+        #    if (step > lower_bound_guess)
+        #        return initial_lower_bound_guess, upper_bound_guess
+        #    else
+        #        return lower_bound_guess, upper_bound_guess
+        #    end
+        #end
         if (step > lower_bound_guess) | (step === zero(UInt32))
             return initial_lower_bound_guess, upper_bound_guess
         end
         lower_bound_guess -= step 
         n += one(UInt8)
     end
+    =#
     #println("lower_bound_guess $lower_bound_guess upper_bound_guess $upper_bound_guess")
     return lower_bound_guess, upper_bound_guess
 end
