@@ -24,7 +24,6 @@
             "min_count": 7,
             "max_rank": 25,
             "tol_ppm": 20.0,
-            "max_ppm_tol": 20.0,
             "min_score": 22,
             "min_spectral_contrast": 0.9,
             "min_log2_ratio": 1.5,

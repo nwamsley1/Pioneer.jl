@@ -200,8 +200,7 @@ function process_file!(
             
             # Plot the line
             plot!(p, pbins, curve_values, 
-                label = "+"*string(charge), 
-                show = true)
+                label = "+"*string(charge))
             
             # Add annotation at the rightmost point
             last_x = pbins[end]
