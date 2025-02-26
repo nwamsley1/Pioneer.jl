@@ -3,12 +3,7 @@ function parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
     mods_regex = r"(?<=\().*?(?=\))"
     return eachmatch(mods_regex, mods_string)
 end
-function getModIndex(mod_string::AbstractString)::UInt8
-    parse(UInt8, match(r"^[0-9]+(?=,)", mod_string).match)
-end
-function getModName(mod_string::AbstractString)::String
-    match(r"[^,]+(?=$)", mod_string).match
-end
+
 function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}) where {S<:AbstractString}
     # Convert the original string into an array of characters for easier manipulation
     char_array = collect(original)

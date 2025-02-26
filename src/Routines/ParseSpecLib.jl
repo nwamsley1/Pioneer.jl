@@ -49,9 +49,9 @@ function nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Abstrac
     
     return nothing
 end
-
+#=
 """
-    parseMods(mod_string::String)::Vector{Tuple{String, Int}}
+    parse_mods(mod_string::String)::Vector{Tuple{String, Int}}
 
 Parse modification string in the format "[Mod1]Res1[Mod2]Res2" and return a vector of 
 (modification, position) tuples.
@@ -64,12 +64,12 @@ Parse modification string in the format "[Mod1]Res1[Mod2]Res2" and return a vect
 
 # Example
 ```julia
-julia> parseMods("_[Unimod:35]M[Unimod:4]PEPTIDE_")
+julia> parse_mods("_[Unimod:35]M[Unimod:4]PEPTIDE_")
 2-element Vector{Tuple{String, Int}}:
  ("Unimod:35", 1)
  ("Unimod:4", 2)
 """
-function parseMods(mod_string::Union{String, Missing})::Vector{Tuple{String, Int}} if ismissing(mod_string) || isempty(mod_string) return Tuple{String, Int}[] end
+function parse_mods(mod_string::Union{String, Missing})::Vector{Tuple{String, Int}} if ismissing(mod_string) || isempty(mod_string) return Tuple{String, Int}[] end
     # Match pattern [ModName]Residue
     mod_pattern = r"\[([^\]]+)\]([A-Z])"
 
@@ -86,6 +86,7 @@ function parseMods(mod_string::Union{String, Missing})::Vector{Tuple{String, Int
 
     return mods
 end
+=#
 
 #=
 sequence = "PEPMTIDME"
