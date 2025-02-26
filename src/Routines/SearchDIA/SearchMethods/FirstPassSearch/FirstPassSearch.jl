@@ -222,15 +222,11 @@ function process_file!(
         # Score PSMs
         score_psms!(psms, params)
         # Get best PSMs
-        println("names(psms) ", names(psms))
-        println("\n")
         select_best_psms!(
             psms,
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
             params
         )
-        println("names(psms) ", names(psms))
-        println("\n")
         return psms
     end
 
@@ -280,7 +276,7 @@ function process_file!(
         ]
 
         # Select scoring columns
-        select!(psms, vcat(column_names, [:b_count, :ms_file_idx, :score, :precursor_idx, :scan_idx,
+        select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))
         # Score PSMs
         try
@@ -307,24 +303,15 @@ function process_file!(
         # Process scores
        
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted,:y_count,:b_count])
+            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted])
         get_probs!(psms, psms[!,:score])
         sort!(psms, :irt)
-        println("names(psms) 2 ", names(psms))
-        println("\n")
     end
 
     try
         # Get models and update fragment lookup table
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
-        #=
-        println("any(psms[!,:precursor_idx].== 576761): ", any(psms[!,:precursor_idx].== 576760))
-        println("sum(psms[!,:precursor_idx].== 576761): ", sum(psms[!,:precursor_idx].== 576760))
-        println("psms[psms[!,:precursor_idx].== 576761,[:spectral_contrast,:scribe,:y_count]]: ", psms[psms[!,:precursor_idx].== 576760,[:spectral_contrast,:scribe,:y_count]])
-        println("\n")
-        =#
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
-        Arrow.write("/Users/nathanwamsley/Documents/PTI/notebooks/Feb_2025/first_search_psms.arrow",  results.psms[] )
     catch e
         @warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)

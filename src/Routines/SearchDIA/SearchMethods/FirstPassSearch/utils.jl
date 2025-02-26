@@ -281,7 +281,7 @@ function get_best_psms!(psms::DataFrame,
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
     n = size(psms, 1)
-    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:y_count,:b_count])
+    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
     #Instead of max_psms, 2x the number at 10% fdr. 
     psms_10fdr = 0
     q_values = psms[!,:q_value]::Vector{Float16}
