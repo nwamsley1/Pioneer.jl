@@ -89,7 +89,7 @@ Fill a pre-allocated vector with all possible combinations of variable modificat
 - `max_var_mods::Int`: Maximum number of variable modifications allowed per sequence
 
 # Output Format
-Each modification string follows the format: "(index,amino_acid,modification_name)", concatenated for multiple modifications.
+Each modification String follows the format: "(index,amino_acid,modification_name)", concatenated for multiple modifications.
 
 # Examples
 ```julia
@@ -133,73 +133,16 @@ function fillVarModStrings!(
 end
 
 """
-    fillModMasses!(mod_masses::Vector{Float32}, sequence::String, mods::String, mod_to_mass::Dict{String, Float32})
-
-Maps modification masses to their positions in a peptide sequence by filling an array of masses.
-Each index in the array corresponds to a position in the peptide sequence.
-
-# Arguments
-- `mod_masses::Vector{Float32}`: Pre-allocated vector to store modification masses at each sequence position
-- `sequence::String`: The peptide sequence
-- `mods::String`: String containing modifications in format "(index,name)" or "(index,aa,name)"
-- `mod_to_mass::Dict{String, Float32}`: Dictionary mapping modification names to their masses
-
-# Effects
-- Fills `mod_masses` with modification masses at their corresponding sequence positions
-- All other positions remain 0.0
-
-# Examples
-```julia
-sequence = "ILSISADIETIGEILK"
-mods = "(1,tag6)(15,tag6)"
-mod_masses = zeros(Float32, length(sequence))
-mod_to_mass = Dict("tag6" => 229.163f0)
-
-fillModMasses!!(mod_masses, sequence, mods, mod_to_mass)
-# mod_masses now contains modification masses at positions 1 and 15
-```
-
-Note: The function expects the mods string to be well-formed and the mod_masses vector 
-to be pre-allocated with length matching the sequence length.
-"""
-function fillModMasses!(mod_masses::Vector{Float32}, 
-                   sequence::String,
-                   mods::String,
-                   mod_to_mass::Dict{String, Float32})
-    
-    # Reset the mod_masses array
-    fill!(mod_masses, 0.0f0)
-    
-    # If no mods, return early
-    isempty(mods) && return
-
-    # Regex to parse modification entries
-    # Matches both (index,name) and (index,aa,name) formats
-    mod_regex = r"\((\d+),(?:[A-Z]|[nc],)?([^,\)]+)\)"
-    
-    # Find all modifications
-    for m in eachmatch(mod_regex, mods)
-        index = parse(Int, m.captures[1])
-        mod_name = m.captures[2]
-        
-        # Add the modification mass to the corresponding position
-        if haskey(mod_to_mass, mod_name)
-            mod_masses[index] += mod_to_mass[mod_name]
-        end
-    end
-end
-
-"""
     parseEmpiricalLibraryMods(sequence::String)
 
-Parse modifications embedded in a sequence string and return them in a standardized format.
+Parse modifications embedded in a sequence String and return them in a standardized format.
 Modifications in the sequence are in the format AA(mod_name).
 
 # Arguments
 - `sequence::String`: Peptide sequence with embedded modifications
 
 # Returns
-- `String`: Modified string containing modifications in format "(position,amino_acid,mod_name)"
+- `String`: Modified String containing modifications in format "(position,amino_acid,mod_name)"
 
 # Examples
 ```julia
@@ -257,77 +200,6 @@ function parseEmpiricalLibraryMods(sequence::String)
     return join(mods)
 end
 
-
-"""
-    stripMods!(mod_masses::Vector{Float32}, 
-               sequence::String,
-               mods::String,
-               mod_to_mass::Dict{String, Float32},
-               mods_to_strip::Set{String})
-
-Strip specified modifications from a sequence and record their mass changes.
-
-# Arguments
-- `mod_masses::Vector{Float32}`: Pre-allocated vector to store modification mass changes
-- `sequence::String`: Peptide sequence with embedded modifications
-- `mods::String`: String containing modifications in format "(position,amino_acid,mod_name)"
-- `mod_to_mass::Dict{String, Float32}`: Dictionary mapping modification names to their masses
-- `mods_to_strip::Set{String}`: Set of modification names that should be removed
-
-# Returns
-- `Tuple{String, String}`: (stripped sequence, remaining modifications string)
-
-# Examples
-```julia
-sequence = "I(tag6)LSISADI(Unimod:35)ETIGEILK(tag6)"
-mod_masses = zeros(Float32, 255)
-mod_to_mass = Dict("tag6" => 229.163f0, "Unimod:35" => 15.995f0)
-stripped_sequence, remaining_mods = stripMods!(mod_masses, sequence, mod_to_mass, Set(["tag6"]))
-# Returns ("ILSISADI(Unimod:35)ETIGEILK", "(8,I,Unimod:35)")
-```
-"""
-function stripMods!(mod_masses::Vector{Float32},
-                   sequence::String,
-                   mod_to_mass::Dict{String, Float32},
-                   mods_to_strip::Set{String})
-    
-    # Reset mod_masses
-    fill!(mod_masses, 0.0f0)
-    
-    # Parse current modifications if not already parsed
-    mods = parseMods!(sequence)
-    
-    # Regex to parse individual modifications
-    mod_regex = r"\((\d+),([A-Z]|[nc]),([^)]+)\)"
-    
-    # Track which mods to keep and which to strip
-    mods_to_keep = String[]
-    stripped_sequence = sequence
-    
-    for m in eachmatch(mod_regex, mods)
-        pos = parse(Int, m.captures[1])
-        aa = m.captures[2]
-        mod_name = m.captures[3]
-        
-        if mod_name ∈ mods_to_strip
-            # Record negative mass for stripped modifications
-            mod_masses[pos] -= mod_to_mass[mod_name]
-            # Remove the modification from sequence
-            stripped_sequence = replace(stripped_sequence, "($mod_name)" => "", count=1)
-        else
-            # Keep track of modifications we're preserving
-            push!(mods_to_keep, "($pos,$aa,$mod_name)")
-            # Record positive mass for kept modifications
-            mod_masses[pos] += mod_to_mass[mod_name]
-        end
-    end
-    
-    # Join remaining modifications
-    remaining_mods = join(mods_to_keep)
-    
-    return stripped_sequence, remaining_mods
-end
-
 """
     getMassOffset(start_idx::Integer, stop_idx::Integer, mod_masses::Vector{Float32})
 
@@ -361,21 +233,21 @@ end
                mod_key::String,
                mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})
 
-Creates a new string combining existing isotopic modifications with additional isotopic channel information 
+Creates a new String combining existing isotopic modifications with additional isotopic channel information 
 for specified structural modifications. The function identifies all instances of the target modification in 
-the structural modifications string and adds corresponding isotopic channel annotations.
+the structural modifications String and adds corresponding isotopic channel annotations.
 
 # Arguments
 - `isotopic_mods::String`: Existing isotopic modifications in format "(mod_index, channel)", where mod_index refers 
-   to the position of the modification in the structural_mods string
+   to the position of the modification in the structural_mods String
 - `structural_mods::String`: Structural modifications in format "(position,amino_acid,mod_name)"
 - `mod_key::String`: Target modification to add isotopic channel for (e.g., "tag6")
 - `mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}`: Isotopic channel information
     - `:channel`: String identifier for the isotopic channel (e.g., "d0")
-    - `:mass`: Mass shift associated with the channel (unused in string generation)
+    - `:mass`: Mass shift associated with the channel (unused in String generation)
 
 # Returns
-- `String`: New string containing all isotopic modifications in format "(mod_index, channel)", where mod_index 
+- `String`: New String containing all isotopic modifications in format "(mod_index, channel)", where mod_index 
    refers to the order of appearance in structural_mods (1-based indexing)
 
 # Examples
@@ -400,7 +272,7 @@ result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=
 ```
 
 Note: Mod indices in the output are sorted numerically for consistent ordering. If no instances 
-of the target modification are found, returns the original isotopic_mods string unchanged.
+of the target modification are found, returns the original isotopic_mods String unchanged.
 The indices in the output refer to the order of appearance in structural_mods (1-based), not 
 to sequence positions.
 """
@@ -445,7 +317,6 @@ function addIsoMods(isotopic_mods::String,
     sorted_indices = sort(collect(keys(existing_mods)))
     return join("($idx, $(existing_mods[idx]))" for idx in sorted_indices)
 end
-
 
 function addIsoMods(isotopic_mods::Missing, 
     structural_mods::String, 
@@ -836,10 +707,6 @@ function calculate_mz_and_sulfur_count!(df::DataFrame,
     end
 end
 
-
-
-
-
 """
     reverseSequence(sequence::String, structural_mods::String)
 
@@ -851,7 +718,7 @@ Internal modifications are moved to correspond with their amino acids in the rev
 - `structural_mods::String`: String containing modifications in format "(pos,aa,mod_name)"
 
 # Returns
-- `Tuple{String, String}`: (reversed sequence, updated modification string)
+- `Tuple{String, String}`: (reversed sequence, updated modification String)
 
 # Examples
 ```julia
@@ -881,7 +748,7 @@ rev_seq, rev_mods = reverseSequence(sequence, mods)
 function reverseSequence(sequence::String, structural_mods::String)
     # Early return if no modifications
     if isempty(structural_mods)
-        return sequence[end] * reverse(sequence[1:end-1]), ""
+        return reverse(sequence[1:end-1])*sequence[end], ""
     end
     
     # Pre-count number of modifications for array pre-allocation
@@ -1016,7 +883,7 @@ Randomly shuffle a peptide sequence (keeping last AA fixed) and update modificat
 - `structural_mods::String`: Modifications in format "(pos,aa,mod_name)"
 
 # Returns
-- `Tuple{String, String}`: (shuffled sequence, updated modification string)
+- `Tuple{String, String}`: (shuffled sequence, updated modification String)
 
 # Examples
 ```julia
@@ -1036,7 +903,7 @@ function shuffleSequence(sequence::String, structural_mods::String)
     # Early return if no modifications
     if isempty(structural_mods)
         # Shuffle all but last AA
-        return shuffle(sequence[1:end-1])*sequence[end], ""
+        return join(Random.shuffle(collect(sequence[1:end-1])))*sequence[end], ""
     end
     
     # Pre-count number of modifications

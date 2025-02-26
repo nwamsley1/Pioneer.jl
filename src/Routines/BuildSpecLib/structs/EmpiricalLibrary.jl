@@ -34,7 +34,7 @@ println("All tests passed!")
 
 ```
 """
-function convert_to_n_term(sequence::String)
+function convert_to_n_term(sequence::AbstractString)
     # If no sequence or no brackets, return as is
     if isempty(sequence) || !occursin('(', sequence)
         return sequence
@@ -96,7 +96,7 @@ add_cysteine_mods(seq)  # Returns "PEPC(MyMod)TIDE"
     @assert add_cysteine_mods("") == ""
 ```
 """
-function add_cysteine_mods(sequence::String)
+function add_cysteine_mods(sequence::AbstractString)
     # Result buffer
     result = IOBuffer()
     
@@ -151,7 +151,8 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         
         # Create a copy and rename columns
         new_df = copy(df)
-        rename!(new_df, 
+        # Create a mapping of all column renames you want
+        column_mapping = Dict(
             "PrecursorMz" => "prec_mz",
             "Tr_recalibrated" => "irt",
             "PeptideSequence" => "sequence",
@@ -159,7 +160,7 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
             "PrecursorCharge" => "prec_charge",
             "IonMobility" => "ion_mobility",
             "ProductMz" => "frag_mz",
-            "LibraryIntensity" => "library_intensity",
+            "LibraryIntensity" => "library_intensity", 
             "FragmentCharge" => "frag_charge",
             "FragmentType" => "frag_type",
             "FragmentSeriesNumber" => "frag_series_number",
@@ -168,6 +169,13 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
             "ProteinName" => "protein_name",
             "Genes" => "genes"
         )
+
+        # Filter to only include columns that exist in the dataframe
+        existing_columns = filter(col -> col in names(new_df), keys(column_mapping))
+        filtered_mapping = Dict(col => column_mapping[col] for col in existing_columns)
+
+        # Apply the rename
+        rename!(new_df, filtered_mapping)
         
         # Add proteome_idx column if missing
         if !hasproperty(new_df, :ProteomeIdentifier)
