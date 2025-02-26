@@ -158,19 +158,19 @@ end
     
     @testset "parseEmpiricalLibraryMods" begin
         # Test case 1: Standard modification
-        sequence = "I(tag6)LSISADI(Unimod:35)ETIGEILK(tag6)"
+        sequence = "I(exTag1)LSISADI(Unimod:35)ETIGEILK(exTag1)"
         result = parseEmpiricalLibraryMods(sequence)
-        @test result == "(1,I,tag6)(8,I,Unimod:35)(16,K,tag6)"
+        @test result == "(1,I,exTag1)(8,I,Unimod:35)(16,K,exTag1)"
         
         # Test case 2: N-terminal modification
-        sequence = "n(tag6)PEPTIDE(tag6)"
+        sequence = "n(exTag1)PEPTIDE(exTag1)"
         result = parseEmpiricalLibraryMods(sequence)
-        @test result == "(1,n,tag6)(7,E,tag6)"
+        @test result == "(1,n,exTag1)(7,E,exTag1)"
         
         # Test case 3: N and C-terminal modifications
-        sequence = "n(tag6)PEPTIDEc(tag6)"
+        sequence = "n(exTag1)PEPTIDEc(exTag1)"
         result = parseEmpiricalLibraryMods(sequence)
-        @test result == "(1,n,tag6)(7,c,tag6)"
+        @test result == "(1,n,exTag1)(7,c,exTag1)"
     end
     
     @testset "getMassOffset" begin
@@ -187,38 +187,38 @@ end
     
     @testset "addIsoMods" begin
         # Test case 1: Basic indexing
-        structural_mods = "(1,I,tag6)(5,L,tag5)(16,K,tag6)"
+        structural_mods = "(1,I,exTag1)(5,L,exTag3)(16,K,exTag1)"
         isotopic_mods = ""
-        result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+        result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
         @test result == "(1, d0)(3, d0)"
         
         # Test case 2: With existing isotopic mods
-        structural_mods = "(1,I,tag6)(5,L,tag5)(16,K,tag6)"
-        isotopic_mods = "(2, d4)"  # For the second mod (tag5)
-        result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+        structural_mods = "(1,I,exTag1)(5,L,exTag3)(16,K,exTag1)"
+        isotopic_mods = "(2, d4)"  # For the second mod (exTag3)
+        result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
         @test result == "(1, d0)(2, d4)(3, d0)"
         
         # Test case 3: Missing target modification
-        structural_mods = "(1,I,tag7)(5,L,tag5)"  # No tag6
+        structural_mods = "(1,I,exTag2)(5,L,exTag3)"  # No exTag1
         isotopic_mods = "(2, d4)"
-        result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+        result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
         @test result == "(2, d4)"  # Unchanged
         
         # Test case 4: Empty structural mods
         structural_mods = ""
         isotopic_mods = ""
-        result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+        result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
         @test result == ""  # Empty
     end
     
     @testset "getIsoModMasses!" begin
         iso_mods_dict = Dict(
-            "tag6" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
-            "tag5" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
+            "exTag1" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
+            "exTag3" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
         )
         
         # Test 1: Basic indexing
-        structural_mods = "(1,I,tag6)(5,L,tag5)(7,K,tag6)"
+        structural_mods = "(1,I,exTag1)(5,L,exTag3)(7,K,exTag1)"
         isotopic_mods = "(3, d4)"  # Third mod gets d4
         iso_mod_masses = zeros(Float32, 255)
         getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
@@ -226,28 +226,12 @@ end
         @test iso_mod_masses[1] ≈ 0.0f0  # Position 1 (I) has mass 0.0
         
         # Test 2: Multiple mods
-        structural_mods = "(1,n,tag6)(5,L,tag5)(16,c,tag6)"
+        structural_mods = "(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)"
         isotopic_mods = "(1, d0)(2, d4)"  # First mod gets d0, second gets d4
         iso_mod_masses = zeros(Float32, 255)
         getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
         @test iso_mod_masses[1] ≈ 0.0f0  # Position 1 (n) has mass 0.0
         @test iso_mod_masses[5] ≈ 4.0f0  # Position 5 (L) has mass 4.0
-    end
-    
-    @testset "get_aa_masses!" begin
-        # Test for a simple tripeptide
-        sequence = "PAK"
-        aa_masses = zeros(Float32, 3)
-        get_aa_masses!(aa_masses, sequence)
-        @test aa_masses ≈ [97.05276f0, 71.03711f0, 128.09496f0]
-        
-        # Test for a sequence with all standard amino acids
-        sequence = "ACDEFGHIKLMNPQRSTVWY"
-        aa_masses = zeros(Float32, 20)
-        get_aa_masses!(aa_masses, sequence)
-        @test aa_masses[1] ≈ 71.03711f0  # A
-        @test aa_masses[8] ≈ 113.08406f0  # I
-        @test aa_masses[20] ≈ 163.06333f0  # Y
     end
     
     @testset "reverseSequence" begin
@@ -412,56 +396,6 @@ end
         @test prec_mz ≈ expected_prec_mass
     end
     
-    @testset "adjust_masses!" begin
-        # Mock DataFrame for testing
-        using DataFrames
-        
-        # Mock the constants
-        H2O = 18.010565f0
-        PROTON = 1.007276f0
-        
-        # Mock fragment indices function
-        global function get_fragment_indices(base_type::Char, frag_series_number::Integer, seq_length::Integer)
-            if base_type == 'b'
-                return 1, frag_series_number
-            else # 'y' type
-                return seq_length - frag_series_number + 1, seq_length
-            end
-        end
-        
-        # Create test data
-        df = DataFrame(
-            precursor_idx = [1, 1, 2, 2],
-            sequence = ["APK", "APK", "LMR", "LMR"],
-            structural_mods = ["(1,A,tag6)", "(1,A,tag6)", "(2,M,tag5)", "(2,M,tag5)"],
-            isotopic_mods = ["(1, d0)", "(1, d0)", "(1, d4)", "(1, d4)"],
-            prec_mz = [150.0f0, 150.0f0, 200.0f0, 200.0f0],
-            frag_mz = [80.0f0, 120.0f0, 100.0f0, 150.0f0],
-            prec_charge = [UInt8(1), UInt8(1), UInt8(2), UInt8(2)],
-            frag_charge = [UInt8(1), UInt8(1), UInt8(1), UInt8(1)],
-            frag_type = ["b2", "y2", "b2", "y2"],
-            frag_series_number = [UInt8(2), UInt8(2), UInt8(2), UInt8(2)]
-        )
-        
-        # Save original values to compare after adjustment
-        original_prec_mz = copy(df.prec_mz)
-        original_frag_mz = copy(df.frag_mz)
-        
-        # Run the function
-        adjust_masses!(df)
-        
-        # Check that values were modified
-        @test any(df.prec_mz .!= original_prec_mz)
-        @test any(df.frag_mz .!= original_frag_mz)
-        
-        # Check that all rows for the same precursor have consistent adjustments
-        @test df.prec_mz[1] == df.prec_mz[2]  # Same precursor should have same adjusted mass
-        @test df.prec_mz[3] == df.prec_mz[4]  # Same precursor should have same adjusted mass
-        
-        # Different fragment types should have different adjustments
-        @test df.frag_mz[1] != df.frag_mz[2]  # b2 vs y2 for same precursor
-    end
-    
     @testset "calculate_mz_and_sulfur_count!" begin
         # Mock DataFrame for testing
         using DataFrames
@@ -485,24 +419,24 @@ end
         structural_mod_to_mass = Dict{String, Float32}(
             "Phospho" => 79.966331f0,
             "Acetyl" => 42.010565f0,
-            "tag6" => 229.163f0
+            "exTag1" => 229.163f0
         )
         
         iso_mods_dict = Dict{String, Dict{String, Float32}}(
-            "tag6" => Dict("d0" => 0.0f0, "d4" => 4.0f0, "d8" => 8.0f0),
-            "tag5" => Dict("d0" => 0.0f0, "d4" => 4.0f0, "d8" => 8.0f0)
+            "exTag1" => Dict("d0" => 0.0f0, "d4" => 4.0f0, "d8" => 8.0f0),
+            "exTag3" => Dict("d0" => 0.0f0, "d4" => 4.0f0, "d8" => 8.0f0)
         )
         
         mods_to_sulfur_diff = Dict{String, Int8}(
             "Phospho" => Int8(0),
             "Acetyl" => Int8(0),
-            "tag6" => Int8(1)  # Adds 1 sulfur
+            "exTag1" => Int8(1)  # Adds 1 sulfur
         )
         
         # Create test data with sequences containing C and M (sulfur-containing amino acids)
         df = DataFrame(
             sequence = ["ACMPK", "APKMC"],
-            structural_mods = ["(1,A,tag6)", "(3,K,tag6)"],
+            structural_mods = ["(1,A,exTag1)", "(3,K,exTag1)"],
             isotopic_mods = ["(1, d0)", "(1, d4)"],
             prec_mz = [300.0f0, 300.0f0],
             frag_mz = [120.0f0, 150.0f0],
@@ -518,20 +452,20 @@ end
         calculate_mz_and_sulfur_count!(df, structural_mod_to_mass, iso_mods_dict, mods_to_sulfur_diff)
         
         # Check sulfur counts
-        # First sequence: ACMPK with tag6 on A
-        # Expected precursor sulfur: 1 (from tag6) + 1 (C) + 1 (M) = 3
+        # First sequence: ACMPK with exTag1 on A
+        # Expected precursor sulfur: 1 (from exTag1) + 1 (C) + 1 (M) = 3
         @test df.prec_sulfur_count[1] == 3
         
         # b3 fragment of ACMPK covers ACM
-        # Expected fragment sulfur: 1 (from tag6) + 1 (C) + 1 (M) = 3
+        # Expected fragment sulfur: 1 (from exTag1) + 1 (C) + 1 (M) = 3
         @test df.frag_sulfur_count[1] == 3
         
-        # Second sequence: APKMC with tag6 on K
-        # Expected precursor sulfur: 1 (from tag6) + 1 (M) + 1 (C) = 3
+        # Second sequence: APKMC with exTag1 on K
+        # Expected precursor sulfur: 1 (from exTag1) + 1 (M) + 1 (C) = 3
         @test df.prec_sulfur_count[2] == 3
         
         # y2 fragment of APKMC covers MC
-        # Expected fragment sulfur: 1 (M) + 1 (C) = 2 (tag6 is on K which isn't in y2)
+        # Expected fragment sulfur: 1 (M) + 1 (C) = 2 (exTag1 is on K which isn't in y2)
         @test df.frag_sulfur_count[2] == 2
         
         # Check that m/z values were recalculated

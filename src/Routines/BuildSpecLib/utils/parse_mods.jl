@@ -147,19 +147,19 @@ Modifications in the sequence are in the format AA(mod_name).
 # Examples
 ```julia
 # Test case 1
-sequence = "I(tag6)LSISADI(Unimod:35)ETIGEILK(tag6)"
+sequence = "I(exTag1)LSISADI(Unimod:35)ETIGEILK(exTag1)"
 result = parseEmpiricalLibraryMods(sequence)
-@assert result == "(1,I,tag6)(8,I,Unimod:35)(16,K,tag6)" "Test 1 failed"
+@assert result == "(1,I,exTag1)(8,I,Unimod:35)(16,K,exTag1)" "Test 1 failed"
 
 # Test case 2
-sequence = "n(tag6)PEPTIDE(tag6)"
+sequence = "n(exTag1)PEPTIDE(exTag1)"
 result = parseEmpiricalLibraryMods(sequence)
-@assert result == "(1,n,tag6)(7,E,tag6)" "Test 2 failed"
+@assert result == "(1,n,exTag1)(7,E,exTag1)" "Test 2 failed"
 
 # Test case 3
-sequence = "n(tag6)PEPTIDEc(tag6)"
+sequence = "n(exTag1)PEPTIDEc(exTag1)"
 result = parseEmpiricalLibraryMods(sequence)
-@assert result == "(1,n,tag6)(7,c,tag6)" "Test 3 failed"
+@assert result == "(1,n,exTag1)(7,c,exTag1)" "Test 3 failed"
 
 println("All tests passed!")
 ```
@@ -241,7 +241,7 @@ the structural modifications String and adds corresponding isotopic channel anno
 - `isotopic_mods::String`: Existing isotopic modifications in format "(mod_index, channel)", where mod_index refers 
    to the position of the modification in the structural_mods String
 - `structural_mods::String`: Structural modifications in format "(position,amino_acid,mod_name)"
-- `mod_key::String`: Target modification to add isotopic channel for (e.g., "tag6")
+- `mod_key::String`: Target modification to add isotopic channel for (e.g., "exTag1")
 - `mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}`: Isotopic channel information
     - `:channel`: String identifier for the isotopic channel (e.g., "d0")
     - `:mass`: Mass shift associated with the channel (unused in String generation)
@@ -253,21 +253,21 @@ the structural modifications String and adds corresponding isotopic channel anno
 # Examples
 ```julia
 # Basic case with structural mod indices
-structural_mods = "(1,n,tag6)(5,L,tag5)(16,c,tag6)"
+structural_mods = "(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)"
 isotopic_mods = ""
-result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
 # Returns "(1, d0)(3, d0)"
 # Here:
-#   - 1 refers to first modification "(1,n,tag6)"
-#   - 3 refers to third modification "(16,c,tag6)"
+#   - 1 refers to first modification "(1,n,exTag1)"
+#   - 3 refers to third modification "(16,c,exTag1)"
 
 # With existing isotopic mods
-structural_mods = "(1,n,tag6)(5,L,tag5)(16,c,tag6)"
-isotopic_mods = "(2, d4)"  # Refers to second structural mod "(5,L,tag5)"
-result = addIsoMods(isotopic_mods, structural_mods, "tag6", (channel="d0", mass=0.0f0))
+structural_mods = "(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)"
+isotopic_mods = "(2, d4)"  # Refers to second structural mod "(5,L,exTag3)"
+result = addIsoMods(isotopic_mods, structural_mods, "exTag1", (channel="d0", mass=0.0f0))
 # Returns "(1, d0)(2, d4)(3, d0)"
 # Here:
-#   - 1, 3 refer to first and third tag6 modifications
+#   - 1, 3 refer to first and third exTag1 modifications
 #   - 2 refers to existing isotopic mod on second structural modification
 ```
 
@@ -354,23 +354,23 @@ Uses structural modifications to identify modification types and isotopic modifi
 # Example
 ```julia
 iso_mods_dict = Dict(
-    "tag6" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
-    "tag5" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
+    "exTag1" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
+    "exTag3" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
 )
 # Third modification in structural_mods gets d4 channel
-structural_mods = "(1,I,tag6)(5,L,tag5)(7,K,tag6)"
-isotopic_mods = "(3, d4)"  # Refers to third mod "(7,K,tag6)"
+structural_mods = "(1,I,exTag1)(5,L,exTag3)(7,K,exTag1)"
+isotopic_mods = "(3, d4)"  # Refers to third mod "(7,K,exTag1)"
 iso_mod_masses = zeros(Float32, 255)
 getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
 # Results in iso_mod_masses[7] = 4.
 
 iso_mods_dict = Dict(
-    "tag6" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
-    "tag5" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
+    "exTag1" => Dict("d0" => 0.0f0, "d4" => 4.0f0),
+    "exTag3" => Dict("d0" => 0.0f0, "d4" => 4.0f0)
 )
 
 # Test 1: Basic indexing
-structural_mods = "(1,I,tag6)(5,L,tag5)(7,K,tag6)"
+structural_mods = "(1,I,exTag1)(5,L,exTag3)(7,K,exTag1)"
 isotopic_mods = "(3, d4)"  # Third mod gets d4
 iso_mod_masses = zeros(Float32, 255)
 getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
@@ -378,7 +378,7 @@ getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
 @assert iso_mod_masses[1] == 0.0f0 "Failed: First mod should have mass 0.0"
 
 # Test 2: Multiple mods
-structural_mods = "(1,n,tag6)(5,L,tag5)(16,c,tag6)"
+structural_mods = "(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)"
 isotopic_mods = "(1, d0)(2, d4)"  # First mod gets d0, second gets d4
 iso_mod_masses = zeros(Float32, 255)
 getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)
@@ -425,65 +425,6 @@ function getIsoModMasses!(iso_mod_masses::Vector{Float32},
                 iso_mod_masses[pos] = iso_mods_dict[mod_name][channel]
             end
         end
-    end
-end
-
-"""
-    adjust_masses!(df::DataFrame)
-
-Adjusts precursor and fragment m/z values based on isotopic modification masses.
-Optimized to recompute iso_mod_masses only when encountering a new precursor_idx.
-
-# Arguments
-- `df::DataFrame`: DataFrame containing required columns including precursor_idx
-
-# Effects
-Modifies in place:
-- df.prec_mz: Adjusts for total isotopic modification mass
-- df.frag_mz: Adjusts based on fragment coverage of sequence
-"""
-function adjust_masses!(df::DataFrame)
-    iso_mods_dict = Dict(
-        "tag6" => Dict(
-            "d0" => 0.0f0,
-            "d4" => 4.0f0,
-            "d8" => 8.0f0
-        ),
-        "tag5" => Dict(
-            "d0" => 0.0f0,
-            "d4" => 4.0f0,
-            "d8" => 8.0f0
-        )
-    )
-    
-    iso_mod_masses = zeros(Float32, 255)
-    last_precursor_idx = zero(UInt32)
-    
-    for row in eachrow(df)
-        # Only recompute iso_mod_masses for new precursor_idx
-        if row.precursor_idx != last_precursor_idx
-            fill!(iso_mod_masses, zero(Float32))
-            getIsoModMasses!(iso_mod_masses, row.structural_mods, row.isotopic_mods, iso_mods_dict)
-            last_precursor_idx = row.precursor_idx
-        end
-        
-        # Calculate sequence length and precursor shift
-        seq_length = UInt8(length(row.sequence))
-        prec_mass_shift = sum(iso_mod_masses[1:seq_length])
-        prec_mz_shift = prec_mass_shift / row.prec_charge
-        row.prec_mz += prec_mz_shift
-        
-        # Get fragment indices and calculate fragment shift
-        base_type = first(row.frag_type)
-        start_idx, stop_idx = get_fragment_indices(
-            base_type,
-            row.frag_series_number,
-            seq_length
-        )
-        
-        frag_mass_shift = sum(iso_mod_masses[start_idx:stop_idx])
-        frag_mz_shift = frag_mass_shift / row.frag_charge
-        row.frag_mz += frag_mz_shift
     end
 end
 
