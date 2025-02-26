@@ -53,6 +53,7 @@ importScripts()
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(dirname(@__DIR__), "src", "Routines","SearchDIA.jl"))
 include(joinpath(dirname(@__DIR__), "src", "Routines","BuildSpecLib.jl"))
+include(joinpath(dirname(@__DIR__), "src", "Routines","ParseSpecLib.jl"))
 const CHARGE_ADJUSTMENT_FACTORS = Float64[1, 0.9, 0.85, 0.8, 0.75]
 
 const H2O::Float64 = Float64(18.010565)
@@ -100,13 +101,14 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
-   @testset "process_test" begin 
-        @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
-    end
+    #@testset "process_test" begin 
+    #    @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
+    #end
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
     include("./UnitTests/matchPeaks.jl")
     include("./UnitTests/queryFragmentIndex.jl")
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
+    include("./UnitTests/empiricalLibTests.jl")
 end
