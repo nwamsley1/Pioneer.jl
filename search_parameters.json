@@ -133,7 +133,7 @@
     },
     "paths": {
         "ms_data": "/Users/nathanwamsley/Desktop/test_data",
-        "library": "/Users/nathanwamsley/temp/test.poin",
+        "library": "/Users/nathanwamsley/temp/processed_library.poin",
         "results": "/Users/nathanwamsley/Desktop/test_data/test_out"
     }
 }

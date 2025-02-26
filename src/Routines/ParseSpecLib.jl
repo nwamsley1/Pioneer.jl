@@ -17,7 +17,7 @@ The function performs a two-level sort:
 This nested sorting approach maintains retention time as the primary ordering while ensuring 
 mass-to-charge ratio ordering within local retention time windows.
 """
-function nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Float64=0.1)
+function nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::AbstractFloat=0.1)
     df = getDF(spec_lib)  # Get the DataFrame from the library
     
     # Initial sort by retention time
@@ -105,24 +105,109 @@ function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tu
     end
     return var_mod_matches
 end
-#=
-# Get the matches
-matches = matchVarMods(sequence, var_mods)
 
-# Print the results in your desired format
-mods_matched = Vector{String}(undef, length(matches))
-for (i, match) in enumerate(matches)
-    index = UInt8(match[:regex_match].offset)
-    aa = match[:regex_match].match
-    mod_name = match[:name]
-    mods_matched[i] = "($index,$aa,$mod_name)"
+"""
+    create_precursor_idx!(df::DataFrame)
+
+Creates a UInt32 precursor_idx column that uniquely identifies each unique combination of
+sequence, structural_mods, isotopic_mods, and prec_charge.
+
+# Arguments
+- `df::DataFrame`: DataFrame containing required columns
+
+# Effects
+- Adds or updates 'precursor_idx' column with unique identifiers
+"""
+function create_precursor_idx!(df::DataFrame)
+    # Get unique combinations and assign indices
+    unique_combinations = unique(df[!, [:is_decoy, :sequence, :structural_mods, :isotopic_mods, :prec_charge]])
+    precursor_dict = Dict(
+        tuple(row...) => UInt32(i) 
+        for (i, row) in enumerate(eachrow(unique_combinations))
+    )
+    
+    # Create the precursor_idx column
+    df[!, :precursor_idx] = UInt32[
+        precursor_dict[tuple(row.is_decoy, row.sequence, row.structural_mods, row.isotopic_mods, row.prec_charge)]
+        for row in eachrow(df)
+    ]
+    
+    # Reorder columns to put precursor_idx first if it's not already
+    if first(names(df)) != "precursor_idx"
+        select!(df, :precursor_idx, Not(:precursor_idx))
+    end
 end
-mods_matched = join(mods_matched,"")
-=#
+
+function parseStructralModsFromLib!(speclib::BasicEmpiricalLibrary)
+    function _parseStructuralModsFromLib(
+        modified_seqs::AbstractVector{<:AbstractString}
+    )
+        structural_mods = length(modified_seqs) > 0 ? Vector{String}(undef, length(modified_seqs)) : Vector{String}()
+        for (i, seq) in enumerate(modified_seqs)
+            structural_mods[i] = parseEmpiricalLibraryMods(seq)
+        end
+        return structural_mods  
+    end
+    speclib.libdf[!,:structural_mods] = _parseStructuralModsFromLib(speclib.libdf[!,:modified_sequence])
+end
+
+"""
+    addIsoModsToLib!(speclib::BasicEmpiricalLibrary,
+                    mod_key::String,
+                    mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})
+
+Process a spectral library dataframe to add isotopic modifications for a given modification type
+and channel. Creates a new channel-specific dataframe for entries containing the target modification.
+
+# Arguments
+- `speclib::BasicEmpiricalLibrary`: Spectral library containing precursor information
+- `mod_key::String`: Target modification to add isotopic channel for (e.g., "tag6")
+- `mod_channel::NamedTuple{(:channel, :mass)}`: Isotopic channel information
+
+# Returns
+- DataFrame containing entries that have the target modification, with updated isotopic_mods column
+
+# Example
+```julia
+# For a library with tag6 modifications:
+channel = (channel="d0", mass=0.0f0)
+channel_df = addIsoModsToLib!(speclib, "tag6", channel)
+```
+"""
+function addIsoModsToLib(
+    speclib::BasicEmpiricalLibrary,
+    mod_key::String,
+    mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}
+)
+    # Create a copy of the library dataframe
+    libdf = copy(speclib.libdf)
+    
+    # Ensure isotopic_mods column exists, initialize if needed
+    if !hasproperty(libdf, :isotopic_mods)
+        libdf[!, :isotopic_mods] .= ""
+    end
+    
+    # Filter rows that contain the target modification
+    has_target_mod = map(row -> contains(row.structural_mods, mod_key), eachrow(libdf))
+    channel_df = libdf[has_target_mod, :]
+    
+    # Process each row to add isotopic modifications
+    for row in eachrow(channel_df)
+        row.isotopic_mods = addIsoMods(
+            row.isotopic_mods,
+            row.structural_mods,
+            mod_key,
+            mod_channel
+        )
+    end
+    
+    return channel_df
+end
+
 """
     ParseSpecLib(params_path::String)
 
-Main function to build a Pioneer formatted spectral library from an empirical librairy.
+Main function to build a Pioneer formatted spectral library from an empirical library.
 
 Parameters:
 - params_path: Path to JSON configuration file containing library building parameters
@@ -130,204 +215,150 @@ Parameters:
 Output:
 - Generates a spectral library in the specified output directory
 - Creates a detailed log file with timing and performance metrics
-- Returns nothing
+- Returns the built spectral library
 """
-function ParseSpecLib(path; rt_bin_tol = 1.0)
+function ParseSpecLib(params_path::String)
+
+    params = checkParseSpecLibParams(params_path)
+    
+    # Extract parameters
+    lib_path = params["library_params"]["input_lib_path"]
+    rt_bin_tol = Float32(params["library_params"]["rt_bin_tol"])
+    output_path = params["library_params"]["output_lib_path"]
+    generate_decoys = params["library_params"]["generate_decoys"]
+    generate_entrapment = params["library_params"]["generate_entrapment"]
+    entrapment_groups = params["library_params"]["entrapment_groups"]
     #"../Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv"
-    #csv_file = CSV.File("../Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv")
-    #seqs = ["YINHSCAPNCVAEVVTFDK","IINEPTAAAIAYGLDR"]
-    #return DataFrame([pep_frag for 
-    #    pep_frag in csv_file if pep_frag.PeptideSequence ∈ seqs])
-    # 
-    #println("hello to da world!!")
-    #test_lib = BasicEmpiricalLibrary("/Users/nathanwamsley/Desktop/testdf.csv")
     #test_lib = ParseSpecLib("/Users/nathanwamsley/Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv").libdf;
-    test_lib = BasicEmpiricalLibrary(path)
 
-    """
-        create_precursor_idx!(df::DataFrame)
+    # Initialize library
+    test_lib = BasicEmpiricalLibrary(lib_path)
 
-    Creates a UInt32 precursor_idx column that uniquely identifies each unique combination of
-    sequence, structural_mods, isotopic_mods, and prec_charge.
-
-    # Arguments
-    - `df::DataFrame`: DataFrame containing required columns
-
-    # Effects
-    - Adds or updates 'precursor_idx' column with unique identifiers
-    """
-    function create_precursor_idx!(df::DataFrame)
-        # Get unique combinations and assign indices
-        unique_combinations = unique(df[!, [:is_decoy, :sequence, :structural_mods, :isotopic_mods, :prec_charge]])
-        precursor_dict = Dict(
-            tuple(row...) => UInt32(i) 
-            for (i, row) in enumerate(eachrow(unique_combinations))
-        )
-        
-        # Create the precursor_idx column
-        df[!, :precursor_idx] = UInt32[
-            precursor_dict[tuple(row.is_decoy, row.sequence, row.structural_mods, row.isotopic_mods, row.prec_charge)]
-            for row in eachrow(df)
-        ]
-        
-        # Reorder columns to put precursor_idx first if it's not already
-        if first(names(df)) != "precursor_idx"
-            select!(df, :precursor_idx, Not(:precursor_idx))
-        end
-    end
-
-    function parseStructralModsFromLib!(speclib::BasicEmpiricalLibrary)
-        function _parseStructuralModsFromLib(
-            modified_seqs::AbstractVector{<:AbstractString}
-        )
-            structural_mods = length(modified_seqs) > 0 ? Vector{String}(undef, length(modified_seqs)) : Vector{String}()
-            for (i, seq) in enumerate(modified_seqs)
-                structural_mods[i] = parseEmpiricalLibraryMods(seq)
-            end
-            return structural_mods  
-        end
-        speclib.libdf[!,:structural_mods] = _parseStructuralModsFromLib(speclib.libdf[!,:modified_sequence])
-    end
-
-    """
-        addIsoModsToLib!(speclib::BasicEmpiricalLibrary,
-                        mod_key::String,
-                        mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})
-
-    Process a spectral library dataframe to add isotopic modifications for a given modification type
-    and channel. Creates a new channel-specific dataframe for entries containing the target modification.
-
-    # Arguments
-    - `speclib::BasicEmpiricalLibrary`: Spectral library containing precursor information
-    - `mod_key::String`: Target modification to add isotopic channel for (e.g., "tag6")
-    - `mod_channel::NamedTuple{(:channel, :mass)}`: Isotopic channel information
-
-    # Returns
-    - DataFrame containing entries that have the target modification, with updated isotopic_mods column
-
-    # Example
-    ```julia
-    # For a library with tag6 modifications:
-    channel = (channel="d0", mass=0.0f0)
-    channel_df = addIsoModsToLib!(speclib, "tag6", channel)
-    ```
-    """
-    function addIsoModsToLib(
-        speclib::BasicEmpiricalLibrary,
-        mod_key::String,
-        mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}
-    )
-        # Create a copy of the library dataframe
-        libdf = copy(speclib.libdf)
-        
-        # Ensure isotopic_mods column exists, initialize if needed
-        if !hasproperty(libdf, :isotopic_mods)
-            libdf[!, :isotopic_mods] .= ""
-        end
-        
-        # Filter rows that contain the target modification
-        has_target_mod = map(row -> contains(row.structural_mods, mod_key), eachrow(libdf))
-        channel_df = libdf[has_target_mod, :]
-        
-        # Process each row to add isotopic modifications
-        for row in eachrow(channel_df)
-            row.isotopic_mods = addIsoMods(
-                row.isotopic_mods,
-                row.structural_mods,
-                mod_key,
-                mod_channel
-            )
-        end
-        
-        return channel_df
-    end
-
-
+    # Process structural modifications
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-    #entrapment_r = 1
-    #for i in range(1, entrapment_r)
-    #    getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
-    #end
-    getRevDecoys!(test_lib)
-    #return test_lib
 
-    mod_channels =  Dict(
-        "tag6" => [
-            #(channel = "d0", mass = -8.02684222281249f0),
-            #(channel = "d4", mass = -4.010959582812518f0),
-            (channel = "d8", mass = 0.0f0)
-        ]
-    )
-
-    iso_mods_dict =  Dict(
-        "tag6" => Dict(
-            #"d0" => -8.02684222281249f0,
-            #"d4" => -4.010959582812518f0,
-            "d8" => 0.0f0
-        )
-    )
-
-
-    structural_mod_to_mass = Dict(
-        "Unimod:4" => 57.021464f0,
-        "tag6" => 316.14293109f0
-    )
-
-    channel_dfs = []
-    for (mod_key, channels) in pairs(mod_channels)
-        for channel in channels
-            channel_df = addIsoModsToLib(test_lib, mod_key, channel)
-            push!(channel_dfs, channel_df)
+    # Generate entrapment sequences if requested
+    if generate_entrapment
+        for i in 1:entrapment_groups
+            getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
         end
     end
+    
+    # Generate reversed decoys if requested
+    if generate_decoys
+        getRevDecoys!(test_lib)
+    end
 
-    channels_df = vcat(channel_dfs...)
+    # Process modification channels
+    mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
+    for mod_group in params["isotope_mod_groups"]
+        name = mod_group["name"]
+        channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
+        mod_channels[name] = channels
+    end
 
-    empty!(test_lib.libdf)
-    append!(test_lib.libdf, channels_df)
+
+    # Process modification channels
+    mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
+    for mod_group in params["isotope_mod_groups"]
+        name = mod_group["name"]
+        channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
+        mod_channels[name] = channels
+    end
+
+    # Build isotope modifications dictionary
+    iso_mods_dict = Dict{String, Dict{String, Float32}}()
+    for mod_group in params["isotope_mod_groups"]
+        name = mod_group["name"]
+        iso_mods_dict[name] = Dict{String, Float32}()
+        for ch in mod_group["channels"]
+            iso_mods_dict[name][ch["channel"]] = Float32(ch["mass"])
+        end
+    end
+    
+    # Build structural modification masses dictionary
+    structural_mod_to_mass = Dict{String, Float32}()
+    for (mass, name) in zip(
+        params["fixed_mods"]["mass"],
+        params["fixed_mods"]["name"]
+    )
+        structural_mod_to_mass[name] = Float32(mass)
+    end
+    println("structural_mod_to_mass $structural_mod_to_mass")
+   # Apply isotopic modifications
+   channel_dfs = []
+   for (mod_key, channels) in pairs(mod_channels)
+       for channel in channels
+           channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+           push!(channel_dfs, channel_df)
+       end
+   end
+
+    # If channels were processed, update the DataFrame
+    if !isempty(channel_dfs)
+        channels_df = vcat(channel_dfs...)
+        empty!(test_lib.libdf)
+        append!(test_lib.libdf, channels_df)
+    end
+
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     #Now need to recalculate masses for precursors and fragments with the new modifications 
+    # Create precursor indices
     create_precursor_idx!(test_lib.libdf)
-    calculate_mz_and_sulfur_count!( 
-                            test_lib.libdf, 
-                            structural_mod_to_mass,
-                            iso_mods_dict,
-                            Dict{String, Int8}()
-                            )
-                                #Make new precursor ids 
+    
+    # Calculate m/z and sulfur count
+    mods_to_sulfur_diff = Dict{String, Int8}()
+    for mod_group in get(params, "sulfur_mod_groups", [])
+        mods_to_sulfur_diff[mod_group["name"]] = Int8(mod_group["sulfur_count"])
+    end
+
+    calculate_mz_and_sulfur_count!(
+        test_lib.libdf, 
+        structural_mod_to_mass,
+        iso_mods_dict,
+        mods_to_sulfur_diff
+    )
+
+    # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
-    nestedLibrarySort!(test_lib, rt_bin_tol = rt_bin_tol)
+    
+    # Sort library by retention time and then by precursor_mz within retention time bins
+    nestedLibrarySort!(test_lib, rt_bin_tol=rt_bin_tol)
 
+    # Ensure output directory exists
+    if !isdir(output_path)
+        mkpath(output_path)
+    end
 
-    #return test_lib.libdf
-    @time parseLib(test_lib, "/Users/nathanwamsley/temp/test.poin")
+    # Parse library to Pioneer format
+    parseLib(test_lib, output_path)
 
     buildPionLib(
-        "/Users/nathanwamsley/temp/test.poin",
-        UInt8(3),#UInt8(_params.library_params["y_start_index"]),
-        UInt8(2),#UInt8(_params.library_params["y_start"]),
-        UInt8(2),#UInt8(_params.library_params["b_start_index"]),
-        UInt8(2),#UInt8(_params.library_params["b_start"]),
-        false,# _params.library_params["include_p_index"],
-        false,#_params.library_params["include_p"],
-        false,#_params.library_params["include_isotope"],
-        false,#_params.library_params["include_immonium"],
-        false,#_params.library_params["include_internal"],
-        false,#_params.library_params["include_neutral_diff"],
-        UInt8(2),#UInt8(_params.library_params["max_frag_charge"]),
-        UInt8(255),#UInt8(_params.library_params["max_frag_rank"]),
-        zero(Float32),#Float32(_params.library_params["min_frag_intensity"]),
-        UInt8[8, 4, 4, 2, 2, 1, 1],#UInt8.(_params.library_params["rank_to_score"]),
+        output_path,
+        UInt8(params["library_params"]["y_start_index"]),
+        UInt8(params["library_params"]["y_start"]),
+        UInt8(params["library_params"]["b_start_index"]),
+        UInt8(params["library_params"]["b_start"]),
+        params["library_params"]["include_p_index"],
+        params["library_params"]["include_p"],
+        params["library_params"]["include_isotope"],
+        params["library_params"]["include_immonium"],
+        params["library_params"]["include_internal"],
+        params["library_params"]["include_neutral_diff"],
+        UInt8(params["library_params"]["max_frag_charge"]),
+        UInt8(params["library_params"]["max_frag_rank"]),
+        Float32(params["library_params"]["min_frag_intensity"]),
+        UInt8.(params["library_params"]["rank_to_score"]),
         FragBoundModel(
             ImmutablePolynomial(zero(Float32)),
             ImmutablePolynomial(Float32(10000.0f0)) 
-        ),#frag_bounds,
-        Float32(10),#Float32(_params.library_params["frag_bin_tol_ppm"]),
-        Float32(1),#Float32(1000.0),#Float32(_params.library_params["rt_bin_tol"]),
-        InstrumentSpecificModel("empirical")
-    )       
+        ),
+        Float32(params["library_params"]["frag_bin_tol_ppm"]),
+        Float32(params["library_params"]["rt_bin_tol"]),
+        InstrumentSpecificModel(params["library_params"]["instrument_type"])
+    )   
 
     return test_lib
 end

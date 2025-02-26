@@ -719,7 +719,6 @@ function getDetailedFrags(
     max_frag_rank::UInt8,
     min_frag_intensity::AbstractFloat,
     koina_model::KoinaModelType)
-    println("in this function yo")
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         println("mistake")
     end

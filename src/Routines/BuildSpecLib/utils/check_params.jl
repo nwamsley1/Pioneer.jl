@@ -89,3 +89,98 @@ function check_params_bsp(json_string::String)
     # If all checks pass, return the validated parameters
     return params
 end
+
+"""
+    checkParseSpecLibParams(json_path::String)
+
+Validate the parameters for ParseSpecLib from a JSON configuration file.
+
+Parameters:
+- json_path: Path to JSON configuration file
+
+Returns:
+- Parsed and validated parameters dictionary
+"""
+function checkParseSpecLibParams(json_path::String)
+    params = JSON.parsefile(json_path)
+    
+    # Helper function to check if a key exists and has the correct type
+    function check_param(dict, key, expected_type)
+        if !haskey(dict, key)
+            throw(InvalidParametersError("Missing parameter: $key", dict))
+        elseif !(dict[key] isa expected_type)
+            throw(InvalidParametersError("Invalid type for parameter $key: expected $(expected_type), got $(typeof(dict[key]))", dict))
+        end
+    end
+    
+    # Check required sections
+    required_sections = ["library_params", "fixed_mods"]
+    for section in required_sections
+        check_param(params, section, Dict)
+    end
+
+    # Check required sections
+    required_sections = ["isotope_mod_groups"]
+    for section in required_sections
+        check_param(params, section, Vector{Any})
+    end
+    
+    # Validate library parameters
+    lib_params = params["library_params"]
+    required_lib_params = [
+        ("input_lib_path", String),
+        ("output_lib_path", String),
+        ("rt_bin_tol", Number),
+        ("frag_bin_tol_ppm", Number),
+        ("rank_to_score", Vector),
+        ("y_start_index", Number),
+        ("b_start_index", Number),
+        ("y_start", Number),
+        ("b_start", Number),
+        ("include_p_index", Bool),
+        ("include_p", Bool),
+        ("include_isotope", Bool),
+        ("include_immonium", Bool),
+        ("include_internal", Bool),
+        ("include_neutral_diff", Bool),
+        ("max_frag_charge", Number),
+        ("max_frag_rank", Number),
+        ("min_frag_intensity", Number),
+        ("generate_decoys", Bool),
+        ("generate_entrapment", Bool),
+        ("entrapment_groups", Number),
+        ("instrument_type", String)
+    ]
+    
+    for (param, type) in required_lib_params
+        check_param(lib_params, param, type)
+    end
+    
+    # Validate fixed mods
+    fixed_mods = params["fixed_mods"]
+    for key in ["mass", "name"]
+        check_param(fixed_mods, key, Vector)
+    end
+    
+    # Validate isotope mod groups
+    iso_groups = params["isotope_mod_groups"]
+    for group in iso_groups
+        check_param(group, "name", String)
+        check_param(group, "channels", Vector)
+        
+        for channel in group["channels"]
+            check_param(channel, "channel", String)
+            check_param(channel, "mass", Number)
+        end
+    end
+    
+    # Optional: validate sulfur mod groups if present
+    if haskey(params, "sulfur_mod_groups")
+        for group in params["sulfur_mod_groups"]
+            check_param(group, "name", String)
+            check_param(group, "sulfur_count", Number)
+        end
+    end
+    
+    return params
+end

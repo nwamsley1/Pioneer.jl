@@ -143,12 +143,13 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
     # Internal constructor to standardize column names
     function BasicEmpiricalLibrary(df::DataFrame)
         # Check if required columns exist
-        required_cols = ["PrecursorMz", "Tr_recalibrated", "ModifiedPeptide", "PrecursorCharge"]
+        required_cols = ["Tr_recalibrated", "ModifiedPeptide", "PrecursorMz",
+                         "PrecursorCharge", "ProductMz", "FragmentCharge",
+                         "FragmentType", "FragmentSeriesNumber", "FragmentLossType"]
         missing_cols = setdiff(required_cols, names(df))
         if !isempty(missing_cols)
             throw(ArgumentError("Missing required columns: $(join(missing_cols, ", "))"))
         end
-        
         # Create a copy and rename columns
         new_df = copy(df)
         # Create a mapping of all column renames you want
@@ -306,6 +307,9 @@ Create a BasicEmpiricalLibrary from a CSV file.
 """
 function BasicEmpiricalLibrary(csv_file::String)
     df = CSV.read(csv_file, DataFrame)
+    #println("csv_file $csv_file")
+    #df = DataFrame(CSV.File(csv_file))
+    #println("first(df, 5) ", first(df, 5))
     return BasicEmpiricalLibrary(df)
 end
 

@@ -5,6 +5,7 @@ const H2O::Float64 = Float64(18.010565)
 const PROTON::Float64 = Float64(1.0072764)
 const NEUTRON::Float64 = Float64(1.00335)
 
+#=
 const default_mods::Dict{String, Float64} = Dict{String, Float64}(
     "Carb" => Float64(57.021464))
 
@@ -32,7 +33,7 @@ const AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
         'U' => 150.95363,
         'O' => 237.14773
         )
-    
+=#
 
 function getMass(residue::Char)::Float64
     if haskey(AA_to_mass, residue)
