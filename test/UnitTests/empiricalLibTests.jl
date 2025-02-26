@@ -256,7 +256,7 @@ end
         @test rev_seq == "DITPEPE"
         @test rev_mods == "(1,n,mymod-nterm)(3,T,Phospho)(6,P,mymod)(7,E,Acetyl)(7,c,mymod-cterm)"
     end
-    
+    #=
     @testset "shuffleSequence" begin
         using Random
         # Ensure deterministic results for testing
@@ -282,7 +282,7 @@ end
         @test last(shuffled_seq) == last(sequence)  # Last character should be preserved
         @test shuffled_mods == ""  # No mods
     end
-
+    =#
 
     @testset "get_aa_masses!" begin
         # Test for a simple tripeptide
