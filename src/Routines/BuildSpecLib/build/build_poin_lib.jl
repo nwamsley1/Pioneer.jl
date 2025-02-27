@@ -158,10 +158,12 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
         pid_to_fid
     )
-
-    rm(joinpath(spec_lib_path,"fragments_table.arrow"));
-    rm(joinpath(spec_lib_path,"prec_to_frag.arrow"));
-    rm(joinpath(spec_lib_path,"precursors.arrow"));
+    for  fname in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
+        fpath = joinpath(spec_lib_path, fname)
+        if isfile(fpath)
+            rm(fpath)
+        end
+    end
 
     return nothing
 end
@@ -710,7 +712,7 @@ function getDetailedFrags(
     max_frag_rank::UInt8,
     min_frag_intensity::AbstractFloat,
     koina_model::KoinaModelType)
-    println("in this function yo")
+
     if (length(prec_to_frag_idx) - 1) != (length(precursor_mz))
         println("mistake")
     end

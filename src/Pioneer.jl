@@ -11,7 +11,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, SparseArrays
+using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
@@ -69,6 +69,30 @@ const PROTON::Float64 = Float64(1.0072764)
 const NEUTRON::Float64 = Float64(1.00335)
 const NCE_MODEL_BREAKPOINT::Float32 = Float32(500.0f0)
 
+const AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
+        'A' => 71.03711,
+        'R' => 156.10111,
+        'N' => 114.04293,
+        'D' => 115.02694,
+        'C' => 103.00919,
+        'E' => 129.04259,
+        'Q' => 128.05858,
+        'G' => 57.02146,
+        'H' => 137.05891,
+        'I' => 113.08406,
+        'L' => 113.08406,
+        'K' => 128.09496,
+        'M' => 131.04049,
+        'F' => 147.06841,
+        'P' => 97.05276,
+        'S' => 87.03203,
+        'T' => 101.04768,
+        'W' => 186.07931,
+        'Y' => 163.06333,
+        'V' => 99.06841,
+        'U' => 150.95363,
+        'O' => 237.14773
+        )
 
 
 
@@ -106,5 +130,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, BuildSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
 end

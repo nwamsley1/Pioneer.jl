@@ -279,14 +279,14 @@ function ParseSpecLib(params_path::String)
     end
     
     # Build structural modification masses dictionary
+    # Build structural modification masses dictionary
     structural_mod_to_mass = Dict{String, Float32}()
-    for (Parwsemass, name) in zip(
+    for (mass, name) in zip(
         params["fixed_mods"]["mass"],
         params["fixed_mods"]["name"]
     )
         structural_mod_to_mass[name] = Float32(mass)
     end
-    println("structural_mod_to_mass $structural_mod_to_mass")
    # Apply isotopic modifications
    channel_dfs = []
    for (mod_key, channels) in pairs(mod_channels)

@@ -461,7 +461,7 @@ get_aa_masses!(aa_masses, sequence)
 Note: All masses are monoisotopic masses in Daltons (Da).
 See AA_to_mass dictionary for the complete mass mapping.
 """
-function get_aa_masses!(aa_masses::Vector{T}, sequence::String) where {T<:AbstractFloat}
+function get_aa_masses!(aa_masses::Vector{T}, sequence::AbstractString) where {T<:AbstractFloat}
     fill!(aa_masses, zero(T))
     for (i, aa) in enumerate(sequence)
         aa_masses[i] = convert(T, AA_to_mass[aa])
@@ -490,7 +490,7 @@ get_structural_mod_masses!(mod_masses, structural_mods, mod_to_mass)
 ```
 """
 function get_structural_mod_masses!(mod_masses::Vector{T}, 
-                                  structural_mods::String,
+                                  structural_mods::AbstractString,
                                   mod_to_mass::Dict{String, T}) where {T<:AbstractFloat}
     fill!(mod_masses, zero(T))
     
@@ -567,8 +567,8 @@ including both amino acid sulfurs (C, M) and modification-based sulfurs.
 Fills `sulfur_counts` with the number of sulfurs at each position
 """
 function get_sulfur_counts!(sulfur_counts::Vector{Int8}, 
-                          sequence::String, 
-                          structural_mods::String,
+                          sequence::AbstractString, 
+                          structural_mods::AbstractString,
                           mods_to_sulfur_diff::Dict{String, Int8})
     fill!(sulfur_counts, zero(Int8))
     
@@ -685,7 +685,7 @@ rev_seq, rev_mods = reverseSequence(sequence, mods)
 
 ```
 """
-function reverseSequence(sequence::String, structural_mods::String)
+function reverseSequence(sequence::AbstractString, structural_mods::String)
     # Early return if no modifications
     if isempty(structural_mods)
         return reverse(sequence[1:end-1])*sequence[end], ""
