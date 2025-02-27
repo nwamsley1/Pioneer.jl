@@ -839,7 +839,7 @@ shuffled_seq, shuffled_mods = shuffleSequence(sequence, mods)
 @assert shuffled_mods == "(1,n,mymod-nterm)(2,P,mymod)(3,T,Phospho)(7,E,Acetyl)(7,c,mymod-cterm)"
 ```
 """
-function shuffleSequence(sequence::String, structural_mods::String)
+function shuffleSequence(sequence::AbstractString, structural_mods::String)
     # Early return if no modifications
     if isempty(structural_mods)
         # Shuffle all but last AA
