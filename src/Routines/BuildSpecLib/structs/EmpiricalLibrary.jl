@@ -367,7 +367,7 @@ end
 function getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer)
     return zero(UInt8)
 end
-getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:sequence]::String
+getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:sequence]::S where {S<:AbstractString}
 getStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:structural_mods]::Union{Missing, String}
 getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_charge]::UInt8
 getPrecSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_sulfur_count]::UInt8
