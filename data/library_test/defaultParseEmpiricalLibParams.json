@@ -1,7 +1,7 @@
 {
     "library_params": {
-        "input_lib_path": "./data/library_test/example_empirical_df.tsv",
-        "output_lib_path": "./data/library_test/example_empirical_library.poin",
+        "input_lib_path": "./../data/library_test/example_empirical_df.tsv",
+        "output_lib_path": "./../data/library_test/example_empirical_library.poin",
         "rt_bin_tol": 1.0,
         "frag_bin_tol_ppm": 10.0,
         "rank_to_score": [2, 1, 1],
@@ -19,8 +19,8 @@
         "max_frag_rank": 255,
         "min_frag_intensity": 0.0,
         "generate_decoys": true,
-        "generate_entrapment": false,
-        "entrapment_groups": 0,
+        "generate_entrapment": true,
+        "entrapment_groups": 1,
         "instrument_type": "empirical"
     },
     "fixed_mods": {

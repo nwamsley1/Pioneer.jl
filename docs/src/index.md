@@ -70,3 +70,6 @@ Pioneer.ParseSpecLib
 ```@docs
 Pioneer.convertMzML
 ```
+```@docs
+Pioneer.ParseSpecLib
+```
