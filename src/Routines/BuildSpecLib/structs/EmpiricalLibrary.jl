@@ -216,8 +216,10 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         new_df[!,:is_decoy] = zeros(Bool, nrow(new_df))
         ###########
         #Temporary. Should fix input formatting so that this is no longer required. 
-        new_df[!,:modified_sequence] = convert_to_n_term.(new_df[!,:modified_sequence])
-        new_df[!,:modified_sequence] = add_cysteine_mods.(new_df[!,:modified_sequence])
+
+        #new_df[!,:modified_sequence] = convert_to_n_term.(new_df[!,:modified_sequence])
+        #new_df[!,:modified_sequence] = add_cysteine_mods.(new_df[!,:modified_sequence])
+        
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)
