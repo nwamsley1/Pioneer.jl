@@ -180,7 +180,9 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         
         # Add proteome_idx column if missing
         if !hasproperty(new_df, :ProteomeIdentifier)
-            new_df[!,:proteome_idx] = zeros(Missing, nrow(new_df))
+            if hasproperty(new_df, :protein_name)
+                new_df[!,:proteome_idx] = [string(split(pn, '_')[end]) for pn in new_df[!,:protein_name]]
+            end
         else
             rename!(new_df, 
                 "ProteomeIdentifier" => "proteome_idx"
@@ -219,7 +221,12 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
 
         #new_df[!,:modified_sequence] = convert_to_n_term.(new_df[!,:modified_sequence])
         #new_df[!,:modified_sequence] = add_cysteine_mods.(new_df[!,:modified_sequence])
-        
+        ###########
+        #Specific treatment for the di-ethyl library from kmd 
+        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Oxidation (M)]"=>"(Unimod:35)")
+        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:35)")
+        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(de)")
+        new_df[!,:modified_sequence] = ["n(de)"*seq for seq in new_df[!,:modified_sequence]]
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)
@@ -323,7 +330,7 @@ function getProteomeId(sl::EmpiricalLibrary, frag_idx::Integer)
     function proteome_id(proteome_idx::AbstractVector{Missing}, frag_idx::Integer)
         return ""
     end
-    function proteome_id(proteome_idx::AbstractVector{String}, frag_idx::Integer)
+    function proteome_id(proteome_idx::AbstractVector{<:AbstractString}, frag_idx::Integer)
         return proteome_idx[frag_idx]
     end
     return proteome_id(proteome_idx, frag_idx)
@@ -334,7 +341,7 @@ function getProteinGroupId(sl::EmpiricalLibrary, frag_idx::Integer)
     function proteome_id(protein_group::AbstractVector{Missing}, frag_idx::Integer)
         return ""
     end
-    function proteome_id(protein_group::AbstractVector{String}, frag_idx::Integer)
+    function proteome_id(protein_group::AbstractVector{<:AbstractString}, frag_idx::Integer)
         return protein_group[frag_idx]
     end
     return proteome_id(protein_groups, frag_idx)
@@ -364,11 +371,12 @@ end
 
 
 function parseIsotopicMods(sl::EmpiricalLibrary, frag_idx::Integer)
-    return ""
+    return 
 end
 function getSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer)
     return zero(UInt8)
 end
+getIsotopicMods(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:isotopic_mods]::S where {S<:AbstractString}
 getSequence(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:sequence]::S where {S<:AbstractString}
 getStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:structural_mods]::Union{Missing, String}
 getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_charge]::UInt8

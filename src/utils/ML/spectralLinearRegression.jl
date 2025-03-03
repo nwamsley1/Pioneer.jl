@@ -205,6 +205,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         max_diff::T) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
     i = 0
+    λ = Float32(1e1)
     while (i < max_iter_outer) & (ΔX > tol)
         ΔX = 0.0
         #Update each variable once 
@@ -229,6 +230,10 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         end
        i += 1
     end
+    #if i >= max_iter_outer
+    #    println("i $i")
+    #    jldsave("/Users/nathanwamsley/Desktop/test_hs.jld2"; Hs)
+    #end
     return i
 end
 

@@ -240,7 +240,18 @@ function process_search_results!(
             );
         end
 
-        # Keep only apex scans for each PSM group
+        # Keep only apex scans for each PSM group  
+        #=
+        to_keep = ones(Bool, size(psms, 1))
+        for i in range(1, size(psms, 1))
+            if getPrecursors(getSpecLib(search_context))[:sequence][psms[i,:precursor_idx]][end] == "R"
+                if psms[i,:b_count]>0
+                    to_keep[i] = false
+                end
+            end
+        end     
+        psms = psms[to_keep,:]
+        =#
         filter!(x->x.best_scan, psms);
 
         # Add additional features for final analysis

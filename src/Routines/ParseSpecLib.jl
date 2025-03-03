@@ -238,7 +238,7 @@ function ParseSpecLib(params_path::String)
     # Process structural modifications
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-
+    CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
     # Generate entrapment sequences if requested
     if generate_entrapment
         for i in 1:entrapment_groups
@@ -295,14 +295,16 @@ function ParseSpecLib(params_path::String)
            push!(channel_dfs, channel_df)
        end
    end
-
     # If channels were processed, update the DataFrame
     if !isempty(channel_dfs)
         channels_df = vcat(channel_dfs...)
         empty!(test_lib.libdf)
         append!(test_lib.libdf, channels_df)
     end
-
+    println("mod_channels $mod_channels")
+    println("length(channel_dfs) ", length(channel_dfs))
+    [println("size(df, 1): ", size(df, 1)) for df in channel_dfs]
+    CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out2.csv", test_lib.libdf)
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     #Now need to recalculate masses for precursors and fragments with the new modifications 
@@ -314,17 +316,15 @@ function ParseSpecLib(params_path::String)
     for mod_group in get(params, "sulfur_mod_groups", [])
         mods_to_sulfur_diff[mod_group["name"]] = Int8(mod_group["sulfur_count"])
     end
-
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
         iso_mods_dict,
         mods_to_sulfur_diff
     )
-
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
-    
+
     # Sort library by retention time and then by precursor_mz within retention time bins
     nestedLibrarySort!(test_lib, rt_bin_tol=rt_bin_tol)
 
@@ -407,7 +407,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             accession_numbers[prec_idx] = getProteinGroupId(speclib, frag_idx)
             sequence[prec_idx] = getSequence(speclib, frag_idx)
             structural_mods[prec_idx] = getStructuralMods(speclib, frag_idx)
-            isotopic_mods[prec_idx] = parseIsotopicMods(speclib, frag_idx)
+            isotopic_mods[prec_idx] = getIsotopicMods(speclib, frag_idx)
             prec_charge[prec_idx] = getPrecCharge(speclib, frag_idx)
             collision_energy[prec_idx] = getCollisionEnergy(speclib, frag_idx)
             is_decoy[prec_idx] = getIsDecoy(speclib, frag_idx)
