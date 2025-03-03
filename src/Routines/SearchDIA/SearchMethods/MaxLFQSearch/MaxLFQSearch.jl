@@ -42,6 +42,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     
     # Output parameters
     write_csv::Bool
+    delete_temp::Bool
     params::Any  # Store full parameters for reference
 
     function MaxLFQSearchParameters(params::PioneerParameters)
@@ -58,6 +59,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
             Bool(output_params.write_csv),
+            Bool(output_params.delete_temp),
             params  # Store full parameters
         )
     end
@@ -191,6 +193,12 @@ function summarize_results!(
             precursors,
             params
         )
+
+        if params.delete_temp
+            @info "Removing temporary data..."
+            temp_path = joinpath(getDataOutDir(search_context), "temp_data")
+            isdir(temp_path) && rm(temp_path; recursive=true, force=true)
+        end
 
     catch e
         @error "MaxLFQ analysis failed" exception=e
