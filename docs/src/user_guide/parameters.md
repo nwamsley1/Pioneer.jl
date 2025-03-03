@@ -42,6 +42,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
 | `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
 | `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
+| `match_between_runs` | Boolean | Whether to attempt to transfer peptide identifications across runs. Turning this on will add additional features to the XGBoost model (default: true) |
 
 ### Parameter Tuning Settings
 

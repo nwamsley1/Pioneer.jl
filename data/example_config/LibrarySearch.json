@@ -12,7 +12,8 @@
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
-        }
+        }, 
+		"match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
