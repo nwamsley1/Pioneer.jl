@@ -50,7 +50,7 @@ function getQuantCorrections(
         end
     end
     median_quant = reshape(median(median_quant, dims = 1), (N,))
-    median_quant = LinearInterpolation(rt_range, median_quant)
+    median_quant = linear_interpolation(rt_range, median_quant)
     corrections = Dictionary{String, Any}()
     for (key, spline) in pairs(quant_splines)
         offset = zeros(Float32, N)
@@ -60,7 +60,7 @@ function getQuantCorrections(
         insert!(
             corrections, 
             key,
-            LinearInterpolation(rt_range, offset)
+            linear_interpolation(rt_range, offset)
         )
     end
     return corrections 
