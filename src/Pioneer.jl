@@ -19,7 +19,7 @@ using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars, Pkg
 using Tables, Test
 using StatsPlots, SentinelArrays
 using Random
-using StaticArrays, StatsBase, SpecialFunctions, Statistics
+using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
 using XGBoost
 using KernelDensity
 using FastGaussQuadrature
