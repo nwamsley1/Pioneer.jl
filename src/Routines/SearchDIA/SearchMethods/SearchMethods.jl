@@ -191,6 +191,8 @@ function setDataOutDir!(s::SearchContext, dir::String)
     s.mass_err_plot_folder[] = mass_error_folder
 
     temp_data_dir = joinpath(dir, "temp_data")
+    # Delete previous temp data if it exists
+    rm(temp_data_dir, recursive=true, force=true)
     !isdir(temp_data_dir) && mkdir(temp_data_dir)
 
     s.data_out_dir[] = dir
