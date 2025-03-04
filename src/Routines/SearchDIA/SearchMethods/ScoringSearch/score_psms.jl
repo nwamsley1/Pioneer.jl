@@ -99,6 +99,8 @@ function score_precursor_isotope_traces_in_memory!(
     file_paths::Vector{String},
     precursors::BasicLibraryPrecursors
 )
+    best_psms[!,:sequence] = [getSequence(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
+    best_psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [ 

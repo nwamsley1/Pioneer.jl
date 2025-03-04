@@ -1,3 +1,4 @@
+#=
 function getBestScorePerPrec(psms::SubDataFrame)
     # Create dictionary to store scores per precursor
     prec_to_best_score = Dictionary{
@@ -8,6 +9,53 @@ function getBestScorePerPrec(psms::SubDataFrame)
     # Process each row in the dataframe
     for (i, row) in enumerate(eachrow(psms))
         key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
+        prob = row.prob
+        
+        if haskey(prec_to_best_score, key)
+            max_prob, mean_prob, min_prob, n = prec_to_best_score[key]
+            prec_to_best_score[key] = (
+                max_prob = max(max_prob, prob),
+                mean_prob = mean_prob + prob,
+                min_prob = min(min_prob, prob),
+                n = n + one(UInt16)
+            )
+        else
+            insert!(prec_to_best_score, key, (
+                max_prob = prob,
+                mean_prob = prob,
+                min_prob = prob,
+                n = one(UInt16)
+            ))
+        end
+    end
+    
+    # Calculate final mean probabilities
+    for (key, value) in pairs(prec_to_best_score)
+        max_prob, mean_prob, min_prob, n = value
+        prec_to_best_score[key] = (
+            max_prob = max_prob,
+            mean_prob = mean_prob / n,
+            min_prob = min_prob,
+            n = n
+        )
+    end
+    
+    return prec_to_best_score
+end
+=#
+
+function getBestScorePerPrec(psms::SubDataFrame)
+    # Create dictionary to store scores per precursor
+    prec_to_best_score = Dictionary{
+        #@NamedTuple{prec_idx::UInt32, isotopes::Tuple{Int8,Int8}}, 
+        @NamedTuple{sequence::String, structural_mods::String, charge::UInt8, isotopes::Tuple{Int8,Int8}}, 
+        @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}
+    }()
+    
+    # Process each row in the dataframe
+    for (i, row) in enumerate(eachrow(psms))
+        #key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
+        key = (sequence = string(row.sequence), structural_mods = string(row.structural_mods), charge = row.charge, isotopes = row.isotopes_captured)
         prob = row.prob
         
         if haskey(prec_to_best_score, key)
@@ -67,7 +115,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             minimum(probs), maximum(probs), mean(probs)
         end
         
-        for (key, sub_psms) in pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
+        for (key, sub_psms) in pairs(groupby(psms, [:sequence,:structural_mods,:charge, :isotopes_captured]))#pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
             min_prob, max_prob, mean_prob = summarize_prob(sub_psms[!,:prob])
             set_column!(sub_psms[!,:min_prob], min_prob)
             set_column!(sub_psms[!,:max_prob], max_prob)
@@ -85,7 +133,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     psms[!, :min_prob] = zeros(Float32, size(psms, 1))
     #Faster if sorted first 
     @info "sort time..."
-    @time sort!(psms, [:precursor_idx, :isotopes_captured])
+    @time sort!(psms, [:sequence,:structural_mods,:charge,:isotopes_captured])#[:precursor_idx, :isotopes_captured])
     #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
 
@@ -122,8 +170,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
-            if print_importance
+            if true==true#print_importance
                 println(collect(zip(importance(bst))))
+                println("\n")
             end
             
             push!(fold_models, bst)
