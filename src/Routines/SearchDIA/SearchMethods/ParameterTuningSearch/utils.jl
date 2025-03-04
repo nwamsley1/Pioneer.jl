@@ -122,6 +122,7 @@ function filter_and_score_psms!(
         end
         
         filter!(x -> x.best_psms::Bool, psms)
+        filter!(x->x.target::Bool, psms) #Otherwise fitting rt/irt and mass tolerance partly on decoys. 
         return n_passing_psms
     end
     
