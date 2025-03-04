@@ -33,18 +33,21 @@ struct ScoringSearchParameters <: SearchParameters
     precursor_q_value_interpolation_points_per_bin::Int64
     pg_prob_spline_points_per_bin::Int64  # Added based on original struct
     pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
+    match_between_runs::Bool
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
+        global_params = params.global_settings 
         
         new(
             Int64(ml_params.max_psms_in_memory),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
             Int64(ml_params.interpolation_points),
-            Int64(ml_params.spline_points),       # Using same value for protein groups
-            Int64(ml_params.interpolation_points) # Using same value for protein groups
+            Int64(ml_params.spline_points),        # Using same value for protein groups
+            Int64(ml_params.interpolation_points), # Using same value for protein groups
+            Bool(global_params.match_between_runs)
         )
     end
 end
@@ -122,14 +125,16 @@ function summarize_results!(
             models = score_precursor_isotope_traces_out_of_memory!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
-                getPrecursors(getSpecLib(search_context))
+                getPrecursors(getSpecLib(search_context)),
+                params.match_between_runs
             )
         else #In memory algorithm
             best_psms = load_psms_for_xgboost(second_pass_folder)#params.max_n_samples)
             models = score_precursor_isotope_traces_in_memory!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
-                getPrecursors(getSpecLib(search_context))
+                getPrecursors(getSpecLib(search_context)),
+                params.match_between_runs
             )
         end
         best_psms = nothing

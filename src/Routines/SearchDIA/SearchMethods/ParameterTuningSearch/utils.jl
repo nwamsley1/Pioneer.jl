@@ -237,7 +237,7 @@ function fit_irt_model(
     # Calculate residuals
     psms[!,:irt_observed] = rt_to_irt_map.(psms.rt::Vector{Float32})
     residuals = psms[!,:irt_observed] .- psms[!,:irt_predicted]
-    irt_mad = mad(residuals)::Float32
+    irt_mad = mad(residuals, normalize=false)::Float32
     
     # Remove outliers and refit
     valid_psms = psms[abs.(residuals) .< (irt_mad * getOutlierThreshold(params)), :]

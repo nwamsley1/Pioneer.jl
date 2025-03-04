@@ -158,12 +158,6 @@ function buildPionLib(spec_lib_path::String,
         joinpath(spec_lib_path, "precursor_to_fragment_indices.jld2");
         pid_to_fid
     )
-    for  fname in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
-        fpath = joinpath(spec_lib_path, fname)
-        if isfile(fpath)
-            rm(fpath)
-        end
-    end
 
     return nothing
 end
@@ -331,6 +325,16 @@ function buildPionLib(spec_lib_path::String,
     )
 
     return nothing
+end
+
+function cleanUpLibrary(spec_lib_path::String)
+    GC.gc()
+    for fname in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
+        fpath = joinpath(spec_lib_path, fname)
+        if isfile(fpath)
+            rm(fpath, force=true)
+        end
+    end
 end
 
 function fragFilter(

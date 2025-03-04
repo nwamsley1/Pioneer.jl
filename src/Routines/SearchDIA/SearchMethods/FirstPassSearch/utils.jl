@@ -292,7 +292,7 @@ function get_best_psms!(psms::DataFrame,
         end
     end
     #delete!(psms, min(n, max_psms + 1):n)
-    delete!(psms, min(n, round(Int64, psms_10fdr*2.0) + 1):n)
+    deleteat!(psms, min(n, round(Int64, psms_10fdr*2.0) + 1):n)
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}

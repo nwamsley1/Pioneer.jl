@@ -44,7 +44,8 @@ end
 
 function sort_of_percolator_in_memory!(psms::DataFrame, 
                   file_paths::Vector{String},
-                  features::Vector{Symbol};
+                  features::Vector{Symbol},
+                  match_between_runs::Bool = true;
                   colsample_bytree::Float64 = 0.5,
                   colsample_bynode::Float64 = 0.5,
                   eta::Float64 = 0.15,
@@ -80,9 +81,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     
     # Initialize probability columns
     psms[!, :prob] = zeros(Float32, size(psms, 1))
-    psms[!, :max_prob] = zeros(Float32, size(psms, 1))
-    psms[!, :mean_prob] = zeros(Float32, size(psms, 1))
-    psms[!, :min_prob] = zeros(Float32, size(psms, 1))
+    if match_between_runs
+        psms[!, :max_prob] = zeros(Float32, size(psms, 1))
+        psms[!, :mean_prob] = zeros(Float32, size(psms, 1))
+        psms[!, :min_prob] = zeros(Float32, size(psms, 1))
+    end
     #Faster if sorted first 
     @info "sort time..."
     @time sort!(psms, [:precursor_idx, :isotopes_captured])
@@ -97,9 +100,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     for test_fold_idx in unique_cv_folds
         #Clear prob stats 
         psms[!, :prob] .= zero(Float32)
-        psms[!, :max_prob] .= zero(Float32)
-        psms[!, :mean_prob] .= zero(Float32)
-        psms[!, :min_prob] .= zero(Float32)
+        if match_between_runs
+            psms[!, :max_prob] .= zero(Float32)
+            psms[!, :mean_prob] .= zero(Float32)
+            psms[!, :min_prob] .= zero(Float32)
+        end
         # Get training data
         psms_train = @view(psms[findall(x -> x != test_fold_idx, psms[!, :cv_fold]), :])
         # Train models for each iteration
@@ -131,9 +136,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             test_fold_psms = @view(psms[test_fold_idxs,:])
 
             test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
-            summarize_precursors!(test_fold_psms)
             psms_train[!,:prob] =  XGBoost.predict(bst, psms_train[!, features])
-            summarize_precursors!(psms_train)
+
+            if match_between_runs
+                summarize_precursors!(test_fold_psms)
+                summarize_precursors!(psms_train)
+            end
         end
         # Make predictions on hold out data.
         test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
@@ -151,7 +159,8 @@ end
 
 function sort_of_percolator_out_of_memory!(psms::DataFrame, 
                     file_paths::Vector{String},
-                    features::Vector{Symbol}; 
+                    features::Vector{Symbol},
+                    match_between_runs::Bool = true; 
                     colsample_bytree::Float64 = 0.5, 
                     colsample_bynode::Float64 = 0.5,
                     eta::Float64 = 0.15, 
@@ -159,7 +168,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     subsample::Float64 = 0.5, 
                     gamma::Int = 0, 
                     max_depth::Int = 10,
-                    iter_scheme::Vector{Int} = [100, 100, 200], 
+                    iter_scheme::Vector{Int} = [100, 100, 200],
                     print_importance::Bool = true)
 
     function getBestScorePerPrec!(
@@ -177,13 +186,13 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         end
             
         for file_path in file_paths
-            psms = DataFrame(Arrow.Table(file_path))
-            probs = XGBoost.predict(bst, psms[!,features])
+            psms_subset = DataFrame(Arrow.Table(file_path))
+            probs = XGBoost.predict(bst, psms_subset[!,features])
             #Update maximum probabilities for tracked precursors 
-            for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-                if !test_fold_filter(psms[i,:cv_fold], test_fold_idx)::Bool continue end
+            for (i, prec_idx) in enumerate(psms_subset[!,:precursor_idx])
+                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
                 prob = probs[i]
-                key = (prec_idx = prec_idx, isotopes = psms[i,:isotopes_captured])
+                key = (prec_idx = prec_idx, isotopes = psms_subset[i,:isotopes_captured])
                 if haskey(prec_to_best_score_new, key)
                     max_prob, mean_prob, min_prob, n = prec_to_best_score_new[key]
                     if max_prob < prob
@@ -203,24 +212,24 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         end
     
         for file_path in file_paths
-            psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            probs = XGBoost.predict(bst, psms[!,features])
-            for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-                if !test_fold_filter(psms[i,:cv_fold], test_fold_idx)::Bool continue end
-                psms[i,:prob] = probs[i]
-                key = (prec_idx = prec_idx, isotopes = psms[i,:isotopes_captured])
+            psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+            probs = XGBoost.predict(bst, psms_subset[!,features])
+            for (i, prec_idx) in enumerate(psms_subset[!,:precursor_idx])
+                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                psms_subset[i,:prob] = probs[i]
+                key = (prec_idx = prec_idx, isotopes = psms_subset[i,:isotopes_captured])
                 if haskey(prec_to_best_score_new, key)
                     max_prob, mean_prob, min_prob, n = prec_to_best_score_new[key]
-                    psms[i,:max_prob] = max_prob
-                    psms[i,:min_prob] = min_prob
+                    psms_subset[i,:max_prob] = max_prob
+                    psms_subset[i,:min_prob] = min_prob
                     if n > 0
-                        psms[i,:mean_prob] = mean_prob/n
+                        psms_subset[i,:mean_prob] = mean_prob/n
                     else
-                        psms[i,:mean_prob] = zero(Float32)
+                        psms_subset[i,:mean_prob] = zero(Float32)
                     end
                 end
             end
-            Arrow.write(file_path, psms)
+            Arrow.write(file_path, psms_subset)
         end
         return prec_to_best_score_new
     end
@@ -249,7 +258,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         return cv_fold != test_fold
     end
 
-    psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+    if match_between_runs
+        psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+    end
+    
     psms[!,:prob] = zeros(Float32, size(psms, 1))
     folds = psms[!,:cv_fold]
     unique_cv_folds = unique(folds)
@@ -262,6 +274,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         psms_train = psms[train_fold_idxs_all,:]
         prec_to_best_score = Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
         for (train_iter, num_round) in enumerate(iter_scheme)
+            println("training: ", test_fold_idx, " ", train_iter, " ", size(psms,1), "\n")
             ###################
             #Train a model on the n-1 training folds.
             _seed_ = rand(UInt32)
