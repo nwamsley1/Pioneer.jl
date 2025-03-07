@@ -167,24 +167,36 @@ function score_precursor_isotope_traces_in_memory!(
                                 print_importance = false);
         return models;#best_psms
     else
-        @warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
+        if size(best_psms, 1) > 1000
+            @warn "Less than 100,000 psms. Training with simplified target-decoy discrimination model..."
+            features = [ 
+                :missed_cleavage,
+                :Mox,
+                :sequence_length,
+                :charge,
+                :irt_error,
+                :irt_diff,
+                :y_count,
+                :max_fitted_manhattan_distance,
+                :max_matched_residual,
+                :max_unmatched_residual,
+                :max_gof,
+                :err_norm,
+                :weight,
+                :log2_intensity_explained,
+            ];
+        else
+             @warn "Less than 1,000 psms. Training with super simplified target-decoy discrimination model..."
+             features = [ 
+                :fitted_spectral_contrast,
+                :max_matched_residual,
+                :max_unmatched_residual,
+                :err_norm,
+                :log2_intensity_explained,
+            ];
+        end
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
-        features = [ 
-            :missed_cleavage,
-            :Mox,
-            :sequence_length,
-            :charge,
-            :irt_error,
-            :irt_diff,
-            :y_count,
-            :max_fitted_manhattan_distance,
-            :max_matched_residual,
-            :max_unmatched_residual,
-            :max_gof,
-            :err_norm,
-            :weight,
-            :log2_intensity_explained,
-        ];
+        
         best_psms[!,:accession_numbers] = [getAccessionNumbers(precursors)[pid] for pid in best_psms[!,:precursor_idx]]
         best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
         best_psms[!,:decoy] = best_psms[!,:target].==false;
@@ -204,7 +216,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 eta = 0.01, 
                                 iter_scheme = [200],
                                 print_importance = false);
-        return models;#best_psms
+        return models
     end
 end
 

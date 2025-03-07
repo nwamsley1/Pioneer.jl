@@ -1,3 +1,28 @@
+function shortenFileNames(parsed_fnames,
+    max_length = 20)
+
+    result = Vector{String}(undef, length(parsed_fnames))
+
+    for (i, s) in pairs(parsed_fnames)
+        if length(s) <= max_length
+            # String is already within length, keep it as is
+            result[i] = s
+        else
+            # Calculate how many characters remain for the sides after inserting "..."
+            side_space = max_length - 3  # e.g. if max_length=10, side_space=7
+            left_len = div(side_space, 2)  # integer division
+            right_len = side_space - left_len
+
+            # left chunk from start, right chunk from end
+            left_part = s[1:left_len]
+            right_part = s[end - right_len + 1:end]
+            result[i] = left_part * "..." * right_part
+        end
+    end
+
+    return result
+end
+
 #Group psms by file of origin
 function qcPlots(
     precursors_wide_path,
@@ -10,6 +35,7 @@ function qcPlots(
     irt_rt,
     frag_err_dist_dict
 )
+    short_fnames = shortenFileNames(parsed_fnames)
     #grouped_precursors = groupby(best_psms, :file_name)
     #grouped_protein_groups = groupby(protein_quant, :file_name)
     #Number of files to parse
@@ -23,7 +49,8 @@ function qcPlots(
     #Plot precursor abundance distribution
     function plotAbundanceECDF(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -53,7 +80,7 @@ function qcPlots(
             return log2.(sampled_range), [log10(x) for x in sorted_precursor_abundances[sampled_range]]
         end
 
-        for parsed_fname in parsed_fnames
+        for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             try
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
             Plots.plot!(p, 
@@ -61,7 +88,7 @@ function qcPlots(
                     sorted_precursor_abundances,
                     #ylim = (0, log2(maximum(sorted_precursor_abundances))),
                     subplot = 1,
-                    label = parsed_fname
+                    label = short_fname
                     )
             catch
                 continue
@@ -77,6 +104,7 @@ function qcPlots(
         plotAbundanceECDF(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
+            [x for x in short_fnames[start:stop]],
             title = "Precursor Abundance by Rank",
             f_out = joinpath(qc_plot_folder, "precursor_abundance_qc_"*string(n)*".pdf")
         )
@@ -86,7 +114,8 @@ function qcPlots(
     #Plot precursor IDs
     function plotPrecursorIDBarPlot(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -113,7 +142,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
-        parsed_fnames,
+        short_fnames,
         ids,
         subplot = 1,
         texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
@@ -130,6 +159,7 @@ function qcPlots(
         plotPrecursorIDBarPlot(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
+            [x for x in short_fnames[start:stop]],
             title = "Precursor ID's per File",
             f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_"*string(n)*".pdf")
         )
@@ -140,7 +170,8 @@ function qcPlots(
     
     function plotProteinGroupIDBarPlot(
         protein_groups_wide::Arrow.Table,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "protein_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -166,7 +197,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
-        parsed_fnames,
+        short_fnames,
         ids,
         subplot = 1,
         texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
@@ -184,6 +215,7 @@ function qcPlots(
         plotProteinGroupIDBarPlot(
             protein_groups_wide,
             [x for x in parsed_fnames[start:stop]],
+            [x for x in short_fnames[start:stop]],
             title = "Protein Group ID's per File",
             f_out = joinpath(qc_plot_folder, "protein_group_ids_barplot_"*string(n)*".pdf")
         )
@@ -194,7 +226,8 @@ function qcPlots(
     #Plot missed cleavage rate
     function plotMissedCleavageRate(
         precursors_wide::Arrow.Table,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -227,7 +260,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         Plots.bar!(p, 
-        parsed_fnames,
+        short_fnames,
         ids,
         subplot = 1,
         texts = [text(string(x)[1:min(6,length(string(x)))], valign = :vcenter, halign = :right, rotation = 90) for x in ids],
@@ -244,6 +277,7 @@ function qcPlots(
         plotMissedCleavageRate(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
+            [x for x in short_fnames[start:stop]],
             title = "Missed Cleavage Percentage",
             f_out = joinpath(qc_plot_folder, "missed_cleavage_plot_"*string(n)*".pdf")
         )
@@ -254,7 +288,8 @@ function qcPlots(
     #Plot TIC
     function plotTIC(
         ms_table_paths::Vector{String},
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -263,7 +298,7 @@ function qcPlots(
         legend=:outertopright, layout = (1, 1))
 
         for (id, ms_table_path) in enumerate(ms_table_paths)
-            parsed_fname = parsed_fnames[id]
+            short_fname = short_fnames[id]
             ms_table = BasicMassSpecData(ms_table_path)
             ms1_scans = getMsOrders(ms_table).==1
 
@@ -273,7 +308,7 @@ function qcPlots(
             [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
                     xlabel = "retention time (min)",
-                    label = parsed_fname,
+                    label = short_fname,
                     alpha = 0.3
                     )
         end
@@ -286,6 +321,7 @@ function qcPlots(
         plotTIC(
             MS_TABLE_PATHS[start:stop],
             parsed_fnames,
+            short_fnames,
             title = "TIC plot",
             f_out = joinpath(qc_plot_folder, "tic_plot_"*string(n)*".pdf")
         )
@@ -335,7 +371,8 @@ function qcPlots(
     #Plot precursor IDs
     function plotMS2MassErrors(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "precursor_abundance_qc",
         f_out::String = "./test.pdf"
         )
@@ -343,9 +380,9 @@ function qcPlots(
         p = Plots.plot(title = title,
                         legend=:none, layout = (1, 1))
 
-        for parsed_fname in parsed_fnames
+        for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             Plots.boxplot!(p, 
-            [parsed_fname],
+            [short_fname],
             gpsms[(file_name = parsed_fname,)][!,:error_norm],
             subplot = 1,
             outliers = false,
@@ -379,6 +416,7 @@ function qcPlots(
     #Plot precursor IDs
     function plotMS2MassErrorCorrection(
         parsed_fnames::Any,
+        short_fnames::Any,
         frag_err_dist_dict::Dict{Int64, MassErrorModel},
         file_ids::Vector{Int64};
         title::String = "precursor_abundance_qc",
@@ -389,10 +427,11 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         parsed_fnames = [parsed_fnames[file_id] for file_id in file_ids]
+        short_fnames = [short_fnames[file_id] for file_id in file_ids]
         mass_corrections = [getMassCorrection(frag_err_dist_dict[file_id]) for file_id in file_ids]
 
         Plots.bar!(p, 
-        parsed_fnames,
+        short_fnames,
         mass_corrections,
         subplot = 1,
         yflip = true,
@@ -406,10 +445,11 @@ function qcPlots(
 
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
+        stop = min(n*n_files_per_plot, length(short_fnames))
 
         plotMS2MassErrorCorrection(
             parsed_fnames,
+            short_fnames,
             frag_err_dist_dict,
             collect(start:stop),
             title = "MS2 Mass Error Correction",
@@ -423,7 +463,8 @@ function qcPlots(
     #Plot precursor IDs
     function plotFWHM(
         gpsms::GroupedDataFrame,
-        parsed_fnames::Any;
+        parsed_fnames::Any,
+        short_fnames::Any;
         title::String = "fwhm_qc",
         f_out::String = "./test.pdf"
         )
@@ -432,10 +473,10 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
 
-        for parsed_fname in parsed_fnames
+        for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             psms =  gpsms[(file_name = parsed_fname,)]
             Plots.boxplot!(p, 
-            [parsed_fname],
+            [short_fname],
             psms[psms[!,:points_above_FWHM_01].>1,:FWHM],
             subplot = 1,
             outliers = false,

@@ -422,7 +422,9 @@ function LibrarySearchNceTuning(
         vcat(skipmissing(fetch.(tasks))...)
     end
 
-    return vcat(all_results...)
+    # filter out empty DFs (which are actually Vectors instead of DataFrames)
+    nonempty_dfs = filter(df -> df isa DataFrame, all_results)
+    return vcat(nonempty_dfs...)
 end
 
 function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
