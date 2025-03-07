@@ -156,8 +156,10 @@ Mol Cell Proteomics. 2005 Oct;4(10):1419-40. doi: 10.1074/mcp.R500012-MCP200.
 Zhang B, Chambers MC, Tabb DL. Proteomic parsimony through bipartite graph analysis improves accuracy
 and transparency. J Proteome Res. 2007 Sep;6(9):3549-57. doi: 10.1021/pr070230d.
 """
-function infer_proteins(proteins::Vector{String}, peptides::Vector{String})::Dictionary{String, Tuple{String, Bool}}
+function infer_proteins(proteins::AbstractVector{String}, peptides::AbstractVector{String})::Dictionary{String, Tuple{String, Bool}}
     # Build peptide-to-protein and protein-to-peptide mappings
+    # Basically a bipartite graph. Edge lists of proteins ot their peptides and 
+    # another edge list of peptides to their proteins 
     peptide_to_proteins = Dictionary{String, Set{String}}()
     original_groups = Dictionary{String, String}()
     
@@ -200,7 +202,10 @@ function infer_proteins(proteins::Vector{String}, peptides::Vector{String})::Dic
         while !isempty(queue)
             current = pop!(queue)
             
-            if current in visited_peptides
+            # Each peptide is in one and only one conected component. 
+            # So if this peptide has been visited before, then pass on to the next. 
+            # Otherwise there would be duplicate componenets 
+            if current in visited_peptides 
                 continue
             end
             

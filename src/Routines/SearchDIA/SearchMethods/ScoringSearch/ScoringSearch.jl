@@ -193,7 +193,7 @@ function summarize_results!(
         # Step 7: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores
-        sorted_pg_score_path = get_protein_groups(
+        sorted_pg_score_path, protein_inference_dict = get_protein_groups(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
@@ -201,6 +201,11 @@ function summarize_results!(
             getPrecursors(getSpecLib(search_context))
         )
 
+        add_protein_inferrence_col(
+            getPassingPsms(getMSData(search_context)),
+            protein_inference_dict,
+            getSequence(getPrecursors(getSpecLib(search_context)))
+        )
         # Create protein group q-value interpolation
         search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_score_path,
