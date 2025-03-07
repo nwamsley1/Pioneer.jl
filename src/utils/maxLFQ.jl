@@ -336,7 +336,9 @@ function LFQ(prot::DataFrame,
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            getProtAbundance(protein[:accession_numbers], 
+            #filter!(x->x.use_for_protein_quant::Bool, data) #Maybe this is a bit slow. But works for now. 
+            data = data[data[!,:use_for_protein_quant],:]
+            getProtAbundance(protein[:inferred_protein_group], 
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
                                 protein[:species],

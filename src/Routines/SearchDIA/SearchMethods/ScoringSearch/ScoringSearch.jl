@@ -204,7 +204,8 @@ function summarize_results!(
         add_protein_inferrence_col(
             getPassingPsms(getMSData(search_context)),
             protein_inference_dict,
-            getSequence(getPrecursors(getSpecLib(search_context)))
+            getSequence(getPrecursors(getSpecLib(search_context))),
+            getIsDecoy(getPrecursors(getSpecLib(search_context)))
         )
         # Create protein group q-value interpolation
         search_context.pg_score_to_qval[] = get_qvalue_spline(

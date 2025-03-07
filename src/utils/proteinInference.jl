@@ -345,3 +345,244 @@ function infer_proteins(proteins::AbstractVector{String}, peptides::AbstractVect
     
     return result
 end
+
+function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}, 
+                        peptides::Vector{String})::Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}}
+    # Build peptide-to-protein and protein-to-peptide mappings
+    peptide_to_proteins = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}}()
+    original_groups = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+    
+    for i in 1:length(peptides)
+        peptide = peptides[i]
+        peptide_key = (peptide = peptide, decoy = proteins[i].decoy)
+        
+        if !haskey(peptide_to_proteins, peptide_key)
+            insert!(peptide_to_proteins, peptide_key, Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}())
+            # Store the original protein group
+            insert!(original_groups, peptide_key, proteins[i])
+        end
+        
+        # Split the protein name string by ";" and treat each part as a protein
+        for protein_part in split(proteins[i].protein_name, ";")
+            push!(peptide_to_proteins[peptide_key], (protein_name = protein_part, decoy = proteins[i].decoy))
+        end
+    end
+    
+    # Map from protein name to peptides
+    protein_to_peptides = Dictionary{String, Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}}()
+    
+    # Track decoy status for each protein
+    protein_decoy_status = Dictionary{String, Bool}()
+    
+    for (peptide_key, protein_set) in pairs(peptide_to_proteins)
+        for protein_tuple in protein_set
+            protein_name = protein_tuple.protein_name
+            
+            if !haskey(protein_to_peptides, protein_name)
+                insert!(protein_to_peptides, protein_name, Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}())
+                insert!(protein_decoy_status, protein_name, protein_tuple.decoy)
+            end
+            
+            push!(protein_to_peptides[protein_name], peptide_key)
+        end
+    end
+    
+    # Find connected components (independent protein-peptide clusters)
+    visited_peptides = Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}()
+    components = Vector{Tuple{Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}, Set{String}}}()  # (peptides, proteins)
+    
+    for i in 1:length(peptides)
+        peptide_key = (peptide = peptides[i], decoy = proteins[i].decoy)
+        
+        if peptide_key in visited_peptides
+            continue
+        end
+        
+        component_peptides = Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}()
+        component_proteins = Set{String}()
+        queue = [peptide_key]
+        
+        while !isempty(queue)
+            current = pop!(queue)
+            
+            if current in visited_peptides
+                continue
+            end
+            
+            push!(component_peptides, current)
+            push!(visited_peptides, current)
+            
+            # Add proteins connected to this peptide
+            for protein_tuple in peptide_to_proteins[current]
+                push!(component_proteins, protein_tuple.protein_name)
+                
+                # Add peptides connected to this protein
+                for p in protein_to_peptides[protein_tuple.protein_name]
+                    if !(p in visited_peptides)
+                        push!(queue, p)
+                    end
+                end
+            end
+        end
+        
+        push!(components, (component_peptides, component_proteins))
+    end
+    
+    # Initialize result dictionary
+    result = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}}()
+    
+    # Process each component independently
+    for (component_peptides, component_proteins) in components
+        # Check if all proteins have identical peptide sets (Case C/F)
+        if length(component_proteins) > 1
+            identical_sets = true
+            first_protein = first(component_proteins)
+            first_peptides = intersect(protein_to_peptides[first_protein], component_peptides)
+            
+            for protein in component_proteins
+                if protein != first_protein
+                    protein_peptides = intersect(protein_to_peptides[protein], component_peptides)
+                    if protein_peptides != first_peptides
+                        identical_sets = false
+                        break
+                    end
+                end
+            end
+            
+            if identical_sets
+                # Case where all proteins are indistinguishable
+                all_proteins = sort(collect(component_proteins))
+                protein_group = join(all_proteins, ";")
+                
+                # Use the decoy status of the first protein (should be the same for all indistinguishable proteins)
+                decoy_status = protein_decoy_status[first(all_proteins)]
+                
+                for peptide_key in component_peptides
+                    insert!(result, peptide_key, (
+                        protein_name = protein_group, 
+                        decoy = decoy_status,
+                        retain = true
+                    ))
+                end
+                continue
+            end
+        end
+        
+        # Find peptides unique to a protein
+        unique_peptide_to_protein = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, String}()
+        
+        for peptide_key in component_peptides
+            proteins_for_peptide_tuples = intersect([p.protein_name for p in peptide_to_proteins[peptide_key]], component_proteins)
+            if length(proteins_for_peptide_tuples) == 1
+                insert!(unique_peptide_to_protein, peptide_key, first(proteins_for_peptide_tuples))
+            end
+        end
+        
+        # Case F handling: No protein has unique peptides
+        if isempty(unique_peptide_to_protein) && !isempty(component_proteins)
+            # If no protein has unique peptides, merge all
+            all_proteins = sort(collect(component_proteins))
+            protein_group = join(all_proteins, ";")
+            
+            # Check if all proteins have the same decoy status
+            all_decoy = true
+            all_target = true
+            
+            for protein in all_proteins
+                if protein_decoy_status[protein]
+                    all_target = false
+                else
+                    all_decoy = false
+                end
+            end
+            
+            # If mixed decoy/target, prefer to mark as decoy
+            decoy_status = !all_target
+            
+            for peptide_key in component_peptides
+                insert!(result, peptide_key, (
+                    protein_name = protein_group,
+                    decoy = decoy_status,
+                    retain = true
+                ))
+            end
+            continue
+        end
+        
+        # Apply greedy set cover for minimal protein list
+        remaining_peptides = copy(component_peptides)
+        necessary_proteins = Set{String}()
+        
+        # First include proteins with unique peptides
+        unique_proteins = Set{String}()
+        for (_, protein) in pairs(unique_peptide_to_protein)
+            push!(unique_proteins, protein)
+        end
+        
+        for protein in unique_proteins
+            push!(necessary_proteins, protein)
+            for peptide_key in intersect(protein_to_peptides[protein], remaining_peptides)
+                delete!(remaining_peptides, peptide_key)
+            end
+        end
+        
+        # Continue with greedy set cover for remaining peptides
+        candidate_proteins = collect(setdiff(component_proteins, necessary_proteins))
+        
+        while !isempty(remaining_peptides) && !isempty(candidate_proteins)
+            # Find protein that covers the most remaining peptides
+            best_protein = ""
+            best_coverage = 0
+            
+            for protein in candidate_proteins
+                coverage = length(intersect(protein_to_peptides[protein], remaining_peptides))
+                if coverage > best_coverage
+                    best_coverage = coverage
+                    best_protein = protein
+                end
+            end
+            
+            if best_coverage == 0
+                break  # No more peptides can be covered
+            end
+            
+            push!(necessary_proteins, best_protein)
+            filter!(p -> p != best_protein, candidate_proteins)
+            
+            for peptide_key in intersect(protein_to_peptides[best_protein], remaining_peptides)
+                delete!(remaining_peptides, peptide_key)
+            end
+        end
+        
+        # Assign peptides to proteins
+        for peptide_key in component_peptides
+            proteins_for_peptide = [p.protein_name for p in peptide_to_proteins[peptide_key]]
+            proteins_for_peptide = intersect(proteins_for_peptide, component_proteins)
+            
+            if length(proteins_for_peptide) == 1
+                # Unique peptide for a single protein - mark as retain=true
+                protein_name = first(proteins_for_peptide)
+                insert!(result, peptide_key, (
+                    protein_name = protein_name,
+                    decoy = protein_decoy_status[protein_name],
+                    retain = true
+                ))
+            else
+                # Shared peptide - use original protein group and mark as retain=false
+                original_group = original_groups[peptide_key]
+                insert!(result, peptide_key, (
+                    protein_name = original_group.protein_name,
+                    decoy = original_group.decoy,
+                    retain = false
+                ))
+            end
+        end
+    end
+    
+    return result
+end
+# Helper function to split protein group strings into named tuples
+function split_protein_group(protein_group::String)
+    parts = split(protein_group, ";")
+    return [(protein_name = part, decoy = false) for part in parts]
+end
