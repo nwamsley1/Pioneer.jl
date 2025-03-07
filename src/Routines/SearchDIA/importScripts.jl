@@ -29,7 +29,7 @@ function importScripts()
             "RazoQuadModel.jl",
             "SplineQuadModel.jl",
             "binIsotopeRatioData.jl",
-            "SquareQuadModel.jl",
+            "SquareQuadModel.jl"
         ]
     )
 
@@ -81,7 +81,8 @@ function importScripts()
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
-                        "writeArrow.jl"
+                        "writeArrow.jl",
+            "proteinInference.jl"
         ]
     )
 
