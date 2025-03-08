@@ -289,6 +289,7 @@ function convertMzML(
 
     # Clean up any old file handlers in case the program crashed
     GC.gc()
+    mzml_dir = expanduser(mzml_dir)
 
     mzml_paths = missing
     if isdir(mzml_dir)

@@ -86,6 +86,13 @@ function check_params_bsp(json_string::String)
         check_param(group, "label_name", String)
     end
 
+    # expand any home directories "~"
+    params["out_dir"] = expanduser(params["out_dir"])
+    params["library_params"]["calibration_raw_file"] = expanduser( params["library_params"]["calibration_raw_file"])
+    for i in range(1,length(params["fasta_paths"]))
+        params["fasta_paths"][i] = expanduser(params["fasta_paths"][i])
+    end
+
     # If all checks pass, return the validated parameters
     return params
 end
@@ -182,6 +189,10 @@ function checkParseSpecLibParams(json_path::String)
             check_param(group, "sulfur_count", Number)
         end
     end
+
+    # expand any home directories "~"
+    params["library_params"]["input_lib_path"] = expanduser(params["library_params"]["input_lib_path"])
+    params["library_params"]["output_lib_path"] = expanduser(params["library_params"]["input_lib_path"])
     
     return params
 end
