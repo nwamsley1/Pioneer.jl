@@ -45,6 +45,13 @@ function parse_pioneer_parameters(json_path::String)
         return NamedTuple(symbol_pairs)
     end
 
+    function expand_user_paths(nt::NamedTuple)
+        vals_expanded = map(nt) do val
+            expanduser(val)
+        end
+        return vals_expanded
+    end
+
     # Parse each section
     global_settings = dict_to_namedtuple(params["global"])
     parameter_tuning = dict_to_namedtuple(params["parameter_tuning"])
@@ -55,7 +62,7 @@ function parse_pioneer_parameters(json_path::String)
     optimization = dict_to_namedtuple(params["optimization"])
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
     output = dict_to_namedtuple(params["output"])
-    paths = dict_to_namedtuple(params["paths"])
+    paths = expand_user_paths(dict_to_namedtuple(params["paths"]))
 
     return PioneerParameters(
         global_settings,

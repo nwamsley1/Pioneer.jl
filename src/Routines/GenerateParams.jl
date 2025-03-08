@@ -31,12 +31,15 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
     
     if ismissing(params_path)
         output_path = joinpath(pwd(), "search_parameters.json")
-    elseif isdir(params_path)
-        output_path = joinpath(params_path, "search_parameters.json")
-    elseif isfile(params_path)
-        output_path = params_path
     else
-        throw("User supplied `params_path` is not a path to a file or a directory")
+        params_path = expanduser(params_path)
+        name, ext = splitext(params_path)
+        if isempty(ext)
+            mkpath(params_path)
+            output_path = joinpath(params_path, "search_parameters.json")
+        else
+            output_path = params_path
+        end
     end
     
     # Read the JSON template and convert to OrderedDict
@@ -85,13 +88,16 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     GC.gc()
 
     if ismissing(params_path)
-        output_path = pwd()
-    elseif isdir(params_path)
-        output_path = joinpath(params_path)
-    elseif isfile(params_path)
-        output_path = params_path
+        output_path = joinpath(pwd(), "buildspeclib_params.json")
     else
-        throw("User supplied `params_path` is not a path to a file or a directory")
+        params_path = expanduser(params_path)
+        name, ext = splitext(params_path)
+        if isempty(ext)
+            mkpath(params_path)
+            output_path = joinpath(params_path, "buildspeclib_params.json")
+        else
+            output_path = params_path
+        end
     end
 
     # Parse JSON
@@ -119,7 +125,6 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     config["out_name"] = basename(lib_name) * ".tsv"
     
     # Write output using the same formatting as template
-    output_path = joinpath(output_path, "buildspeclib_params.json")
     @info "Writing default parameters .json to: $output_path"
     open(output_path, "w") do io
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
