@@ -31,7 +31,6 @@ function searchFragmentIndex(
         while rt_bin_idx > 1 && getLow(getRTBin(frag_index, rt_bin_idx)) > irt_lo
             rt_bin_idx -= 1
         end
-        rt_bin_idx = min(rt_bin_idx, length(getRTBins(frag_index)))
         
         # Fragment index search for matching precursors
         searchScan!(
