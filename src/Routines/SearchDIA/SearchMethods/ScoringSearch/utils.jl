@@ -554,7 +554,7 @@ function get_protein_groups(
     #Protein inference
     ##########
     passing_psms = Arrow.Table(passing_psms_paths)
-    protein_peptide_rows = Set{Tuple{String, String, Bool}}()
+    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy), Tuple{String, String, Bool}}}()
     passing_precursor_idx = passing_psms[:precursor_idx]
     accession_numbers = getAccessionNumbers(precursors)
     decoys = getIsDecoy(precursors)
@@ -563,15 +563,15 @@ function get_protein_groups(
         push!(
             protein_peptide_rows, 
             (
-                sequences[pid],
-                accession_numbers[pid],
-                decoys[pid]
+                sequence = sequences[pid],
+                protein_name = accession_numbers[pid],
+                decoy = decoys[pid]
             )
         )
     end
     protein_peptide_rows = collect(protein_peptide_rows)
-    peptides = [first(row) for row in protein_peptide_rows]
-    proteins = [(protein_name = row[2], decoy = last(row)) for row in protein_peptide_rows]
+    peptides = [row.sequence for row in protein_peptide_rows]
+    proteins = [(protein_name = row.protein_name, decoy = row.decoy) for row in protein_peptide_rows]
     @time protein_inference_dict = infer_proteins(
         proteins,
         peptides
