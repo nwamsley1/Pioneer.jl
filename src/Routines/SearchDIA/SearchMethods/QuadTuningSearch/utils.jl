@@ -389,12 +389,39 @@ function summarize_precursor(
     if length(iso_idx) == 3
         println("bro... $iso_idx")
     end
-        return (center_mz = missing, 
-                δ = missing, 
-                yt = missing, 
-                x0 = missing, 
-                x1 = missing, 
-                prec_charge = missing)
+    
+    #If we only got the M0
+    if (length(iso_idx) == 1) & (iso_idx[1] == 1)
+        m0_idx = 1
+        m1_mz = iso_mz[m0_idx] + (NEUTRON/prec_charge[m0_idx])
+
+        return (center_mz = center_mz[m0_idx], 
+            δ = δ[m0_idx], 
+            yt = 10.0f0, # assume this is the most extreme ratio we could see
+            x0 = iso_mz[m0_idx]-center_mz[m0_idx],
+            x1 = m1_mz - center_mz[m0_idx],
+            prec_charge = prec_charge[m0_idx]) 
+    end
+
+    #If we only got the M1
+    if (length(iso_idx) == 1) & (iso_idx[1] == 2)
+        m1_idx = 1
+        mo_mz = iso_mz[m1_idx] - (NEUTRON/prec_charge[m1_idx])
+
+        return (center_mz = center_mz[m1_idx], 
+               δ = δ[m1_idx], 
+               yt = -10.0f0, # assume this is the most extreme ratio we could see
+               x0 = mo_mz - center_mz[m1_idx],
+               x1 = iso_mz[m1_idx]-center_mz[m1_idx],
+               prec_charge = prec_charge[m1_idx])
+    end
+
+    return (center_mz = missing, 
+            δ = missing, 
+            yt = missing, 
+            x0 = missing, 
+            x1 = missing, 
+            prec_charge = missing)
 end
 
 """
@@ -610,7 +637,8 @@ function perform_quad_transmission_search(
                 weight = weights[colid],
                 iso_idx = isotope_idx,
                 center_mz = center_mz,
-                n_matches = n_matches
+                n_matches = n_matches,
+               # isolation_width = isolation_width
             ))
         end
         #Arrow.write("/Users/n.t.wamsley/Desktop/test.arrow", DataFrame(tuning_results))
@@ -836,7 +864,7 @@ function plot_charge_distributions(psms::DataFrame, results::QuadTuningSearchRes
             label="Charge $charge",
             xlabel = "m/z offset of M0",
             ylabel = L"log(\delta_i\frac{x_0}{x_1})",
-            ylim = (-5, 5)
+            ylim = (-10.5, 10.5)
         )
     end
     savefig(p, joinpath(results.quad_plot_dir, "quad_data", fname*".pdf"))
