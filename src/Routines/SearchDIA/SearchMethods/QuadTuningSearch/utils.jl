@@ -638,7 +638,6 @@ function perform_quad_transmission_search(
                 iso_idx = isotope_idx,
                 center_mz = center_mz,
                 n_matches = n_matches,
-               # isolation_width = isolation_width
             ))
         end
         #Arrow.write("/Users/n.t.wamsley/Desktop/test.arrow", DataFrame(tuning_results))
