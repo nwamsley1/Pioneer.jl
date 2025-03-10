@@ -637,7 +637,7 @@ function perform_quad_transmission_search(
                 weight = weights[colid],
                 iso_idx = isotope_idx,
                 center_mz = center_mz,
-                n_matches = n_matches,
+                n_matches = n_matches
             ))
         end
         #Arrow.write("/Users/n.t.wamsley/Desktop/test.arrow", DataFrame(tuning_results))
