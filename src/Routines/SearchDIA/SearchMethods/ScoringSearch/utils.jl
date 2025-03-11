@@ -147,6 +147,19 @@ function merge_sorted_psms_scores(
         )
     end
 
+    function addPrecursorToHeap!(
+        psms_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
+        sort_key::AbstractVector{S},
+        table_idx::Int64,
+        row_idx::Int64) where {S<:AbstractString}
+        push!(
+            psms_heap,
+            (
+            sort_key[row_idx],
+            table_idx
+            )
+        )
+    end
     ##println("psms input_paths $input_paths")
     #input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
     tables = [Arrow.Table(path) for path in input_paths]

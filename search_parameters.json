@@ -1,0 +1,139 @@
+{
+    "global": {
+        "isotope_settings": {
+            "err_bounds_first_pass": [
+                1,
+                0
+            ],
+            "err_bounds_quant_search": [
+                3,
+                0
+            ],
+            "combine_traces": false,
+            "partial_capture": true,
+            "min_fraction_transmitted": 0.25
+        },
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
+        "normalization": {
+            "n_rt_bins": 100,
+            "spline_n_knots": 7
+        },
+        "huber_override": {
+            "override_huber_delta_fit": true,
+            "huber_delta": 1500.0
+        },
+        "match_between_runs": true
+    },
+    "parameter_tuning": {
+        "fragment_settings": {
+            "min_count": 7,
+            "max_rank": 25,
+            "tol_ppm": 20.0,
+            "min_score": 22,
+            "min_spectral_contrast": 0.9,
+            "min_log2_ratio": 1.5,
+            "min_top_n": [
+                3,
+                3
+            ],
+            "n_isotopes": 1
+        },
+        "search_settings": {
+            "sample_rate": 0.02,
+            "min_samples": 3500,
+            "min_quad_tuning_psms": 5000,
+            "min_quad_tuning_fragments": 3,
+            "max_presearch_iters": 10,
+            "frag_err_quantile": 0.01
+        }
+    },
+    "first_search": {
+        "fragment_settings": {
+            "min_count": 4,
+            "max_rank": 25,
+            "min_score": 15,
+            "min_spectral_contrast": 0.5,
+            "min_log2_ratio": 0.0,
+            "min_top_n": [
+                2,
+                3
+            ],
+            "n_isotopes": 1
+        },
+        "scoring_settings": {
+            "n_train_rounds": 2,
+            "max_iterations": 20,
+            "max_q_value": 0.01
+        },
+        "irt_mapping": {
+            "max_prob_to_impute_irt": 0.75,
+            "fwhm_nstd": 4,
+            "irt_nstd": 4
+        }
+    },
+    "quant_search": {
+        "fragment_settings": {
+            "min_count": 3,
+            "min_y_count": 2,
+            "max_rank": 255,
+            "min_spectral_contrast": 0.0,
+            "min_log2_ratio": -1.7,
+            "min_top_n": [
+                2,
+                3
+            ],
+            "n_isotopes": 2
+        },
+        "chromatogram": {
+            "smoothing_strength": 0.0002,
+            "padding": 20,
+            "max_apex_offset": 2
+        }
+    },
+    "acquisition": {
+        "nce": 25,
+        "quad_transmission": {
+            "fit_from_data": true,
+            "overhang": 0.25,
+            "smoothness": 5.0
+        }
+    },
+    "rt_alignment": {
+        "n_bins": 200,
+        "bandwidth": 0.25,
+        "sigma_tolerance": 4,
+        "min_probability": 0.95
+    },
+    "optimization": {
+        "deconvolution": {
+            "lambda": 0.0,
+            "huber_delta": 300,
+            "huber_exp": 1.5,
+            "huber_iters": 15,
+            "newton_iters": 100,
+            "newton_accuracy": 10,
+            "max_diff": 0.01
+        },
+        "machine_learning": {
+            "max_psms_in_memory": 50000000,
+            "min_trace_prob": 0.75,
+            "spline_points": 500,
+            "interpolation_points": 10
+        }
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": true
+    },
+    "output": {
+        "write_csv": true,
+        "delete_temp": true,
+        "plots_per_page": 12
+    },
+    "paths": {
+        "ms_data": "/home/nathan/Projects/data/yeast_pioneer_test/yeast_alternating_3min_v2/arrow_out",
+        "library": "/home/nathan/Projects/data/yeast_pioneer_test/yeast_alternating_3min_v2/yeast.poin",
+        "results": "/home/nathan/Projects/data/yeast_pioneer_test/yeast_alternating_3min_v2/results"
+    }
+}
