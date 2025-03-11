@@ -39,7 +39,7 @@ function partitionScansToThreads(spectra::AbstractArray,
     sort!(@view(spectra_ids[bin_start:bin_stop]), by = x->round_float32_alt(prec_mz[x],6))
 
     spectra_count = length(spectra_ids)
-    scans_per_thread = spectra_count÷n_threads + n_threads
+    scans_per_thread = spectra_count÷n_threads + n_threads + 1
     thread_tasks = [[0, zeros(Int64, scans_per_thread)] for _ in range(1, n_threads)]
     for (thread_id, task) in enumerate(thread_tasks)
         task[1] = thread_id

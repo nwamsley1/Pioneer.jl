@@ -182,6 +182,7 @@ function getProtAbundance(protein::String,
                             species::String,
                             peptides::AbstractVector{UInt32}, 
                             experiments::AbstractVector{UInt16}, 
+                            use_for_quant::AbstractVector{Bool},
                             abundance::AbstractVector{Union{T, Missing}},
                             target_out::Vector{Union{Missing, Bool}},
                             species_out::Vector{Union{Missing, String}},
@@ -291,9 +292,9 @@ function LFQ(prot::DataFrame,
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
     while batch_start_idx <= size(prot, 1)
-        last_prot_idx = prot[batch_end_idx,:protein_idx]
+        last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
         while batch_end_idx < size(prot, 1)
-            if prot[batch_end_idx+1,:protein_idx]!=last_prot_idx
+            if prot[batch_end_idx+1,:inferred_protein_group]!=last_prot_idx
                 break
             end
             batch_end_idx += 1
@@ -309,7 +310,7 @@ function LFQ(prot::DataFrame,
         filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
-            [:target, :species, :accession_numbers]
+            [:target, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))
@@ -335,12 +336,15 @@ function LFQ(prot::DataFrame,
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            getProtAbundance(protein[:accession_numbers], 
+            #filter!(x->x.use_for_protein_quant::Bool, data) #Maybe this is a bit slow. But works for now. 
+            data = data[data[!,:use_for_protein_quant],:]
+            getProtAbundance(protein[:inferred_protein_group], 
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
                                 protein[:species],
                                 data[!,:precursor_idx], 
                                 data[!,:ms_file_idx], 
+                                data[!,:use_for_protein_quant],
                                 data[!,quant_col],
                                 out[:target],
                                 out[:species],

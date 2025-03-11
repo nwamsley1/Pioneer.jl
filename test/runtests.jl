@@ -115,4 +115,5 @@ end
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
     include("./UnitTests/empiricalLibTests.jl")
+    include("./UnitTests/proteinInference.jl")
 end

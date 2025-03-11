@@ -436,6 +436,7 @@ function get_protein_groups(
 )
 
     function getProteinGroupsDict(
+        protein_inference_dict::Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}},
         psm_precursor_idx::AbstractVector{UInt32},
         psm_score::AbstractVector{Float32},
         psm_is_target::AbstractVector{Bool},
@@ -444,7 +445,7 @@ function get_protein_groups(
 
         accession_numbers = getAccessionNumbers(precursors)
         precursor_sequence = getSequence(precursors)
-        protein_groups = Dictionary{@NamedTuple{protein_idx::UInt32, target::Bool},
+        protein_groups = Dictionary{@NamedTuple{protein_name::String, target::Bool},
         @NamedTuple{
             max_pg_score::Float32, 
             peptides::Set{String}}
@@ -453,10 +454,24 @@ function get_protein_groups(
         for i in range(1, length(psm_precursor_idx))
             precursor_idx = psm_precursor_idx[i]
             sequence = precursor_sequence[precursor_idx]
+            
+            # Create key for protein_inference_dict lookup
+            peptide_key = (peptide = sequence, decoy = !psm_is_target[i])
+            
+            # Check if this peptide exists in our protein inference dictionary
+            if !haskey(protein_inference_dict, peptide_key)
+                continue
+            end
+            
+            # Exclude peptide 
+            if protein_inference_dict[peptide_key][:retain] == false
+                continue
+            end
+            
             score = psm_score[i]
-            protein_idx = getProteinGroupId(precursors, accession_numbers[precursor_idx])
-            #protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
-            keyname = (protein_idx = protein_idx, target = psm_is_target[i])
+            protein_name = protein_inference_dict[peptide_key][:protein_name]
+            keyname = (protein_name = protein_name, target = psm_is_target[i])
+            
             if haskey(protein_groups, keyname)
                 max_pg_score, peptides = protein_groups[keyname]
                 if score > max_pg_score
@@ -467,37 +482,46 @@ function get_protein_groups(
             else
                 sequences = Set{String}((sequence,))
                 insert!(protein_groups,
-                keyname,
-                        (max_pg_score = score,
-                        peptides = sequences)
+                    keyname,
+                    (max_pg_score = score,
+                    peptides = sequences)
                 )
             end
         end
+        
         filter!(x->length(x[:peptides])>=min_peptides, protein_groups)
-        #modify the table
-        #psms_table = DataFrame(Tables.columntable(psms_table))
+        
+        # Rest of the function remains the same...
         max_pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
         for i in range(1, length(psm_precursor_idx))
             precursor_idx = psm_precursor_idx[i]
-            protein_idx = getProteinGroupId(precursors, accession_numbers[precursor_idx])
-            #protein_idx = accession_number_to_id[accession_numbers[precursor_idx]]
-            key = (protein_idx = protein_idx, target = psm_is_target[i])
+            sequence = precursor_sequence[precursor_idx]
+            
+            # Create key for protein_inference_dict lookup
+            peptide_key = (peptide = sequence, decoy = !psm_is_target[i])
+            
+            # Skip if not in dictionary
+            if !haskey(protein_inference_dict, peptide_key)
+                max_pg_score[i] = missing
+                continue
+            end
+            
+            protein_name = protein_inference_dict[peptide_key][:protein_name]
+            key = (protein_name = protein_name, target = psm_is_target[i])
+            
             if haskey(protein_groups, key)
                 max_pg_score[i] = protein_groups[key][:max_pg_score]
             else
                 max_pg_score[i] = missing
             end
         end
-        #Arrow.write(
-        #    psms_path,
-        #    psms_table
-        #)
+        
         return max_pg_score, protein_groups
     end
 
     function writeProteinGroups(
                                     protein_groups::Dictionary{
-                                    @NamedTuple{protein_idx::UInt32, target::Bool},
+                                    @NamedTuple{protein_name::String, target::Bool},
                                     @NamedTuple{max_pg_score::Float32,  peptides::Set{String}}
                                     },
                                     protein_groups_path::String)
@@ -506,14 +530,14 @@ function get_protein_groups(
         values_array = values(protein_groups)
 
         # Create vectors for each column
-        protein_idx = [k[:protein_idx] for k in keys_array]
+        protein_name = [k[:protein_name] for k in keys_array]
         target = [k[:target] for k in keys_array]
         max_pg_score = [v[:max_pg_score] for v in values_array]
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
 
         # Create DataFrame
         df = DataFrame((
-            protein_idx = protein_idx,
+            protein_name = protein_name,
             target = target,
             max_pg_score = max_pg_score,
         )
@@ -524,8 +548,39 @@ function get_protein_groups(
         return size(df, 1)
     end
 
-
     pg_count = 0
+    #Concatenate psms 
+    ##########
+    #Protein inference
+    ##########
+    passing_psms = Arrow.Table(passing_psms_paths)
+    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy), Tuple{String, String, Bool}}}()
+    passing_precursor_idx = passing_psms[:precursor_idx]
+    accession_numbers = getAccessionNumbers(precursors)
+    decoys = getIsDecoy(precursors)
+    sequences = getSequence(precursors)
+    for pid in passing_precursor_idx
+        push!(
+            protein_peptide_rows, 
+            (
+                sequence = sequences[pid],
+                protein_name = accession_numbers[pid],
+                decoy = decoys[pid]
+            )
+        )
+    end
+    protein_peptide_rows = collect(protein_peptide_rows)
+    peptides = [row.sequence for row in protein_peptide_rows]
+    proteins = [(protein_name = row.protein_name, decoy = row.decoy) for row in protein_peptide_rows]
+    @time protein_inference_dict = infer_proteins(
+        proteins,
+        peptides
+        )
+    #Returns Dictionary{String, Tuple{String, Bool}}
+    #Key is a peptide base sequence (no mods or charge state)
+    #Value is 1) protein group name 2) Whether to exclude the peptide from protien quant and exclude
+    #for purposes of protein scoring as well .
+
     for (ms_file_idx, file_path) in enumerate(passing_psms_paths)#readdir(passing_psms_folder, join=true)
         _, extention = splitext(file_path)
         if extention != ".arrow"
@@ -535,6 +590,7 @@ function get_protein_groups(
         passing_pg_paths[ms_file_idx] = protein_groups_path
         psms_table = Arrow.Table(file_path)
         max_pg_score, protein_groups = getProteinGroupsDict(
+            protein_inference_dict,
             psms_table[:precursor_idx],
             psms_table[:prob],
             psms_table[:target],
@@ -560,7 +616,33 @@ function get_protein_groups(
         :max_pg_score,
         N = 1000000
     )
-    return sorted_pg_scores_path
+    return sorted_pg_scores_path, protein_inference_dict
+end
+
+function add_protein_inferrence_col(
+    passing_psms_paths::Vector{String},
+    protein_inference_dict::Dictionary{@NamedTuple{peptide::String, decoy::Bool}, @NamedTuple{protein_name::String, decoy::Bool, retain::Bool}},
+    precursor_sequences::AbstractVector{S},
+    precursor_is_decoy::AbstractVector{Bool},
+) where {S<:AbstractString}
+
+    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+        passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+        precursor_idx = passing_psms[!,:precursor_idx]
+        inferred_protein_group = Vector{String}(undef, length(precursor_idx))
+        use_for_protein_quant = zeros(Bool, length(precursor_idx))
+        for (i, pid) in enumerate(precursor_idx)
+            protein_group, decoy, use_for_inference = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid])]
+            inferred_protein_group[i] = protein_group
+            use_for_protein_quant[i] = use_for_inference
+        end
+        passing_psms[!,:use_for_protein_quant] = use_for_protein_quant
+        passing_psms[!,:inferred_protein_group] = inferred_protein_group
+        writeArrow(
+            file_path,
+            passing_psms            
+        )
+    end
 end
 
 """
@@ -601,6 +683,18 @@ function merge_sorted_protein_groups(
         for i in range(1, max(min(length(pg_batch_col), n - 1), 1))
             table_idx, idx = sorted_tuples[i]
             pg_batch_col[i] = tables[table_idx][col][idx]::R
+        end
+    end
+
+    function fillColumn!(
+        pg_batch_col::Vector{S},
+        col::Symbol,
+        sorted_tuples::Vector{Tuple{Int64, Int64}},
+        tables::Vector{Arrow.Table},
+        n) where {S<:AbstractString}
+        for i in range(1, max(min(length(pg_batch_col), n - 1), 1))
+            table_idx, idx = sorted_tuples[i]
+            pg_batch_col[i] = tables[table_idx][col][idx]::S
         end
     end
 
