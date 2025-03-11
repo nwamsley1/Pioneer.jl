@@ -192,7 +192,7 @@ function checkParseSpecLibParams(json_path::String)
 
     # expand any home directories "~"
     params["library_params"]["input_lib_path"] = expanduser(params["library_params"]["input_lib_path"])
-    params["library_params"]["output_lib_path"] = expanduser(params["library_params"]["input_lib_path"])
+    params["library_params"]["output_lib_path"] = expanduser(params["library_params"]["output_lib_path"])
     
     return params
 end

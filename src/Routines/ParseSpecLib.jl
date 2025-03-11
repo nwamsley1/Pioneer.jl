@@ -219,7 +219,7 @@ Output:
 - Returns the built spectral library
 """
 function ParseSpecLib(params_path::String)
-
+    
     params = checkParseSpecLibParams(params_path)
     
     # Extract parameters
@@ -231,7 +231,6 @@ function ParseSpecLib(params_path::String)
     entrapment_groups = params["library_params"]["entrapment_groups"]
     #"../Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv"
     #test_lib = ParseSpecLib("/Users/nathanwamsley/Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv").libdf;
-
     # Initialize library
     test_lib = BasicEmpiricalLibrary(lib_path)
 
