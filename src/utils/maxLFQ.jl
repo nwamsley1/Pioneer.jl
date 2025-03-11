@@ -292,9 +292,9 @@ function LFQ(prot::DataFrame,
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
     while batch_start_idx <= size(prot, 1)
-        last_prot_idx = prot[batch_end_idx,:protein_idx]
+        last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
         while batch_end_idx < size(prot, 1)
-            if prot[batch_end_idx+1,:protein_idx]!=last_prot_idx
+            if prot[batch_end_idx+1,:inferred_protein_group]!=last_prot_idx
                 break
             end
             batch_end_idx += 1

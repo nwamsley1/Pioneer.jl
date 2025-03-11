@@ -198,7 +198,6 @@ function writeProteinGroupsCSV(
     if isfile(wide_protein_groups_arrow)
         rm(wide_protein_groups_arrow)
     end
-    
     # Update wide columns to include n_peptides
     wide_columns = ["species", "protein", "target", "n_peptides"]
 
