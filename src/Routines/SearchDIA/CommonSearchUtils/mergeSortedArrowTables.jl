@@ -35,6 +35,22 @@ function addPrecursorToHeap!(
     )
 end
 
+function addPrecursorToHeap!(
+    precursor_heap::BinaryMinHeap{Tuple{S, UInt32, Int64}},
+    first_sort_key::AbstractVector{S},
+    second_sort_key::AbstractVector{UInt32},
+    table_idx::Int64,
+    row_idx::Int64) where {S<:AbstractString}
+    push!(
+        precursor_heap,
+        (
+        first_sort_key[row_idx],
+        second_sort_key[row_idx],
+        table_idx
+        )
+    )
+end
+
 function mergeSortedArrowTables(
     input_dir::String, 
     output_path::String,
@@ -116,7 +132,7 @@ function mergeSortedArrowTables(
     peptide_batch = getEmptyDF(first(tables), N)
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, N)
     peptide_batch_names = Symbol.(names(peptide_batch))
-    precursor_heap = BinaryMinHeap{Tuple{UInt32, UInt32, Int64}}()
+    precursor_heap = BinaryMinHeap{Tuple{eltype(first(tables)[first(sort_keys)]), UInt32, Int64}}()
     for (i, table) in enumerate(tables)
         addPrecursorToHeap!(
             precursor_heap,
