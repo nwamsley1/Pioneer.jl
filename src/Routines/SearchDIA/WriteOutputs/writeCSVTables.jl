@@ -177,7 +177,7 @@ function writeProteinGroupsCSV(
     function makeWideFormat(
         longdf::DataFrame)
         # First create a DataFrame with the non-abundance columns we want to keep
-        metadata_df = unique(longdf[:, [:species, :protein, :target, :n_peptides]])
+        metadata_df = unique(longdf[:, [:species, :protein, :target]])#, :n_peptides]])
         
         # Create the abundance wide format
         abundance_df = unstack(longdf,
@@ -199,7 +199,7 @@ function writeProteinGroupsCSV(
         rm(wide_protein_groups_arrow)
     end
     # Update wide columns to include n_peptides
-    wide_columns = ["species", "protein", "target", "n_peptides"]
+    wide_columns = ["species", "protein", "target"]
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_protein_groups_path,"w") do io1
