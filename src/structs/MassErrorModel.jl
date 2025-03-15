@@ -58,7 +58,7 @@ end
 =#
 #Correct an empeirical mass. 
 function getCorrectedMz(mem::MassErrorModel, mz::Float32)
-    return  Float32(mz - getMassOffset(mem)*(mz/1e6))
+    return Float32(mz - getMassOffset(mem)*(mz/1e6))
 end
 
 """
