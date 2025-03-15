@@ -237,7 +237,7 @@ function matchPeaks!(matches::Vector{M}, #Pre-allocated container for Matched Io
     #Corrected m/z of the empirical peak 
     corrected_empirical_mz = getCorrectedMz(mass_err_model, masses[peak_idx])
     #Mass tolerance of the theoretical ion
-    low, high = getMzBounds(mass_err_model, getMZ(ions[ion_idx]))
+    low, high = (mass_err_model, getMZ(ions[ion_idx]))
 
     @inbounds @fastmath while (peak_idx <= length(masses)) & (ion_idx <= max_ions_idx)
         #if (peak_idx == 180) & (ions[ion_idx].prec_id == 724316)& (abs(getMZ(ions[ion_idx]) - 231.0975f0) <1e-3)

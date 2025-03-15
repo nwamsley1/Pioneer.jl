@@ -17,15 +17,45 @@ function getLocation(mem::MassErrorModel)
 end
 
 #Adjust a theoretical mass to be
+#=
+"""
+    (mem::MassErrorModel)(mass::Float32) -> Tuple{Float32, Float32}
+
+Calculate mass tolerance window based on a mass error model.
+
+Given an input observed m/z ratio, this function calculates the lower and upper bounds of a 
+matching theoretical m/z ratio tolerance window.
+
+# Arguments
+- `mass::Float32`: The target m/z value to calculate tolerances for
+
+# Returns
+- `Tuple{Float32, Float32}`: A tuple containing `(lower_bound, upper_bound)` where:
+  - `lower_bound`: The mass minus the left tolerance
+  - `upper_bound`: The mass plus the right tolerance
+
+# Details
+The function:
+1. Converts the mass to ppm scale (dividing by 1e6)
+2. Applies a mass offset correction
+3. Calculates asymmetric tolerance windows using the model's left and right tolerance parameters
+4. Returns the lower and upper bounds as Float32 values
+
+# Examples
+```julia
+mem = MassErrorModel(0.3, 10.0, 10.0)  # offset, left_tol, right_tol
+lower, upper = mem(1000.0f0)  # Calculate window for mass 1000 Da
+```
+"""
 function (mem::MassErrorModel)(mass::Float32)
     ppm_norm = Float32(1e6)
     ppm = mass/ppm_norm
-    mass += getMassOffset(mem)*ppm
+    mass -= getMassOffset(mem)*ppm
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
     return Float32(mass - l_tol), Float32(mass + r_tol)
 end
-
+=#
 #Correct an empeirical mass. 
 function getCorrectedMz(mem::MassErrorModel, mz::Float32)
     return  Float32(mz - getMassOffset(mem)*(mz/1e6))
@@ -53,7 +83,16 @@ A theoretical mass of 1000000.0f0 m/z, would have a tolerance of (999990.0f0, 10
 ### Examples 
 
 """
+#Bounds for the theoretical mass 
 function getMzBounds(mem::MassErrorModel, mass::Float32)
+    ppm = mass/(1e6)
+    r_tol = getRightTol(mem)*ppm
+    l_tol = getLeftTol(mem)*ppm
+    return Float32(mass - r_tol), Float32(mass + l_tol)
+end
+
+#Bounds for the empirical mass 
+function getMzBoundsReverse(mem::MassErrorModel, mass::Float32)
     ppm = mass/(1e6)
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
