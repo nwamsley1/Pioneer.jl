@@ -84,7 +84,7 @@ A theoretical mass of 1000000.0f0 m/z, would have a tolerance of (999990.0f0, 10
 
 """
 #Bounds for the theoretical mass 
-function getMzBounds(mem::MassErrorModel, mass::Float32)
+function getMzBoundsReverse(mem::MassErrorModel, mass::Float32)
     ppm = mass/(1e6)
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
@@ -92,7 +92,7 @@ function getMzBounds(mem::MassErrorModel, mass::Float32)
 end
 
 #Bounds for the empirical mass 
-function getMzBoundsReverse(mem::MassErrorModel, mass::Float32)
+function getMzBounds(mem::MassErrorModel, mass::Float32)
     ppm = mass/(1e6)
     r_tol = getRightTol(mem)*ppm
     l_tol = getLeftTol(mem)*ppm
