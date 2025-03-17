@@ -460,7 +460,7 @@ function get_protein_groups(
         precursor_sequence = getSequence(precursors)
         protein_groups = Dictionary{@NamedTuple{protein_name::String, target::Bool},
         @NamedTuple{
-            max_pg_score::Float32, 
+            pg_score::Float32, 
             peptides::Set{String}}
         }()
 
@@ -486,26 +486,30 @@ function get_protein_groups(
             keyname = (protein_name = protein_name, target = psm_is_target[i])
             
             if haskey(protein_groups, keyname)
-                max_pg_score, peptides = protein_groups[keyname]
-                if score > max_pg_score
-                    max_pg_score = score
-                end
+                pg_score, peptides = protein_groups[keyname]
+                pg_score += log(1 - score)
                 push!(peptides, sequence)
-                protein_groups[keyname] = (max_pg_score = max_pg_score, peptides = peptides)
+                protein_groups[keyname] = (pg_score = pg_score, peptides = peptides)
             else
                 sequences = Set{String}((sequence,))
                 insert!(protein_groups,
                     keyname,
-                    (max_pg_score = score,
+                    (pg_score = log(1 - score),
                     peptides = sequences)
                 )
             end
         end
         
         filter!(x->length(x[:peptides])>=min_peptides, protein_groups)
+
+        for key in keys(protein_groups)
+            pg_score, peptides = protein_groups[key]
+            pg_score = (1 - exp(pg_score))
+            protein_groups[key] = (pg_score = pg_score, peptides = peptides)
+        end
         
         # Rest of the function remains the same...
-        max_pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
+        pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
         for i in range(1, length(psm_precursor_idx))
             precursor_idx = psm_precursor_idx[i]
             sequence = precursor_sequence[precursor_idx]
@@ -515,7 +519,7 @@ function get_protein_groups(
             
             # Skip if not in dictionary
             if !haskey(protein_inference_dict, peptide_key)
-                max_pg_score[i] = missing
+                pg_score[i] = missing
                 continue
             end
             
@@ -523,19 +527,19 @@ function get_protein_groups(
             key = (protein_name = protein_name, target = psm_is_target[i])
             
             if haskey(protein_groups, key)
-                max_pg_score[i] = protein_groups[key][:max_pg_score]
+                pg_score[i] = protein_groups[key][:pg_score]
             else
-                max_pg_score[i] = missing
+                pg_score[i] = missing
             end
         end
         
-        return max_pg_score, protein_groups
+        return pg_score, protein_groups
     end
 
     function writeProteinGroups(
                                     protein_groups::Dictionary{
                                     @NamedTuple{protein_name::String, target::Bool},
-                                    @NamedTuple{max_pg_score::Float32,  peptides::Set{String}}
+                                    @NamedTuple{pg_score::Float32,  peptides::Set{String}}
                                     },
                                     protein_groups_path::String)
         # Extract keys and values
@@ -545,17 +549,17 @@ function get_protein_groups(
         # Create vectors for each column
         protein_name = [k[:protein_name] for k in keys_array]
         target = [k[:target] for k in keys_array]
-        max_pg_score = [v[:max_pg_score] for v in values_array]
+        pg_score = [v[:pg_score] for v in values_array]
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
 
         # Create DataFrame
         df = DataFrame((
             protein_name = protein_name,
             target = target,
-            max_pg_score = max_pg_score,
+            pg_score = pg_score,
         )
         )
-        sort!(df, :max_pg_score, rev = true)
+        sort!(df, :pg_score, rev = true)
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
         return size(df, 1)
@@ -602,7 +606,7 @@ function get_protein_groups(
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         passing_pg_paths[ms_file_idx] = protein_groups_path
         psms_table = Arrow.Table(file_path)
-        max_pg_score, protein_groups = getProteinGroupsDict(
+        pg_score, protein_groups = getProteinGroupsDict(
             protein_inference_dict,
             psms_table[:precursor_idx],
             psms_table[:prob],
@@ -611,7 +615,7 @@ function get_protein_groups(
             min_peptides = min_peptides
         )
         psms_table = DataFrame(Tables.columntable(psms_table))
-        psms_table[!,:max_pg_score] = max_pg_score
+        psms_table[!,:pg_score] = pg_score
         writeArrow(file_path, psms_table)
         pg_count += writeProteinGroups(
             protein_groups,
@@ -626,7 +630,7 @@ function get_protein_groups(
     merge_sorted_protein_groups(
         protein_groups_folder,
         sorted_pg_scores_path,
-        :max_pg_score,
+        :pg_score,
         N = 1000000
     )
     return sorted_pg_scores_path, protein_inference_dict

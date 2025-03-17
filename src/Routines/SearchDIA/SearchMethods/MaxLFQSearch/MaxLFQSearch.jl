@@ -39,7 +39,8 @@ struct MaxLFQSearchParameters <: SearchParameters
     # LFQ parameters
     q_value_threshold::Float32
     batch_size::Int64
-    
+    min_peptides::Int64
+
     # Output parameters
     write_csv::Bool
     delete_temp::Bool
@@ -51,6 +52,7 @@ struct MaxLFQSearchParameters <: SearchParameters
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
+        protein_inference_params = params.protein_inference
         
         new(
             Int64(norm_params.n_rt_bins),
@@ -58,6 +60,7 @@ struct MaxLFQSearchParameters <: SearchParameters
             Bool(maxLFQ_params.run_to_run_normalization),
             Float32(global_params.scoring.q_value_threshold),
             Int64(100000),  # Default batch size
+            Int64(protein_inference_params.min_peptides),
             Bool(output_params.write_csv),
             Bool(output_params.delete_temp),
             params  # Store full parameters
@@ -166,7 +169,8 @@ function summarize_results!(
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
             search_context.pg_score_to_qval[],#getPGQValueInterp(search_context),
-            batch_size = params.batch_size
+            batch_size = params.batch_size,
+            min_peptides = params.min_peptides
         )
 
         @info "Writing protein group results..."

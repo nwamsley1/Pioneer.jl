@@ -129,6 +129,11 @@ Most parameters should not be changed, but the following may need adjustement.
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 
+### Protein Inference Parameters
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `min_peptides` | Int | Minimum number of peptides required for a protein group (default: 1) |
+
 ### MaxLFQ Parameters
 
 | Parameter | Type | Description |
