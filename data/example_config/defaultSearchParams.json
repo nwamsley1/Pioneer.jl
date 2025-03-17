@@ -108,6 +108,9 @@
             "interpolation_points": 10
         }
     },
+    "proteinInference": {
+        "min_peptides": 1
+    },
     "maxLFQ": {
         "run_to_run_normalization": true
     },

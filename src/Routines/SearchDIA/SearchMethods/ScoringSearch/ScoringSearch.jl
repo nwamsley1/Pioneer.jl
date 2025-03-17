@@ -34,11 +34,13 @@ struct ScoringSearchParameters <: SearchParameters
     pg_prob_spline_points_per_bin::Int64  # Added based on original struct
     pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
     match_between_runs::Bool
+    min_peptides::Int64
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings 
+        protein_inference_params = params.protein_inference
         
         new(
             Int64(ml_params.max_psms_in_memory),
@@ -47,7 +49,8 @@ struct ScoringSearchParameters <: SearchParameters
             Int64(ml_params.interpolation_points),
             Int64(ml_params.spline_points),        # Using same value for protein groups
             Int64(ml_params.interpolation_points), # Using same value for protein groups
-            Bool(global_params.match_between_runs)
+            Bool(global_params.match_between_runs),
+            Int64(protein_inference_params.min_peptides)
         )
     end
 end
@@ -198,7 +201,8 @@ function summarize_results!(
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
             temp_folder,
-            getPrecursors(getSpecLib(search_context))
+            getPrecursors(getSpecLib(search_context)),
+            min_peptides = params.min_peptides
         )
 
         add_protein_inferrence_col(

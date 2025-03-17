@@ -287,7 +287,8 @@ function LFQ(prot::DataFrame,
                 file_id_to_parsed_name::Vector{String},
                 q_value_threshold::Float32,
                 score_to_qval::Interpolations.Extrapolation;
-                batch_size = 100000)
+                batch_size = 100000,
+                min_peptides = 2)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
@@ -364,7 +365,7 @@ function LFQ(prot::DataFrame,
                 out[i,:file_name] = file_id_to_parsed_name[out[i,:experiments]]
             end
         end
-        filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>1), out);
+        filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>min_peptides), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
         if size(out, 1) == 0
             continue

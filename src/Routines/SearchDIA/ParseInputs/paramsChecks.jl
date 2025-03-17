@@ -139,6 +139,10 @@ function checkParams(json_path::String)
     check_param(ml_params, "spline_points", Integer)
     check_param(ml_params, "interpolation_points", Integer)
 
+    # Validate Protein Inference parameters
+    output = params["proteinInference"]
+    check_param(output, "min_peptides", Integer)
+
     # Validate MaxLFQ parameters
     output = params["maxLFQ"]
     check_param(output, "run_to_run_normalization", Bool)
