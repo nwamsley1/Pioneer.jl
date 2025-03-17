@@ -382,6 +382,7 @@ getStructuralMods(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:
 getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_charge]::UInt8
 getPrecSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_sulfur_count]::UInt8
 getIsDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:is_decoy]::Bool
+getIsChannelDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:channel_decoy]::Bool
 function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
     sl.libdf[frag_idx,:entrapment_group_id]::UInt8
 end

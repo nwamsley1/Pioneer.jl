@@ -219,6 +219,11 @@ function process_file!(
                 params::P
             ) where {P<:ParameterTuningSearchParameters}
                 
+                #seqs = getSequence(precursors)
+                #k_end = [seqs[pid][end]=='K' for pid in new_psms[!,:precursor_idx]]
+                #new_psms = new_psms[k_end,:]
+                #println("TEST")
+
                 add_tuning_search_columns!(
                     new_psms,
                     spectra,

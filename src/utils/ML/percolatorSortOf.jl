@@ -115,7 +115,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             minimum(probs), maximum(probs), mean(probs)
         end
         
-        for (key, sub_psms) in pairs(groupby(psms, [:sequence,:structural_mods,:charge, :isotopes_captured]))#pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
+        for (key, sub_psms) in pairs(groupby(psms, [:sequence,:structural_mods,:charge,:isotopes_captured]))#pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
             min_prob, max_prob, mean_prob = summarize_prob(sub_psms[!,:prob])
             set_column!(sub_psms[!,:min_prob], min_prob)
             set_column!(sub_psms[!,:max_prob], max_prob)

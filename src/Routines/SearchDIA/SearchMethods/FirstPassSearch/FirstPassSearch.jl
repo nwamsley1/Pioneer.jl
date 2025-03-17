@@ -218,7 +218,11 @@ function process_file!(
         rt_model = getRtIrtModel(search_context, ms_file_idx)
         # Add columns
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
-        
+        #precursors = getPrecursors(getSpecLib(search_context))
+        #seqs = getSequence(precursors)
+        #k_end = [seqs[pid][end]=='K' for pid in psms[!,:precursor_idx]]
+        #psms = psms[k_end,:]
+        #println("TEST")
         # Score PSMs
         score_psms!(psms, params)
         # Get best PSMs

@@ -40,6 +40,7 @@ function add_tuning_search_columns!(psms::DataFrame,
     spectrum_peak_count = zeros(UInt32, N);
     irt_pred = zeros(Float32, N);
     rt = zeros(Float32, N);
+    seq = Vector{String}(undef, N);
     scan_idx::Vector{UInt32} = psms[!,:scan_idx]
     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx]
     matched_ratio::Vector{Float16} = psms[!,:matched_ratio]
@@ -105,6 +106,7 @@ function filter_and_score_psms!(
     params::P
 ) where {P<:ParameterTuningSearchParameters}
     
+    Arrow.write("/Users/nathanwamsley/Desktop/psms_test3.arrow", psms)
     score_presearch!(psms)
     get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
     
@@ -122,6 +124,7 @@ function filter_and_score_psms!(
         end
         
         filter!(x -> x.best_psms::Bool, psms)
+        filter!(x->x.target::Bool, psms)
         return n_passing_psms
     end
     
@@ -494,7 +497,8 @@ function generate_rt_plot(
     results::ParameterTuningSearchResults,
     plot_path::String,
     title::String
-)
+)   
+
     n = length(results.rt)
     p = Plots.plot(
         results.rt,
