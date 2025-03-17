@@ -304,7 +304,7 @@ function LFQ(prot::DataFrame,
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         #Get rid of low scoring proteins 
         filter!(x->
-        score_to_qval(coalesce(x.max_pg_score, 0.0f0))::Float32<q_value_threshold, 
+        score_to_qval(coalesce(x.pg_score, 0.0f0))::Float32<q_value_threshold, 
         subdf);
         #Exclude precursors with mods that impact quantitation
         filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)

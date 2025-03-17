@@ -210,7 +210,7 @@ function summarize_results!(
         # Create protein group q-value interpolation
         search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_score_path,
-            :max_pg_score,
+            :pg_score,
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
