@@ -238,7 +238,7 @@ function writeProteinGroupsCSV(
                             structural_mods[pid],
                             precursor_charge[pid])
                     end
-                    subdf[i,:modified_sequence] = join(modified_sequences,';')
+                    subdf[i,:modified_sequence] = join(filter(!isempty, modified_sequences),';')
                 end
                 subdf[!,:peptides] = subdf[!,:modified_sequence]
                 select!(subdf, Not([:modified_sequence]))
