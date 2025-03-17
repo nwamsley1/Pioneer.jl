@@ -15,7 +15,7 @@
             "spline_n_knots": 7
         },
         "huber_override": {
-            "override_huber_delta_fit": true,
+            "override_huber_delta_fit": false,
             "huber_delta": 1500.0
         }, 
 		"match_between_runs": true
