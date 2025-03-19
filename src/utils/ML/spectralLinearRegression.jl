@@ -254,12 +254,12 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
                             r::Vector{Float32}, 
                             col::Int64, 
                             δ::Float32, 
-                            λ::Float32,
-                            x2_sum::Float32,
+                            λ::Float64,
+                            x2_sum::Float64,
                             xk::Float32
                             ) where {Ti<:Integer,T<:AbstractFloat}
-    L1 = zero(Float32)
-    L2 = zero(Float32)
+    L1 = zero(Float64)
+    L2 = zero(Float64)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
     #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
@@ -278,13 +278,13 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
         L2 += (hsval) * HSVAL_R * ((R)^(2))
     end
 
-    return L1 + (λ)*xk/sqrt(x2_sum), L2 + ((λ)/sqrt(x2_sum))*(1 - (xk^2)/x2_sum)
+    return L1 + (λ)*xk/sqrt(x2_sum), L2 + ((λ)/sqrt(x2_sum))*(1.0 - (xk^2.0)/x2_sum)
 end
 
-function getL1(Hs::SparseArray{Ti, Float32}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float32,
-    x2_sum::Float32,
+function getL1(Hs::SparseArray{Ti, Float32}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float64,
+    x2_sum::Float64,
     xk::Float32) where {Ti<:Integer}
-    L1 = zero(Float32)
+    L1 = zero(Float64)
     #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         #Huber
@@ -331,15 +331,15 @@ function updateX2Norm!(x0::T, x1::T, x2_sum::T) where {T<:AbstractFloat}
     return max(x2_sum + x1^2 - x0^2, zero(T))
 end
 =#
-function updateX2Norm!(x0::T, x1::T, x2_sum::T, X₁::Vector{T}, n::Int64) where {T<:AbstractFloat}
+function updateX2Norm!(x0::T, x1::T, x2_sum::Float64, X₁::Vector{T}, n::Int64) where {T<:AbstractFloat}
     x1_sq = x1^2
     x0_sq = x0^2
     #Can have numerical instability for small values of lambda. May need to recalculate the x2_sum. 
-    if (x2_sum + x1_sq - x0_sq < 0)
+    if (x2_sum + x1_sq - x0_sq < -1)
         x2_sum_old = x2_sum
         x2_sum = x2_sum + x1_sq - x0_sq
         x2_sum_new = x2_sum
-        x2_sum = zero(T)
+        x2_sum = zero(Float64)
         @turbo for col in 1:n
             x2_sum += X₁[col]*X₁[col]
         end
@@ -349,16 +349,16 @@ function updateX2Norm!(x0::T, x1::T, x2_sum::T, X₁::Vector{T}, n::Int64) where
         end
         return x2_sum
     end
-    return x2_sum + x1_sq - x0_sq
+    return max(x2_sum + x1_sq - x0_sq, zero(Float64))
 end
 
 function newton_bisection!(Hs::SparseArray{Ti, T}, 
                             r::Vector{T}, 
                             X₁::Vector{T}, 
-                            x2_sum::T,
+                            x2_sum::Float64,
                             col::Int64, 
                             δ::T, 
-                            λ::T,
+                            λ::Float64,
                             max_iter_newton::Int64, 
                             max_iter_bisection::Int64,
                             accuracy_newton::T,
@@ -434,13 +434,13 @@ end
 function bisection!(Hs::SparseArray{Ti, T}, 
                     r::Vector{T}, 
                     X₁::Vector{T}, 
-                    x2_sum::T,
+                    x2_sum::Float64,
                     col::Int64, 
                     δ::T, 
-                    λ::T, 
+                    λ::Float64, 
                     a::T, 
                     b::T, 
-                    fa::T,
+                    fa::Float64,
                     max_iter::Int64, 
                     accuracy_bisection::T,
                     ::L2Norm) where {Ti<:Integer,T<:AbstractFloat}
@@ -494,11 +494,11 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         norm_type::L2Norm) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
     #sum of squared weight
-    x2_sum = zero(T)
+    x2_sum = zero(Float64)
     @turbo for col in 1:Hs.n
         x2_sum += X₁[col]*X₁[col]
     end
-    λ = Float32(1.0)
+    λ = Float64(0.1)
     max_iter_newton = 50
     max_iter_bisection = 100 
     max_iter_outer = 1000
@@ -524,7 +524,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             
             ΔX += δx
         end
-        x2_sum = zero(T)
+        x2_sum = zero(Float64)
         @turbo for col in 1:Hs.n
             x2_sum += X₁[col]*X₁[col]
         end
