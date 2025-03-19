@@ -88,6 +88,8 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
+        huber_δs = Float32[delta0 * (delta_exp^i) for i in range(0, 2)]
+        #huber_δs = Float32[1e5] #For now, just use 100000
         println("huber_δs ", huber_δs)
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
 

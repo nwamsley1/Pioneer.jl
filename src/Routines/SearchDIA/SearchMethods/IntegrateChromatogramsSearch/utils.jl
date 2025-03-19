@@ -300,7 +300,8 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
-                params.max_diff
+                params.max_diff,
+                L2Norm()
             )
 
             # Record chromatogram points with weights

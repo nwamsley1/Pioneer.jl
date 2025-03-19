@@ -591,7 +591,8 @@ function perform_quad_transmission_search(
             params.accuracy_newton,
             params.accuracy_bisection,
             10.0,
-            params.max_diff
+            params.max_diff,
+            L2Norm()
         )
     end
 

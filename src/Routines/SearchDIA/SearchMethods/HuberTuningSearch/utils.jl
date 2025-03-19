@@ -224,7 +224,6 @@ function process_scans_for_huber!(
                 ms_file_idx, spectra, irt_start, irt_stop, rt_index, params
             )
         end
-        
         # Match peaks and process if enough matches found
         nmatches, nmisses = match_peaks_for_huber!(
             search_data,
@@ -416,7 +415,8 @@ function process_delta_values!(
             params.accuracy_newton,
             params.accuracy_bisection,
             10.0,
-            params.max_diff
+            params.max_diff,
+            L2Norm()
         )
         
         # Record results
