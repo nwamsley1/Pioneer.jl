@@ -388,7 +388,7 @@ function get_psms_passing_qval(
                             qval_interp::Interpolations.Extrapolation,
                             q_val_threshold::Float32,
 )
-    
+    #=
     #file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
     for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
         # Read the Arrow table
@@ -428,6 +428,97 @@ function get_psms_passing_qval(
         Arrow.write(
             joinpath(passing_psms_folder, basename(file_path)),
             passing_psms
+        )
+        passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
+    end
+    =#
+    
+    function add_group_level_scores_and_qvalues(df)
+        # Step 1: Group by the specified columns and get max probability for each group
+        grouped_df = combine(groupby(df, [:ms_file_idx, :sequence, :structural_mods]),
+                            :prob => maximum => :group_max_prob,
+                            :decoy => first => :group_decoy)
+        
+        # Step 2: Calculate FDR and q-values based on the max probability
+        # Sort by descending probability
+        sort!(grouped_df, :group_max_prob, rev=true)
+        
+        # Calculate FDR at each threshold
+        n_targets = sum(.!grouped_df.group_decoy)
+        n_decoys = sum(grouped_df.group_decoy)
+        
+        # Calculate FDR for each row
+        grouped_df.group_fdr = zeros(Float32, size(grouped_df, 1))
+        cumulative_decoys = 0
+        cumulative_targets = 0
+        
+        for i in 1:nrow(grouped_df)
+            if grouped_df.group_decoy[i]
+                cumulative_decoys += 1
+            else
+                cumulative_targets += 1
+            end
+            
+            # FDR = (decoys * scale_factor) / targets
+            if cumulative_targets == 0
+                grouped_df.group_fdr[i] = 1.0
+            else
+                grouped_df.group_fdr[i] = min(1.0, (cumulative_decoys) / cumulative_targets)
+            end
+        end
+        
+        # Step 3: Convert FDR to q-value (monotonically non-decreasing values)
+        grouped_df.group_qvalue = copy(grouped_df.group_fdr)
+        
+        # Ensure q-values are monotonically non-decreasing from bottom to top
+        for i in (nrow(grouped_df)-1):-1:1
+            grouped_df.group_qvalue[i] = min(grouped_df.group_qvalue[i], 
+                                              grouped_df.group_qvalue[i+1])
+        end
+        
+        # Step 4: Join the group-level information back to the original dataframe
+        # Create a temporary dataframe with just the keys and new columns
+        temp_df = select(grouped_df, 
+                         [:ms_file_idx, :sequence, :structural_mods, 
+                          :group_max_prob, :group_qvalue])
+        
+        # Join this information back to the original dataframe
+        result_df = leftjoin(df, temp_df, 
+                             on=[:ms_file_idx, :sequence, :structural_mods])
+        
+        return result_df
+    end
+    psms = DataFrame(Tables.columntable(Arrow.Table(second_pass_psms_paths)))
+    psms[!,:decoy] = psms[!,:target].==false
+    psms[!,:sequence] = [getSequence(precursors)[pid] for pid in psms[!,:precursor_idx]]
+    psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in psms[!,:precursor_idx]]
+        #gpsms = groupby(passing_psms,[:sequence,:structural_mods,:charge])
+        #for (key, psms) in pairs(gpsms)
+        #    psms[argmin(psms[!,:qval]),:best_plex_qval] = minimum(psms[!,:qval])
+        #end
+    psms = add_group_level_scores_and_qvalues(psms)
+    psms[!,:qval] = psms[!,:group_qvalue]
+    select!(psms,
+    [
+        :precursor_idx,
+        :prob,
+        :qval,
+        :group_qvalue,
+        #:pep,
+        :weight,
+        :target,
+        :irt_obs,
+        :missed_cleavage,
+        :isotopes_captured,
+        :scan_idx,
+        :ms_file_idx])
+    filter!(x->x.group_qvalue<=q_val_threshold, psms)
+    psms_by_file = groupby(psms, :ms_file_idx)
+    for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
+        file_psms = psms_by_file[(ms_file_idx = ms_file_idx,)]
+        Arrow.write(
+            joinpath(passing_psms_folder, basename(file_path)),
+            file_psms
         )
         passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
     end
@@ -581,6 +672,9 @@ function get_protein_groups(
     ##########
     #Protein inference
     ##########
+    println("test")
+    println("passing_psms_paths $passing_psms_paths")
+
     passing_psms = Arrow.Table(passing_psms_paths)
     protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy), Tuple{String, String, Bool}}}()
     passing_precursor_idx = passing_psms[:precursor_idx]

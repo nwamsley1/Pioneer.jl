@@ -493,12 +493,13 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         max_diff::T,
                         norm_type::L2Norm) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
+    λ = Float64(λ)
     #sum of squared weight
     x2_sum = zero(Float64)
     @turbo for col in 1:Hs.n
         x2_sum += X₁[col]*X₁[col]
     end
-    λ = Float64(0.1)
+    #λ = Float64(0.1)
     max_iter_newton = 50
     max_iter_bisection = 100 
     max_iter_outer = 1000

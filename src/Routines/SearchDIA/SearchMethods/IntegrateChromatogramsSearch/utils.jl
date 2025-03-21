@@ -299,6 +299,7 @@ function build_chromatograms(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
+
             solveHuber!(
                 Hs,
                 residuals,
@@ -414,10 +415,10 @@ function build_chromatograms(
     seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
     pids = [pid for pid in precursors_passing]
     pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
-    isotopes_dict = getIsotopes(seqs, pids, pcharge, QRoots(5), 5)
+    pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+    isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
-    prec_mz_string = ""
     ion_idx = 0
     rt_idx = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
@@ -473,6 +474,7 @@ function build_chromatograms(
             UInt32(scan_idx),
             UInt32(ms_file_idx)
         )
+
         #nmisses -= 1
         sort!(@view(getIonMatches(search_data)[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
         #println("nmatches $nmatches nmisses $nmisses")
@@ -489,6 +491,7 @@ function build_chromatograms(
                 nmisses,
                 getIdToCol(search_data)
             )
+            #println("nmatches $nmatches nmisses $nmisses Hs.n ", Hs.n, " Hs.m ", Hs.m)
             catch e
                 #println("getIonMatches(search_data)[1:nmatches] ", getIonMatches(search_data)[1:nmatches])
                 #println("getIonMisses(search_data)[1:nmisses] ", getIonMisses(search_data)[1:nmisses])

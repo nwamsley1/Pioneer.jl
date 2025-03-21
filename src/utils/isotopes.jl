@@ -168,3 +168,38 @@ function getIsotopes(seqs::Vector{String}, ids::Vector{I}, charges::Vector{J}, r
     end
     isotopes
 end
+
+function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, mz::Float32, charge::I, prec_id::J; precision::DataType = Float32) where {I,J<:Integer}
+    npeaks = min(npeaks, roots.npeaks)
+    Ψ = zeros(ComplexF64, npeaks - 1)
+    for n in range(1, npeaks - 1)
+        Ψ[n] = sum(comp.C./(roots.C[n])) + sum(comp.H./(roots.H[n])) + sum(comp.N./(roots.N[n])) + sum(comp.O./(roots.O[n])) + sum(comp.S./(roots.S[n]))
+    end
+    q = zeros(Float32, npeaks)
+    #C, 
+    q[1] = prod([0.9893, 0.999885, 0.99757, 0.99636, 0.9499].^[comp.C, comp.H, comp.N, comp.O, comp.S])
+
+    for i in range(2, npeaks)
+        qΨ = 0.0
+        for k in range(1, i-1)
+            qΨ += q[i - k]Ψ[k]
+        end
+        q[i] = -(1/(i - 1))*qΨ
+    end
+
+    mass = mz#Float32(getMonoMass(comp, charge))
+    isotopes = Vector{Isotope{precision}}(undef, npeaks)
+    for i in eachindex(isotopes)
+        isotopes[i] = Isotope(mass, q[i], UInt32(prec_id))
+        mass += Float32((NEUTRON/charge))
+    end
+    return isotopes
+end
+
+function getIsotopes(seqs::Vector{String}, mzs::Vector{Float32}, ids::Vector{I}, charges::Vector{J}, roots::QRoots, npeaks::Int; precision::DataType = Float32) where {I,J<:Integer}
+    isotopes = UnorderedDictionary{UInt32, Vector{Isotope{precision}}}()
+    for i in eachindex(seqs)
+        insert!(isotopes, ids[i], getIsotopes(getElementalComposition(String(seqs[i])), roots, npeaks, mzs[i], charges[i], ids[i], precision = precision))
+    end
+    isotopes
+end
