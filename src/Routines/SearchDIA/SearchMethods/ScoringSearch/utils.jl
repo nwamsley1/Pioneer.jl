@@ -380,6 +380,7 @@ Filter PSMs that pass a given q-value threshold and calculate error probabilitie
 - scan_idx, ms_file_idx
 """
 function get_psms_passing_qval(
+                            precursors::BasicLibraryPrecursors,
                             passing_psms_paths::Vector{String},
                             passing_psms_folder::String,
                             second_pass_psms_paths::Vector{String}, 
@@ -395,11 +396,19 @@ function get_psms_passing_qval(
         passing_psms[!,:qval] = qval_interp.(passing_psms[!,:prob])
         passing_psms[!,:pep] = pep_spline.(passing_psms[!,:prob])
         # Sample the rows and convert to DataFrame
+        #passing_psms[!,:best_plex_qval] .= zero(Float32)
+        #passing_psms[!,:sequence] = [getSequence(precursors)[pid] for pid in passing_psms[!,:precursor_idx]]
+        #passing_psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in passing_psms[!,:precursor_idx]]
+        #gpsms = groupby(passing_psms,[:sequence,:structural_mods,:charge])
+        #for (key, psms) in pairs(gpsms)
+        #    psms[argmin(psms[!,:qval]),:best_plex_qval] = minimum(psms[!,:qval])
+        #end
         select!(passing_psms,
         [
             :precursor_idx,
             :prob,
             :qval,
+            #:best_plex_qval,
             :pep,
             :weight,
             :target,
@@ -411,6 +420,8 @@ function get_psms_passing_qval(
         ###println("size(passing_psms) ", size(passing_psms))
         ###println("q_val_threshold $q_val_threshold")
         filter!(x->x.qval<=q_val_threshold, passing_psms)
+        #filter!(x->x.qval<=0.05, passing_psms)
+        #filter!(x->x.best_plex_qval<=q_val_threshold, passing_psms)
         ##println("size(passing_psms) ", size(passing_psms))
         # Append to the result DataFrame
         ##println("joinpath(passing_psms_folder, basename(file_path)) ", joinpath(passing_psms_folder, basename(file_path)))

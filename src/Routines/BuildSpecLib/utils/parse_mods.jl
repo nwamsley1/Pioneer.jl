@@ -810,7 +810,8 @@ function getRevDecoys!(speclibdf::BasicEmpiricalLibrary)
     end
     
     # Filter out duplicates and append
-    append!(speclibdf.libdf, rev_libdf[keep_rows, :])
+    return rev_libdf[keep_rows, :]
+    #append!(speclibdf.libdf, rev_libdf[keep_rows, :])
 end
 
 """
@@ -1023,4 +1024,3 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
     # Filter out failed shuffles and append
     append!(speclibdf.libdf, shuffle_libdf[keep_rows, :])
 end
-

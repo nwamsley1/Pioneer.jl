@@ -186,6 +186,7 @@ function summarize_results!(
         @info "Filtering passing PSMs..."
         # Apply q-value threshold and store passing PSMs
         get_psms_passing_qval(
+            getPrecursors(getSpecLib(search_context)),
             getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
             getSecondPassPsms(getMSData(search_context)),

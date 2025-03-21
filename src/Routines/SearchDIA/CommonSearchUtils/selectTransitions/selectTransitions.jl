@@ -76,3 +76,26 @@ function selectTransitions!(
           
     return transition_idx, n_precursors
 end
+
+# Core function that handles common setup and cleanup
+#=
+function selectIsotopes!(
+    isotopes::Vector{Isotope{Float32}},
+    prec_estimation_type::PrecEstimation,
+    common_args...;
+    kwargs...)
+    
+    # Common setup code here
+    transition_idx = 0
+    
+    # Delegate to specific implementation
+    transition_idx, n_precursors = _select_transitions_impl!(transitions, strategy, prec_estimation_type, transition_idx, common_args...; kwargs...)
+    
+    # Common cleanup/sorting code
+    sort!(@view(transitions[1:transition_idx]), 
+          by = x->getMZ(x),
+          alg=PartialQuickSort(1:transition_idx))
+          
+    return transition_idx, n_precursors
+end
+=#

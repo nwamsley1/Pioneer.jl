@@ -176,13 +176,10 @@ channel_df = addIsoModsToLib!(speclib, "tag6", channel)
 ```
 """
 function addIsoModsToLib(
-    speclib::BasicEmpiricalLibrary,
+    libdf::DataFrame,
     mod_key::String,
     mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}
 )
-    # Create a copy of the library dataframe
-    libdf = copy(speclib.libdf)
-    
     # Ensure isotopic_mods column exists, initialize if needed
     if !hasproperty(libdf, :isotopic_mods)
         libdf[!, :isotopic_mods] .= ""
@@ -205,6 +202,18 @@ function addIsoModsToLib(
     return channel_df
 end
 
+function addIsoModsToLib(
+    speclib::BasicEmpiricalLibrary,
+    mod_key::String,
+    mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}
+)
+    return addIsoModsToLib(
+        copy(speclib.libdf),
+        mod_key, 
+        mod_channel
+    )
+end
+
 """
     ParseSpecLib(params_path::String)
 
@@ -219,7 +228,7 @@ Output:
 - Returns the built spectral library
 """
 function ParseSpecLib(params_path::String)
-    
+
     params = checkParseSpecLibParams(params_path)
     
     # Extract parameters
@@ -231,13 +240,14 @@ function ParseSpecLib(params_path::String)
     entrapment_groups = params["library_params"]["entrapment_groups"]
     #"../Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv"
     #test_lib = ParseSpecLib("/Users/nathanwamsley/Data/SPEC_LIBS/tag6_feb142025/tag6_comet_lib.tsv").libdf;
+
     # Initialize library
     test_lib = BasicEmpiricalLibrary(lib_path)
-
+    test_lib.libdf[!,:channel_decoy] = zeros(Bool, size(test_lib.libdf, 1))
     # Process structural modifications
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-
+    CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
     # Generate entrapment sequences if requested
     if generate_entrapment
         for i in 1:entrapment_groups
@@ -247,61 +257,62 @@ function ParseSpecLib(params_path::String)
     
     # Generate reversed decoys if requested
     if generate_decoys
-        getRevDecoys!(test_lib)
+        decoy_lib = getRevDecoys!(test_lib)
     end
+    append!(test_lib.libdf, decoy_lib)
+    #Channel decoys are the target sequences but in the decoy/fake isotope channels. 
+    #Probably need to add a check to not add decoys in cases were there are no isotope labesl. 
+    if params["channel_decoys"]
+        # Process modification channels
+        decoy_mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
+        for mod_group in params["decoy_isotope_mod_groups"]
+            name = mod_group["name"]
+            channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
+            decoy_mod_channels[name] = channels
+        end
 
-    # Process modification channels
-    mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
-    for mod_group in params["isotope_mod_groups"]
-        name = mod_group["name"]
-        channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
-        mod_channels[name] = channels
-    end
-
-
-    # Process modification channels
-    mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
-    for mod_group in params["isotope_mod_groups"]
-        name = mod_group["name"]
-        channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
-        mod_channels[name] = channels
-    end
-
-    # Build isotope modifications dictionary
-    iso_mods_dict = Dict{String, Dict{String, Float32}}()
-    for mod_group in params["isotope_mod_groups"]
-        name = mod_group["name"]
-        iso_mods_dict[name] = Dict{String, Float32}()
-        for ch in mod_group["channels"]
-            iso_mods_dict[name][ch["channel"]] = Float32(ch["mass"])
+        # Apply isotopic modifications
+        decoy_channel_dfs = []
+        for (mod_key, channels) in pairs(decoy_mod_channels)
+            for channel in channels
+                channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+                channel_df[!,:channel_decoy] = ones(Bool, size(channel_df, 1))
+                push!(decoy_channel_dfs, channel_df)
+            end
         end
     end
-    
-    # Build structural modification masses dictionary
-    # Build structural modification masses dictionary
-    structural_mod_to_mass = Dict{String, Float32}()
-    for (mass, name) in zip(
-        params["fixed_mods"]["mass"],
-        params["fixed_mods"]["name"]
-    )
-        structural_mod_to_mass[name] = Float32(mass)
-    end
-   # Apply isotopic modifications
-   channel_dfs = []
-   for (mod_key, channels) in pairs(mod_channels)
-       for channel in channels
-           channel_df = addIsoModsToLib(test_lib, mod_key, channel)
-           push!(channel_dfs, channel_df)
-       end
-   end
 
+    # Process modification channels
+    mod_channels = Dict{String, Vector{NamedTuple{(:channel, :mass), Tuple{String, Float32}}}}()
+    for mod_group in params["isotope_mod_groups"]
+        name = mod_group["name"]
+        channels = [(channel = ch["channel"], mass = Float32(ch["mass"])) for ch in mod_group["channels"]]
+        mod_channels[name] = channels
+    end
+    # Build structural modification masses dictionary
+    # Apply isotopic modifications 
+    ##########
+    #Important!
+    ##########
+    channel_dfs = []
+    for (mod_key, channels) in pairs(mod_channels)
+        for channel in channels
+            channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+            push!(channel_dfs, channel_df)
+        end
+    end
     # If channels were processed, update the DataFrame
     if !isempty(channel_dfs)
         channels_df = vcat(channel_dfs...)
+        decoy_channel_dfs = vcat(decoy_channel_dfs...)
         empty!(test_lib.libdf)
         append!(test_lib.libdf, channels_df)
+        append!(test_lib.libdf, decoy_channel_dfs)
     end
-
+    println("mod_channels $mod_channels")
+    println("length(channel_dfs) ", length(channel_dfs))
+    [println("size(df, 1): ", size(df, 1)) for df in channel_dfs]
+    #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out2.csv", test_lib.libdf)
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     #Now need to recalculate masses for precursors and fragments with the new modifications 
@@ -314,16 +325,43 @@ function ParseSpecLib(params_path::String)
         mods_to_sulfur_diff[mod_group["name"]] = Int8(mod_group["sulfur_count"])
     end
 
+    # Build structural modification masses dictionary
+    structural_mod_to_mass = Dict{String, Float32}()
+    for (mass, name) in zip(
+        params["fixed_mods"]["mass"],
+        params["fixed_mods"]["name"]
+    )
+        structural_mod_to_mass[name] = Float32(mass)
+    end
+
+    # Build isotope modifications dictionary
+    iso_mods_dict = Dict{String, Dict{String, Float32}}()
+    for mod_group in params["isotope_mod_groups"]
+        name = mod_group["name"]
+        iso_mods_dict[name] = Dict{String, Float32}()
+        for ch in mod_group["channels"]
+            iso_mods_dict[name][ch["channel"]] = Float32(ch["mass"])
+        end
+    end
+    if params["channel_decoys"]
+        for mod_group in params["decoy_isotope_mod_groups"]
+            name = mod_group["name"]
+            for ch in mod_group["channels"]
+                iso_mods_dict[name][ch["channel"]] = Float32(ch["mass"])
+            end
+        end
+    end
+
+    println("iso_mods_dict $iso_mods_dict")
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
         iso_mods_dict,
         mods_to_sulfur_diff
     )
-
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
-    
+
     # Sort library by retention time and then by precursor_mz within retention time bins
     nestedLibrarySort!(test_lib, rt_bin_tol=rt_bin_tol)
 
@@ -387,6 +425,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     prec_charge = zeros(UInt8, n_precursors)
     collision_energy = zeros(Float32, n_precursors)
     is_decoy = zeros(Bool, n_precursors)
+    channel_decoy = zeros(Bool, n_precursors)
     entrapment_group_id = zeros(UInt8, n_precursors)
     prec_mz = zeros(Float32, n_precursors)
     seq_length = zeros(UInt8, n_precursors)
@@ -406,10 +445,11 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             accession_numbers[prec_idx] = getProteinGroupId(speclib, frag_idx)
             sequence[prec_idx] = getSequence(speclib, frag_idx)
             structural_mods[prec_idx] = getStructuralMods(speclib, frag_idx)
-            isotopic_mods[prec_idx] = parseIsotopicMods(speclib, frag_idx)
+            isotopic_mods[prec_idx] = getIsotopicMods(speclib, frag_idx)
             prec_charge[prec_idx] = getPrecCharge(speclib, frag_idx)
             collision_energy[prec_idx] = getCollisionEnergy(speclib, frag_idx)
             is_decoy[prec_idx] = getIsDecoy(speclib, frag_idx)
+            channel_decoy[prec_idx] = getIsChannelDecoy(speclib, frag_idx)
             entrapment_group_id[prec_idx] = getEntrapmentGroupIdx(speclib, frag_idx)
             if getSequence(speclib, frag_idx) ∉ unique_base_pep_seqs
                 _base_pep_id_ += one(UInt32)
@@ -438,6 +478,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             prec_charge = prec_charge,
             collision_energy = collision_energy,
             is_decoy = is_decoy,
+            channel_decoy = channel_decoy,
             entrapment_group_id = entrapment_group_id,
             base_pep_id = base_pep_ids,
             mz = prec_mz,

@@ -343,10 +343,10 @@ function updateX2Norm!(x0::T, x1::T, x2_sum::Float64, X₁::Vector{T}, n::Int64)
         @turbo for col in 1:n
             x2_sum += X₁[col]*X₁[col]
         end
-        println("x2_sum $x2_sum x2_sum_old $x2_sum_old x2_sum_new $x2_sum_new x1 $x1 x0 $x0 x1_sq $x1_sq x0_sq $x0_sq $n n")
-        if n < 10
-            println("X₁ ", X₁[1:n])
-        end
+        #println("x2_sum $x2_sum x2_sum_old $x2_sum_old x2_sum_new $x2_sum_new x1 $x1 x0 $x0 x1_sq $x1_sq x0_sq $x0_sq $n n")
+        #if n < 10
+        #    println("X₁ ", X₁[1:n])
+        #end
         return x2_sum
     end
     return max(x2_sum + x1_sq - x0_sq, zero(Float64))
