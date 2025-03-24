@@ -711,6 +711,9 @@ getMissedCleavages(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UI
 getIrt(lp::BasicLibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
 getSulfurCount(lp::BasicLibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::BasicLibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
+getPartnerPrecursorIdx(lp::BasicLibraryPrecursors)::Arrow.Primitive{Union{Missing, UInt32}, Vector{UInt32}} = lp.data[:partner_precursor_idx]
+getPairIdx(lp::BasicLibraryPrecursors)::Arrow.Primitive{Union{Missing, UInt32}, Vector{UInt32}} = lp.data[:pair_id]
+
 
 
 
