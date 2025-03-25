@@ -386,8 +386,7 @@ function get_psms_passing_qval(
                             second_pass_psms_paths::Vector{String}, 
                             pep_spline::UniformSpline,
                             qval_interp::Interpolations.Extrapolation,
-                            q_val_threshold::Float32,
-)
+                            q_val_threshold::Float32)
     #=
     #file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
     for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
