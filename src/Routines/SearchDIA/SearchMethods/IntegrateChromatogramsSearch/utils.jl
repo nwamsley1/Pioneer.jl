@@ -35,7 +35,8 @@ function integrate_precursors(chromatograms::DataFrame,
                              λ::Float32 = 1.0f0,
                              n_pad::Int64 = 20,
                              max_apex_offset::Int64 = 2,
-)
+                             test_print::Bool = false
+                             )
     chromatogram_keys = [:precursor_idx]
     if seperateTraces(isotope_trace_type)
         chromatogram_keys = [:precursor_idx,:isotopes_captured]
@@ -43,7 +44,6 @@ function integrate_precursors(chromatograms::DataFrame,
     grouped_chroms = groupby(chromatograms, chromatogram_keys)
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
-
     #Maximal size of a chromatogram
     N = 0
     for (chrom_id, chrom) in pairs(grouped_chroms)
@@ -53,7 +53,6 @@ function integrate_precursors(chromatograms::DataFrame,
     end
     N += n_pad*2
     group_keys = keys(grouped_chroms)
-    #println("group_keys[1:10] ", collect(group_keys)[1:10])
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
             #chromdf = DataFrame()
@@ -83,9 +82,26 @@ function integrate_precursors(chromatograms::DataFrame,
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
                 isnothing(first_pos) ? continue : nothing
                 chrom = view(chrom, first_pos:last_pos, :)
-                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
-                isnothing(apex_scan) ? continue : nothing
-                
+                if test_print == false
+                    apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
+                    isnothing(apex_scan) ? continue : nothing
+                else
+                    min_diff = typemax(Int64)
+                    nearest_idx = i
+                    for i in range(1, size(chrom, 1))
+                        if abs(chrom[i,:scan_idx] - apex_scan) < min_diff
+                            min_diff = abs(chrom[i,:scan_idx] - apex_scan)
+                            nearest_idx = i
+                        end
+                    end
+                    for i in range(max(1, nearest_idx - 5), min(size(chrom, 1), nearest_idx + 5))
+                        if chrom[i,:intensity] > chrom[nearest_idx,:intensity]
+                            nearest_idx = i
+                        end
+                    end
+                    apex_scan = nearest_idx#argmax(chrom[!,:intensity])
+                    #apex_scan = nearest_idx  # Use the index of the nearest scan
+                end
                 peak_area[i], new_best_scan[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
@@ -97,7 +113,9 @@ function integrate_precursors(chromatograms::DataFrame,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-
+                #if test_print
+                #    println(" i $i")
+                #end
                 reset!(state)
             end
             return #chromdf
@@ -403,7 +421,7 @@ function build_chromatograms(
     # Initialize working arrays
     mem = MassErrorModel(
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (6.0f0, 6.0f0)
+        (4.0f0, 4.0f0)
     )
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
@@ -525,7 +543,7 @@ function build_chromatograms(
                 residuals,
                 weights,
                 getHuberDelta(search_context),
-                params.lambda,
+                0.0f0,#params.lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 params.max_iter_outer,

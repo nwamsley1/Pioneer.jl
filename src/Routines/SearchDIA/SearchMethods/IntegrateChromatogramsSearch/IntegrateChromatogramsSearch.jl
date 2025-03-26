@@ -147,7 +147,9 @@ function process_file!(
         # new_best_scan: Updated apex scan after refinement
         passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
         passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
-
+        passing_psms[!,:peak_area_ms1] = zeros(Float32, nrow(passing_psms)) 
+        passing_psms[!,:ms1_best_scan] = zeros(UInt32, nrow(passing_psms)) 
+  
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
         chromatograms = extract_chromatograms(
@@ -173,6 +175,7 @@ function process_file!(
             MS1CHROM(),
         )
         sort!(ms1_chromatograms, :rt)
+        ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
         Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
         # Determine which isotopes are captured in each isolation window
@@ -194,7 +197,8 @@ function process_file!(
         filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, chromatograms)
         
         # Integrate chromatographic peaks for each precursor
-        # Updates peak_area and new_best_scan in passing_psms        
+        # Updates peak_area and new_best_scan in passing_psms   
+    
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -209,7 +213,25 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-
+           println("A")
+        integrate_precursors(
+            ms1_chromatograms,
+            CombineTraces(zero(Float32)),
+            params.min_fraction_transmitted,
+            passing_psms[!, :precursor_idx],
+            passing_psms[!, :isotopes_captured],
+            passing_psms[!, :scan_idx],
+            passing_psms[!, :peak_area_ms1],
+            passing_psms[!, :ms1_best_scan],
+            ms_file_idx,
+            λ = params.wh_smoothing_strength,
+            n_pad = params.n_pad,
+            max_apex_offset = 5,#typemax(Int64),
+            test_print = true
+        )
+        println("sum(passing_psms[!,:peak_area_ms1]) ", sum(passing_psms[!,:peak_area_ms1]))
+        println("B")
+        println("C")
         # Clear chromatograms to free memory
         chromatograms = nothing
 
