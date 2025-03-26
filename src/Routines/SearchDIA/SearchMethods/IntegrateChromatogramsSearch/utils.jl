@@ -154,7 +154,7 @@ function extract_chromatograms(
     else
         ms_order_select = 1
     end
-    println("ms_order_select $ms_order_select")
+
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = ms_order_select)
 
     tasks = map(thread_tasks) do thread_task
@@ -331,7 +331,7 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                L2Norm()
+                params.reg_type
             )
 
             # Record chromatogram points with weights
@@ -543,7 +543,7 @@ function build_chromatograms(
                 residuals,
                 weights,
                 getHuberDelta(search_context),
-                0.0f0,#params.lambda,
+                params.lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 params.max_iter_outer,
@@ -551,7 +551,7 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                L2Norm()
+                params.reg_type,#NoNorm()
             )
 
             # Record chromatogram points with weights

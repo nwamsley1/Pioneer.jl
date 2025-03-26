@@ -41,6 +41,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     
     # Deconvolution parameters
     lambda::Float32
+    reg_type::RegularizationType
     max_iter_newton::Int64
     max_iter_bisection::Int64
     max_iter_outer::Int64
@@ -72,7 +73,17 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-
+        reg_type = deconv_params.reg_type
+        if reg_type == "none"
+            reg_type = NoNorm()
+        elseif reg_type == "l1"
+            reg_type = L1Norm()
+        elseif reg_type == "l2"
+            reg_type = L2Norm()
+        else
+            reg_type = NoNorm()
+            @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -86,9 +97,10 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Int64(chrom_params.max_apex_offset),
             
             Float32(deconv_params.lambda),
+            reg_type, 
             Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.bisection_iters),
+            Int64(deconv_params.outer_iters),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
@@ -213,7 +225,6 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-           println("A")
         integrate_precursors(
             ms1_chromatograms,
             CombineTraces(zero(Float32)),
@@ -229,9 +240,6 @@ function process_file!(
             max_apex_offset = 5,#typemax(Int64),
             test_print = true
         )
-        println("sum(passing_psms[!,:peak_area_ms1]) ", sum(passing_psms[!,:peak_area_ms1]))
-        println("B")
-        println("C")
         # Clear chromatograms to free memory
         chromatograms = nothing
 

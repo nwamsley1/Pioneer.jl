@@ -416,7 +416,7 @@ function process_delta_values!(
             params.accuracy_bisection,
             10.0,
             params.max_diff,
-            L2Norm()
+            params.reg_type,
         )
         
         # Record results

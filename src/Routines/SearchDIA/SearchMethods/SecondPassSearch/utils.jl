@@ -190,7 +190,7 @@ function process_scans!(
             search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
             search_context.deconvolution_stop_tolerance[],
             params.max_diff,
-            L2Norm()
+            params.reg_type,
         )
 
         # Update precursor weights
@@ -316,7 +316,7 @@ PSMs processing
 """
     add_second_search_columns!(psms::DataFrame, scan_retention_time::AbstractVector{Float32},
                              prec_charge::AbstractVector{UInt8}, prec_is_decoy::AbstractVector{Bool},
-                             precursors::BasicLibraryPrecursors)
+                             precursors::LibraryPrecursors)
 
 Add essential columns to PSM DataFrame for second pass analysis.
 
@@ -332,7 +332,7 @@ function add_second_search_columns!(psms::DataFrame,
                         scan_retention_time::AbstractVector{Float32},
                         prec_charge::AbstractVector{UInt8},
                         prec_is_decoy::AbstractVector{Bool},
-                        precursors::BasicLibraryPrecursors,
+                        precursors::LibraryPrecursors,
                         #prec_id_to_cv_fold::Dictionary{UInt32, UInt8})
 )
     
@@ -503,7 +503,6 @@ function add_features!(psms::DataFrame,
     #filter!(x->x.data_points>0, psms)
     ###########################
     #Allocate new columns
-    #println("TEST")
     N = size(psms, 1)
     irt_diff = zeros(Float32, N)
     irt_obs = zeros(Float32, N)

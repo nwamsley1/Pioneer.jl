@@ -61,6 +61,7 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
     
     # Deconvolution parameters
     lambda::Float32
+    reg_type::RegularizationType
     max_iter_newton::Int64
     max_iter_bisection::Int64
     max_iter_outer::Int64
@@ -88,14 +89,22 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
         delta_exp = Float32(deconv_params.huber_exp)
         delta_iters = Int64(deconv_params.huber_iters)
         huber_δs = Float32[delta0 * (delta_exp^i) for i in range(-4,delta_iters+6)]
-        huber_δs = Float32[delta0 * (delta_exp^i) for i in range(0, 2)]
-        #huber_δs = Float32[1e5] #For now, just use 100000
-        println("huber_δs ", huber_δs)
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
 
         # Always use partial capture for Huber tuning
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
+        reg_type = deconv_params.reg_type
+        if reg_type == "none"
+            reg_type = NoNorm()
+        elseif reg_type == "l1"
+            reg_type = L1Norm()
+        elseif reg_type == "l2"
+            reg_type = L2Norm()
+        else
+            reg_type = NoNorm()
+            @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
+
         new{typeof(prec_estimation)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Int64(frag_params.n_isotopes),  # Fixed n_frag_isotopes
@@ -104,9 +113,10 @@ struct HuberTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchPara
             Set{Int64}([2]),
             
             Float32(deconv_params.lambda),
+            reg_type, 
             Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.bisection_iters),
+            Int64(deconv_params.outer_iters),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
@@ -148,6 +158,9 @@ function process_file!(
     spectra::MassSpecData
 ) where {P<:HuberTuningSearchParameters}
 
+    if params.huber_override_bool==true
+        return 
+    end
     try
         setNceModel!(
             getFragmentLookupTable(getSpecLib(search_context)), 
@@ -162,7 +175,6 @@ function process_file!(
         prec_set = Set(zip(file_psms[!, :precursor_idx], file_psms[!, :scan_idx]))
         scan_idxs = Set(file_psms[!, :scan_idx])
         
-                
         # Create scan mapping
         scan_to_prec = get_scan_precursor_mapping(file_psms)
         
@@ -205,23 +217,23 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:HuberTuningSearchParameters}
     
+    if params.huber_override_bool==true
+        default_delta = params.huber_override_delta
+        results.huber_delta[] = default_delta
+        setHuberDelta!(search_context, default_delta)
+        return 
+    end
     try
         # Combine all tuning PSMs
         all_psms = vcat(results.tuning_psms...)
-        
+
         # Process results to get optimal δ
         optimal_delta = estimate_optimal_delta(
             all_psms,
             params.delta_grid,
             params.min_pct_diff
         )
-        #optimal_delta = 100000.0f0
-        #println("optimal_delta $optimal_delta")
-        #stop_tolerance = 10.0f0#Float32(quantile(all_psms[!,:weight], 0.01)/1000)
-        #println("would be ", Float32(quantile(all_psms[!,:weight], 0.01)/100000))
         search_context.deconvolution_stop_tolerance[] = Float32(quantile(all_psms[!,:weight], 0.01)/100000)
-        #println("test ", search_context.deconvolution_stop_tolerance[] )
-        #println("_")
         # Store results
         if params.huber_override_bool #If overriding the fit
             optimal_delta = params.huber_override_delta
@@ -232,7 +244,7 @@ function summarize_results!(
     catch e
         throw(e)
         @warn "Failed to determine optimal Huber delta, using default" exception=e
-        default_delta = 100000.0f0
+        default_delta = params.huber_override_delta
         results.huber_delta[] = default_delta
         setHuberDelta!(search_context, default_delta)
     end

@@ -126,6 +126,7 @@ function checkParams(json_path::String)
 
     deconv = opt_params["deconvolution"]
     check_param(deconv, "lambda", Real)
+    check_param(deconv, "reg_type", String)
     check_param(deconv, "huber_delta", Real)
     check_param(deconv, "huber_exp", Real)
     check_param(deconv, "huber_iters", Integer)

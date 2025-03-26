@@ -109,7 +109,7 @@ function getPSMS(
     ms_file_idx::UInt32,
     spectra::MassSpecData,
     thread_task::Vector{Int64},
-    precursors::BasicLibraryPrecursors,
+    precursors::LibraryPrecursors,
     ion_list::LibraryFragmentLookup,
     scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}}, 
     precursors_passed_scoring::Vector{UInt32},

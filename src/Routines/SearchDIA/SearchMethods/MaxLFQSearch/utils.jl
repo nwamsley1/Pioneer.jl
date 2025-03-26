@@ -3,9 +3,10 @@ Create QC plots showing quantification metrics.
 """
 function create_qc_plots(
     precursors_path::String,
+    precursors_long_path::String,
     proteins_path::String,
     search_context::SearchContext,
-    precursors::BasicLibraryPrecursors,
+    precursors::LibraryPrecursors,
     params::Any
 )
     # Create plots showing:
@@ -17,6 +18,7 @@ function create_qc_plots(
     @info "Generating final QC plots"
     qcPlots(
         precursors_path,
+        precursors_long_path,
         proteins_path,
         params.params,
         precursors,
