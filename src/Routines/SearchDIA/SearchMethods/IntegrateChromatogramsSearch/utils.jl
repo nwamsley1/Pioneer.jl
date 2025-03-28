@@ -421,7 +421,7 @@ function build_chromatograms(
     # Initialize working arrays
     mem = MassErrorModel(
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (4.0f0, 4.0f0)
+        (6.0f0, 6.0f0)
     )
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
