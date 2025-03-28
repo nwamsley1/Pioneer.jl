@@ -209,7 +209,7 @@ function build_chromatograms(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{ChromObject}(undef, 500000)  # Initial size
+    chromatograms = Vector{MS2ChromObject}(undef, 500000)  # Initial size
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -338,18 +338,18 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
                 end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS2ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         weights[getIdToCol(search_data)[precs_temp[j]]],
                         scan_idx,
                         precs_temp[j]
                     )
                 else
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS2ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         zero(Float32),
                         scan_idx,
@@ -369,10 +369,10 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
                 end
 
-                chromatograms[rt_idx] = ChromObject(
+                chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),
                     scan_idx,
@@ -427,7 +427,7 @@ function build_chromatograms(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{ChromObject}(undef, 500000)  # Initial size
+    chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     precursors = getPrecursors(getSpecLib(search_context))
     seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
@@ -453,8 +453,6 @@ function build_chromatograms(
         end
         # Calculate RT window
         irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
-        #irt_start_new = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
-        #irt_stop_new = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
         irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
         irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
@@ -499,8 +497,6 @@ function build_chromatograms(
         # Process matches
         if nmatches > 2
             i += 1
-            # Build design matrix
-            try
             buildDesignMatrix!(
                 Hs,
                 getIonMatches(search_data),
@@ -509,18 +505,6 @@ function build_chromatograms(
                 nmisses,
                 getIdToCol(search_data)
             )
-            #println("nmatches $nmatches nmisses $nmisses Hs.n ", Hs.n, " Hs.m ", Hs.m)
-            catch e
-                #println("getIonMatches(search_data)[1:nmatches] ", getIonMatches(search_data)[1:nmatches])
-                #println("getIonMisses(search_data)[1:nmisses] ", getIonMisses(search_data)[1:nmisses])
-                ion_matches, ion_misses = getIonMatches(search_data)[1:nmatches], getIonMisses(search_data)[1:nmisses]
-                #jldsave("/Users/nathanwamsley/Desktop/test_matches.jld2"; ion_matches)
-                #jldsave("/Users/nathanwamsley/Desktop/test_misses.jld2"; ion_misses)
-                #println("nmatches $nmatches nmisses $nmisses")
-                #println("getIonMisses(search_data)[nmisses-10:nmisses] ", getIonMisses(search_data)[nmisses-10:nmisses])
-                println("getIonMatches(search_data)[nmatches-10:nmatches] ", getIonMatches(search_data)[nmatches-10:nmatches])
-                throw(e)
-            end
 
             # Handle array resizing
             if getIdToCol(search_data).size > length(weights)
@@ -558,20 +542,24 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
                 end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS1ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         weights[getIdToCol(search_data)[precs_temp[j]]],
+                        true,
+                        UInt8(5),
                         scan_idx,
                         precs_temp[j]
                     )
                 else
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS1ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         zero(Float32),
+                        false,
+                        UInt8(0),
                         scan_idx,
                         precs_temp[j]
                     )
@@ -588,11 +576,13 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
                 end
-                chromatograms[rt_idx] = ChromObject(
+                chromatograms[rt_idx] = MS1ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),
+                    false,
+                    UInt8(0),
                     scan_idx,
                     precs_temp[j]
                 )
