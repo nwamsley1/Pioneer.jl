@@ -707,7 +707,7 @@ function process_final_psms!(
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        species[i] = getProteomeIdentifiers(precursors)[pid]
+        species[i] = join(sort(unique(split(coalesce(getProteomeIdentifiers(precursors)[pid], ""),';'))),';')
         peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
         structural_mods[i] = getStructuralMods(precursors)[pid]
