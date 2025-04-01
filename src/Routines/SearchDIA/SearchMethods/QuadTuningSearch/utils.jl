@@ -425,7 +425,7 @@ function summarize_precursor(
 end
 
 """
-    process_quad_results(psms::DataFrame, precursors::BasicLibraryPrecursors,
+    process_quad_results(psms::DataFrame, precursors::LibraryPrecursors,
                         iso_splines::IsotopeSplineModel) -> DataFrame
 
 Process quadrupole transmission search results.
@@ -446,7 +446,7 @@ Processed DataFrame ready for quad model fitting.
 """
 function process_quad_results(
     psms::DataFrame,
-    precursors::BasicLibraryPrecursors,
+    precursors::LibraryPrecursors,
     iso_splines::IsotopeSplineModel
 )
     sort!(psms, [:scan_idx, :precursor_idx, :iso_idx])
@@ -591,7 +591,8 @@ function perform_quad_transmission_search(
             params.accuracy_newton,
             params.accuracy_bisection,
             10.0,
-            params.max_diff
+            params.max_diff,
+            NoNorm()
         )
     end
 

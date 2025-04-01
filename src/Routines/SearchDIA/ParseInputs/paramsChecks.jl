@@ -39,7 +39,7 @@ function checkParams(json_path::String)
 
     check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
     check_param(global_params["huber_override"], "huber_delta", Real)
-
+    check_param(global_params, "ms1_quant", Bool)
     check_param(global_params, "match_between_runs", Bool)
 
     # Validate parameter tuning parameters
@@ -126,6 +126,7 @@ function checkParams(json_path::String)
 
     deconv = opt_params["deconvolution"]
     check_param(deconv, "lambda", Real)
+    check_param(deconv, "reg_type", String)
     check_param(deconv, "huber_delta", Real)
     check_param(deconv, "huber_exp", Real)
     check_param(deconv, "huber_iters", Integer)

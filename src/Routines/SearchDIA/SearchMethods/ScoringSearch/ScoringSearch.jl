@@ -185,14 +185,17 @@ function summarize_results!(
         # Step 6: Filter PSMs
         @info "Filtering passing PSMs..."
         # Apply q-value threshold and store passing PSMs
+        passing_psms_paths = getSecondPassPsms(getMSData(search_context))
         get_psms_passing_qval(
+            getPrecursors(getSpecLib(search_context)),
             getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
-            getSecondPassPsms(getMSData(search_context)),
+            passing_psms_paths,
             results.precursor_pep_spline[],
             results.precursor_qval_interp[],
             0.01f0
         )
+
         # Step 7: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores

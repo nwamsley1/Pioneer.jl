@@ -215,7 +215,7 @@ function process_file!(
                 psms::DataFrame,
                 new_psms::DataFrame,
                 spectra::MassSpecData,
-                precursors::BasicLibraryPrecursors,
+                precursors::LibraryPrecursors,
                 params::P
             ) where {P<:ParameterTuningSearchParameters}
                 

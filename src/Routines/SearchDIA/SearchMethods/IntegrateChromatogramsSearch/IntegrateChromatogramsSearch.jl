@@ -41,6 +41,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     
     # Deconvolution parameters
     lambda::Float32
+    reg_type::RegularizationType
     max_iter_newton::Int64
     max_iter_bisection::Int64
     max_iter_outer::Int64
@@ -72,7 +73,17 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         min_fraction_transmitted = global_params.isotope_settings.min_fraction_transmitted
         # Always use partial precursor capture for integrate chromatogram
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-
+        reg_type = deconv_params.reg_type
+        if reg_type == "none"
+            reg_type = NoNorm()
+        elseif reg_type == "l1"
+            reg_type = L1Norm()
+        elseif reg_type == "l2"
+            reg_type = L2Norm()
+        else
+            reg_type = NoNorm()
+            @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
+        end
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -86,9 +97,10 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Int64(chrom_params.max_apex_offset),
             
             Float32(deconv_params.lambda),
+            reg_type, 
             Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
-            Int64(deconv_params.newton_iters),
+            Int64(deconv_params.bisection_iters),
+            Int64(deconv_params.outer_iters),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.newton_accuracy),
             Float32(deconv_params.max_diff),
@@ -147,7 +159,11 @@ function process_file!(
         # new_best_scan: Updated apex scan after refinement
         passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
         passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
-
+        if params.ms1_quant==true
+            passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
+            passing_psms[!,:peak_area_ms1] = zeros(Float32, nrow(passing_psms)) 
+            passing_psms[!,:ms1_best_scan] = zeros(UInt32, nrow(passing_psms)) 
+        end
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
         chromatograms = extract_chromatograms(
@@ -156,9 +172,28 @@ function process_file!(
             rt_index,
             search_context,
             params,
-            ms_file_idx
+            ms_file_idx,
+            MS2CHROM(),
         )
-
+        #sort!(chromatograms, :rt)
+        #out_dir = getDataOutDir(search_context)
+        #Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
+        #jldsave("/Users/nathanwamsley/Desktop/rt_index.jld2"; rt_index)
+        if params.ms1_quant==true
+            ms1_chromatograms = extract_chromatograms(
+                spectra,
+                passing_psms,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                MS1CHROM(),
+            )
+            sort!(ms1_chromatograms, :rt)
+            ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
+        else
+        #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
+        #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
         # Determine which isotopes are captured in each isolation window
         # Uses quadrupole transmission model to check isotope coverage
         get_isotopes_captured!(
@@ -178,7 +213,7 @@ function process_file!(
         filter!(row -> row.precursor_fraction_transmitted >= params.min_fraction_transmitted, chromatograms)
         
         # Integrate chromatographic peaks for each precursor
-        # Updates peak_area and new_best_scan in passing_psms        
+        # Updates peak_area and new_best_scan in passing_psms   
         integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
@@ -193,7 +228,23 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
-
+        if params.ms1_quant==true
+            integrate_precursors(
+                ms1_chromatograms,
+                CombineTraces(zero(Float32)),
+                params.min_fraction_transmitted,
+                passing_psms[!, :precursor_idx],
+                passing_psms[!, :isotopes_captured],
+                passing_psms[!, :scan_idx],
+                passing_psms[!, :peak_area_ms1],
+                passing_psms[!, :ms1_best_scan],
+                ms_file_idx,
+                λ = params.wh_smoothing_strength,
+                n_pad = params.n_pad,
+                max_apex_offset = 5,#typemax(Int64),
+                test_print = true
+            )
+        end
         # Clear chromatograms to free memory
         chromatograms = nothing
 

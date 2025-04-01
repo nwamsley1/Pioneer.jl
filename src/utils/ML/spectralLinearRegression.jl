@@ -1,8 +1,48 @@
+abstract type RegularizationType end
+struct L1Norm <: RegularizationType end
+struct L2Norm <: RegularizationType end
+struct NoNorm <: RegularizationType end
+
+function getRegL1(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
+    return zero(Float32)
+end
+
+function getRegL1(λ::T, xk::T, ::L1Norm) where T<:AbstractFloat
+    return λ
+end
+
+function getRegL1(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
+    return λ*Float32(2)*xk
+end
+
+function getRegL2(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
+    return zero(Float32)
+end
+
+function getRegL2(λ::T, xk::T, ::L1Norm) where T<:AbstractFloat
+    return zero(Float32)
+end
+
+function getRegL2(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
+    return Float32(2)*λ
+end
+
+function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, X0) where {Ti<:Integer, T<:AbstractFloat}
+    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
+        row_val = Hs.rowval[i]
+        nz_val = Hs.nzval[i]
+        r[row_val] += nz_val*(X1 - X0)
+    end
+end
+
 function getDerivatives!(Hs::SparseArray{Ti, T}, 
                             r::Vector{Float32}, 
                             col::Int64, 
                             δ::Float32, 
-                            λ::Float32) where {Ti<:Integer,T<:AbstractFloat}
+                            λ::Float32,
+                            xk::Float32,
+                            regularization_type::RegularizationType
+                            ) where {Ti<:Integer,T<:AbstractFloat}
     L1 = zero(Float32)
     L2 = zero(Float32)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
@@ -22,14 +62,20 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
         L1 += HSVAL_R * rval
         L2 += (hsval) * HSVAL_R * ((R)^(2))
     end
-    return L1 + λ, L2
+
+    return Float32(L1) + getRegL1(λ, xk, regularization_type), Float32(L2) + getRegL2(λ, xk, regularization_type)
 end
 
-function getL1(Hs::SparseArray{Ti, Float32}, r::Vector{Float32}, col::Int64, δ::Float32, λ::Float32) where {Ti<:Integer}
+function getL1(Hs::SparseArray{Ti, Float32}, 
+                r::Vector{Float32}, 
+                col::Int64, 
+                δ::Float32, 
+                λ::Float32,
+                xk::Float32,
+                regularization_type::RegularizationType) where {Ti<:Integer}
     L1 = zero(Float32)
     #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-        #Huber
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
@@ -42,34 +88,7 @@ function getL1(Hs::SparseArray{Ti, Float32}, r::Vector{Float32}, col::Int64, δ:
         R *= 1.5f0 - RS * 0.5f0 * R^2
         L1 += rval * hsval * R
     end
-    return L1 + λ
-end
-
-function getL1(Hs::SparseArray{Ti, Float64}, r::Vector{Float64}, col::Int64, δ::Float64, λ::Float64) where {Ti<:Integer}
-    L1 = zero(Float32)
-    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-        #Huber
-        rval = r[Hs.rowval[i]]
-        hsval = Hs.nzval[i]
-        RS = (1 + (rval/δ)^2)
-        #Quake's Fast Inverse Square Root Algorighm
-        #Different magic for float64. 
-        R = RS
-        int64 = reinterpret(UInt64, xₛ)
-        int64 = 0x5fe6eb50c7b537a9 - int64 >> 1
-        R = reinterpret(Float64, int64)
-        R *= 1.5 - RS * 0.5 * R^2
-        L1 += rval * hsval * R
-    end
-    return L1 + λ
-end
-
-function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, X0) where {Ti<:Integer, T<:AbstractFloat}
-    @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-        row_val = Hs.rowval[i]
-        nz_val = Hs.nzval[i]
-        r[row_val] += nz_val*(X1 - X0)
-    end
+    return Float32(L1) + getRegL1(λ, xk, regularization_type) #λ*Float32(2)*xk)
 end
 
 function newton_bisection!(Hs::SparseArray{Ti, T}, 
@@ -81,7 +100,8 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             max_iter_newton::Int64, 
                             max_iter_bisection::Int64,
                             accuracy_newton::T,
-                            accuracy_bisection::T) where {Ti<:Integer,T<:AbstractFloat}
+                            accuracy_bisection::T,
+                            regulariation_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     X_init = X₁[col] #Estimate prior to optimiztion
     X0 = X₁[col] #Keeps track of previous etimate at each iteration
@@ -96,7 +116,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
         while (n < max_iter_newton)
 
             #First and second derivatives 
-            L1, L2 = getDerivatives!(Hs, r, col, δ, λ)
+            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regulariation_type)
             update_rule = (L1)/L2
             #Switch to bisection method
             if isnan(update_rule)
@@ -111,7 +131,6 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
             end
 
             X0 = X₁[col] 
-
             #Newton-Raphson update. Contrain X₁[col] to be non-negative
             X₁[col] = max(X₁[col] - update_rule, zero(T))
             n += 1
@@ -132,15 +151,16 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
             X0 = X₁[col]
             X₁[col] = zero(T)
             updateResiduals!(Hs, r, col, X₁[col], X0)
-            L1 = getL1(Hs, r, col, δ, λ)
+            L1 = getL1(Hs, r, col, δ, λ, X₁[col], regulariation_type)
             if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
-                bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
-                            min(max_x1, Float32(1e11)), #Maximum Plausible Value for X1
+                _ = bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
+                            min(max(max_x1, zero(Float32)), Float32(1e11)), #Maximum Plausible Value for X1
                             L1,  
                             max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
-                            accuracy_bisection)#accuracy)
+                            accuracy_bisection,
+                            regulariation_type)#accuracy)
             end
-              X₁[col] - X_init
+            return X₁[col] - X_init
         else #Convergence reached. Return difference between current estimate and initial guess. 
             return X₁[col] - X_init
         end
@@ -149,27 +169,28 @@ end
 
 function bisection!(Hs::SparseArray{Ti, T}, 
                     r::Vector{T}, 
-                    X₁::Vector{T}, 
+                    X₁::Vector{T},
                     col::Int64, 
                     δ::T, 
                     λ::T, 
                     a::T, 
                     b::T, 
-                    fa::T,
+                    fa::Float32,
                     max_iter::Int64, 
-                    accuracy_bisection::T) where {Ti<:Integer,T<:AbstractFloat}
+                    accuracy_bisection::T,
+                    regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     c = (a + b)/2
     #Since first guess for X₁[col] will change to "c"
     #Need to update the residuals accordingly. 
     updateResiduals!(Hs, r, col, c, X₁[col])
-
+    X0 = X₁[col]
     X₁[col] = c
     X_init, X0 = X₁[col],  X₁[col]
     while (n < max_iter)
 
         #Evaluate first partial derivative
-        fc = getL1(Hs, r, col, δ, λ)
+        fc = getL1(Hs, r, col, δ, λ, X₁[col], regularization_type)
         #Bisection Rule
         if (sign(fc) != sign(fa))
             b, fb = c, fc
@@ -202,8 +223,13 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         accuracy_newton::T,
                         accuracy_bisection::T,
                         tol::U,
-                        max_diff::T) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
+                        max_diff::T,
+                        regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     ΔX = Inf
+    #λ = Float64(0.1)
+    max_iter_newton = 50
+    max_iter_bisection = 100 
+    max_iter_outer = 1000
     i = 0
     while (i < max_iter_outer) & (ΔX > tol)
         ΔX = 0.0
@@ -211,11 +237,13 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         _diff = 0.0
         for col in range(1, Hs.n)
             #difference in X_1[col]
-            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
+            δx = newton_bisection!(Hs, r, X₁,col, δ, λ,
                                         max_iter_newton, 
                                         max_iter_bisection,
                                         accuracy_newton,
-                                        accuracy_bisection))
+                                        accuracy_bisection,
+                                        regularization_type)
+            δx = abs(δx)
             if !iszero(X₁[col]) 
                 if δx/X₁[col] > max_diff
                     _diff =  δx/X₁[col]
@@ -231,5 +259,4 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     end
     return i
 end
-
 

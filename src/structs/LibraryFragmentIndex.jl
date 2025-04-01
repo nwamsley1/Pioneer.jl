@@ -108,14 +108,14 @@ abstract type SpectralLibrary end
 struct FragmentIndexLibrary <: SpectralLibrary
     presearch_fragment_index::FragmentIndex{Float32}
     fragment_index::FragmentIndex{Float32}
-    precursors::BasicLibraryPrecursors
+    precursors::LibraryPrecursors
     fragment_lookup_table::StandardFragmentLookup
 end
 
 struct SplineFragmentIndexLibrary <: SpectralLibrary
     presearch_fragment_index::FragmentIndex{Float32}
     fragment_index::FragmentIndex{Float32}
-    precursors::BasicLibraryPrecursors
+    precursors::LibraryPrecursors
     fragment_lookup_table::SplineFragmentLookup
 end
 
