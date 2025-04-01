@@ -63,12 +63,14 @@ Composition() = Composition(zero(UInt32), zero(UInt32), zero(UInt32), zero(UInt3
 struct Isotope{T<:AbstractFloat} <: LibraryIon{T}
     mass::T
     intensity::T
+    iso_idx::UInt8
     prec_idx::UInt32
 end
 #test 
 getMZ(i::Isotope{T}) where {T<:AbstractFloat} = i.mass
 getIntensity(i::Isotope{T}) where {T<:AbstractFloat} = i.intensity
 getPrecID(i::Isotope{T}) where {T<:AbstractFloat} = i.prec_idx
+getIsoIdx(i::Isotope{T}) where {T<:AbstractFloat} = i.iso_idx
 Isotope{Float32}() = Isotope(zero(Float32), zero(Float32), zero(UInt32))
 
 function getMonoMass(comp::Composition,charge::I) where {I<:Integer}
@@ -102,7 +104,7 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, charge::I, p
     mass = Float32(getMonoMass(comp, charge))
     isotopes = Vector{Isotope{precision}}(undef, npeaks)
     for i in eachindex(isotopes)
-        isotopes[i] = Isotope(mass, q[i], UInt32(prec_id))
+        isotopes[i] = Isotope(mass, q[i], UInt8(i), UInt32(prec_id))
         mass += Float32((NEUTRON/charge))
     end
     return isotopes
@@ -190,7 +192,7 @@ function getIsotopes(comp::Composition, roots::QRoots, npeaks::Int, mz::Float32,
     mass = mz#Float32(getMonoMass(comp, charge))
     isotopes = Vector{Isotope{precision}}(undef, npeaks)
     for i in eachindex(isotopes)
-        isotopes[i] = Isotope(mass, q[i], UInt32(prec_id))
+        isotopes[i] = Isotope(mass, q[i], UInt8(i), UInt32(prec_id))
         mass += Float32((NEUTRON/charge))
     end
     return isotopes

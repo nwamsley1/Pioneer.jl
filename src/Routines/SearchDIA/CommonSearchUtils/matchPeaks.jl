@@ -74,7 +74,7 @@ function setMatch!(matches::Vector{M},
 end
 
 function setMatch!(matches::Vector{M}, 
-                    transition::Isotope{Float32}, 
+                    precursor_isotope::Isotope{Float32}, 
                     mass::Float32, 
                     intensity::Float32, 
                     peak_ind::Int64, 
@@ -85,26 +85,15 @@ function setMatch!(matches::Vector{M},
     i += 1
     #Grow pre-allocated placeholder array if needed
     if i > length(matches)
-        append!(matches, [FragmentMatch{Float32}() for _ in range(1, block_size)])
+        append!(matches, [PrecursorMatch{Float32}() for _ in range(1, block_size)])
     end
-
-    ion_type = zero(UInt8)
-    matches[i] = FragmentMatch(
-                                Float32(getIntensity(transition)), 
+    matches[i] = PrecursorMatch(
+                                Float32(getIntensity(precursor_isotope)), 
                                  intensity,
-                                 getMZ(transition),
-                                 mass,
+                                 getMZ(precursor_isotope),
+                                 getIsoIdx(precursor_isotope),
                                  peak_ind,
-                                 one(UInt8),
-                                 one(UInt8),
-                                 UInt8(0),
-                                 zero(UInt8),
-                                 false,
-                                 getPrecID(transition),
-                                 UInt8(1), 
-                                 scan_idx,
-                                 ms_file_idx,
-                                 one(UInt8)
+                                 getPrecID(precursor_isotope)
                                  )
     return i
 end

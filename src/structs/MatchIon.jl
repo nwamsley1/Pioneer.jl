@@ -77,10 +77,13 @@ getScanID(f::FragmentMatch) = f.scan_idx
 getMSFileID(f::FragmentMatch) = f.ms_file_idx
 getRank(f::FragmentMatch) = f.predicted_rank
 isIsotope(f::FragmentMatch) = f.is_isotope
+getIsoIdx(f::FragmentMatch) = UInt8(f.is_isotope)
 
 struct PrecursorMatch{T<:AbstractFloat} <: MatchIon{T}
     predicted_intensity::T
     intensity::T
+    theoretical_mz::T
+    iso_idx::UInt8
     peak_ind::Int64
     prec_id::UInt32
 end
@@ -89,6 +92,5 @@ getPrecID(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.prec_id
 getIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.intensity
 getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
 getPredictedIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
-PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Int64), zero(UInt32))
-getFragInd(::PrecursorMatch{Float32}) = Inf
-getIonType(::PrecursorMatch{Float32}) = 'y'
+getIsoIdx(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.iso_idx
+PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Float32), zero(UInt8), zero(Int64), zero(UInt32))

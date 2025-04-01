@@ -39,7 +39,7 @@ function checkParams(json_path::String)
 
     check_param(global_params["huber_override"], "override_huber_delta_fit", Bool)
     check_param(global_params["huber_override"], "huber_delta", Real)
-
+    check_param(global_params, "ms1_quant", Bool)
     check_param(global_params, "match_between_runs", Bool)
 
     # Validate parameter tuning parameters
