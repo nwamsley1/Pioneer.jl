@@ -33,6 +33,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     max_frag_rank::UInt8
     sample_rate::Float32
     spec_order::Set{Int64}
+    ms1_quant::Bool
 
     # Chromatogram parameters
     wh_smoothing_strength::Float32
@@ -91,6 +92,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling
             Set{Int64}([2]),
+            global_params.ms1_quant,
             
             Float32(chrom_params.smoothing_strength),
             Int64(chrom_params.padding),
