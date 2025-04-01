@@ -18,6 +18,7 @@
             "override_huber_delta_fit": true,
             "huber_delta": 1500.0
         }, 
+        "ms1_quant": false,
 		"match_between_runs": true
     },
     "parameter_tuning": {
@@ -92,10 +93,13 @@
     "optimization": {
         "deconvolution": {
             "lambda": 0.0,
+            "reg_type": "none",
             "huber_delta": 300,
             "huber_exp": 1.5,
             "huber_iters": 15,
-            "newton_iters": 100,
+            "newton_iters": 50,
+            "bisection_iters": 100,
+            "outer_iters": 1000,
             "newton_accuracy": 10,
             "max_diff": 0.01
         },

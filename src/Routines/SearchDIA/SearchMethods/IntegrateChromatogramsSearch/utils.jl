@@ -35,7 +35,8 @@ function integrate_precursors(chromatograms::DataFrame,
                              λ::Float32 = 1.0f0,
                              n_pad::Int64 = 20,
                              max_apex_offset::Int64 = 2,
-)
+                             test_print::Bool = false
+                             )
     chromatogram_keys = [:precursor_idx]
     if seperateTraces(isotope_trace_type)
         chromatogram_keys = [:precursor_idx,:isotopes_captured]
@@ -43,7 +44,6 @@ function integrate_precursors(chromatograms::DataFrame,
     grouped_chroms = groupby(chromatograms, chromatogram_keys)
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
-
     #Maximal size of a chromatogram
     N = 0
     for (chrom_id, chrom) in pairs(grouped_chroms)
@@ -53,7 +53,6 @@ function integrate_precursors(chromatograms::DataFrame,
     end
     N += n_pad*2
     group_keys = keys(grouped_chroms)
-    #println("group_keys[1:10] ", collect(group_keys)[1:10])
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
             #chromdf = DataFrame()
@@ -83,9 +82,26 @@ function integrate_precursors(chromatograms::DataFrame,
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
                 isnothing(first_pos) ? continue : nothing
                 chrom = view(chrom, first_pos:last_pos, :)
-                apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
-                isnothing(apex_scan) ? continue : nothing
-                
+                if test_print == false
+                    apex_scan = findfirst(x->x==apex_scan,chrom[!,:scan_idx]::AbstractVector{UInt32}) # scan first/last
+                    isnothing(apex_scan) ? continue : nothing
+                else
+                    min_diff = typemax(Int64)
+                    nearest_idx = i
+                    for i in range(1, size(chrom, 1))
+                        if abs(chrom[i,:scan_idx] - apex_scan) < min_diff
+                            min_diff = abs(chrom[i,:scan_idx] - apex_scan)
+                            nearest_idx = i
+                        end
+                    end
+                    for i in range(max(1, nearest_idx - 5), min(size(chrom, 1), nearest_idx + 5))
+                        if chrom[i,:intensity] > chrom[nearest_idx,:intensity]
+                            nearest_idx = i
+                        end
+                    end
+                    apex_scan = nearest_idx#argmax(chrom[!,:intensity])
+                    #apex_scan = nearest_idx  # Use the index of the nearest scan
+                end
                 peak_area[i], new_best_scan[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
@@ -97,7 +113,9 @@ function integrate_precursors(chromatograms::DataFrame,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-
+                #if test_print
+                #    println(" i $i")
+                #end
                 reset!(state)
             end
             return #chromdf
@@ -109,6 +127,9 @@ end
 #==========================================================
 Chromatogram Building Functions
 ==========================================================#
+abstract type CHROMATOGRAM end
+struct MS2CHROM <: CHROMATOGRAM end
+struct MS1CHROM <: CHROMATOGRAM end
 """
     extract_chromatograms(spectra::MassSpecData, passing_psms::DataFrame,
                          rt_index::retentionTimeIndex, search_context::SearchContext,
@@ -125,9 +146,16 @@ function extract_chromatograms(
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     params::IntegrateChromatogramSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    chrom_type::CHROMATOGRAM
 )
-    thread_tasks = partition_scans(spectra, Threads.nthreads())
+    if typeof(chrom_type)==typeof(MS2CHROM())
+        ms_order_select = 2
+    else
+        ms_order_select = 1
+    end
+
+    thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = ms_order_select)
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -142,11 +170,11 @@ function extract_chromatograms(
                 search_context,
                 search_data,
                 params,
-                ms_file_idx
+                ms_file_idx,
+                chrom_type
             )
         end
     end
-
     return vcat(fetch.(tasks)...)
 end
 
@@ -173,14 +201,15 @@ function build_chromatograms(
     search_context::SearchContext,
     search_data::SearchDataStructures,
     params::IntegrateChromatogramSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::MS2CHROM
 )
     # Initialize working arrays
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{ChromObject}(undef, 500000)  # Initial size
+    chromatograms = Vector{MS2ChromObject}(undef, 500000)  # Initial size
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -288,6 +317,7 @@ function build_chromatograms(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
+
             solveHuber!(
                 Hs,
                 residuals,
@@ -300,25 +330,26 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
-                params.max_diff
+                params.max_diff,
+                params.reg_type
             )
 
             # Record chromatogram points with weights
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
                 end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS2ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         weights[getIdToCol(search_data)[precs_temp[j]]],
                         scan_idx,
                         precs_temp[j]
                     )
                 else
-                    chromatograms[rt_idx] = ChromObject(
+                    chromatograms[rt_idx] = MS2ChromObject(
                         Float32(getRetentionTime(spectra, scan_idx)),
                         zero(Float32),
                         scan_idx,
@@ -338,12 +369,268 @@ function build_chromatograms(
             for j in 1:prec_temp_size
                 rt_idx += 1
                 if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{ChromObject}(undef, 500000))
+                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
                 end
 
-                chromatograms[rt_idx] = ChromObject(
+                chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),
+                    scan_idx,
+                    precs_temp[j]
+                )
+            end
+        end
+
+        # Reset arrays
+        for i in 1:Hs.n
+            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
+        end
+        reset!(getIdToCol(search_data))
+        reset!(Hs)
+    end
+
+    return DataFrame(@view(chromatograms[1:rt_idx]))
+end
+
+"""
+    build_chromatograms(spectra::MassSpecData, scan_range::Vector{Int64},
+                       precursors_passing::Set{UInt32}, rt_index::retentionTimeIndex,
+                       search_context::SearchContext, search_data::SearchDataStructures,
+                       params::IntegrateChromatogramSearchParameters,
+                       ms_file_idx::Int64) -> DataFrame
+
+Build chromatograms for a range of scans with RT bin caching.
+
+# Process
+1. Tracks RT bins for efficient transition selection
+2. Selects transitions based on RT windows
+3. Matches peaks and performs deconvolution
+4. Records chromatogram points with weights
+"""
+function build_chromatograms(
+    spectra::MassSpecData,
+    scan_range::Vector{Int64},
+    precursors_passing::Set{UInt32},
+    rt_index::retentionTimeIndex,
+    search_context::SearchContext,
+    search_data::SearchDataStructures,
+    params::IntegrateChromatogramSearchParameters,
+    ms_file_idx::Int64,
+    ::MS1CHROM
+)
+    # Initialize working arrays
+    mem = MassErrorModel(
+        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        (12.0f0, 12.0f0)
+    )
+    Hs = getHs(search_data)
+    weights = getTempWeights(search_data)
+    precursor_weights = getPrecursorWeights(search_data)
+    residuals = getResiduals(search_data)
+    chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
+    ion_templates = Vector{Isotope{Float32}}(undef, 100000)
+    ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    precursors = getPrecursors(getSpecLib(search_context))
+    seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
+    pids = [pid for pid in precursors_passing]
+    pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
+    pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+    isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+
+   
+    # RT bin tracking state
+    irt_start, irt_stop = 1, 1
+    ion_idx = 0
+    rt_idx = 0
+    precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
+    prec_temp_size = 0
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    i = 1
+    for scan_idx in scan_range
+        
+        ((scan_idx<1) | (scan_idx > length(spectra))) && continue
+        # Process MS1 scans
+        #msn = getMsOrder(spectra, scan_idx)
+        #msn ∉ one(UInt8) && continue
+        if getMsOrder(spectra, scan_idx) != 1
+            continue
+        end
+        iso_count = Dictionary{UInt32, @NamedTuple{matched_mono::Bool, iso_count::UInt8}}()
+        # Calculate RT window
+        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+        # Update transitions if window changed
+        prec_temp_size = 0
+        ion_idx = 0
+        for rt_bin_idx in irt_start:irt_stop
+            precs = rt_index.rt_bins[rt_bin_idx].prec
+            for i in 1:length(precs)
+                prec_idx = first(precs[i])
+                if prec_idx in precursors_passing
+                    prec_temp_size += 1
+                    if prec_temp_size > length(precs_temp)
+                        append!(precs_temp, Vector{UInt32}(undef, 1000))
+                    end
+                    precs_temp[prec_temp_size] = prec_idx
+                    for iso in isotopes_dict[prec_idx]
+                        ion_idx += 1
+                        ion_templates[ion_idx] = iso
+                    end
+                end
+            end
+        end
+        #Probably more efficient way to do this later 
+        for i in range(1, ion_idx)
+            _ion_ = ion_templates[i]
+            pid = getPrecID(_ion_)
+            if haskey(iso_count, pid)
+                matched_mono = false
+                if iso_count[pid].matched_mono
+                    matched_mono = true
+                elseif getIsoIdx(_ion_)==one(UInt8)
+                    matched_mono = true
+                end
+                iso_count[pid] = (matched_mono = matched_mono, iso_count = iso_count[pid].iso_count + one(UInt8))
+            else
+                insert!(iso_count, 
+                pid,
+                (matched_mono = getIsoIdx(_ion_)==one(UInt8), iso_count = one(UInt8))
+            )
+            end
+            iso_count
+        end
+        sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
+        # Match peaks
+        nmatches, nmisses = matchPeaks!(
+            ion_matches,
+            ion_misses,
+            ion_templates,
+            ion_idx,
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
+            mem,
+            getHighMz(spectra, scan_idx),
+            UInt32(scan_idx),
+            UInt32(ms_file_idx)
+        )
+
+        #nmisses -= 1
+        sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        #println("nmatches $nmatches nmisses $nmisses")
+        # Process matches
+        if nmatches > 2
+            i += 1
+            buildDesignMatrix!(
+                Hs,
+                ion_matches,
+                ion_misses,
+                nmatches,
+                nmisses,
+                getIdToCol(search_data)
+            )
+
+            # Handle array resizing
+            if getIdToCol(search_data).size > length(weights)
+                new_entries = getIdToCol(search_data).size - length(weights) + 1000
+                resize!(weights, length(weights) + new_entries)
+                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+            end
+
+            # Initialize weights
+            for i in 1:getIdToCol(search_data).size
+                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+                    precursor_weights[getIdToCol(search_data).keys[i]]
+            end
+
+            # Solve deconvolution
+            initResiduals!(residuals, Hs, weights)
+            solveHuber!(
+                Hs,
+                residuals,
+                weights,
+                getHuberDelta(search_context),
+                params.lambda,
+                params.max_iter_newton,
+                params.max_iter_bisection,
+                params.max_iter_outer,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
+                search_context.deconvolution_stop_tolerance[],
+                params.max_diff,
+                params.reg_type,#NoNorm()
+            )
+            if scan_idx==6625#8241#Design Matrix 
+                N = Hs.n_vals
+                H = Matrix(sparse(Hs.rowval[1:N],
+                                    Hs.colval[1:N],
+                                    Hs.nzval[1:N])
+                                    )
+                #OLS Regression 
+                rowvals = copy(Hs.rowval)
+                y = zeros(Float32, Hs.m)
+                for i in range(1, N)
+                    y[Hs.rowval[i]] = Hs.x[i]
+                end
+                id_to_col = getIdToCol(search_data)
+                _matches_ = ion_matches[1:nmatches]
+                _misses_ = ion_misses[1:nmisses]
+                jldsave(joinpath(getQcPlotfolder(search_context), "A_mat.jld2"); H)
+                jldsave(joinpath(getQcPlotfolder(search_context), "y_mat.jld2"); y)
+                jldsave(joinpath(getQcPlotfolder(search_context), "residuals.jld2"); residuals)
+                jldsave(joinpath(getQcPlotfolder(search_context), "weights.jld2"); weights)
+                jldsave(joinpath(getQcPlotfolder(search_context), "getIdToCol.jld2"); id_to_col)
+                jldsave(joinpath(getQcPlotfolder(search_context), "ion_matches.jld2"); _matches_)
+                jldsave(joinpath(getQcPlotfolder(search_context), "ion_misses.jld2"); _misses_)
+            end
+            # Record chromatogram points with weights
+            for j in 1:prec_temp_size
+                rt_idx += 1
+                if rt_idx + 1 > length(chromatograms)
+                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
+                end
+
+                if !iszero(getIdToCol(search_data)[precs_temp[j]])
+                    chromatograms[rt_idx] = MS1ChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        weights[getIdToCol(search_data)[precs_temp[j]]],
+                        iso_count[precs_temp[j]].matched_mono,
+                        iso_count[precs_temp[j]].iso_count,
+                        scan_idx,
+                        precs_temp[j]
+                    )
+                else
+                    chromatograms[rt_idx] = MS1ChromObject(
+                        Float32(getRetentionTime(spectra, scan_idx)),
+                        zero(Float32),
+                        false,
+                        UInt8(0),
+                        scan_idx,
+                        precs_temp[j]
+                    )
+                end
+            end
+
+            # Update precursor weights
+            for i in 1:getIdToCol(search_data).size
+                precursor_weights[getIdToCol(search_data).keys[i]] = 
+                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
+            end
+
+        else
+            for j in 1:prec_temp_size
+                rt_idx += 1
+                if rt_idx + 1 > length(chromatograms)
+                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
+                end
+                chromatograms[rt_idx] = MS1ChromObject(
+                    Float32(getRetentionTime(spectra, scan_idx)),
+                    zero(Float32),
+                    false,
+                    UInt8(0),
                     scan_idx,
                     precs_temp[j]
                 )
@@ -420,7 +707,7 @@ function process_final_psms!(
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        species[i] = getProteomeIdentifiers(precursors)[pid]
+        species[i] = join(sort(unique(split(coalesce(getProteomeIdentifiers(precursors)[pid], ""),';'))),';')
         peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
         structural_mods[i] = getStructuralMods(precursors)[pid]

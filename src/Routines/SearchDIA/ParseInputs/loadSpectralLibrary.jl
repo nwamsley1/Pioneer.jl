@@ -107,14 +107,14 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
         return FragmentIndexLibrary(
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
-            BasicLibraryPrecursors(spec_lib["precursors"]), 
+            SetPrecursors(spec_lib["precursors"]), 
             spec_lib["f_det"]
         )
     else
         return SplineFragmentIndexLibrary(
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
-            BasicLibraryPrecursors(spec_lib["precursors"]), 
+            SetPrecursors(spec_lib["precursors"]), 
             spec_lib["f_det"]
         )
     end

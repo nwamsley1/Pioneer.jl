@@ -82,7 +82,7 @@ end
 
 """
     score_precursor_isotope_traces_in_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::BasicLibraryPrecursors) -> XGBoostModels
+                                  precursors::LibraryPrecursors) -> XGBoostModels
 
 Train XGBoost models for PSM scoring. All psms are kept in memory
 
@@ -97,7 +97,7 @@ Trained XGBoost models or simplified model if insufficient PSMs.
 function score_precursor_isotope_traces_in_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
-    precursors::BasicLibraryPrecursors,
+    precursors::LibraryPrecursors,
     match_between_runs::Bool
 )
     if size(best_psms, 1) > 100000
@@ -222,7 +222,7 @@ end
 
 """
     score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::BasicLibraryPrecursors) -> XGBoostModels
+                                  precursors::LibraryPrecursors) -> XGBoostModels
 
 Train XGBoost models for PSM scoring. Only a subset of psms are kept in memory
 
@@ -237,7 +237,7 @@ Trained XGBoost models or simplified model if insufficient PSMs.
 function score_precursor_isotope_traces_out_of_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
-    precursors::BasicLibraryPrecursors,
+    precursors::LibraryPrecursors,
     match_between_runs::Bool
 )
     if size(best_psms, 1) > 100000

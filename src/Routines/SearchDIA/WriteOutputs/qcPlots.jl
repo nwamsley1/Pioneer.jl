@@ -26,6 +26,7 @@ end
 #Group psms by file of origin
 function qcPlots(
     precursors_wide_path,
+    precursors_long_path,
     protein_groups_wide_path,
     params_,
     precursors,
@@ -40,6 +41,7 @@ function qcPlots(
     #grouped_protein_groups = groupby(protein_quant, :file_name)
     #Number of files to parse
     precursors_wide = Arrow.Table(precursors_wide_path)
+    precursors_long = Arrow.Table(precursors_long_path)
     protein_groups_wide = Arrow.Table(protein_groups_wide_path)
     n_files = length(parsed_fnames)
     n_files_per_plot = Int64(params_.output[:plots_per_page])
@@ -111,60 +113,107 @@ function qcPlots(
     end
 
     ###############
-    #Plot precursor IDs
+    # Plot precursor IDs using long-format data
+    ###############
+    # Get counts of precursor IDs per file meeting q-value threshold
+    function getIdCounts(
+        precursors_long::DataFrame;
+        file_column::Symbol = :file_name,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0
+        )
+        
+        # Filter rows by q-value threshold
+        filtered_df = filter(row -> row[q_value_column] <= q_value_threshold, precursors_long)
+        
+        # Count unique precursors per file
+        file_counts = combine(
+            groupby(filtered_df, file_column), 
+            nrow => :precursor_count
+        )
+        
+        # Create a mapping from filename to count
+        fname_to_id = Dict(
+            file_counts[!, file_column] .=> file_counts.precursor_count
+        )
+        
+        return fname_to_id
+    end
+
+    # Plot precursor IDs for a subset of files
     function plotPrecursorIDBarPlot(
-        precursors_wide::Arrow.Table,
-        parsed_fnames::Any,
-        short_fnames::Any;
-        title::String = "precursor_abundance_qc",
+        fname_to_id::Dict,
+        parsed_fnames::Vector;
+        title::String = "Precursor ID's per File",
         f_out::String = "./test.pdf"
         )
-
-        function getColumnIDs(
-            abundance::AbstractVector{Union{Missing, Float32}})
-            non_missing_count = 0
-            for i in range(1, length(abundance))
-                if !ismissing(abundance[i])
-                    non_missing_count += 1
-                end
-            end
-            return non_missing_count
+        
+        # Get counts for requested files
+        ids = Int64[]
+        for fname in parsed_fnames
+            push!(ids, fname_to_id[fname])
         end
-        ids = zeros(Int64, length(parsed_fnames))
-        for (i, fname) in enumerate(parsed_fnames)
-            try
-            ids[i] = getColumnIDs(precursors_wide[Symbol(fname)])
-            catch
-                continue
-            end
-        end
-        p = Plots.plot(title = title,
-                        legend=:none, layout = (1, 1))
-
-        Plots.bar!(p, 
-        short_fnames,
-        ids,
-        subplot = 1,
-        texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
-        xrotation = 45,
+        
+        p = Plots.plot(
+            title = title,
+            legend = :none, 
+            layout = (1, 1)
         )
-
+        
+        Plots.bar!(
+            p, 
+            parsed_fnames,
+            ids,
+            subplot = 1,
+            texts = [text(string(x), valign = :vcenter, halign = :right, rotation = 90) for x in ids],
+            xrotation = 45,
+        )
+        
         savefig(p, f_out)
     end
 
-
-    for n in 1:n_qc_plots
-        start = (n - 1)*n_files_per_plot + 1
-        stop = min(n*n_files_per_plot, length(parsed_fnames))
-        plotPrecursorIDBarPlot(
-            precursors_wide,
-            [x for x in parsed_fnames[start:stop]],
-            [x for x in short_fnames[start:stop]],
-            title = "Precursor ID's per File",
-            f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_"*string(n)*".pdf")
+    # Create multiple plots with chunking
+    function create_precursor_id_plots(
+        precursors_long::DataFrame;
+        n_files_per_plot::Int = 20,
+        file_column::Symbol = :ms_file_idx,
+        q_value_column::Symbol = :qval,
+        q_value_threshold::Real = 0.01f0,
+        qc_plot_folder::String = "./qc_plots/"
+    )
+        # Get counts of IDs per file once
+        fname_to_id = getIdCounts(
+            precursors_long, 
+            file_column = file_column,
+            q_value_column = q_value_column,
+            q_value_threshold = q_value_threshold
         )
-
+        fnames = collect(keys(fname_to_id))
+        # Calculate number of plots needed
+        n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        
+        # Create plots in chunks
+        for n in 1:n_qc_plots
+            start = (n - 1) * n_files_per_plot + 1
+            stop = min(n * n_files_per_plot, length(fnames))
+            
+            plotPrecursorIDBarPlot(
+                fname_to_id,
+                fnames[start:stop],
+                title = "Precursor ID's per File",
+                f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_" * string(n) * ".pdf")
+            )
+        end
     end
+
+    # Example usage:
+    precursors_long_df = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
+    create_precursor_id_plots(precursors_long_df, 
+                                n_files_per_plot=n_files_per_plot,
+                                file_column = :file_name,
+                                q_value_column = :qval,
+                                q_value_threshold = params_.global_settings.scoring.q_value_threshold,
+                                qc_plot_folder = qc_plot_folder)   
     ###############
     #Plot Protein Group IDs
     

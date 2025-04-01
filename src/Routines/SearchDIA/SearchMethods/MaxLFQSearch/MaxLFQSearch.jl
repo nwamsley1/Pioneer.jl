@@ -192,6 +192,7 @@ function summarize_results!(
         isfile(qc_plot_path) && rm(qc_plot_path)
         create_qc_plots(
             precursors_wide_path,
+            precursors_long_path,
             proteins_wide_path,
             search_context,
             precursors,

@@ -73,6 +73,30 @@ function setMatch!(matches::Vector{M},
     return i
 end
 
+function setMatch!(matches::Vector{M}, 
+                    precursor_isotope::Isotope{Float32}, 
+                    mass::Float32, 
+                    intensity::Float32, 
+                    peak_ind::Int64, 
+                    scan_idx::UInt32, 
+                    ms_file_idx::UInt32,
+                    i::Int64; 
+                    block_size = 10000) where {M<:MatchIon{Float32}}
+    i += 1
+    #Grow pre-allocated placeholder array if needed
+    if i > length(matches)
+        append!(matches, [PrecursorMatch{Float32}() for _ in range(1, block_size)])
+    end
+    matches[i] = PrecursorMatch(
+                                Float32(getIntensity(precursor_isotope)), 
+                                 intensity,
+                                 getMZ(precursor_isotope),
+                                 getIsoIdx(precursor_isotope),
+                                 peak_ind,
+                                 getPrecID(precursor_isotope)
+                                 )
+    return i
+end
 """
     getNearest(transition::Transition, masses::Vector{Union{Missing, Float32}}, peak::Int; δ = 0.01)
 
@@ -171,7 +195,73 @@ function setNearest!(matches::Vector{M},
     #end
     return matched_idx, unmatched_idx
 end
+function setNearest!(matches::Vector{M}, 
+                    unmatched::Vector{M},
+                    masses::AbstractArray{Union{Missing, Float32}}, 
+                    intensities::AbstractArray{Union{Missing, Float32}},
+                    Ion::Isotope{Float32},
+                    mass_err_model::MassErrorModel,
+                    low_theoretical_mz::Float32,
+                    high_theoretical_mz::Float32,
+                    corrected_empirical_mz::Float32,
+                    peak_idx::Int64,
+                    scan_idx::UInt32,
+                    ms_file_idx::UInt32,
+                    matched_idx::Int64,
+                    unmatched_idx::Int64
+                    )::Tuple{Int64,Int64} where {M<:MatchIon{Float32}}
 
+    smallest_diff = typemax(Float32)
+    #Have already verified that the current peak is within the mass tolerance 
+    best_mz, best_peak, i = corrected_empirical_mz, peak_idx, one(Int64)
+    theoretical_mz = getMZ(Ion)
+
+    #Iterate through peaks in  `masses` until a peak is encountered that is 
+    #greater in m/z than the upper bound of the theoretical ion mass tolerance 
+    #or until there are no more masses to check. Keep track of the best peak/transition match. 
+    #@inbounds @fastmath begin
+
+        if peak_idx + 1 <= length(masses)
+            @inbounds @fastmath begin
+                corrected_empirical_mz = getCorrectedMz(mass_err_model, masses[peak_idx + i])
+                while (corrected_empirical_mz <= high_theoretical_mz)
+                    if (corrected_empirical_mz >= low_theoretical_mz) #
+                        mz_diff = abs(corrected_empirical_mz-theoretical_mz)
+                        if mz_diff < smallest_diff
+                            smallest_diff = mz_diff
+                            best_peak = peak_idx + i
+                            best_mz = corrected_empirical_mz
+                        end
+                    end
+                    i+=1
+                    if (peak_idx + 1 + i > length(masses)) break end
+                end
+            end
+        end
+
+        if best_peak > 0
+            matched_idx = setMatch!(matches, 
+                                    Ion, 
+                                    best_mz,
+                                    intensities[best_peak], 
+                                    best_peak, 
+                                    scan_idx, 
+                                    ms_file_idx,
+                                    matched_idx);
+        else
+            unmatched_idx = setMatch!(unmatched,
+                        Ion, 
+                        zero(Float32), 
+                        zero(Float32),
+                        unmatched_idx, 
+                        scan_idx, 
+                        ms_file_idx,
+                        unmatched_idx
+                        );
+        end
+    #end
+    return matched_idx, unmatched_idx
+end
 """
     function matchPeaks!(matches::Vector{FragmentMatch}, Transitions::Vector{Transition}, masses::Vector{Union{Missing, Float32}}, intensities::Vector{Union{Missing, Float32}}, δ::Float64)  
 

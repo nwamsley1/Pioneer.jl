@@ -71,7 +71,9 @@ Helper Functions
 
 Partition MS data into chunks for parallel processing.
 """
-function partition_scans(ms_table, n_threads)
+function partition_scans(ms_table, n_threads; ms_order_select = 2)
+
+    if ms_order_select == 2
     thread_tasks, total_peaks = partitionScansToThreads(
         getMzArrays(ms_table),
         getRetentionTimes(ms_table),
@@ -80,6 +82,16 @@ function partition_scans(ms_table, n_threads)
         n_threads,
         1
     )
+    else   
+    thread_tasks, total_peaks = partitionScansToThreadsMS1(
+        getMzArrays(ms_table),
+        getRetentionTimes(ms_table),
+        getCenterMzs(ms_table),
+        getMsOrders(ms_table),
+        n_threads,
+        1
+    )
+    end
     return thread_tasks
 end
 

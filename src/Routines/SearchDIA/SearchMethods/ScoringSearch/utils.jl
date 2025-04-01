@@ -351,13 +351,15 @@ function get_qvalue_spline(
 end
 
 """
-    get_psms_passing_qval(passing_psms_paths::Vector{String}, passing_psms_folder::String,
-                         second_pass_psms_paths::Vector{String}, pep_spline::UniformSpline,
-                         qval_interp::Interpolations.Extrapolation, q_val_threshold::Float32)
+    get_psms_passing_qval(precursors::LibraryPrecursors, passing_psms_paths::Vector{String}, 
+                         passing_psms_folder::String, second_pass_psms_paths::Vector{String}, 
+                         pep_spline::UniformSpline, qval_interp::Interpolations.Extrapolation, 
+                         q_val_threshold::Float32)
 
 Filter PSMs that pass a given q-value threshold and calculate error probabilities.
 
 # Arguments
+- `precursors::LibraryPrecursors`: Library precursor information
 - `passing_psms_paths`: Vector to store paths of filtered PSM files
 - `passing_psms_folder`: Folder to store passing PSM files
 - `second_pass_psms_paths`: Paths to second pass PSM files
@@ -380,15 +382,13 @@ Filter PSMs that pass a given q-value threshold and calculate error probabilitie
 - scan_idx, ms_file_idx
 """
 function get_psms_passing_qval(
+                            precursors::LibraryPrecursors,
                             passing_psms_paths::Vector{String},
                             passing_psms_folder::String,
                             second_pass_psms_paths::Vector{String}, 
                             pep_spline::UniformSpline,
                             qval_interp::Interpolations.Extrapolation,
-                            q_val_threshold::Float32,
-)
-    
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
+                            q_val_threshold::Float32)
     for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
         # Read the Arrow table
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
@@ -408,15 +408,165 @@ function get_psms_passing_qval(
             :isotopes_captured,
             :scan_idx,
             :ms_file_idx])
-        ###println("size(passing_psms) ", size(passing_psms))
-        ###println("q_val_threshold $q_val_threshold")
         filter!(x->x.qval<=q_val_threshold, passing_psms)
-        ##println("size(passing_psms) ", size(passing_psms))
         # Append to the result DataFrame
-        ##println("joinpath(passing_psms_folder, basename(file_path)) ", joinpath(passing_psms_folder, basename(file_path)))
         Arrow.write(
             joinpath(passing_psms_folder, basename(file_path)),
             passing_psms
+        )
+        passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
+    end
+    return
+end
+
+"""
+    get_psms_passing_qval(precursors::PlexedLibraryPrecursors, passing_psms_paths::Vector{String}, 
+                         passing_psms_folder::String, second_pass_psms_paths::Vector{String}, 
+                         pep_spline::UniformSpline, qval_interp::Interpolations.Extrapolation, 
+                         q_val_threshold::Float32)
+
+Filter PSMs that pass a given group-level q-value threshold and calculate error probabilities for plexed library precursors.
+
+# Arguments
+- `precursors::PlexedLibraryPrecursors`: Plexed library precursor information
+- `passing_psms_paths`: Vector to store paths of filtered PSM files
+- `passing_psms_folder`: Folder to store passing PSM files
+- `second_pass_psms_paths`: Paths to second pass PSM files
+- `pep_spline`: Spline for posterior error probability calculation
+- `qval_interp`: Interpolation function for q-value calculation
+- `q_val_threshold`: Q-value threshold for filtering
+
+# Process
+1. Reads all PSMs from second pass files
+2. Adds sequence and structural modification information from precursors
+3. Calculates group-level q-values by:
+   - Grouping by ms_file_idx, sequence, and structural_mods
+   - Finding maximum probability for each group
+   - Computing FDR and q-values at the group level
+4. Calculates PSM-level q-values and PEP
+5. Filters PSMs below the group q-value threshold
+6. Saves filtered PSMs by file
+7. Updates passing_psms_paths with new file locations
+
+# Selected Columns
+- precursor_idx, prob, qval, group_qvalue
+- weight, target, irt_obs
+- missed_cleavage, isotopes_captured
+- scan_idx, ms_file_idx
+"""
+function get_psms_passing_qval(
+                            precursors::PlexedLibraryPrecursors,
+                            passing_psms_paths::Vector{String},
+                            passing_psms_folder::String,
+                            second_pass_psms_paths::Vector{String}, 
+                            pep_spline::UniformSpline,
+                            qval_interp::Interpolations.Extrapolation,
+                            q_val_threshold::Float32)
+
+    function groupLevelQval(df::DataFrame)
+        # Step 1: Group by the specified columns and get max probability for each group
+        grouped_df = combine(groupby(df, [:ms_file_idx, :sequence, :structural_mods, :charge]),
+                            :prob => maximum => :group_max_prob,
+                            :decoy => first => :group_decoy)
+        
+        # Step 2: Calculate FDR and q-values based on the max probability
+        # Sort by descending probability
+        sort!(grouped_df, :group_max_prob, rev=true)
+        
+        # Calculate FDR for each row
+        grouped_df.group_fdr = zeros(Float32, size(grouped_df, 1))
+        cumulative_decoys = 0
+        cumulative_targets = 0
+        
+        for i in 1:nrow(grouped_df)
+            if grouped_df.group_decoy[i]
+                cumulative_decoys += 1
+            else
+                cumulative_targets += 1
+            end
+            
+            # FDR = (decoys * scale_factor) / targets
+            if cumulative_targets == 0
+                grouped_df.group_fdr[i] = 1.0
+            else
+                grouped_df.group_fdr[i] = min(1.0, (cumulative_decoys) / cumulative_targets)
+            end
+        end
+        
+        # Step 3: Convert FDR to q-value (monotonically non-decreasing values)
+        grouped_df.group_qvalue = copy(grouped_df.group_fdr)
+        
+        # Ensure q-values are monotonically non-decreasing from bottom to top
+        for i in (nrow(grouped_df)-1):-1:1
+            grouped_df.group_qvalue[i] = min(grouped_df.group_qvalue[i], 
+                                              grouped_df.group_qvalue[i+1])
+        end
+        
+        # Step 4: Join the group-level information back to the original dataframe
+        # Create a temporary dataframe with just the keys and new columns
+        temp_df = select(grouped_df, 
+                         [:ms_file_idx, :sequence, :structural_mods, 
+                          :group_max_prob, :group_qvalue])
+        
+        # Join this information back to the original dataframe
+        result_df = leftjoin(df, temp_df, 
+                             on=[:ms_file_idx, :sequence, :structural_mods, :charge])
+        
+        return result_df
+    end
+
+    #If at least one plex passed 
+    function minQval(df::DataFrame)
+        # Group by sequence and structural_mods (across all plexes/files)
+        # Find the minimum q-value for each peptide group
+        min_qval_df = combine(
+            groupby(df, [:ms_file_idx, :sequence, :structural_mods, :charge]),
+            :qval => minimum => :min_qval
+        )
+        
+        temp_df = select(min_qval_df, 
+        [:ms_file_idx, :sequence, :structural_mods, 
+         :charge, :min_qval])
+
+        # Join this information back to the original dataframe
+        result_df = leftjoin(
+            df, 
+            temp_df, 
+            on = [:ms_file_idx, :sequence, :structural_mods, :charge]
+        )
+        
+        return result_df
+    end
+    psms = DataFrame(Tables.columntable(Arrow.Table(second_pass_psms_paths)))
+    psms[!,:decoy] = psms[!,:target].==false
+    psms[!,:sequence] = [getSequence(precursors)[pid] for pid in psms[!,:precursor_idx]]
+    psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in psms[!,:precursor_idx]]
+    #psms = groupLevelQval(psms)
+    psms[!,:qval] = qval_interp.(psms[!,:prob])
+    psms = minQval(psms)
+    psms[!,:pep] = pep_spline.(psms[!,:prob])
+    select!(psms,
+    [
+        :precursor_idx,
+        :prob,
+        :qval,
+        :min_qval,
+        #:pep,
+        :weight,
+        :target,
+        :irt_obs,
+        :missed_cleavage,
+        :isotopes_captured,
+        :scan_idx,
+        :ms_file_idx])
+    #filter!(x->x.group_qvalue<=q_val_threshold, psms)
+    filter!(x->x.min_qval<=q_val_threshold, psms)
+    psms_by_file = groupby(psms, :ms_file_idx)
+    for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
+        file_psms = psms_by_file[(ms_file_idx = ms_file_idx,)]
+        Arrow.write(
+            joinpath(passing_psms_folder, basename(file_path)),
+            file_psms
         )
         passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
     end
@@ -424,14 +574,13 @@ function get_psms_passing_qval(
     return
 end
 
-
 #==========================================================
 Protein group analysis
 ==========================================================#
 """
     get_protein_groups(passing_psms_paths::Vector{String}, passing_pg_paths::Vector{String},
                       protein_groups_folder::String, temp_folder::String,
-                      precursors::BasicLibraryPrecursors; min_peptides=2,
+                      precursors::LibraryPrecursors; min_peptides=2,
                       protein_q_val_threshold::Float32=0.01f0) -> String
 
 Create and score protein groups from passing PSMs.
@@ -443,7 +592,7 @@ function get_protein_groups(
     passing_pg_paths::Vector{String},
     protein_groups_folder::String,
     temp_folder::String,
-    precursors::BasicLibraryPrecursors;
+    precursors::LibraryPrecursors;
     min_peptides = 2,
     protein_q_val_threshold::Float32 = 0.01f0
 )
@@ -453,7 +602,7 @@ function get_protein_groups(
         psm_precursor_idx::AbstractVector{UInt32},
         psm_score::AbstractVector{Float32},
         psm_is_target::AbstractVector{Bool},
-        precursors::BasicLibraryPrecursors;
+        precursors::LibraryPrecursors;
         min_peptides::Int64 = 2)
 
         accession_numbers = getAccessionNumbers(precursors)
