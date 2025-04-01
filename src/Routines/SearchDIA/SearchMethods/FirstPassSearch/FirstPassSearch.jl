@@ -395,6 +395,22 @@ function summarize_results!(
     map_retention_times!(search_context, results, params)
     # Process precursors
     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)
+    ####
+    #Add complements
+    #test
+    println("length(pairs(precursor_dict)) ", length(pairs(precursor_dict)))
+    precursors = getPrecursors(getSpecLib(search_context))
+    for (pid, val) in pairs(precursor_dict)
+        partner_pid = getPartnerPrecursorIdx(precursors)[pid]
+        if ismissing(partner_pid)
+            continue
+        end
+        if !haskey(precursor_dict, partner_pid)
+            insert!(precursor_dict, partner_pid, val)
+        end
+    end
+    println("After length(pairs(precursor_dict)) ", length(pairs(precursor_dict)))
+    println("\n")
     setPrecursorDict!(search_context, precursor_dict)
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)

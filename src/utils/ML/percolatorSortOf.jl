@@ -1,13 +1,13 @@
 function getBestScorePerPrec(psms::SubDataFrame)
     # Create dictionary to store scores per precursor
     prec_to_best_score = Dictionary{
-        @NamedTuple{prec_idx::UInt32, isotopes::Tuple{Int8,Int8}}, 
+        @NamedTuple{pair_id::UInt32, isotopes::Tuple{Int8,Int8}}, 
         @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}
     }()
     
     # Process each row in the dataframe
     for (i, row) in enumerate(eachrow(psms))
-        key = (prec_idx = row.precursor_idx, isotopes = row.isotopes_captured)
+        key = (pair_id = row.pair_id, isotopes = row.isotopes_captured)
         prob = row.prob
         
         if haskey(prec_to_best_score, key)
@@ -68,7 +68,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             minimum(probs), maximum(probs), mean(probs)
         end
         
-        for (key, sub_psms) in pairs(groupby(psms, [:precursor_idx, :isotopes_captured]))
+        for (key, sub_psms) in pairs(groupby(psms, [:pair_id, :isotopes_captured]))
             min_prob, max_prob, mean_prob = summarize_prob(sub_psms[!,:prob])
             set_column!(sub_psms[!,:min_prob], min_prob)
             set_column!(sub_psms[!,:max_prob], max_prob)
@@ -88,7 +88,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     end
     #Faster if sorted first 
     @info "sort time..."
-    @time sort!(psms, [:precursor_idx, :isotopes_captured])
+    @time sort!(psms, [:pair_id, :isotopes_captured])
     #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
 
@@ -127,6 +127,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
+            print_importance = true
             if print_importance
                 println(collect(zip(importance(bst))))
             end
@@ -172,7 +173,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     print_importance::Bool = true)
 
     function getBestScorePerPrec!(
-        prec_to_best_score_new::Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
+        prec_to_best_score_new::Dictionary{@NamedTuple{pair_id::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
         test_fold_filter::Function,
         test_fold_idx::UInt8,
         file_paths::Vector{String},
@@ -189,10 +190,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             psms_subset = DataFrame(Arrow.Table(file_path))
             probs = XGBoost.predict(bst, psms_subset[!,features])
             #Update maximum probabilities for tracked precursors 
-            for (i, prec_idx) in enumerate(psms_subset[!,:precursor_idx])
+            for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
                 prob = probs[i]
-                key = (prec_idx = prec_idx, isotopes = psms_subset[i,:isotopes_captured])
+                key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                 if haskey(prec_to_best_score_new, key)
                     max_prob, mean_prob, min_prob, n = prec_to_best_score_new[key]
                     if max_prob < prob
@@ -214,10 +215,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
             probs = XGBoost.predict(bst, psms_subset[!,features])
-            for (i, prec_idx) in enumerate(psms_subset[!,:precursor_idx])
+            for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
                 psms_subset[i,:prob] = probs[i]
-                key = (prec_idx = prec_idx, isotopes = psms_subset[i,:isotopes_captured])
+                key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                 if haskey(prec_to_best_score_new, key)
                     max_prob, mean_prob, min_prob, n = prec_to_best_score_new[key]
                     psms_subset[i,:max_prob] = max_prob
@@ -235,11 +236,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     end
     
     function getBestScorePerPrec!(
-        prec_to_best_score_new::Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
+        prec_to_best_score_new::Dictionary{@NamedTuple{pair_id::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}},
         psms::DataFrame)
         m = 0
-        for (i, prec_idx) in enumerate(psms[!,:precursor_idx])
-            key = (prec_idx = prec_idx, isotopes = psms[i,:isotopes_captured])
+        for (i, pair_id) in enumerate(psms[!,:pair_id])
+            key = (pair_id = pair_id, isotopes = psms[i,:isotopes_captured])
             if haskey(prec_to_best_score_new, key)
                 max_prob, mean_prob, min_prob, n = prec_to_best_score_new[key]
                 psms[i,:max_prob] = max_prob
@@ -272,7 +273,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         train_fold_idxs_all = findall(x->x!=test_fold_idx, folds)
         psms_train = psms[train_fold_idxs_all,:]
-        prec_to_best_score = Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
+        prec_to_best_score = Dictionary{@NamedTuple{pair_id::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
         for (train_iter, num_round) in enumerate(iter_scheme)
             println("training: ", test_fold_idx, " ", train_iter, " ", size(psms,1), "\n")
             ###################
@@ -303,6 +304,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 push!(models[test_fold_idx], bst)
             end
             bst.feature_names = [string(x) for x in features]
+            print_importance = true
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
             #println(collect(zip(importance(bst)))[1:5])
             prec_to_best_score = getBestScorePerPrec!(
@@ -322,7 +324,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     end
     pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
     for test_fold_idx in unique_cv_folds
-        prec_to_best_score = Dictionary{@NamedTuple{prec_idx::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
+        prec_to_best_score = Dictionary{@NamedTuple{pair_id::UInt32,isotopes::Tuple{Int8,Int8}}, @NamedTuple{max_prob::Float32, mean_prob::Float32, min_prob::Float32, n::UInt16}}()
         for (train_iter, num_round) in enumerate(iter_scheme)
             model = models[test_fold_idx][train_iter]
             prec_to_best_score = getBestScorePerPrec!(
