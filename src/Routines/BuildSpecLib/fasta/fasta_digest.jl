@@ -72,6 +72,7 @@ function digest_fasta(fasta::Vector{FastaEntry},
     end
     peptides_fasta = Vector{FastaEntry}()
     base_pep_id = one(UInt32)
+    base_prec_id = one(UInt32)
     for entry in fasta
         for peptide in digest_sequence(get_sequence(entry), regex,
                                      max_length, min_length,
@@ -82,9 +83,11 @@ function digest_fasta(fasta::Vector{FastaEntry},
                 proteome_id,
                 peptide,  # Now String instead of SubString
                 base_pep_id,
+                base_prec_id,
                 zero(UInt8),
                 false
             ))
+            base_prec_id += one(UInt32)
             base_pep_id += one(UInt32)
         end
     end

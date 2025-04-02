@@ -1,3 +1,4 @@
+#=
 using DataFrames
 function reverseSequence(sequence::AbstractString, structural_mods::String)
     # Early return if no modifications
@@ -308,4 +309,5 @@ mv(temp_dir, ptable_path, force = true)
 #Testing 
 #=
 
+=#
 =#
