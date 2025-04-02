@@ -131,7 +131,7 @@ function prepare_chronologer_input(
     else
         fasta_df[!, :collision_energy] .= Float32(params["nce_params"]["nce"])
     end
-    
+
     Arrow.write(chronologer_out_path, fasta_df)
 
     return nothing
@@ -493,7 +493,7 @@ function add_pair_indices!(df)
     end
     
     # Add the column to the DataFrame
-    df.precursor_pair_idx = precursor_pair_idx
+    df[!,:partner_precursor_idx] = precursor_pair_idx
     
     return nothing
 end
