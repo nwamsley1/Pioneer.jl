@@ -246,7 +246,7 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         
         # Reorder columns to put precursor_idx first
         new_df = select(new_df, :precursor_idx, Not(:precursor_idx))
-
+        new_df[!,:pair_id] = collect(range(one(UInt32), UInt32(size(new_df, 1))))
         new(new_df)
     end
 end
@@ -384,6 +384,8 @@ getPrecCharge(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec
 getPrecSulfurCount(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:prec_sulfur_count]::UInt8
 getIsDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:is_decoy]::Bool
 getIsChannelDecoy(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:channel_decoy]::Bool
+getPairId(sl::EmpiricalLibrary, frag_idx::Integer) = sl.libdf[frag_idx,:pair_id]::UInt32
+
 function getEntrapmentGroupIdx(sl::EmpiricalLibrary, frag_idx::Integer)
     sl.libdf[frag_idx,:entrapment_group_id]::UInt8
 end
