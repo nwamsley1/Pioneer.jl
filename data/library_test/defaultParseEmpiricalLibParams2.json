@@ -38,6 +38,7 @@
             ]
         }
     ],
+    "channel_decoys": false,
     "sulfur_mod_groups": [
         {
             "name": "tag6",

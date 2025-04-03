@@ -193,9 +193,9 @@ function parseEmpiricalLibraryMods(sequence::String)
         # Adjust for removal of (mod_name)
         pos_adjust += length(m.match) - 1
     end
-    
     # Sort by position and join
     sort!(mods, by=x->parse(Int, match(r"\((\d+)", x).captures[1]))
+
     return join(mods)
 end
 

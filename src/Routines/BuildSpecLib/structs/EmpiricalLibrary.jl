@@ -177,11 +177,12 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
 
         # Apply the rename
         rename!(new_df, filtered_mapping)
-        
+        parseProteinName(pn::Missing) = ""
+        parseProteinName(pn::String) = string(split(pn, '_')[end])
         # Add proteome_idx column if missing
         if !hasproperty(new_df, :ProteomeIdentifier)
             if hasproperty(new_df, :protein_name)
-                new_df[!,:proteome_idx] = [string(split(pn, '_')[end]) for pn in new_df[!,:protein_name]]
+                new_df[!,:proteome_idx] = [parseProteinName(pn) for pn in new_df[!,:protein_name]]
             end
         else
             rename!(new_df, 
@@ -223,10 +224,10 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         #new_df[!,:modified_sequence] = add_cysteine_mods.(new_df[!,:modified_sequence])
         ###########
         #Specific treatment for the di-ethyl library from kmd 
-        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Oxidation (M)]"=>"(Unimod:35)")
-        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:35)")
-        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(de)")
-        new_df[!,:modified_sequence] = ["n(de)"*seq for seq in new_df[!,:modified_sequence]]
+        #new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Oxidation (M)]"=>"(Unimod:35)")
+        #new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:35)")
+        #new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(de)")
+        #new_df[!,:modified_sequence] = ["n(de)"*seq for seq in new_df[!,:modified_sequence]]
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)

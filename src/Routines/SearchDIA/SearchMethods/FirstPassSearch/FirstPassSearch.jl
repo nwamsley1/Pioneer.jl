@@ -77,7 +77,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_frag_rank::UInt8
     sample_rate::Float32
     spec_order::Set{Int64}
-    sibling_peptide_scores::Bool
+    match_between_runs::Bool
     
     # Scoring parameters
     n_train_rounds_probit::Int64
@@ -104,7 +104,6 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
         irt_mapping_params = first_params.irt_mapping
         # Convert isotope error bounds
         isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
-        
         # Determine precursor estimation strategy
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
@@ -122,7 +121,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling for first pass
             Set{Int64}([2]),
-            global_params.match_bewteen_runs,
+            global_params.match_between_runs,
             
             Int64(score_params.n_train_rounds),
             Int64(score_params.max_iterations),

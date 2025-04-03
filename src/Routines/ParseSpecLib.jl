@@ -247,7 +247,8 @@ function ParseSpecLib(params_path::String)
     # Process structural modifications
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-    CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
+    #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
+    #println("test_lib.libdf[1:3,:], ", test_lib.libdf[1:3,:])
     # Generate entrapment sequences if requested
     if generate_entrapment
         for i in 1:entrapment_groups
@@ -280,6 +281,8 @@ function ParseSpecLib(params_path::String)
                 push!(decoy_channel_dfs, channel_df)
             end
         end
+    else
+        decoy_channel_dfs = []
     end
 
     # Process modification channels
