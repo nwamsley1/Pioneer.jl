@@ -769,7 +769,6 @@ function getDetailedFrags(
             end
         end
     end
-    println("n_frags $n_frags")
     detailed_frags = Vector{DetailedFrag{Float32}}(
                                     undef, 
                                     n_frags)   
@@ -921,7 +920,6 @@ function getDetailedFrags(
             end
         end
     end
-    println("n_frags $n_frags")
     n_tuple_p = typeof(first(frag_coef))
     n_tuple_size = length(n_tuple_p.parameters)
     n_tuple_type = eltype(n_tuple_p)

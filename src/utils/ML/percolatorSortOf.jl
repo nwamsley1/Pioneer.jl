@@ -127,7 +127,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
-            print_importance = true
             if print_importance
                 println(collect(zip(importance(bst))))
             end
@@ -304,7 +303,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 push!(models[test_fold_idx], bst)
             end
             bst.feature_names = [string(x) for x in features]
-            print_importance = true
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
             #println(collect(zip(importance(bst)))[1:5])
             prec_to_best_score = getBestScorePerPrec!(

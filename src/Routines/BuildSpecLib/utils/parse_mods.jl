@@ -193,9 +193,9 @@ function parseEmpiricalLibraryMods(sequence::String)
         # Adjust for removal of (mod_name)
         pos_adjust += length(m.match) - 1
     end
-    
     # Sort by position and join
     sort!(mods, by=x->parse(Int, match(r"\((\d+)", x).captures[1]))
+
     return join(mods)
 end
 
@@ -970,6 +970,7 @@ end
 function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment_group_id::Integer)
     # Make a deep copy and sort by precursor_idx
     shuffle_libdf = deepcopy(speclibdf.libdf)
+    pair_id = UInt32(size(shuffle_libdf, 1) + 1)
     sort!(shuffle_libdf, :precursor_idx)
     shuffle_libdf[!,:entrapment_group_id] .= UInt8(entrapment_group_id)
     # Create a Set of forward sequences for O(1) lookup
@@ -1018,7 +1019,9 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
         # Apply current shuffled sequence to this row
         row.sequence = current_shuffled_seq
         row.structural_mods = current_shuffled_mods
-        row.is_decoy = true
+        row.pair_id = pair_id
+        pair_id += one(UInt32)
+        row.is_decoy = false
     end
     
     # Filter out failed shuffles and append

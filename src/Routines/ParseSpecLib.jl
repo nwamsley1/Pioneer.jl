@@ -247,14 +247,14 @@ function ParseSpecLib(params_path::String)
     # Process structural modifications
     parseStructralModsFromLib!(test_lib)
     test_lib.libdf[!,:entrapment_group_id] = zeros(UInt8, size(test_lib.libdf, 1))
-    CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
+    #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
+    #println("test_lib.libdf[1:3,:], ", test_lib.libdf[1:3,:])
     # Generate entrapment sequences if requested
     if generate_entrapment
         for i in 1:entrapment_groups
             getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
         end
     end
-    
     # Generate reversed decoys if requested
     if generate_decoys
         decoy_lib = getRevDecoys!(test_lib)
@@ -280,6 +280,8 @@ function ParseSpecLib(params_path::String)
                 push!(decoy_channel_dfs, channel_df)
             end
         end
+    else
+        decoy_channel_dfs = []
     end
 
     # Process modification channels
@@ -309,9 +311,6 @@ function ParseSpecLib(params_path::String)
         append!(test_lib.libdf, channels_df)
         append!(test_lib.libdf, decoy_channel_dfs)
     end
-    println("mod_channels $mod_channels")
-    println("length(channel_dfs) ", length(channel_dfs))
-    [println("size(df, 1): ", size(df, 1)) for df in channel_dfs]
     #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out2.csv", test_lib.libdf)
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
@@ -352,7 +351,6 @@ function ParseSpecLib(params_path::String)
         end
     end
 
-    println("iso_mods_dict $iso_mods_dict")
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
@@ -432,6 +430,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     missed_cleavages = zeros(UInt8, n_precursors)
     irt = zeros(Float32, n_precursors)
     sulfur_count = zeros(UInt8, n_precursors)
+    pair_id = zeros(UInt32, n_precursors)
 
     for frag_idx in ProgressBar(range(one(UInt64), UInt64(n_frags)))
         current_prec_idx = speclib_df[frag_idx, :precursor_idx]
@@ -461,6 +460,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             missed_cleavages[prec_idx] = getMissedCleavages(speclib, frag_idx) #will need to have specific and en
             irt[prec_idx] = getIrt(speclib, frag_idx)
             sulfur_count[prec_idx] = getPrecSulfurCount(speclib, frag_idx)
+            pair_id[prec_idx] = getPairId(speclib, frag_idx)
         end
         new_precursor_idxs[frag_idx] = prec_idx
         if speclib_df[frag_idx, :library_intensity] > max_frag_intensities[prec_idx]
@@ -485,9 +485,11 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             length = seq_length,
             missed_cleavages = missed_cleavages,
             irt = irt,
-            sulfur_count = sulfur_count
+            sulfur_count = sulfur_count,
+            pair_id = pair_id
         )
     )
+    add_pair_indices!(precursors_df)
     Arrow.write(
         joinpath(speclib_dir, "precursors_table.arrow"),
         precursors_df

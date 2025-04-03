@@ -260,6 +260,7 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
 
                 # Save processed precursor table
+                add_pair_indices!(precursors_table)
                 Arrow.write(
                     joinpath(lib_dir, "precursors_table.arrow"),
                     precursors_table

@@ -60,6 +60,13 @@ function add_entrapment_sequences(
     union!(sequences_set, target_sequences)
     
     n = 1
+    maximum_prec_id = zero(UInt32)
+    for tfe = target_fasta_entries
+        if get_base_prec_id(tfe) > maximum_prec_id
+            maximum_prec_id = get_base_prec_id(tfe)
+        end
+    end
+    base_prec_id = maximum_prec_id + one(UInt32)
     for target_entry in target_fasta_entries
         for entrapment_group_id in 1:entrapment_r
             n_shuffle_attempts = 0
@@ -74,9 +81,11 @@ function add_entrapment_sequences(
                         get_proteome(target_entry),
                         new_sequence,
                         get_base_pep_id(target_entry),
+                        base_prec_id,
                         entrapment_group_id,
                         false
                     )
+                    base_prec_id += one(UInt32)
                     n += 1
                     push!(sequences_set, new_sequence)
                     break
@@ -166,6 +175,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                                             get_proteome(target_entry),
                                             decoy_sequence,
                                             get_base_pep_id(target_entry),
+                                            get_base_prec_id(target_entry),
                                             get_entrapment_group_id(target_entry),
                                             true #Must be a decoy sequence
                                             )
@@ -232,6 +242,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         proteome,
                                                         get_sequence(fasta_entry),
                                                         get_base_pep_id(fasta_entry),
+                                                        get_base_prec_id(fasta_entry),
                                                         get_entrapment_group_id(fasta_entry), 
                                                         is_decoy(fasta_entry)
                                                         )

@@ -42,6 +42,7 @@ function parse_fasta(fasta_path::String,
             proteome_id,
             FASTA.sequence(record),
             zero(UInt32),
+            zero(UInt32),
             zero(UInt8),
             false
         ))

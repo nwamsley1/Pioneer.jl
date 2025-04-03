@@ -1,3 +1,4 @@
+#=
 using DataFrames
 function reverseSequence(sequence::AbstractString, structural_mods::String)
     # Early return if no modifications
@@ -305,7 +306,20 @@ Arrow.write(temp_dir, precursors_table)
 mv(temp_dir, ptable_path, force = true)
 
 
+
+ptable_path = "/Users/nathanwamsley/Projects/test_pioneer/Pioneer.jl/data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin/precursors_table.arrow"
+precursors_table = DataFrame(Tables.columntable(Arrow.Table(
+    ptable_path
+    )))
+precursors_table, lookup_table = add_precursor_partner_columns!(precursors_table)
+temp_dir = "/Users/nathanwamsley/Projects/test_pioneer/Pioneer.jl/data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin/precursors_table_temp.arrow"
+Arrow.write(temp_dir, precursors_table)
+mv(temp_dir, ptable_path, force = true)
+
+
+
 #Testing 
 #=
 
+=#
 =#
