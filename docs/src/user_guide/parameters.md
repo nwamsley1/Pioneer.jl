@@ -53,6 +53,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.tol_ppm` | Float | Initial tragment mass tolerance guess in parts per million (default: 20.0, should be set lower for some TOF instruments) |
 | `fragment_settings.min_score` | Int | Minimum fragment-index score threshold for fragment matches (default: 22) |
 | `fragment_settings.min_spectral_contrast` | Float | Minimum cosine simmilarity score (default: 0.9) |
+| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interferring peak (default: 1.25) |
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 1.5) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum number of top N matches - [requirement, denominator]. Default: `[3, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of fragment isotopes to consider in matching (default: 1, mono only) |
@@ -71,6 +72,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.max_rank` | Int | Maximum fragment rank to consider (default: 50 means 50th-last most abundant fragments per precursor are filtered out) |
 | `fragment_settings.min_score` | Int | Minimum score for fragment matches (default: 15) |
 | `fragment_settings.min_spectral_contrast` | Float | Minimum cosine simmilarity required (default: 0.5) |
+| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interferring peak (default: 1.25) |
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 0.0, means sum of matched library fragment intensities is equal to the sum of unmatched library fragment intensities for the precursor ) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
