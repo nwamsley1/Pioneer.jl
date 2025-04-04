@@ -22,6 +22,7 @@
             "tol_ppm": 20.0,
             "min_score": 22,
             "min_spectral_contrast": 0.9,
+            "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 1.5,
             "min_top_n": [3, 3],
             "n_isotopes": 1
@@ -39,6 +40,7 @@
             "max_rank": 25,
             "min_score": 15,
             "min_spectral_contrast": 0.5,
+            "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 0.0,
             "min_top_n": [2, 3],
             "n_isotopes": 1

@@ -78,6 +78,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     sample_rate::Float32
     spec_order::Set{Int64}
     match_between_runs::Bool
+    relative_improvement_threshold::Float32
     
     # Scoring parameters
     n_train_rounds_probit::Int64
@@ -122,6 +123,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             1.0f0,  # Full sampling for first pass
             Set{Int64}([2]),
             global_params.match_between_runs,
+            Float32(frag_params.relative_improvement_threshold),
             
             Int64(score_params.n_train_rounds),
             Int64(score_params.max_iterations),
@@ -268,13 +270,19 @@ function process_file!(
         params::FirstPassSearchParameters
     )
         column_names = [
-            :spectral_contrast, :city_block, :entropy_score, :scribe,
+            :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, 
             :missed_cleavage, 
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
+
+        # Avoid singular error if no peaks were ignored
+        if maximum(psms.percent_theoretical_ignored) == 0
+            deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))
+        end
+
 
         # Select scoring columns
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
@@ -290,7 +298,7 @@ function process_file!(
             )
         catch
             column_names = [
-            :spectral_contrast, :city_block, :entropy_score, :scribe,
+            :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
             ]
             score_main_search_psms!(

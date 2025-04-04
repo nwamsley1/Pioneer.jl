@@ -1,0 +1,89 @@
+{
+    "lib_name": "Altimeter_ecoli",
+    "max_koina_batch": 1000,
+    "variable_mods": {
+        "name": [
+            "Unimod:35"
+        ],
+        "pattern": [
+            "M"
+        ],
+        "mass": [
+            15.99491
+        ]
+    },
+    "predict_fragments": true,
+    "library_params": {
+        "auto_detect_frag_bounds": false,
+        "calibration_raw_file": "/Users/dennisgoldfarb/Downloads/Pioneer Testing/MTAC/arrow_out/20241203_bkc_25-0856_Goldfarb_Wamsley_Yeast_Standard_5min_Rep1.arrow",
+        "y_start_index": 4,
+        "include_immonium": false,
+        "frag_mz_min": 150.0,
+        "max_frag_rank": 7,
+        "include_internal": false,
+        "rank_to_score": [
+            8,
+            4,
+            4,
+            2,
+            2,
+            1,
+            1
+        ],
+        "prec_mz_min": 500.0,
+        "frag_bin_tol_ppm": 10.0,
+        "min_frag_intensity": 0.0,
+        "y_start": 3,
+        "prediction_model": "prosit_2020_hcd",
+        "include_isotope": false,
+        "b_start_index": 3,
+        "frag_mz_max": 2020.0,
+        "include_neutral_diff": true,
+        "max_frag_charge": 3,
+        "rt_bin_tol": 1.0,
+        "b_start": 2,
+        "include_p": false,
+        "include_p_index": false,
+        "prec_mz_max": 600.0,
+        "instrument_type": "NONE"
+    },
+    "fasta_names": [
+        "ECOLI"
+    ],
+    "out_dir": "/Users/dennisgoldfarb/Downloads/Pioneer Testing/libraries/",
+    "match_lib_build_batch": 100000,
+    "new_lib_name": "yeast_prosit",
+    "nce_params": {
+        "nce": 25.0,
+        "dynamic_nce": true,
+        "default_charge": 2
+    },
+    "max_koina_requests": 24,
+    "fasta_paths": [
+        "/Users/dennisgoldfarb/Downloads/Pioneer Testing/FASTA/ecoli_iso.fasta.gz"
+    ],
+    "fasta_digest_params": {
+        "min_charge": 2,
+        "cleavage_regex": "[KR][^_|$]",
+        "missed_cleavages": 1,
+        "max_var_mods": 1,
+        "max_charge": 4,
+        "entrapment_r": 0,
+        "add_decoys": true,
+        "max_length": 30,
+        "min_length": 7
+    },
+    "isotope_mod_groups": [],
+    "fixed_mods": {
+        "name": [
+            "Unimod:4"
+        ],
+        "pattern": [
+            "C"
+        ],
+        "mass": [
+            57.021464
+        ]
+    },
+    "out_name": "yeast_prosit.tsv"
+}
