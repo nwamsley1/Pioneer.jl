@@ -197,6 +197,15 @@ function get_qvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}
             decoys += (1 - labels[i])
             qvals[i] = decoys/(targets)
     end
+
+    fdr = Inf
+    @inbounds @fastmath for i in reverse(order)
+        if qvals[i] > fdr
+            qvals[i] = fdr
+        else
+            fdr = qvals[i]
+        end
+    end
 end
 get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = get_qvalues!(PSMs, allowmissing(probs), allowmissing(labels))
 
