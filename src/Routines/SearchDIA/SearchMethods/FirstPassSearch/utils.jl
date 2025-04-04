@@ -217,12 +217,16 @@ function get_best_psms!(psms::DataFrame,
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
+    psms[!,:local_fdr] = zeros(Float16, size(psms, 1))
+    #highest scoring psm for a given precursor
     psms[!,:best_psm] = zeros(Bool, size(psms, 1))
     #fwhm estimate of the precursor
     psms[!,:fwhm] = zeros(Union{Missing, Float32}, size(psms, 1))
     #number of scans below the q value threshold for hte precursor
     psms[!,:scan_count] = zeros(UInt16,size(psms, 1))
 
+    # Will use local FDR for final filter
+    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]);
     #Get best psm for each precursor 
     #ASSUMES psms IS SOrtED BY rt IN ASCENDING ORDER
     gpsms = groupby(psms,:precursor_idx)
@@ -281,18 +285,18 @@ function get_best_psms!(psms::DataFrame,
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
     n = size(psms, 1)
-    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
+    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr])
     #Instead of max_psms, 2x the number at 10% fdr. 
-    psms_10fdr = 0
-    q_values = psms[!,:q_value]::Vector{Float16}
+    psms_passing = 0
+    local_fdrs = psms[!,:local_fdr]::Vector{Float16}
     @inbounds for i in range(1, n)
-        psms_10fdr += 1
-        if q_values[i]>0.10
+        psms_passing += 1
+        if local_fdrs[i]>=1.0
             break
         end
     end
     #delete!(psms, min(n, max_psms + 1):n)
-    deleteat!(psms, min(n, round(Int64, psms_10fdr*2.0) + 1):n)
+    deleteat!(psms, min(n, round(Int64, psms_passing) + 1):n)
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
