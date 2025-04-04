@@ -212,8 +212,8 @@ Processes PSMs to identify the best matches and calculate peak characteristics.
 Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
-                        prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                        max_q_val::Float32 = 0.01f0
+                        prec_mz::Arrow.Primitive{T, Vector{T}};
+                        max_local_fdr::Float32 = 1.00f0
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
@@ -239,11 +239,9 @@ function get_best_psms!(psms::DataFrame,
         best_psm_score, best_psm_idx = zero(Float32), one(Int64)
         scan_count = one(UInt8)
         for i in range(1, size(prec_psms, 1))
-            if (prec_psms[i,:q_value].<=max_q_val) 
-                if coalesce(max_log2_intensity, zero(Float32)) < prec_psms[i,:log2_summed_intensity]
-                    max_log2_intensity = prec_psms[i,:log2_summed_intensity]
-                    max_idx = i
-                end
+            if coalesce(max_log2_intensity, zero(Float32)) < prec_psms[i,:log2_summed_intensity]
+                max_log2_intensity = prec_psms[i,:log2_summed_intensity]
+                max_idx = i
             end
             if prec_psms[i,:score]>best_psm_score
                 best_psm_idx = i
@@ -257,7 +255,7 @@ function get_best_psms!(psms::DataFrame,
         i = max_idx - 1
         while i > 0
             #Is the i'th psm above half the maximum 
-            if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
+            if (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
                 min_irt = prec_psms[i,:irt]
             else
@@ -269,7 +267,7 @@ function get_best_psms!(psms::DataFrame,
         i = max_idx + 1
         while i <= size(prec_psms, 1)
             #Is the i'th psm above half the maximum 
-            if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
+            if (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
                 max_irt = prec_psms[i,:irt]
             else
@@ -291,7 +289,7 @@ function get_best_psms!(psms::DataFrame,
     local_fdrs = psms[!,:local_fdr]::Vector{Float16}
     @inbounds for i in range(1, n)
         psms_passing += 1
-        if local_fdrs[i]>=1.0
+        if local_fdrs[i]>=max_local_fdr
             break
         end
     end

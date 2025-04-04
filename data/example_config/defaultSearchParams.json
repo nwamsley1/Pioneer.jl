@@ -56,7 +56,8 @@
         "scoring_settings": {
             "n_train_rounds": 2,
             "max_iterations": 20,
-            "max_q_value": 0.01
+            "max_q_value_probit_rescore": 0.05,
+            "max_local_fdr": 1.0
         },
         "irt_mapping": {
             "max_prob_to_impute_irt": 0.75,
