@@ -178,8 +178,8 @@ function process_file!(
             MS2CHROM(),
         )
         #sort!(chromatograms, :rt)
-        #out_dir = getDataOutDir(search_context)
-        #Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
+        out_dir = getDataOutDir(search_context)
+        Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/rt_index.jld2"; rt_index)
         if params.ms1_quant==true
             ms1_chromatograms = extract_chromatograms(
@@ -194,7 +194,7 @@ function process_file!(
             sort!(ms1_chromatograms, :rt)
             ms1_chromatograms[!,:precursor_fraction_transmitted] = ones(Float32, size(ms1_chromatograms, 1))
         end
-        #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
+        Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
         # Determine which isotopes are captured in each isolation window
         # Uses quadrupole transmission model to check isotope coverage
@@ -243,7 +243,7 @@ function process_file!(
                 ms_file_idx,
                 λ = params.wh_smoothing_strength,
                 n_pad = params.n_pad,
-                max_apex_offset = 5,#typemax(Int64),
+                max_apex_offset = 1,
                 test_print = true
             )
         end

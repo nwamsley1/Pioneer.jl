@@ -466,18 +466,18 @@ function add_pair_indices!(df)
     n = nrow(df)
     
     # Create a dictionary mapping pair_ids to their row indices
-    pair_id_to_rows = Dict{UInt32, Vector{Int}}()
+    pair_id_to_rows = Dict{UInt32, Vector{UInt32}}()
     for i in 1:n
         pair_id = df.pair_id[i]
         if !haskey(pair_id_to_rows, pair_id)
-            pair_id_to_rows[pair_id] = [i]
+            pair_id_to_rows[pair_id] = [UInt32(i)]
         else
-            push!(pair_id_to_rows[pair_id], i)
+            push!(pair_id_to_rows[pair_id], UInt32(i))
         end
     end
     
     # Create the precursor_pair_idx column
-    precursor_pair_idx = Vector{Union{Int, Missing}}(missing, n)
+    precursor_pair_idx = Vector{Union{UInt32, Missing}}(missing, n)
     
     for i in 1:n
         pair_id = df.pair_id[i]
@@ -487,7 +487,7 @@ function add_pair_indices!(df)
         if length(rows) == 2
             # Set the index to point to the other row
             other_idx = (rows[1] == i) ? rows[2] : rows[1]
-            precursor_pair_idx[i] = other_idx
+            precursor_pair_idx[i] = UInt32(other_idx)
         end
         # If only 1 row with this pair_id, leave as missing
     end

@@ -260,6 +260,8 @@ function ParseSpecLib(params_path::String)
         decoy_lib = getRevDecoys!(test_lib)
     end
     append!(test_lib.libdf, decoy_lib)
+    plex_idx = one(UInt8)
+    test_lib.libdf[!,:plex].=plex_idx
     #Channel decoys are the target sequences but in the decoy/fake isotope channels. 
     #Probably need to add a check to not add decoys in cases were there are no isotope labesl. 
     if params["channel_decoys"]
@@ -276,6 +278,8 @@ function ParseSpecLib(params_path::String)
         for (mod_key, channels) in pairs(decoy_mod_channels)
             for channel in channels
                 channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+                plex_idx += one(UInt8)
+                channel_df[!,:plex] .= plex_idx
                 channel_df[!,:channel_decoy] = ones(Bool, size(channel_df, 1))
                 push!(decoy_channel_dfs, channel_df)
             end
@@ -300,6 +304,8 @@ function ParseSpecLib(params_path::String)
     for (mod_key, channels) in pairs(mod_channels)
         for channel in channels
             channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+            plex_idx += one(UInt8)
+            channel_df[!,:plex] .= plex_idx
             push!(channel_dfs, channel_df)
         end
     end
@@ -350,7 +356,6 @@ function ParseSpecLib(params_path::String)
             end
         end
     end
-
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
@@ -359,7 +364,6 @@ function ParseSpecLib(params_path::String)
     )
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
-
     # Sort library by retention time and then by precursor_mz within retention time bins
     nestedLibrarySort!(test_lib, rt_bin_tol=rt_bin_tol)
 
@@ -431,6 +435,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     irt = zeros(Float32, n_precursors)
     sulfur_count = zeros(UInt8, n_precursors)
     pair_id = zeros(UInt32, n_precursors)
+    plex_id = zeros(UInt8, n_precursors)
 
     for frag_idx in ProgressBar(range(one(UInt64), UInt64(n_frags)))
         current_prec_idx = speclib_df[frag_idx, :precursor_idx]
@@ -461,6 +466,7 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             irt[prec_idx] = getIrt(speclib, frag_idx)
             sulfur_count[prec_idx] = getPrecSulfurCount(speclib, frag_idx)
             pair_id[prec_idx] = getPairId(speclib, frag_idx)
+            plex_id[prec_idx] = speclib.libdf[frag_idx, :plex]
         end
         new_precursor_idxs[frag_idx] = prec_idx
         if speclib_df[frag_idx, :library_intensity] > max_frag_intensities[prec_idx]
@@ -486,7 +492,8 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             missed_cleavages = missed_cleavages,
             irt = irt,
             sulfur_count = sulfur_count,
-            pair_id = pair_id
+            pair_id = pair_id,
+            plex = plex_id
         )
     )
     add_pair_indices!(precursors_df)

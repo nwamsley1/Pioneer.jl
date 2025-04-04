@@ -559,7 +559,6 @@ function get_psms_passing_qval(
         :isotopes_captured,
         :scan_idx,
         :ms_file_idx])
-    #filter!(x->x.group_qvalue<=q_val_threshold, psms)
     filter!(x->x.min_qval<=q_val_threshold, psms)
     psms_by_file = groupby(psms, :ms_file_idx)
     for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)

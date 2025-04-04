@@ -94,7 +94,7 @@ function integrate_precursors(chromatograms::DataFrame,
                             nearest_idx = i
                         end
                     end
-                    for i in range(max(1, nearest_idx - 5), min(size(chrom, 1), nearest_idx + 5))
+                    for i in range(max(1, nearest_idx - max_apex_offset), min(size(chrom, 1), nearest_idx + max_apex_offset))
                         if chrom[i,:intensity] > chrom[nearest_idx,:intensity]
                             nearest_idx = i
                         end
@@ -108,7 +108,7 @@ function integrate_precursors(chromatograms::DataFrame,
                                 b,
                                 u2,
                                 state,
-                                λ,
+                                0.0f0,#λ,
                                 n_pad = n_pad,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
@@ -421,7 +421,7 @@ function build_chromatograms(
     # Initialize working arrays
     mem = MassErrorModel(
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (12.0f0, 12.0f0)
+        (5.0f0, 5.0f0)
     )
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
