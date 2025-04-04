@@ -228,12 +228,12 @@ function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Boo
     decoy_prefix = zeros(Int, N+1)   # decoy_prefix[i] = # decoys among top i items
     target_prefix = zeros(Int, N+1)  # same for targets
 
-    decoy_prefix[1]  = is_target[1]
+    decoy_prefix[1]  = !is_target[1]
     target_prefix[1] = is_target[1]
 
     @inbounds @fastmath for rank in 2:N
         i = idxs[rank] 
-        decoy_prefix[rank]  = decoy_prefix[rank-1]  + is_target[i]
+        decoy_prefix[rank]  = decoy_prefix[rank-1]  + !is_target[i]
         target_prefix[rank] = target_prefix[rank-1] + is_target[i]
     end
 
