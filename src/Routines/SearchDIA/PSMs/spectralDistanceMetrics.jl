@@ -25,7 +25,7 @@ function getDistanceMetrics(H::SparseArray{Ti,T},
     relative_improvement_threshold::Float32 = 1.25f0,
     min_frags::Int64 = 5) where {Ti<:Integer,T,U<:AbstractFloat}
 
-    @inbounds, @fastmath for col in range(1, H.n)
+    @inbounds @fastmath for col in range(1, H.n)
 
         # Gather the indices of relevant peaks in this spectrum. 
         # We'll iteratively drop one at a time if they have too much interference
@@ -92,7 +92,7 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
     total_h = zero(T)
     total_x = zero(T)
 
-    @inbounds, @fastmath for i in included_indices
+    @inbounds @fastmath for i in included_indices
         total_h += H.nzval[i]
         total_x += H.x[i]
         if H.x[i] > 0
