@@ -135,25 +135,25 @@ function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
     tasks_per_thread = 10
     M = size(psms, 1)
     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks
 
     for i in range(1, n_train_rounds)
-        if i < 2 #Train on all data during first round
-            β = ProbitRegression(β, psms[!,column_names], psms[!,:target], data_chunks, max_iter = max_iter_per_round);
-            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
-        else #Train using only decoys and high scoring targets from the previous round
-            psms_targets = psms[best_psms,:target]
-            M = size(psms_targets, 1)
-            sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
-            sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that
-            β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
-            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
+        if i < 2 #Train on top scribe data during first round
+            get_qvalues!(psms[!,:scribe], psms[!,:target], psms[!,:q_value])
         end
-        get_qvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
-        if i < n_train_rounds #Get Data to train on during subsequent round
+
+        if i < n_train_rounds #Get Data to train on
             best_psms = ((psms[!,:q_value].<=max_q_value).&(psms[!,:target])) .| (psms[!,:target].==false);
         end
+
+        psms_targets = psms[best_psms,:target]
+        M = size(psms_targets, 1)
+        sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+        sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that
+        β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
+        ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
     end
+
     return 
 end
 
