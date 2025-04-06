@@ -186,7 +186,7 @@ Calculates q-values (false discovery rate estimates) for PSMs.
 
 Implements target-decoy approach for FDR estimation.
 """
-function get_qvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}
+function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}
 ) where {T,U<:AbstractFloat}
 
     order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
