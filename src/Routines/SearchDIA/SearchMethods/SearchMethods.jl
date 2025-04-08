@@ -85,11 +85,8 @@ function partition_scans(ms_table, n_threads; ms_order_select = 2)
     else   
     thread_tasks, total_peaks = partitionScansToThreadsMS1(
         getMzArrays(ms_table),
-        getRetentionTimes(ms_table),
-        getCenterMzs(ms_table),
         getMsOrders(ms_table),
-        n_threads,
-        1
+        n_threads
     )
     end
     return thread_tasks

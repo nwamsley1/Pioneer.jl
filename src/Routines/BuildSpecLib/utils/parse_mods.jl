@@ -687,6 +687,7 @@ rev_seq, rev_mods = reverseSequence(sequence, mods)
 """
 function reverseSequence(sequence::AbstractString, structural_mods::String)
     # Early return if no modifications
+    #println("sequence $sequence structural_mod $structural_mods")
     if isempty(structural_mods)
         return reverse(sequence[1:end-1])*sequence[end], ""
     end

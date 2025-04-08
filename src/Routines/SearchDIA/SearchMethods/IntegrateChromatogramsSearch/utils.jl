@@ -450,9 +450,6 @@ function build_chromatograms(
     for scan_idx in scan_range
         
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
-        # Process MS1 scans
-        #msn = getMsOrder(spectra, scan_idx)
-        #msn ∉ one(UInt8) && continue
         if getMsOrder(spectra, scan_idx) != 1
             continue
         end
@@ -483,25 +480,6 @@ function build_chromatograms(
             end
         end
         #Probably more efficient way to do this later 
-        for i in range(1, ion_idx)
-            _ion_ = ion_templates[i]
-            pid = getPrecID(_ion_)
-            if haskey(iso_count, pid)
-                matched_mono = false
-                if iso_count[pid].matched_mono
-                    matched_mono = true
-                elseif getIsoIdx(_ion_)==one(UInt8)
-                    matched_mono = true
-                end
-                iso_count[pid] = (matched_mono = matched_mono, iso_count = iso_count[pid].iso_count + one(UInt8))
-            else
-                insert!(iso_count, 
-                pid,
-                (matched_mono = getIsoIdx(_ion_)==one(UInt8), iso_count = one(UInt8))
-            )
-            end
-            iso_count
-        end
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
         # Match peaks
         nmatches, nmisses = matchPeaks!(
@@ -519,6 +497,55 @@ function build_chromatograms(
 
         #nmisses -= 1
         sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        for i in range(1, nmatches)
+            _ion_ = ion_matches[i]
+            pid = getPrecID(_ion_)
+            if haskey(iso_count, pid)
+                matched_mono = false
+                if iso_count[pid].matched_mono
+                    matched_mono = true
+                elseif getIsoIdx(_ion_)==one(UInt8)
+                    matched_mono = true
+                end
+                iso_count[pid] = (matched_mono = matched_mono, iso_count = iso_count[pid].iso_count + one(UInt8))
+            else
+                insert!(iso_count, 
+                pid,
+                (matched_mono = getIsoIdx(_ion_)==one(UInt8), iso_count = one(UInt8))
+            )
+            end
+        end
+
+        # Now remove matches that don't meet our criteria in-place
+        valid_idx = 1
+        for i in range(1, nmatches)
+            _ion_ = ion_matches[i]
+            pid = getPrecID(_ion_)
+            # Keep only if matched_mono is true AND iso_count is >= 3
+            if haskey(iso_count, pid) && iso_count[pid].matched_mono && iso_count[pid].iso_count >= 1
+                if valid_idx != i
+                    ion_matches[valid_idx] = ion_matches[i]
+                end
+                valid_idx += 1
+            end
+        end
+        # Update nmatches to reflect the new count
+        nmatches = valid_idx - 1
+
+        valid_idx = 1
+        for i in range(1, nmisses)
+            _ion_ = ion_misses[i]
+            pid = getPrecID(_ion_)
+            # Keep only if matched_mono is true AND iso_count is >= 3
+            if haskey(iso_count, pid) && iso_count[pid].matched_mono && iso_count[pid].iso_count >= 1
+                if valid_idx != i
+                    ion_misses[valid_idx] = ion_misses[i]
+                end
+                valid_idx += 1
+            end
+        end
+        # Update nmatches to reflect the new count
+        nmisses = valid_idx - 1
         #println("nmatches $nmatches nmisses $nmisses")
         # Process matches
         if nmatches > 2

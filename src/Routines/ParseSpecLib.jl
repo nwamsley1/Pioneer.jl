@@ -437,6 +437,12 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     pair_id = zeros(UInt32, n_precursors)
     plex_id = zeros(UInt8, n_precursors)
 
+    println("n_frags $n_frags")
+    println("n_precursors $n_precursors")
+    println("minimum(speclib_df[!,:precursor_idx]) ", minimum(speclib_df[!,:precursor_idx]))
+    println("length(speclib.libdf[!,:precursor_idx]) ", length(speclib.libdf[!,:precursor_idx]))
+    println("length(speclib.libdf[!,:proteome_idx]) ", length(speclib.libdf[!,:proteome_idx]))
+    Arrow.write("/Users/nathanwamsley/Desktop/testlib.arrow", speclib_df)
     for frag_idx in ProgressBar(range(one(UInt64), UInt64(n_frags)))
         current_prec_idx = speclib_df[frag_idx, :precursor_idx]
         #Encountered a new precursor

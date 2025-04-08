@@ -167,6 +167,7 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
             "FragmentSeriesNumber" => "frag_series_number",
             "FragmentLossType" => "frag_loss_type",
             "ProteinGroup" => "protein_group",
+            "ProteinId" => "protein_group",
             "ProteinName" => "protein_name",
             "Genes" => "genes"
         )
@@ -183,13 +184,14 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         if !hasproperty(new_df, :ProteomeIdentifier)
             if hasproperty(new_df, :protein_name)
                 new_df[!,:proteome_idx] = [parseProteinName(pn) for pn in new_df[!,:protein_name]]
+            else
+                new_df[!,:proteome_idx] .= ""
             end
         else
             rename!(new_df, 
-                "ProteomeIdentifier" => "proteome_idx"
+                "ProteomeIdentifier" => :proteome_idx
             )
         end
-
         # Add collision_energy  column if missing
         if !hasproperty(new_df, :CollisionEnergy)
             new_df[!,:collision_energy] = zeros(Missing, nrow(new_df))
@@ -225,9 +227,9 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         ###########
         #Specific treatment for the di-ethyl library from kmd 
         new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Oxidation (M)]"=>"(Unimod:35)")
-        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:35)")
-        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(de)")
-        new_df[!,:modified_sequence] = ["n(de)"*seq for seq in new_df[!,:modified_sequence]]
+        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:4)")
+        new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(tag6)")
+        new_df[!,:modified_sequence] = ["n(tag6)"*seq for seq in new_df[!,:modified_sequence]]
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)

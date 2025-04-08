@@ -63,17 +63,10 @@ function partitionScansToThreads(spectra::AbstractArray,
 end
 
 function partitionScansToThreadsMS1(spectra::AbstractArray,
-                                rt::AbstractVector{Float32},
-                                prec_mz::AbstractVector{Union{Missing, Float32}},
-                                ms_order::AbstractVector{UInt8},
-                                n_threads::Int,
-                                tasks_per_thread::Int)
-    total_peaks = sum(length.(spectra))
-    n_tasks = n_threads*tasks_per_thread
-    peaks_per_task = total_peaks÷(n_tasks)
+                                    ms_order::AbstractVector{UInt8},
+                                    n_threads::Int)
+
     spectra_ids = collect([x for x in range(1, length(spectra)) if ms_order[x]==1])
-    bin_start, bin_stop = 1, 1
-    #sort!(spectra_ids, by = x->)
 
     spectra_count = length(spectra_ids)
     scans_per_thread = spectra_count÷n_threads + n_threads + 1
@@ -93,5 +86,5 @@ function partitionScansToThreadsMS1(spectra::AbstractArray,
             end
         end
     end
-    return thread_tasks, total_peaks
+    return thread_tasks, 0
 end
