@@ -258,13 +258,14 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
     a = 0
     for peptide in peptides
         sequence = get_sequence(peptide)
-        if haskey(seq_to_fasta_entry, sequence)
+        sequence_il_equiv = replace(sequence, 'I' => 'L')
+        if haskey(seq_to_fasta_entry, sequence_il_equiv)
             a += 1
-            fasta_entry = seq_to_fasta_entry[sequence]
+            fasta_entry = seq_to_fasta_entry[sequence_il_equiv]
             accession = get_id(peptide)*";"*get_id(fasta_entry)
             proteome = get_proteome(peptide)*";"*get_proteome(fasta_entry)
             description = get_description(peptide)*";"*get_description(fasta_entry)
-            seq_to_fasta_entry[sequence] = FastaEntry(accession, 
+            seq_to_fasta_entry[sequence_il_equiv] = FastaEntry(accession, 
                                                         description, 
                                                         proteome,
                                                         get_sequence(fasta_entry),
@@ -275,7 +276,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         )
         else
             n += 1
-            insert!(seq_to_fasta_entry, sequence, peptide)
+            insert!(seq_to_fasta_entry, sequence_il_equiv, peptide)
         end
     end
     fasta_entries = Vector{FastaEntry}(undef, length(seq_to_fasta_entry))
