@@ -1,5 +1,6 @@
 module Pioneer
 __precompile__(false)
+#;cd src/
 using Arrow, ArrowTypes, ArgParse
 #using BSplineKit Don't need this imports anymore?
 using Base64
@@ -130,5 +131,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, DetailedFrag, StandardFragmentLookup
 end

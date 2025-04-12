@@ -43,9 +43,15 @@ function load_detailed_frags(filename::String)
 end
 =#
 
-
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters)
+    return loadSpectralLibrary(
+        SPEC_LIB_DIR::String,
+        params.acquisition[:nce],
+    )
+end
+function loadSpectralLibrary(SPEC_LIB_DIR::String,
+                             nce::Real)
     f_index_fragments = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragments.arrow"))
     f_index_rt_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_rt_bins.arrow"))
     f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "f_index_fragment_bins.arrow"))
@@ -64,8 +70,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     if (eltype(detailed_frags).name == (eltype(Vector{SplineDetailedFrag{4, Float32}}(undef, 0)).name))
         try
             #Model that encodes initial nce guess. 
-            nmc = PiecewiseNceModel(Float32(params.acquisition[:nce]))
-
+            nmc = PiecewiseNceModel(Float32(nce))
             spl_knots = load(joinpath(SPEC_LIB_DIR,"spline_knots.jld2"))["spl_knots"]
             library_fragment_lookup_table = SplineFragmentLookup(
                 detailed_frags, 
@@ -103,7 +108,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     spec_lib["presearch_f_index"] = presearch_f_index;
     spec_lib["precursors"] = precursors;
 
-    if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
+    if (typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}) || (typeof(library_fragment_lookup_table) == StandardFragmentLookup{Float32})
         return FragmentIndexLibrary(
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
