@@ -1,4 +1,46 @@
-# src/fasta/fasta_utils.jl
+struct PeptideSequenceSet
+    sequences::Set{String}
+    # Constructor
+    function PeptideSequenceSet()
+        new(Set{String}())
+    end
+    function PeptideSequenceSet(
+        fasta_entries::Vector{FastaEntry}
+    )::Set{String}
+        pss = PeptideSequenceSet()
+        # Create a set of sequences, treating 'I' as 'L'
+        new(Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries)))
+    end
+    #=
+    function PeptideSequenceSet(
+        fasta_entries::Vector{FastaEntry},
+        size_hint_in::Int
+    )::Set{String}
+        pss = PeptideSequenceSet()
+        # Create a set of sequences, treating 'I' as 'L'
+        seq_seq = 
+        Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries))
+        new(Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries)))
+    end
+    =#
+end
+
+getSeqSet(s::PeptideSequenceSet) = s.sequencess
+
+import Base: push!
+function push!(pss::PeptideSequenceSet, seq::AbstractString)
+    # Replace 'I' with 'L' in the sequence and add to the set
+    push!(pss.sequences, replace(seq, 'I' => 'L'))
+    return pss
+end
+
+import Base: in
+function in(seq::AbstractString, pss::PeptideSequenceSet)
+    # Check if the modified sequence is in the set
+    return replace(seq, 'I' => 'L') ∈ getSeqSet(pss)
+end
+
+
 """
 Fast sequence shuffling algorithm that preserves terminal amino acids.
 """
@@ -45,9 +87,6 @@ function add_entrapment_sequences(
     max_shuffle_attempts::Int64 = 20
 )::Vector{FastaEntry}
     
-    # Get original sequences for uniqueness checking
-    target_sequences = map(get_sequence, target_fasta_entries)
-    
     # Pre-allocate output vector
     entrapment_fasta_entries = Vector{FastaEntry}(
         undef, 
@@ -55,9 +94,9 @@ function add_entrapment_sequences(
     )
     
     # Track unique sequences
-    sequences_set = Set{String}()
-    sizehint!(sequences_set, length(entrapment_fasta_entries) + length(target_fasta_entries))
-    union!(sequences_set, target_sequences)
+    sequences_set = PeptideSequenceSet(arget_fasta_entries)#Set{String}()
+    #sizehint!(sequences_set, length(entrapment_fasta_entries) + length(target_fasta_entries))
+    #union!(sequences_set, target_sequences)
     
     n = 1
     maximum_prec_id = zero(UInt32)
@@ -73,8 +112,8 @@ function add_entrapment_sequences(
             
             while n_shuffle_attempts < max_shuffle_attempts
                 new_sequence = shuffle_fast(get_sequence(target_entry))
-                
-                if new_sequence ∉ sequences_set
+                #Make sure the entrapment sequence is unique (I and L are equivalent)
+                if new_sequence ∈ sequences_set
                     entrapment_fasta_entries[n] = FastaEntry(
                         get_id(target_entry),
                         get_description(target_entry),
@@ -141,14 +180,14 @@ with_decoys = addReverseDecoys(entries)
 """
 function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
     println("add_reverse_decoys")
-    #Get the sequences for the target entries 
-    target_sequences = (map(x->get_sequence(x), target_fasta_entries))
     #Pre-allocate space for entrapment fasta entries 
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
     #Set to keep track of encountered sequences. Do not want to generate non-unique entrapment sequences
-    sequences_set = Set{String}()
-    sizehint!(sequences_set, length(decoy_fasta_entries) + length(target_fasta_entries))
-    union!(sequences_set, target_sequences)
+    #Get the sequences for the target entries 
+    #This is used to check for uniqueness
+    #But we shouldn't treat 'I' and 'L' as distit 
+    #Intead convert 'I' to 'L' for purposes of checking 
+    sequences_set = PeptideSequenceSet(target_fasta_entries)#Set{String}()
     n = 1
     #For eacbh protein in the FASTA
     for target_entry in target_fasta_entries
