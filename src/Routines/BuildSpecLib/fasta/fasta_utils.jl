@@ -4,28 +4,17 @@ struct PeptideSequenceSet
     function PeptideSequenceSet()
         new(Set{String}())
     end
-    function PeptideSequenceSet(
-        fasta_entries::Vector{FastaEntry}
-    )::Set{String}
+    function PeptideSequenceSet(fasta_entries::Vector{FastaEntry})
         pss = PeptideSequenceSet()
-        # Create a set of sequences, treating 'I' as 'L'
-        new(Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries)))
+        # Add each sequence to the set
+        for entry in fasta_entries
+            push!(pss, get_sequence(entry))
+        end
+        return pss
     end
-    #=
-    function PeptideSequenceSet(
-        fasta_entries::Vector{FastaEntry},
-        size_hint_in::Int
-    )::Set{String}
-        pss = PeptideSequenceSet()
-        # Create a set of sequences, treating 'I' as 'L'
-        seq_seq = 
-        Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries))
-        new(Set(map(seq -> addSeq(pss, get_sequence(seq)), fasta_entries)))
-    end
-    =#
 end
 
-getSeqSet(s::PeptideSequenceSet) = s.sequencess
+getSeqSet(s::PeptideSequenceSet) = s.sequences
 
 import Base: push!
 function push!(pss::PeptideSequenceSet, seq::AbstractString)
@@ -94,7 +83,7 @@ function add_entrapment_sequences(
     )
     
     # Track unique sequences
-    sequences_set = PeptideSequenceSet(arget_fasta_entries)#Set{String}()
+    sequences_set = PeptideSequenceSet(target_fasta_entries)#Set{String}()
     #sizehint!(sequences_set, length(entrapment_fasta_entries) + length(target_fasta_entries))
     #union!(sequences_set, target_sequences)
     
@@ -179,7 +168,6 @@ with_decoys = addReverseDecoys(entries)
 ```
 """
 function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
-    println("add_reverse_decoys")
     #Pre-allocate space for entrapment fasta entries 
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
     #Set to keep track of encountered sequences. Do not want to generate non-unique entrapment sequences
