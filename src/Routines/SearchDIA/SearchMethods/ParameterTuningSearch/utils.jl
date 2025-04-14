@@ -191,7 +191,7 @@ function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qv
 
     order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
     targets = 0
-    decoys = 0
+    decoys = 1 # psuedocount to guarantee finite sample control of the FDR
     @inbounds @fastmath for i in order
             targets += labels[i]
             decoys += (1 - labels[i])
@@ -238,7 +238,7 @@ function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Boo
     end
 
     # 3) For each rank i, compute local FDR from this point to the next X entries
-    fdrs[idxs[1]] = decoy_prefix[window_size] / max(1, target_prefix[window_size])
+    fdrs[idxs[1]] = (decoy_prefix[window_size] + 1) / max(1, target_prefix[window_size])
 
     for rank in 2:(N-window_size)
         # Count decoys/targets in [L,R] using prefix sums
@@ -246,7 +246,8 @@ function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Boo
         targs_in_window  = target_prefix[rank + window_size] - target_prefix[rank-1]
 
         # local FDR = (#decoys) / max(1, #targets)
-        fdrs[idxs[rank]] = decs_in_window / max(1, targs_in_window)
+        # adding a psuedocount to guarantee finite sample control of the FDR
+        fdrs[idxs[rank]] = (decs_in_window + 1) / max(1, targs_in_window)
     end
 
     return 

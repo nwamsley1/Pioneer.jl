@@ -225,8 +225,7 @@ function get_best_psms!(psms::DataFrame,
     #number of scans below the q value threshold for hte precursor
     psms[!,:scan_count] = zeros(UInt16,size(psms, 1))
 
-    # Will use local FDR for final filter
-    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]);
+    
     #Get best psm for each precursor 
     #ASSUMES psms IS SOrtED BY rt IN ASCENDING ORDER
     gpsms = groupby(psms,:precursor_idx)
@@ -282,8 +281,13 @@ function get_best_psms!(psms::DataFrame,
 
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
+    # Will use local FDR for final filter
+    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]);
+
     n = size(psms, 1)
-    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr])
+    
+
+    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr,:target])
     #Instead of max_psms, 2x the number at 10% fdr. 
     psms_passing = 0
     local_fdrs = psms[!,:local_fdr]::Vector{Float16}
@@ -293,7 +297,8 @@ function get_best_psms!(psms::DataFrame,
             break
         end
     end
-    #delete!(psms, min(n, max_psms + 1):n)
+    #println("unique IDs prefilter: ", n, " ", psms_passing, " ", sum(psms.target), " ", sum(psms.target[1:min(n, round(Int64, psms_passing))]), "\n\n")
+
     deleteat!(psms, min(n, round(Int64, psms_passing) + 1):n)
 
     mz = zeros(T, size(psms, 1));

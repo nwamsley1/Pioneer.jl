@@ -277,6 +277,7 @@ function process_file!(
             :missed_cleavage, 
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
+            #:b_count, might be good for non-tryptic enzymes
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
 
