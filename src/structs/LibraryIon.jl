@@ -764,8 +764,8 @@ getMissedCleavages(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
-getPartnerPrecursorIdx(lp::LibraryPrecursors)::Arrow.Primitive{Union{Missing, UInt32}, Vector{UInt32}} = lp.data[:partner_precursor_idx]
-getPairIdx(lp::LibraryPrecursors)::Arrow.Primitive{Union{Missing, UInt32}, Vector{UInt32}} = lp.data[:pair_id]
+getPartnerPrecursorIdx(lp::LibraryPrecursors)::Arrow.Primitive{Union{Missing, Int64}, Vector{Int64}} = lp.data[:partner_precursor_idx]
+getPairIdx(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:pair_id]
 getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
 
 
