@@ -406,16 +406,26 @@ function summarize_results!(
         #the maximum score for each target/decoy pair is shared accross runs
         #in an iterative training scheme. 
         precursors = getPrecursors(getSpecLib(search_context))
+        i = 1
         for (pid, val) in pairs(precursor_dict)
+            i += 1
+            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
             partner_pid = getPartnerPrecursorIdx(precursors)[pid]
             if ismissing(partner_pid)
                 continue
             end
+
             if !haskey(precursor_dict, partner_pid)
                 insert!(precursor_dict, partner_pid, val)
             end
+            setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+        end
+    else
+        for (pid, val) in pairs(precursor_dict)
+            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
         end
     end
+
     setPrecursorDict!(search_context, precursor_dict)
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)

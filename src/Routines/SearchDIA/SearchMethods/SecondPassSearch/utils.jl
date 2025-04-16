@@ -553,7 +553,7 @@ function add_features!(psms::DataFrame,
                 prec_idx = precursor_idx[i]
 
                 irt_obs[i] = rt_to_irt_interp(rt[i])
-                irt_pred[i] = prec_irt[prec_idx]
+                irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
                 irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 

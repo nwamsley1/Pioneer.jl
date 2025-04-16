@@ -186,6 +186,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     precursor_dict::Base.Ref{Dictionary}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
+    irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
 
     
@@ -215,6 +216,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Dictionary}(), 
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
+            Dict{UInt32, Float32}(),
             Ref{Any}(),
             n_threads, n_precursors, buffer_size
         )
@@ -335,8 +337,10 @@ getRtIrtMap(s::SearchContext) = s.rt_irt_map
 getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
+getPredIrt(s::SearchContext) = s.irt_obs
+getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-
+setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
 
