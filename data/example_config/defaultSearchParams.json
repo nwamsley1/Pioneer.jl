@@ -111,6 +111,8 @@
         "machine_learning": {
             "max_psms_in_memory": 50000000,
             "min_trace_prob": 0.75,
+            "max_q_value_xgboost_rescore": 0.01,
+			"max_q_value_xgboost_mbr_rescore": 0.20,
             "spline_points": 500,
             "interpolation_points": 10
         }
