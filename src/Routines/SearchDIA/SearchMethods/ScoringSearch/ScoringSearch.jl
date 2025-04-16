@@ -37,6 +37,7 @@ struct ScoringSearchParameters <: SearchParameters
     min_peptides::Int64
     max_q_value_xgboost_rescore::Float32
     max_q_value_xgboost_mbr_rescore::Float32
+    q_value_threshold::Float32
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -54,7 +55,8 @@ struct ScoringSearchParameters <: SearchParameters
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
             Float32(ml_params.max_q_value_xgboost_rescore),
-            Float32(ml_params.max_q_value_xgboost_mbr_rescore)
+            Float32(ml_params.max_q_value_xgboost_mbr_rescore),
+            Float32(global_params.scoring.q_value_threshold)
         )
     end
 end
@@ -201,7 +203,7 @@ function summarize_results!(
             passing_psms_paths,
             results.precursor_pep_spline[],
             results.precursor_qval_interp[],
-            0.01f0
+            params.q_value_threshold
         )
 
         # Step 7: Score Protein Groups
