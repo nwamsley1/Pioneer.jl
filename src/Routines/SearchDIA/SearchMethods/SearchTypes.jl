@@ -338,8 +338,10 @@ getPrecursorDict(s::SearchContext) = s.precursor_dict[]
 getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 getPredIrt(s::SearchContext) = s.irt_obs
+getPredIrt(s::SearchContext, prec_idx::Int64) = s.irt_obs[prec_idx]
 getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
 getHuberDelta(s::SearchContext) = s.huber_delta[]
+setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
 setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
