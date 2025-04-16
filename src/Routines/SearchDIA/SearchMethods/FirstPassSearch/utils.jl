@@ -282,7 +282,7 @@ function get_best_psms!(psms::DataFrame,
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
     # Will use local FDR for final filter
-    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]);
+    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]; doSort=false);
 
     n = size(psms, 1)
     

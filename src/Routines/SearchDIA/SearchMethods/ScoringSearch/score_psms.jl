@@ -98,7 +98,9 @@ function score_precursor_isotope_traces_in_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    match_between_runs::Bool
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -136,13 +138,18 @@ function score_precursor_isotope_traces_in_memory!(
             :weight,
             :log2_intensity_explained,
             :tic,
+            :num_scans,
+            :smoothness
         ];
 
         if match_between_runs
             append!(features, [
                 :max_prob, 
                 :mean_prob, 
-                :min_prob
+                :min_prob,
+                :rv_coefficient,
+                :best_irt_diff,
+                :num_runs
                 ])
         end
 
@@ -155,7 +162,9 @@ function score_precursor_isotope_traces_in_memory!(
                                 best_psms, 
                                 file_paths,
                                 features,
-                                match_between_runs,
+                                match_between_runs;
+                                max_q_value_xgboost_rescore,
+                                max_q_value_xgboost_mbr_rescore,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -206,14 +215,16 @@ function score_precursor_isotope_traces_in_memory!(
                                 best_psms, 
                                 file_paths,
                                 features,
-                                match_between_runs,
+                                match_between_runs;
+                                max_q_value_xgboost_rescore,
+                                max_q_value_xgboost_mbr_rescore,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 1, 
                                 gamma = 0,
                                 subsample = 1.0, 
                                 max_depth = 3,
-                                eta = 0.01, 
+                                eta = 0.01,
                                 iter_scheme = [200],
                                 print_importance = false);
         return models
@@ -238,7 +249,9 @@ function score_precursor_isotope_traces_out_of_memory!(
     best_psms::DataFrame,
     file_paths::Vector{String},
     precursors::LibraryPrecursors,
-    match_between_runs::Bool
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -276,13 +289,18 @@ function score_precursor_isotope_traces_out_of_memory!(
             :weight,
             :log2_intensity_explained,
             :tic,
+            :num_scans,
+            :smoothness
         ];
         
         if match_between_runs
             append!(features, [
                 :max_prob, 
                 :mean_prob, 
-                :min_prob
+                :min_prob,
+                :rv_coefficient,
+                :best_irt_diff,
+                :num_runs,
                 ])
         end
 
@@ -294,7 +312,9 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 best_psms, 
                                 file_paths,
                                 features,
-                                match_between_runs,
+                                match_between_runs;
+                                max_q_value_xgboost_rescore,
+                                max_q_value_xgboost_mbr_rescore,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -334,6 +354,8 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 file_paths,
                                 features,
                                 match_between_runs,
+                                max_q_value_xgboost_rescore,
+                                max_q_value_xgboost_mbr_rescore,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 100, 

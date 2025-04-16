@@ -78,7 +78,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
 | `scoring_settings.n_train_rounds` | Int | Number of training rounds for scoring model (default: 2) |
 | `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
-| `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for iterative learning durning probit regression (default: 0.05) |
+| `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for semi-supervised learning durning probit regression (default: 0.05) |
 | `scoring_settings.max_local_fdr` | Int | Maximum local FDR threshold for passing the first search (default: 1.0) |
 | `irt_mapping.max_prob_to_impute_irt` | Int | If probability of the psm is less then x in the first-pass search, then impute irt for the precursor with globably determined value from the other runs (default: 0.75) |
 | `irt_mapping.fwhm_nstd` | Float | Number of standard deviations of the fwhm to add to the retention time tolerance (default: 4) |
@@ -128,6 +128,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `deconvolution.max_diff` | Float | Maximum allowed difference in optimization (default: 0.01) |
 | `machine_learning.max_samples` | Int | Maximum number of samples for XGBoost training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
+| `machine_learning.max_q_value_xgboost_rescore` | Float | q-value threshold for semi-supervised learning with XGBoost (default: 0.01) |
+| `machine_learning.max_q_value_xgboost_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with XGBoost (default: 0.20) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 

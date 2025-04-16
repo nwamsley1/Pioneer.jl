@@ -186,10 +186,15 @@ Calculates q-values (false discovery rate estimates) for PSMs.
 
 Implements target-decoy approach for FDR estimation.
 """
-function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}
+function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}; doSort = true
 ) where {T,U<:AbstractFloat}
 
-    order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
+    if doSort
+        order = sortperm(probs, rev = true,alg=QuickSort) #Sort class probabilities
+    else
+        order = eachindex(probs)
+    end
+
     targets = 0
     decoys = 1 # psuedocount to guarantee finite sample control of the FDR
     @inbounds @fastmath for i in order
@@ -212,14 +217,18 @@ get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = ge
 
 
 function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fdrs::AbstractVector{T}; 
-    window_size::Int=1000) where {T,U<:AbstractFloat}
+    window_size::Int=1000, doSort=true) where {T,U<:AbstractFloat}
     @assert length(scores) == length(is_target)
     N = length(scores)
     if N == 0
         return
     end
     # 1) Sort items by descending score
-    idxs = sortperm(scores; rev=true)
+    if doSort
+        idxs = sortperm(scores, rev = true, alg = QuickSort) #Sort class probabilities
+    else
+        idxs = eachindex(scores)
+    end
     # We'll define rank i as the i-th item in that sorted order
     # so rank 1 => idxs[1], rank N => idxs[N].
 
