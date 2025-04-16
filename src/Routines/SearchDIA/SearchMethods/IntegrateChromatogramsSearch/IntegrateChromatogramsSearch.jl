@@ -39,6 +39,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     wh_smoothing_strength::Float32
     n_pad::Int64
     max_apex_offset::Int64
+    write_decoys::Bool
     
     # Deconvolution parameters
     lambda::Float32
@@ -61,6 +62,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
         frag_params = quant_params.fragment_settings
         chrom_params = quant_params.chromatogram
         deconv_params = params.optimization.deconvolution
+        output_params = params.output
         
         # Determine isotope trace type
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
@@ -97,6 +99,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             Float32(chrom_params.smoothing_strength),
             Int64(chrom_params.padding),
             Int64(chrom_params.max_apex_offset),
+            Bool(output_params.write_decoys),
             
             Float32(deconv_params.lambda),
             reg_type, 
@@ -154,7 +157,9 @@ function process_file!(
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(getPassingPsms(getMSData(search_context), ms_file_idx))))#load_passing_psms(search_context, parsed_fname)
         
         # Keep only target (non-decoy) PSMs
-        filter!(row -> row.target, passing_psms)
+        if !params.write_decoys
+            filter!(row -> row.target, passing_psms)
+        end
 
         # Initialize columns to store integration results
         # peak_area: Integrated area of chromatographic peak

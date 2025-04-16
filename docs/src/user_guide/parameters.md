@@ -149,6 +149,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `write_csv` | Boolean | Whether to write results to CSV |
+| `write_decoys` | Boolean | Where to quantify and include decoys in the output files |
 | `delete_temp` | Boolean | Whether to delete temporary files |
 | `plots_per_page` | Int | Number of plots per page in reports (default: 12) |
 
