@@ -78,11 +78,13 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     sample_rate::Float32
     spec_order::Set{Int64}
     match_between_runs::Bool
+    relative_improvement_threshold::Float32
     
     # Scoring parameters
     n_train_rounds_probit::Int64
     max_iter_probit::Int64
     max_q_value_probit_rescore::Float32
+    max_local_fdr::Float32
     
     # RT parameters
     min_inference_points::Int64
@@ -122,10 +124,12 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             1.0f0,  # Full sampling for first pass
             Set{Int64}([2]),
             global_params.match_between_runs,
+            Float32(frag_params.relative_improvement_threshold),
             
             Int64(score_params.n_train_rounds),
             Int64(score_params.max_iterations),
-            Float32(score_params.max_q_value),
+            Float32(score_params.max_q_value_probit_rescore),
+            Float32(score_params.max_local_fdr),
             
             Int64(1000), # Default min_inference_points
             Float32(rt_params.min_probability),
@@ -212,7 +216,7 @@ function process_file!(
             get_best_psms!(
                 psms,
                 precursor_mzs,
-                max_q_val=params.max_q_val_for_irt
+                max_local_fdr=params.max_local_fdr
             )
         end
 
@@ -268,13 +272,20 @@ function process_file!(
         params::FirstPassSearchParameters
     )
         column_names = [
-            :spectral_contrast, :city_block, :entropy_score, :scribe,
+            :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, 
             :missed_cleavage, 
             :Mox,
             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error
+            #:b_count, might be good for non-tryptic enzymes
             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
         ]
+
+        # Avoid singular error if no peaks were ignored
+        if maximum(psms.percent_theoretical_ignored) == 0
+            deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))
+        end
+
 
         # Select scoring columns
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
@@ -290,7 +301,7 @@ function process_file!(
             )
         catch
             column_names = [
-            :spectral_contrast, :city_block, :entropy_score, :scribe,
+            :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
             :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
             ]
             score_main_search_psms!(
@@ -304,7 +315,7 @@ function process_file!(
         # Process scores
        
         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
-            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted])
+            :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])
         get_probs!(psms, psms[!,:score])
         sort!(psms, :rt)
     end

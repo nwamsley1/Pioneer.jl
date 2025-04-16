@@ -53,6 +53,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     max_frag_rank::UInt8
     sample_rate::Float32
     spec_order::Set{Int64}
+    match_between_runs::Bool
 
     # Deconvolution parameters
     lambda::Float32
@@ -114,6 +115,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             UInt8(frag_params.max_rank),
             1.0f0,  # Full sampling rate
             Set{Int64}([2]),
+            Bool(global_params.match_between_runs),
             
             Float32(deconv_params.lambda),
             reg_type,
@@ -250,7 +252,8 @@ function process_search_results!(
                 gpsms[!,:matched_ratio],
                 gpsms[!,:fitted_manhattan_distance],
                 gpsms[!,:fitted_spectral_contrast],
-                gpsms[!,:y_count]
+                gpsms[!,:y_count],
+                getRtIrtModel(search_context, ms_file_idx)
             );
         end
 
@@ -269,7 +272,7 @@ function process_search_results!(
         )
 
         # Initialize probability scores (will be calculated later)
-        psms[!,:prob], psms[!,:max_prob], psms[!,:mean_prob], psms[!,:min_prob] = zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1)), zeros(Float32, size(psms, 1))
+        initialize_group_features!(psms, params.match_between_runs)
         
         # Save processed results
         temp_path = joinpath(

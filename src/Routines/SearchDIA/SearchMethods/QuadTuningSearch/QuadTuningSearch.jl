@@ -87,6 +87,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
     sample_rate::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
+    relative_improvement_threshold::Float32
     
     # Deconvolution parameters
     max_iter_newton::Int64
@@ -127,6 +128,7 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
             Float32(search_params.sample_rate),
             typemax(Float32),  # Maximum possible value for irt_tol
             Set{Int64}([2]),
+            Float32(frag_params.relative_improvement_threshold),
             
             # Deconvolution parameters
             Int64(deconv_params.newton_iters),

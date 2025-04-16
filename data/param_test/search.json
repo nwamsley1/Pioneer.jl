@@ -1,10 +1,17 @@
 {
     "global": {
         "isotope_settings": {
-            "err_bounds": [1, 0],
+            "err_bounds_first_pass": [
+                1,
+                0
+            ],
+            "err_bounds_quant_search": [
+                3,
+                0
+            ],
             "combine_traces": false,
             "partial_capture": true,
-            "min_fraction_transmitted" : 0.25
+            "min_fraction_transmitted": 0.25
         },
         "scoring": {
             "q_value_threshold": 0.01
@@ -12,8 +19,12 @@
         "normalization": {
             "n_rt_bins": 100,
             "spline_n_knots": 7
-        }, 
-		"match_between_runs": true
+        },
+        "huber_override": {
+            "override_huber_delta_fit": false,
+            "huber_delta": 1500.0
+        },
+        "match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -24,12 +35,18 @@
             "min_spectral_contrast": 0.9,
             "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 1.5,
-            "min_top_n": [3, 3],
+            "min_top_n": [
+                3,
+                3
+            ],
             "n_isotopes": 1
         },
         "search_settings": {
             "sample_rate": 0.02,
             "min_samples": 3500,
+            "min_quad_tuning_psms": 5000,
+            "min_quad_tuning_fragments": 3,
+            "relative_improvement_threshold": 1.25,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.01
         }
@@ -42,7 +59,10 @@
             "min_spectral_contrast": 0.5,
             "relative_improvement_threshold": 1.25,
             "min_log2_ratio": 0.0,
-            "min_top_n": [2, 3],
+            "min_top_n": [
+                2,
+                3
+            ],
             "n_isotopes": 1
         },
         "scoring_settings": {
@@ -50,6 +70,11 @@
             "max_iterations": 20,
             "max_q_value_probit_rescore": 0.05,
             "max_local_fdr": 1.0
+        },
+        "irt_mapping": {
+            "max_prob_to_impute_irt": 0.75,
+            "fwhm_nstd": 4,
+            "irt_nstd": 4
         }
     },
     "quant_search": {
@@ -59,7 +84,10 @@
             "max_rank": 255,
             "min_spectral_contrast": 0.0,
             "min_log2_ratio": -1.7,
-            "min_top_n": [2, 3],
+            "min_top_n": [
+                2,
+                3
+            ],
             "n_isotopes": 2
         },
         "chromatogram": {
@@ -71,7 +99,7 @@
     "acquisition": {
         "nce": 25,
         "quad_transmission": {
-            "fit_from_data": false,
+            "fit_from_data": true,
             "overhang": 0.25,
             "smoothness": 5.0
         }
@@ -93,7 +121,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_samples": 10000000,
+            "max_psms_in_memory": 50000000,
             "min_trace_prob": 0.75,
             "max_q_value_xgboost_rescore": 0.01,
 			"max_q_value_xgboost_mbr_rescore": 0.20,
@@ -102,7 +130,7 @@
         }
     },
     "proteinInference": {
-        "min_peptides": 2
+        "min_peptides": 1
     },
     "maxLFQ": {
         "run_to_run_normalization": true
@@ -113,8 +141,8 @@
         "plots_per_page": 12
     },
     "paths": {
-        "library": "/abs/path/to/lib",
-        "ms_data": "/abs/path/to/ms_data",
-        "results": "/abs/path/to/results"
+        "ms_data": "/Users/dennisgoldfarb/Pioneer_DG/Pioneer.jl/test/../data/ecoli_test/raw",
+        "library": "/Users/dennisgoldfarb/Pioneer_DG/Pioneer.jl/test/../data/ecoli_test/altimeter_ecoli.poin",
+        "results": "/Users/dennisgoldfarb/Pioneer_DG/Pioneer.jl/test/../data/ecoli_test/ecoli_test_results"
     }
 }

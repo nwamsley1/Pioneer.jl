@@ -398,7 +398,7 @@ function add_second_search_columns!(psms::DataFrame,
     psms[!,:charge] = prec_charges
     #psms[!,:prec_mz] = prec_mzs
     psms[!,:cv_fold] = cv_fold
-    psms[!, :charge2] = Vector{UInt8}(psms[!, :charge] .== 2)
+    psms[!,:charge2] = Vector{UInt8}(psms[!, :charge] .== 2)
     #######
     sort!(psms,:rt); #Sorting before grouping is critical. 
     return nothing
@@ -622,13 +622,22 @@ function init_summary_columns!(
         (:y_ions_sum,               UInt16)
         (:max_y_ions,               UInt16)
         (:max_matched_ratio,        Float16)
+        (:num_scans,        UInt16)
+        (:smoothness,        Float16)
+        (:weights,        Vector{Float32})
+        (:irts,         Vector{Float32})
         ];
 
         N = size(psms, 1)
-        for column in new_cols
-            col_type = last(column);
-            col_name = first(column)
-            psms[!,col_name] = zeros(col_type, N)
+        for (col_name, col_type) in new_cols
+            if col_type <: AbstractVector
+                # col_type is something like Vector{Float16};
+                # create an array of length N, each element is an empty vector of that subtype.
+                psms[!, col_name] = [col_type() for _ in 1:N]
+            else
+                # scalar numeric type, use zeros as before
+                psms[!, col_name] = zeros(col_type, N)
+            end
         end
         return psms
 end
@@ -650,7 +659,7 @@ function get_summary_scores!(
                             fitted_manhattan_distance::AbstractVector{Float16},
                             fitted_spectral_contrast::AbstractVector{Float16},
                             y_count::AbstractVector{UInt8},
-
+                            rt_to_irt_interp::RtConversionModel
                         )
 
     max_gof = -100.0
@@ -661,13 +670,14 @@ function get_summary_scores!(
     count = 0
     y_ions_sum = 0
     max_y_ions = 0
+    smoothness = 0.0f0
 
     apex_scan = argmax(psms[!,:weight])
     #Need to make sure there is not a big gap. 
     start = max(1, apex_scan - 2)
     stop = min(length(weight), apex_scan + 2)
 
-    for i in range(start, stop)
+    @inbounds @fastmath for i in range(start, stop)
         if gof[i]>max_gof
             max_gof =gof[i]
         end
@@ -696,6 +706,24 @@ function get_summary_scores!(
         count += 1
     end    
 
+    irts = rt_to_irt_interp.(psms.rt)
+    
+    @inbounds @fastmath for i in range(1, length(weight))
+        if length(weight) == 1
+            smoothness = (-2*weight[i] / weight[apex_scan])^2
+        else
+            if (i == 1)
+                smoothness += (((weight[i+1] - weight[i]) / (psms.rt[i+1] - psms.rt[i]) + (-weight[i]) / (psms.rt[i+1] - psms.rt[i])) / weight[apex_scan]) ^2
+            elseif (i > 1) & (i < length(weight))
+                smoothness += (((weight[i-1] - weight[i]) / (psms.rt[i] - psms.rt[i-1]) + (weight[i+1]-weight[i]) / (psms.rt[i+1] - psms.rt[i])) / weight[apex_scan]) ^2
+            elseif (i == length(weight))
+                smoothness += (((weight[i-1] - weight[i]) / (psms.rt[i] - psms.rt[i-1]) + (-weight[i]) / (psms.rt[i] - psms.rt[i-1])) / weight[apex_scan]) ^2
+            end
+        end
+    end
+
+   
+
     psms.max_gof[apex_scan] = max_gof
     psms.max_matched_ratio[apex_scan] = max_matched_ratio
    # psms.max_entropy[apex_scan] = max_entropy
@@ -703,6 +731,10 @@ function get_summary_scores!(
     psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
     psms.y_ions_sum[apex_scan] = y_ions_sum
     psms.max_y_ions[apex_scan] = max_y_ions
+    psms.num_scans[apex_scan] = length(weight)
+    psms.smoothness[apex_scan] = smoothness
+    psms.weights[apex_scan] = weight
+    psms.irts[apex_scan] = irts
     psms.best_scan[apex_scan] = true
 
 end

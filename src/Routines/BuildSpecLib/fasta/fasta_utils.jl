@@ -102,7 +102,7 @@ function add_entrapment_sequences(
             while n_shuffle_attempts < max_shuffle_attempts
                 new_sequence = shuffle_fast(get_sequence(target_entry))
                 #Make sure the entrapment sequence is unique (I and L are equivalent)
-                if new_sequence ∈ sequences_set
+                if new_sequence ∉ sequences_set
                     entrapment_fasta_entries[n] = FastaEntry(
                         get_id(target_entry),
                         get_description(target_entry),

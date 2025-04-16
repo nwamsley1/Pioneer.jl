@@ -53,6 +53,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.tol_ppm` | Float | Initial tragment mass tolerance guess in parts per million (default: 20.0, should be set lower for some TOF instruments) |
 | `fragment_settings.min_score` | Int | Minimum fragment-index score threshold for fragment matches (default: 22) |
 | `fragment_settings.min_spectral_contrast` | Float | Minimum cosine simmilarity score (default: 0.9) |
+| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interferring peak (default: 1.25) |
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 1.5) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum number of top N matches - [requirement, denominator]. Default: `[3, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of fragment isotopes to consider in matching (default: 1, mono only) |
@@ -71,13 +72,14 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.max_rank` | Int | Maximum fragment rank to consider (default: 50 means 50th-last most abundant fragments per precursor are filtered out) |
 | `fragment_settings.min_score` | Int | Minimum score for fragment matches (default: 15) |
 | `fragment_settings.min_spectral_contrast` | Float | Minimum cosine simmilarity required (default: 0.5) |
+| `fragment_settings.relative_improvement_threshold` | Float | Minimum relative Scribe score improvement needed to ignore an interferring peak (default: 1.25) |
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of matched library fragment intensities to unmatched library fragment intensities (default: 0.0, means sum of matched library fragment intensities is equal to the sum of unmatched library fragment intensities for the precursor ) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of isotopes to consider (default: 1) |
 | `scoring_settings.n_train_rounds` | Int | Number of training rounds for scoring model (default: 2) |
 | `scoring_settings.max_iterations` | Int | Maximum iterations for scoring optimization (default: 20) |
-| `scoring_settings.max_iterations` | Float | Maximum q-value threshold (default: 0.01) |
-| `scoring_settings.max_q_value` | Int | Maximum number of precursors to consider (default: 200000) |
+| `scoring_settings.max_q_value_probit_rescore` | Float | Maximum q-value threshold for semi-supervised learning durning probit regression (default: 0.05) |
+| `scoring_settings.max_local_fdr` | Int | Maximum local FDR threshold for passing the first search (default: 1.0) |
 | `irt_mapping.max_prob_to_impute_irt` | Int | If probability of the psm is less then x in the first-pass search, then impute irt for the precursor with globably determined value from the other runs (default: 0.75) |
 | `irt_mapping.fwhm_nstd` | Float | Number of standard deviations of the fwhm to add to the retention time tolerance (default: 4) |
 | `irt_mapping.irt_nstd` | Int | Number of standard deviations of run-to-run irt tolerance to add to the retention time tolerance (default: 4) |
@@ -126,6 +128,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `deconvolution.max_diff` | Float | Maximum allowed difference in optimization (default: 0.01) |
 | `machine_learning.max_samples` | Int | Maximum number of samples for XGBoost training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
+| `machine_learning.max_q_value_xgboost_rescore` | Float | q-value threshold for semi-supervised learning with XGBoost (default: 0.01) |
+| `machine_learning.max_q_value_xgboost_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with XGBoost (default: 0.20) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 

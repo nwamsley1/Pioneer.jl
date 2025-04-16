@@ -35,6 +35,8 @@ struct ScoringSearchParameters <: SearchParameters
     pg_q_value_interpolation_points_per_bin::Int64  # Added based on original struct
     match_between_runs::Bool
     min_peptides::Int64
+    max_q_value_xgboost_rescore::Float32
+    max_q_value_xgboost_mbr_rescore::Float32
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -50,7 +52,9 @@ struct ScoringSearchParameters <: SearchParameters
             Int64(ml_params.spline_points),        # Using same value for protein groups
             Int64(ml_params.interpolation_points), # Using same value for protein groups
             Bool(global_params.match_between_runs),
-            Int64(protein_inference_params.min_peptides)
+            Int64(protein_inference_params.min_peptides),
+            Float32(ml_params.max_q_value_xgboost_rescore),
+            Float32(ml_params.max_q_value_xgboost_mbr_rescore)
         )
     end
 end
@@ -129,7 +133,9 @@ function summarize_results!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
                 getPrecursors(getSpecLib(search_context)),
-                params.match_between_runs
+                params.match_between_runs,
+                params.max_q_value_xgboost_rescore,
+                params.max_q_value_xgboost_mbr_rescore
             )
         else #In memory algorithm
             best_psms = load_psms_for_xgboost(second_pass_folder)#params.max_n_samples)
@@ -137,7 +143,9 @@ function summarize_results!(
                 best_psms,
                 getSecondPassPsms(getMSData(search_context)),
                 getPrecursors(getSpecLib(search_context)),
-                params.match_between_runs
+                params.match_between_runs,
+                params.max_q_value_xgboost_rescore,
+                params.max_q_value_xgboost_mbr_rescore
             )
         end
         best_psms = nothing

@@ -83,6 +83,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     sample_rate::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
+    relative_improvement_threshold::Float32
     spline_degree::Int64
     spline_n_knots::Int64
     spline_fit_outlier_sd::Int64
@@ -124,6 +125,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.sample_rate),
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
+            Float32(frag_params.relative_improvement_threshold),
             3,  # spline_degree default
             5,  # spline_n_knots default
             5,  # spline_fit_outlier_sd default

@@ -184,7 +184,7 @@ function getPSMS(
                 append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
             end 
 
-            getDistanceMetrics(Hs, getSpectralScores(search_data))
+            getDistanceMetrics(Hs, getSpectralScores(search_data); params.relative_improvement_threshold)
 
             ScoreFragmentMatches!(
                 getUnscoredPsms(search_data),

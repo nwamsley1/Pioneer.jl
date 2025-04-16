@@ -66,6 +66,7 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     max_frag_rank::UInt8
     sample_rate::Float32
     spec_order::Set{Int64}
+    relative_improvement_threshold::Float32
     
     # NCE specific parameters
     nce_grid::LinRange{Float32, Int64}
@@ -100,6 +101,7 @@ struct NceTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             UInt8(frag_params.max_rank),
             Float32(search_params.sample_rate),
             Set{Int64}([2]),
+            Float32(frag_params.relative_improvement_threshold),
             
             # NCE specific parameters
             nce_grid,

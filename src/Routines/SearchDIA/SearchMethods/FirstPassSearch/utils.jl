@@ -135,25 +135,25 @@ function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
     tasks_per_thread = 10
     M = size(psms, 1)
     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
-    data_chunks = partition(1:M, chunk_size) # partition your data into chunks that
+    data_chunks = partition(1:M, chunk_size) # partition your data into chunks
 
     for i in range(1, n_train_rounds)
-        if i < 2 #Train on all data during first round
-            β = ProbitRegression(β, psms[!,column_names], psms[!,:target], data_chunks, max_iter = max_iter_per_round);
-            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
-        else #Train using only decoys and high scoring targets from the previous round
-            psms_targets = psms[best_psms,:target]
-            M = size(psms_targets, 1)
-            sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
-            sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that
-            β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
-            ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
+        if i < 2 #Train on top scribe data during first round
+            get_qvalues!(psms[!,:scribe], psms[!,:target], psms[!,:q_value])
         end
-        get_qvalues!(psms[!,:score],psms[!,:target],psms[!,:q_value]);
-        if i < n_train_rounds #Get Data to train on during subsequent round
+
+        if i < n_train_rounds #Get Data to train on
             best_psms = ((psms[!,:q_value].<=max_q_value).&(psms[!,:target])) .| (psms[!,:target].==false);
         end
+
+        psms_targets = psms[best_psms,:target]
+        M = size(psms_targets, 1)
+        sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))
+        sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that
+        β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);
+        ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores 
     end
+
     return 
 end
 
@@ -212,10 +212,12 @@ Processes PSMs to identify the best matches and calculate peak characteristics.
 Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
-                        prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                        max_q_val::Float32 = 0.01f0
+                        prec_mz::Arrow.Primitive{T, Vector{T}};
+                        max_local_fdr::Float32 = 1.00f0
 ) where {T<:AbstractFloat}
 
+    #highest scoring psm for a given precursor
+    psms[!,:local_fdr] = zeros(Float16, size(psms, 1))
     #highest scoring psm for a given precursor
     psms[!,:best_psm] = zeros(Bool, size(psms, 1))
     #fwhm estimate of the precursor
@@ -223,6 +225,7 @@ function get_best_psms!(psms::DataFrame,
     #number of scans below the q value threshold for hte precursor
     psms[!,:scan_count] = zeros(UInt16,size(psms, 1))
 
+    
     #Get best psm for each precursor 
     #ASSUMES psms IS SOrtED BY rt IN ASCENDING ORDER
     gpsms = groupby(psms,:precursor_idx)
@@ -235,11 +238,9 @@ function get_best_psms!(psms::DataFrame,
         best_psm_score, best_psm_idx = zero(Float32), one(Int64)
         scan_count = one(UInt8)
         for i in range(1, size(prec_psms, 1))
-            if (prec_psms[i,:q_value].<=max_q_val) 
-                if coalesce(max_log2_intensity, zero(Float32)) < prec_psms[i,:log2_summed_intensity]
-                    max_log2_intensity = prec_psms[i,:log2_summed_intensity]
-                    max_idx = i
-                end
+            if coalesce(max_log2_intensity, zero(Float32)) < prec_psms[i,:log2_summed_intensity]
+                max_log2_intensity = prec_psms[i,:log2_summed_intensity]
+                max_idx = i
             end
             if prec_psms[i,:score]>best_psm_score
                 best_psm_idx = i
@@ -253,7 +254,7 @@ function get_best_psms!(psms::DataFrame,
         i = max_idx - 1
         while i > 0
             #Is the i'th psm above half the maximum 
-            if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
+            if (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
                 min_irt = prec_psms[i,:irt]
             else
@@ -265,7 +266,7 @@ function get_best_psms!(psms::DataFrame,
         i = max_idx + 1
         while i <= size(prec_psms, 1)
             #Is the i'th psm above half the maximum 
-            if (prec_psms[i,:q_value].<=max_q_val) & (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
+            if (prec_psms[i,:log2_summed_intensity] > (max_log2_intensity - 1.0))
                 scan_count += 1
                 max_irt = prec_psms[i,:irt]
             else
@@ -280,19 +281,25 @@ function get_best_psms!(psms::DataFrame,
 
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
+    # Will use local FDR for final filter
+    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]; doSort=false);
+
     n = size(psms, 1)
-    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx])
+    
+
+    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr,:target])
     #Instead of max_psms, 2x the number at 10% fdr. 
-    psms_10fdr = 0
-    q_values = psms[!,:q_value]::Vector{Float16}
+    psms_passing = 0
+    local_fdrs = psms[!,:local_fdr]::Vector{Float16}
     @inbounds for i in range(1, n)
-        psms_10fdr += 1
-        if q_values[i]>0.10
+        psms_passing += 1
+        if local_fdrs[i]>=max_local_fdr
             break
         end
     end
-    #delete!(psms, min(n, max_psms + 1):n)
-    deleteat!(psms, min(n, round(Int64, psms_10fdr*2.0) + 1):n)
+    #println("unique IDs prefilter: ", n, " ", psms_passing, " ", sum(psms.target), " ", sum(psms.target[1:min(n, round(Int64, psms_passing))]), "\n\n")
+
+    deleteat!(psms, min(n, round(Int64, psms_passing) + 1):n)
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
