@@ -108,6 +108,9 @@ function add_entrapment_sequences(
                         get_description(target_entry),
                         get_proteome(target_entry),
                         new_sequence,
+                        missing, #structural_mods 
+                        missing, #istopic_mods 
+                        get_charge(target_entry),
                         get_base_pep_id(target_entry),
                         base_prec_id,
                         entrapment_group_id,
@@ -129,6 +132,94 @@ function add_entrapment_sequences(
     
     return vcat(target_fasta_entries, entrapment_fasta_entries[1:n-1])
 end
+
+"""
+Enhanced version of shuffle_fast that tracks position changes using a position vector.
+"""
+function shuffle_fast_with_positions(s::String, positions::Vector{UInt8})
+    ss = sizeof(s)
+    l = length(s) - 1  # Preserve last amino acid
+
+    # Create indices vector
+    v = Vector{Int}(undef, l)
+    i = 1
+    for j in 1:l
+        v[j] = i
+        i = nextind(s, i)
+    end
+
+    # Generate random permutation
+    perm = randperm(l)
+    
+    # Update positions vector based on the permutation
+    # Store the original positions temporarily
+    temp_positions = copy(positions[1:l])
+    for (new_idx, old_idx) in enumerate(perm)
+        positions[new_idx] = temp_positions[old_idx]
+    end
+    
+    # Shuffle middle positions
+    p = pointer(s)
+    u = Vector{UInt8}(undef, ss)
+    k = 1
+    for i in perm
+        u[k] = unsafe_load(p, v[i])
+        k += 1
+    end
+    u[end] = unsafe_load(p, ss)  # Keep last amino acid
+    
+    return String(u)
+end
+
+function adjust_mod_positions(
+    mods::Union{Missing, Vector{PeptideMod}}, 
+    positions::Vector{UInt8},
+    seq_length::UInt8
+)::Union{Missing, Vector{PeptideMod}}
+    # If no modifications or missing, return as is
+    if ismissing(mods) || isempty(mods)
+        return mods
+    end
+    
+    # Create new vector for adjusted modifications
+    adjusted_mods = Vector{PeptideMod}(undef, length(mods))
+    
+    # Create a reverse mapping for efficiency
+    # This maps original positions to new positions
+    reverse_mapping = Vector{UInt8}(undef, seq_length)
+    for new_pos in 1:seq_length
+        orig_pos = positions[new_pos]
+        if orig_pos <= seq_length
+            reverse_mapping[orig_pos] = UInt8(new_pos)
+        end
+    end
+    
+    for (i, mod) in enumerate(mods)
+        position = mod.position
+        aa = mod.aa
+        mod_name = mod.mod_name
+        
+        # Special case for N-terminal and C-terminal modifications
+        if aa == 'n'
+            # N-terminal modifications stay at position 1
+            adjusted_mods[i] = PeptideMod(UInt8(1), 'n', mod_name)
+        elseif aa == 'c'
+            # C-terminal modifications stay at the end
+            adjusted_mods[i] = PeptideMod(seq_length, 'c', mod_name)
+        else
+            # For normal residue modifications, use the reverse mapping
+            if position <= seq_length
+                adjusted_mods[i] = PeptideMod(reverse_mapping[position], aa, mod_name)
+            else
+                # Edge case handling if position is somehow out of bounds
+                adjusted_mods[i] = mod
+            end
+        end
+    end
+    sort!(adjusted_mods)
+    return adjusted_mods
+end
+
 
 """
     addReverseDecoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)::Vector{FastaEntry}
@@ -168,52 +259,96 @@ with_decoys = addReverseDecoys(entries)
 ```
 """
 function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
-    #Pre-allocate space for entrapment fasta entries 
+    # Pre-allocate space for decoy entries
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
-    #Set to keep track of encountered sequences. Do not want to generate non-unique entrapment sequences
-    #Get the sequences for the target entries 
-    #This is used to check for uniqueness
-    #But we shouldn't treat 'I' and 'L' as distit 
-    #Intead convert 'I' to 'L' for purposes of checking 
-    sequences_set = PeptideSequenceSet(target_fasta_entries)#Set{String}()
+    
+    # Set to track unique sequences
+    sequences_set = PeptideSequenceSet(target_fasta_entries)
+    
+    # Initialize position tracking vector (max peptide length of 255 should be sufficient)
+    positions = Vector{UInt8}(undef, 255)
+    
     n = 1
-    #For eacbh protein in the FASTA
     for target_entry in target_fasta_entries
-        #Make a target and decoy for each peptide
         target_sequence = get_sequence(target_entry)
-        decoy_sequence = reverse(target_sequence[1:(end -1)])*target_sequence[end]
+        seq_length = UInt8(length(target_sequence))
+        
+        # Reset positions vector to initial positions
+        for i in 1:seq_length
+            positions[i] = i
+        end
+        
+        # For reversal, modify positions vector accordingly (except last position)
+        for i in 1:(seq_length-1)
+            positions[i] = seq_length - i
+        end
+        
+        # Create reversed sequence (keeping last amino acid)
+        decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
+        
         n_shuffle_attempts = 0
-        #If reversal fails to generate a unique sequence, then shuffle 
+        
+        # If reversal creates a duplicate, try shuffling
         if decoy_sequence ∈ sequences_set
+            # Reset positions vector before shuffling
+            for i in 1:seq_length
+                positions[i] = i
+            end
+            
             while n_shuffle_attempts < max_shuffle_attempts
-                decoy_sequence = shuffle_fast(get_sequence(target_entry))
+                # Use enhanced shuffle function that updates positions vector
+                decoy_sequence = shuffle_fast_with_positions(target_sequence, positions)
+                
                 if decoy_sequence ∉ sequences_set
                     break
                 end
                 n_shuffle_attempts += 1
+                
+                # Reset positions vector before next attempt
+                for i in 1:seq_length
+                    positions[i] = i
+                end
             end
         end
+        
         if n_shuffle_attempts >= max_shuffle_attempts
-            @warn "Exceeded max shuffle attempts for $target_entry"
+            @warn "Exceeded max shuffle attempts for $(get_sequence(target_entry))"
         else
+            # Adjust modification positions based on sequence manipulation
+            adjusted_structural_mods = adjust_mod_positions(
+                get_structural_mods(target_entry),
+                positions,
+                seq_length
+            )
+            
+            adjusted_isotopic_mods = adjust_mod_positions(
+                get_isotopic_mods(target_entry),
+                positions,
+                seq_length
+            )
+            
+            # Create decoy entry with adjusted modifications
             decoy_fasta_entries[n] = FastaEntry(
-                                            get_id(target_entry), 
-                                            get_description(target_entry),# This justs wastes time and memory here 
-                                            get_proteome(target_entry),
-                                            decoy_sequence,
-                                            get_base_pep_id(target_entry),
-                                            get_base_prec_id(target_entry),
-                                            get_entrapment_group_id(target_entry),
-                                            true #Must be a decoy sequence
-                                            )
+                get_id(target_entry),
+                get_description(target_entry),
+                get_proteome(target_entry),
+                decoy_sequence,
+                adjusted_structural_mods,
+                adjusted_isotopic_mods,
+                get_charge(target_entry),
+                get_base_pep_id(target_entry),
+                get_base_prec_id(target_entry),
+                get_entrapment_group_id(target_entry),
+                true  # This is a decoy sequence
+            )
+            
             n += 1
             push!(sequences_set, decoy_sequence)
         end
     end
-    #Sort the peptides
+    # Sort the peptides by sequence
     return sort(vcat(target_fasta_entries, decoy_fasta_entries[1:n-1]), by = x -> get_sequence(x))
 end
-
 
 """
     combineSharedPeptides(peptides::Vector{FastaEntry})::Vector{FastaEntry}
@@ -269,6 +404,9 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         description, 
                                                         proteome,
                                                         get_sequence(fasta_entry),
+                                                        get_structural_mods(fasta_entry),
+                                                        get_isotopic_mods(fasta_entry),
+                                                        get_charge(fasta_entry),
                                                         get_base_pep_id(fasta_entry),
                                                         get_base_prec_id(fasta_entry),
                                                         get_entrapment_group_id(fasta_entry), 

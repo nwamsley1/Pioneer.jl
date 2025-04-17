@@ -177,7 +177,7 @@ function BuildSpecLib(params_path::String)
                     params["isotope_mod_groups"],
                     Float32(_params.library_params["rt_bin_tol"])
                 )
-                
+                println("precursors_arrow_path $precursors_arrow_path")
                 # Cleanup temporary files
                 GC.gc()
                 rm(chronologer_in_path, force=true)

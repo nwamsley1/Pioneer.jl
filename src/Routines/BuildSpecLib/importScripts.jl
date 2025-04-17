@@ -16,6 +16,7 @@ function importScripts()
     root_path = joinpath(package_root, "src", "Routines", "BuildSpecLib")
     [include(fname) for fname in get_julia_files(joinpath(package_root, "src", "structs", "KoinaStructs"))]
     # FASTA processing
+    include(joinpath(root_path, "structs", "mods.jl"))
     include(joinpath(root_path, "fasta", "fasta_parser.jl"))
     include(joinpath(root_path, "fasta", "fasta_digest.jl"))
     include(joinpath(root_path, "fasta", "fasta_utils.jl"))
