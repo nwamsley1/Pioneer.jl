@@ -77,11 +77,19 @@ function digest_fasta(fasta::Vector{FastaEntry},
         for peptide in digest_sequence(get_sequence(entry), regex,
                                      max_length, min_length,
                                      missed_cleavages)
+
+            if (occursin("[H", peptide)) | (occursin("U", peptide)) | (occursin("O", peptide)) |  (occursin("X", peptide)) | occursin("Z", peptide) | occursin("B", peptide)
+                continue
+            end
+
             push!(peptides_fasta, FastaEntry(
                 get_id(entry),
                 "", # Skip description to save memory
                 proteome_id,
                 peptide,  # Now String instead of SubString
+                missing, #structural_mods 
+                missing, #istopic_mods 
+                zero(UInt8),
                 base_pep_id,
                 base_prec_id,
                 zero(UInt8),

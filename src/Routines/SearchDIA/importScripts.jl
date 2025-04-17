@@ -34,7 +34,7 @@ function importScripts()
     )
 
     include(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
-
+    include(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
     include_files!(
         files_loaded, 
         joinpath(package_root, "src","structs"),
