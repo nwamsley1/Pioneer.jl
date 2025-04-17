@@ -35,7 +35,7 @@
     "prec_mz_min":390.0,
     "prec_mz_max":1010.0,
     "max_frag_charge": 3,
-    "max_frag_rank": 255,
+    "max_frag_rank": 50,
     "min_frag_intensity": 0.00,
     "include_isotope": false,
     "include_internal": false,

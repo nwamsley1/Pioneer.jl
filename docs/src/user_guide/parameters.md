@@ -202,7 +202,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `prec_mz_min` | Float | Minimum precursor m/z (default: 390.0) |
 | `prec_mz_max` | Float | Maximum precursor m/z (default: 1010.0) |
 | `max_frag_charge` | Int | Maximum fragment ion charge (default: 3) |
-| `max_frag_rank` | Int | Maximum fragment rank (default: 255) |
+| `max_frag_rank` | Int | Maximum fragment rank (default: 50) |
 | `min_frag_intensity` | Float | Minimum relative fragment intensity (default: 0.00) |
 | `include_isotope` | Boolean | Include isotope peak annotations (default: false) |
 | `include_internal` | Boolean | Include internal fragment annotations (default: false) |
