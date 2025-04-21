@@ -1,3 +1,4 @@
+#=
 function parseIsotopeMods!(
     iso_mods_json::Dict{String, Any},
     iso_mod_to_mass_float::Dict{String, <:AbstractFloat})
@@ -21,7 +22,8 @@ function parseIsotopeMods!(
     end
     return iso_mods, iso_mod_to_mass_float, iso_mods_json["label_name"]
 end 
-
+=#
+#=
 function addIsotopeMods!(
     isotope_mods_column::Vector{Union{Missing, String}},
     accession_number_column::AbstractVector{String},
@@ -58,7 +60,8 @@ function addIsotopeMods!(
         end
     end
 end
-
+=#
+#=
 function addIsotopeModifiedPrecursors!(
     precursors_df::DataFrame,
     iso_mod_to_mass::Dict{String, Float32},
@@ -93,3 +96,4 @@ function addIsotopeModifiedPrecursors!(
     #Concatentae the precursor dataframes 
     return vcat(precursors_dfs...);
 end
+=#

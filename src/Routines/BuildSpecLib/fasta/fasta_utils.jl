@@ -1,14 +1,48 @@
+"""
+    PeptideSequenceSet
+
+A data structure for efficiently storing and comparing peptide sequences with I/L equivalence.
+
+The structure replaces all isoleucine (I) with leucine (L) in stored sequences to treat these
+amino acids as equivalent for the purpose of comparisons.
+
+# Fields
+- `sequences::Set{String}`: Set of stored sequences with I replaced by L
+
+# Methods
+- `PeptideSequenceSet()`: Constructor to create an empty set
+- `PeptideSequenceSet(fasta_entries::Vector{FastaEntry})`: Constructor to initialize from FASTA entries
+- `push!(pss::PeptideSequenceSet, seq::AbstractString)`: Add a sequence to the set
+- `in(seq::AbstractString, pss::PeptideSequenceSet)`: Check if a sequence exists in the set
+
+# Examples
+```julia
+# Create an empty set
+pss = PeptideSequenceSet()
+
+# Add sequences
+push!(pss, "PEPTIDE")
+push!(pss, "PEPTLDE")  # Contains L instead of I
+
+# Check membership (both return true due to I/L equivalence)
+"PEPTIDE" in pss  # true
+"PEPTLDE" in pss  # true
+
+# Initialize from FASTA entries
+pss = PeptideSequenceSet(fasta_entries)
+```
+"""
 struct PeptideSequenceSet
-    sequences::Set{String}
+    sequences::Set{Tuple{String, UInt8}}
     # Constructor
     function PeptideSequenceSet()
-        new(Set{String}())
+        new(Set{Tuple{String, UInt8}}())
     end
     function PeptideSequenceSet(fasta_entries::Vector{FastaEntry})
         pss = PeptideSequenceSet()
         # Add each sequence to the set
         for entry in fasta_entries
-            push!(pss, get_sequence(entry))
+            push!(pss, get_sequence(entry), get_charge(entry))
         end
         return pss
     end
@@ -17,21 +51,46 @@ end
 getSeqSet(s::PeptideSequenceSet) = s.sequences
 
 import Base: push!
-function push!(pss::PeptideSequenceSet, seq::AbstractString)
+function push!(pss::PeptideSequenceSet, seq::AbstractString, charge::UInt8)
     # Replace 'I' with 'L' in the sequence and add to the set
-    push!(pss.sequences, replace(seq, 'I' => 'L'))
+    push!(pss.sequences, (replace(seq, 'I' => 'L'), charge))
     return pss
 end
 
 import Base: in
-function in(seq::AbstractString, pss::PeptideSequenceSet)
+function in(seq_charge::Tuple{String, UInt8}, pss::PeptideSequenceSet)
     # Check if the modified sequence is in the set
-    return replace(seq, 'I' => 'L') ∈ getSeqSet(pss)
+    return (replace(first(seq_charge), 'I' => 'L'), last(seq_charge)) ∈ getSeqSet(pss)
 end
 
 
 """
+    shuffle_fast(s::String)
+
 Fast sequence shuffling algorithm that preserves terminal amino acids.
+
+# Parameters
+- `s::String`: Peptide sequence to shuffle
+
+# Returns
+- `String`: Shuffled sequence with preserved C-terminal amino acid
+
+# Details
+This function:
+1. Preserves the last amino acid (C-terminal) position
+2. Randomly shuffles all other amino acids
+3. Uses a highly optimized implementation for performance
+
+# Examples
+```julia
+# Shuffle a peptide sequence
+shuffled = shuffle_fast("PEPTIDEK")
+# Returns something like "DPETPIEK" (last K preserved)
+```
+
+# Notes
+Used in entrapment sequence generation where C-terminal preservation is important
+for maintaining enzymatic cleavage properties.
 """
 function shuffle_fast(s::String)
     ss = sizeof(s)
@@ -59,16 +118,47 @@ function shuffle_fast(s::String)
 end
 
 """
+    add_entrapment_sequences(
+        target_fasta_entries::Vector{FastaEntry}, 
+        entrapment_r::UInt8;
+        max_shuffle_attempts::Int64 = 20
+    )::Vector{FastaEntry}
+
 Add entrapment sequences to a set of target peptides.
 Creates shuffled decoy sequences while preserving terminal amino acids.
 
-Parameters:
-- target_fasta_entries: Vector of target peptide entries
-- entrapment_r: Number of entrapment sequences per target
-- max_shuffle_attempts: Maximum attempts to generate unique shuffled sequence
+# Parameters
+- `target_fasta_entries::Vector{FastaEntry}`: Vector of target peptide entries to generate entrapment sequences for
+- `entrapment_r::UInt8`: Number of entrapment sequences to generate per target
+- `max_shuffle_attempts::Int64`: Maximum attempts to generate unique shuffled sequence (default: 20)
 
-Returns:
-Vector{FastaEntry} with original and entrapment sequences
+# Returns
+- `Vector{FastaEntry}`: Combined vector of original entries and their entrapment sequences
+
+# Details
+For each target peptide:
+1. Creates `entrapment_r` shuffled versions using `shuffle_fast()`
+2. Preserves C-terminal amino acid to maintain enzymatic cleavage properties
+3. Ensures each shuffled sequence is unique
+4. Sets entrapment_group_id to indicate the entrapment group
+5. Maintains original metadata (base_pep_id, etc.) for tracking
+
+# Examples
+```julia
+# Create 2 entrapment sequences per target
+entries_with_entrapment = add_entrapment_sequences(target_entries, UInt8(2))
+
+# Create 3 entrapment sequences with more shuffle attempts for difficult sequences
+entries_with_entrapment = add_entrapment_sequences(
+    target_entries, 
+    UInt8(3), 
+    max_shuffle_attempts=50
+)
+```
+
+# Notes
+Entrapment sequences help assess false discovery rates in peptide identification.
+The function uses I/L equivalence when checking for sequence uniqueness.
 """
 function add_entrapment_sequences(
     target_fasta_entries::Vector{FastaEntry}, 
@@ -102,7 +192,7 @@ function add_entrapment_sequences(
             while n_shuffle_attempts < max_shuffle_attempts
                 new_sequence = shuffle_fast(get_sequence(target_entry))
                 #Make sure the entrapment sequence is unique (I and L are equivalent)
-                if new_sequence ∉ sequences_set
+                if (new_sequence, get_charge(target_entry)) ∉ sequences_set
                     entrapment_fasta_entries[n] = FastaEntry(
                         get_id(target_entry),
                         get_description(target_entry),
@@ -118,7 +208,7 @@ function add_entrapment_sequences(
                     )
                     base_prec_id += one(UInt32)
                     n += 1
-                    push!(sequences_set, new_sequence)
+                    push!(sequences_set, new_sequence, get_charge(target_entry))
                     break
                 end
                 n_shuffle_attempts += 1
@@ -222,41 +312,41 @@ end
 
 
 """
-    addReverseDecoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)::Vector{FastaEntry}
+    add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
 
-Creates decoy sequences for target peptides by reversing all but the last amino acid. If reversal
-creates a duplicate sequence, falls back to shuffling.
+Creates decoy sequences for target peptides by reversing all but the last amino acid.
+If reversal creates a duplicate sequence, falls back to shuffling.
 
-Parameters:
-- target_fasta_entries::Vector{FastaEntry}: Vector of target peptide entries to generate decoys for
+# Parameters
+- `target_fasta_entries::Vector{FastaEntry}`: Vector of target peptide entries to generate decoys for
+- `max_shuffle_attempts::Int64`: Maximum attempts to generate unique shuffled sequence when reversal creates a duplicate (default: 20)
 
-Keyword Arguments:
-- max_shuffle_attempts::Int64 = 20: Maximum number of attempts to generate unique shuffled sequence
-  when reversal creates a duplicate
+# Returns
+- `Vector{FastaEntry}`: Sorted vector containing both original entries and their decoys
 
-Returns:
-- Vector{FastaEntry}: Sorted vector containing both original entries and their decoys. Decoy entries
-  have is_decoy=true and maintain their original base_pep_id and entrapment_group_id.
+# Details
+For each target peptide:
+1. Reverses the sequence keeping the last amino acid fixed
+2. If the resulting sequence already exists, tries shuffling instead
+3. Updates modification positions to match the reversed/shuffled sequence
+4. Sets is_decoy=true for decoy entries
+5. Maintains original metadata (base_pep_id, entrapment_group_id) for tracking
+6. Returns a combined list of target and decoy sequences, sorted by sequence
 
-Notes:
-- Preserves C-terminal amino acid to maintain enzymatic cleavage properties
-- Orders entries by sequence for efficient lookup
-- Maintains original metadata (base_pep_id, entrapment_group_id) for tracking
-- Warns if unable to generate unique decoy after max attempts
-- Uses efficient pointer-based sequence manipulation
-
-Example:
+# Examples
 ```julia
-# Original entries
-entries = [FastaEntry("P1", "", "human", "PEPTIDER", 1, 0, false),
-          FastaEntry("P2", "", "human", "SAMPLEK", 2, 0, false)]
+# Add reverse decoys to a set of target entries
+all_entries = add_reverse_decoys(target_entries)
 
-# Add decoys
-with_decoys = addReverseDecoys(entries)
-# Results in 4 entries: original 2 plus:
-# "EPITPEDER" (reverse of "PEPTIDER" keeping R)
-# "LPMASEK" (reverse of "SAMPLEK" keeping K)
+# Add decoys with more shuffle attempts
+all_entries = add_reverse_decoys(target_entries, max_shuffle_attempts=50)
 ```
+
+# Notes
+- Preserves C-terminal amino acid to maintain enzymatic cleavage properties
+- Correctly handles modifications, updating their positions to match the reversed sequence
+- Uses I/L equivalence when checking for sequence uniqueness
+- Entries are sorted by sequence in the output for efficient lookup
 """
 function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
     # Pre-allocate space for decoy entries
@@ -271,6 +361,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
     n = 1
     for target_entry in target_fasta_entries
         target_sequence = get_sequence(target_entry)
+        charge = get_charge(target_entry)
         seq_length = UInt8(length(target_sequence))
         
         # Reset positions vector to initial positions
@@ -289,7 +380,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
         n_shuffle_attempts = 0
         
         # If reversal creates a duplicate, try shuffling
-        if decoy_sequence ∈ sequences_set
+        if (decoy_sequence, charge) ∈ sequences_set
             # Reset positions vector before shuffling
             for i in 1:seq_length
                 positions[i] = i
@@ -299,7 +390,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                 # Use enhanced shuffle function that updates positions vector
                 decoy_sequence = shuffle_fast_with_positions(target_sequence, positions)
                 
-                if decoy_sequence ∉ sequences_set
+                if (decoy_sequence, charge) ∉ sequences_set
                     break
                 end
                 n_shuffle_attempts += 1
@@ -343,7 +434,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
             )
             
             n += 1
-            push!(sequences_set, decoy_sequence)
+            push!(sequences_set, decoy_sequence, get_charge(target_entry))
         end
     end
     # Sort the peptides by sequence
@@ -351,27 +442,25 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
 end
 
 """
-    combineSharedPeptides(peptides::Vector{FastaEntry})::Vector{FastaEntry}
+    combine_shared_peptides(peptides::Vector{FastaEntry})::Vector{FastaEntry}
 
 Combines entries that share identical peptide sequences by concatenating their protein accessions.
-Used to handle peptides that map to multiple proteins while maintaining unique sequences
-in the library.
 
-Parameters:
-- peptides::Vector{FastaEntry}: Vector of peptide entries that may contain duplicates
+# Parameters
+- `peptides::Vector{FastaEntry}`: Vector of peptide entries that may contain duplicates
 
-Returns:
-- Vector{FastaEntry}: Vector of unique peptide entries where shared peptides have concatenated
-  accession numbers separated by semicolons. Other metadata from the first encountered instance 
-  of each peptide is preserved.
+# Returns
+- `Vector{FastaEntry}`: Vector of unique peptide entries with concatenated metadata
 
-Notes:
-- Uses Dictionary for efficient sequence lookup
-- Concatenates accession numbers with semicolon separators
-- Preserves first encountered description, proteome, base_pep_id, etc.
-- Memory efficient by pre-allocating final vector
+# Details
+This function:
+1. Identifies peptides with identical sequences (considering I/L as equivalent)
+2. For shared peptides, combines their protein accessions with semicolon separators
+3. Also combines proteome identifiers and descriptions if multiple exist
+4. Preserves other metadata from the first encountered instance of each sequence
+5. Returns a vector containing only unique peptide sequences
 
-Example:
+# Examples
 ```julia
 # Original entries with shared sequence
 entries = [
@@ -381,11 +470,16 @@ entries = [
 ]
 
 # Combine shared peptides
-combined = combineSharedPeptides(entries)
+combined = combine_shared_peptides(entries)
 # Results in 2 entries:
-# 1. FastaEntry("P1;P2", "desc1", "human", "PEPTIDE", 1, 0, false)
+# 1. FastaEntry("P1;P2", "desc1;desc2", "human;human", "PEPTIDE", 1, 0, false)
 # 2. FastaEntry("P3", "desc3", "human", "UNIQUE", 3, 0, false)
 ```
+
+# Notes
+This function helps handle peptides that map to multiple proteins while maintaining
+unique sequences in the library. It's particularly useful in bottom-up proteomics
+where shared peptides are common.
 """
 function combine_shared_peptides(peptides::Vector{FastaEntry})
     seq_to_fasta_entry = Dictionary{String, FastaEntry}()

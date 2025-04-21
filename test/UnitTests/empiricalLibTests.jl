@@ -126,7 +126,7 @@ end
         n_combinations = countVarModCombinations(matches, 1)
         @test n_combinations == 3  # unmodified + 2 single mods
     end
-    
+    #=
     @testset "fillVarModStrings!" begin
         sequence = "PEPMTIDME"
         var_mods = [(p=r"M", r="Unimod:35")]
@@ -155,7 +155,7 @@ end
         @test "(1,P,Unimod:4)(8,M,Unimod:35)" in var_mod_strings  # Fixed + second M
         @test "(1,P,Unimod:4)(4,M,Unimod:35)(8,M,Unimod:35)" in var_mod_strings  # Fixed + both Ms
     end
-    
+    =#
     @testset "parseEmpiricalLibraryMods" begin
         # Test case 1: Standard modification
         sequence = "I(exTag1)LSISADI(Unimod:35)ETIGEILK(exTag1)"

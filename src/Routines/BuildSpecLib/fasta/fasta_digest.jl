@@ -1,18 +1,139 @@
 # src/fasta/fasta_digest.jl
+"""
+    digest_sequence(sequence::AbstractString, regex::Regex, max_length::Int, min_length::Int, missed_cleavages::Int)::Vector{String}
+
+Digest a protein sequence into peptides using the specified enzyme cleavage pattern.
+
+# Parameters
+- `sequence::AbstractString`: The protein sequence to digest
+- `regex::Regex`: Enzyme cleavage pattern (matches cleavage sites)
+- `max_length::Int`: Maximum peptide length to include
+- `min_length::Int`: Minimum peptide length to include
+- `missed_cleavages::Int`: Maximum number of internal cleavage sites allowed in a peptide
+
+# Returns
+- `Vector{String}`: Vector of digested peptide sequences as Strings
+
+# Details
+The function simulates enzymatic digestion by:
+1. Finding all cleavage sites matching the regex pattern
+2. Generating peptides between sites, including those with missed cleavages
+3. Filtering peptides by length constraints
+4. Converting all SubStrings to Strings to ensure memory stability
+
+# Examples
+```julia
+# Trypsin-like digestion (cleaves after K or R except when followed by P)
+peptides = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 1)
+# Returns ["MKVGPK", "VGPKAFR", "VLTEDEMAK", "VLTEDEMAKR", "AFRVLTEDEMAK"]
+
+# No missed cleavages
+peptides = digest_sequence("MKVGPKAFRVLTEDEMAKR", r"[KR][^P]", 20, 5, 0)
+# Returns ["VLTEDEMAK"]
+```
+"""
+function digest_sequence(sequence::AbstractString,
+                        regex::Regex,
+                        max_length::Int,
+                        min_length::Int,
+                        missed_cleavages::Int)::Vector{String}  # Return String not SubString
+    
+    function add_peptide!(peptides::Vector{SubString{String}},
+                        n::Int,
+                        sequence::AbstractString,
+                        site::Int,
+                        previous_sites::Vector{Int},
+                        min_length::Int,
+                        max_length::Int,
+                        missed_cleavages::Int)
+        
+        for i in 1:min(n, missed_cleavages + 1)
+            previous_site = previous_sites[end - i + 1]
+            if ((site - previous_site) >= min_length) && 
+                ((site - previous_site) <= max_length)
+                # Convert SubString to String when adding to peptides
+                push!(peptides, String(@view sequence[previous_site+1:site]))
+            end
+        end
+
+        for i in 1:length(previous_sites)-1
+            previous_sites[i] = previous_sites[i+1]
+        end
+        previous_sites[end] = site
+        return n + 1
+    end
+
+    peptides = Vector{SubString{String}}()
+    previous_sites = zeros(Int, missed_cleavages + 1)
+    previous_sites[1] = 0
+    n = 1
+
+    for site in eachmatch(regex, sequence, overlap = true)
+        n = add_peptide!(peptides, n, sequence, site.offset,
+                        previous_sites, min_length, max_length,
+                        missed_cleavages)
+    end
+
+    # Handle C-terminal peptides
+    n = add_peptide!(peptides, n, sequence, length(sequence),
+                    previous_sites, min_length, max_length,
+                    missed_cleavages)
+
+    return peptides
+end
 
 """
-Enzymatically digest protein sequences into peptides.
+    digest_fasta(fasta::Vector{FastaEntry}, proteome_id::String; regex::Regex = r"[KR][^P|\$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1)::Vector{FastaEntry}
 
-Parameters:
-- fasta::Vector{FastaEntry}: FASTA entries to digest
-- proteome_id::String: Proteome identifier 
-- regex::Regex: Enzyme cleavage pattern
-- max_length::Int: Maximum peptide length
-- min_length::Int: Minimum peptide length
-- missed_cleavages::Int: Maximum missed cleavages allowed
+Enzymatically digest protein sequences from FASTA entries into peptides.
 
-Returns:
-- Vector{FastaEntry}: Digested peptide entries
+# Parameters
+- `fasta::Vector{FastaEntry}`: FASTA entries to digest
+- `proteome_id::String`: Proteome identifier to assign to resulting peptides
+- `regex::Regex`: Enzyme cleavage pattern (default: trypsin-like, cleaves after K or R except when followed by P)
+- `max_length::Int`: Maximum peptide length to include (default: 40)
+- `min_length::Int`: Minimum peptide length to include (default: 8)
+- `missed_cleavages::Int`: Maximum missed cleavages allowed (default: 1)
+
+# Returns
+- `Vector{FastaEntry}`: Digested peptide entries as FastaEntry objects
+
+# Details
+For each protein in the input FASTA entries:
+1. Digests the sequence using the specified enzyme pattern
+2. Filters out peptides containing unusual amino acids ([H, U, O, X, Z, B])
+3. Creates a new FastaEntry for each valid peptide
+4. Assigns sequential base_pep_id and base_prec_id values
+
+The resulting FastaEntry objects contain:
+- Original entry ID
+- Empty description (to save memory)
+- Specified proteome ID
+- Digested peptide sequence
+- No structural or isotopic modifications (missing)
+- Zero charge state
+- Sequential base_pep_id and base_prec_id
+- Zero entrapment_group_id
+- is_decoy set to false
+
+# Examples
+```julia
+# Load FASTA entries
+fasta_entries = parse_fasta("proteins.fasta", "human")
+
+# Digest with default parameters (trypsin-like)
+peptides = digest_fasta(fasta_entries, "human")
+
+# Digest with custom parameters (AspN-like, cutting before D)
+peptides = digest_fasta(
+    fasta_entries, 
+    "human",
+    regex = r"[^D](?=[D])", 
+    max_length = 30,
+    min_length = 6,
+    missed_cleavages = 2
+)
+```
 """
 function digest_fasta(fasta::Vector{FastaEntry},
                      proteome_id::String;
@@ -21,55 +142,6 @@ function digest_fasta(fasta::Vector{FastaEntry},
                      min_length::Int = 8,
                      missed_cleavages::Int = 1)::Vector{FastaEntry}
 
-    function digest_sequence(sequence::AbstractString,
-                           regex::Regex,
-                           max_length::Int,
-                           min_length::Int,
-                           missed_cleavages::Int)::Vector{String}  # Return String not SubString
-        
-        function add_peptide!(peptides::Vector{SubString{String}},
-                            n::Int,
-                            sequence::AbstractString,
-                            site::Int,
-                            previous_sites::Vector{Int},
-                            min_length::Int,
-                            max_length::Int,
-                            missed_cleavages::Int)
-            
-            for i in 1:min(n, missed_cleavages + 1)
-                previous_site = previous_sites[end - i + 1]
-                if ((site - previous_site) >= min_length) && 
-                   ((site - previous_site) <= max_length)
-                    # Convert SubString to String when adding to peptides
-                    push!(peptides, String(@view sequence[previous_site+1:site]))
-                end
-            end
-
-            for i in 1:length(previous_sites)-1
-                previous_sites[i] = previous_sites[i+1]
-            end
-            previous_sites[end] = site
-            return n + 1
-        end
-
-        peptides = Vector{SubString{String}}()
-        previous_sites = zeros(Int, missed_cleavages + 1)
-        previous_sites[1] = 0
-        n = 1
-
-        for site in eachmatch(regex, sequence, overlap = true)
-            n = add_peptide!(peptides, n, sequence, site.offset,
-                           previous_sites, min_length, max_length,
-                           missed_cleavages)
-        end
-
-        # Handle C-terminal peptides
-        n = add_peptide!(peptides, n, sequence, length(sequence),
-                       previous_sites, min_length, max_length,
-                       missed_cleavages)
-
-        return peptides
-    end
     peptides_fasta = Vector{FastaEntry}()
     base_pep_id = one(UInt32)
     base_prec_id = one(UInt32)
