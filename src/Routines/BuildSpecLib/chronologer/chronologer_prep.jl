@@ -128,7 +128,7 @@ function prepare_chronologer_input(
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
-        
+  
     fasta_entries = add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
@@ -137,7 +137,7 @@ function prepare_chronologer_input(
 
     # Add decoy sequences
     fasta_entries = add_reverse_decoys(fasta_entries)
-
+  
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
         fasta_entries,

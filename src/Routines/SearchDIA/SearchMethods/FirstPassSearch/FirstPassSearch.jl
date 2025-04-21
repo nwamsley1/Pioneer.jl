@@ -426,10 +426,15 @@ function summarize_results!(
                 continue
             end
 
+            # If the partner needs to be added, then give it the irt of the currently identified precursor
+            # Otherwise if the partner was ID'ed, it should keep its original predicted iRT
             if !haskey(precursor_dict, partner_pid)
                 insert!(precursor_dict, partner_pid, val)
+                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+            else
+                setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
             end
-            setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+            
         end
     else
         for (pid, val) in pairs(precursor_dict)
