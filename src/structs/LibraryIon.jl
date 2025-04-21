@@ -765,7 +765,28 @@ getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.da
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
 getPartnerPrecursorIdx(lp::LibraryPrecursors)::Arrow.Primitive{Union{Missing, Int64}, Vector{Int64}} = lp.data[:partner_precursor_idx]
-getPairIdx(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:pair_id]
+# Define two different versions of the function
+function extract_pair_idx(pair_idx_column::Arrow.Primitive{Union{Missing, UInt32}, Array{UInt32,1}}, idx)
+    value = pair_idx_column[idx]
+    return ismissing(value) ? zero(UInt32) : convert(UInt32, value)
+end
+
+function extract_pair_idx(pair_idx_column::Arrow.Primitive{UInt32, Vector{UInt32}}, idx)
+    return pair_idx_column[idx]
+end
+
+# Add a generic fallback for other types
+function extract_pair_idx(pair_idx_column, idx)
+    value = pair_idx_column[idx]
+    if isa(value, UInt32)
+        return value
+    elseif ismissing(value)
+        return zero(UInt32)
+    else
+        return convert(UInt32, value)
+    end
+end
+getPairIdx(lp::LibraryPrecursors) = lp.data[:pair_id]
 getPlex(lp::PlexedLibraryPrecursors)::Arrow.Primitive{I, Vector{I}} where {I<:Integer} = lp.data[:plex]
 
 
