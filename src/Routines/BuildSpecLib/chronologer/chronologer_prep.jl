@@ -1,19 +1,65 @@
+"""
+    adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
+
+Adjust the normalized collision energy (NCE) based on precursor charge state. This is useful for thermo instruments when 
+predicting a spectral library using Prosit. 
+
+# Parameters
+- `NCE::T`: Base normalized collision energy value
+- `default_charge::Integer`: Default charge state for which the base NCE is calibrated
+- `peptide_charge::Integer`: Actual charge state of the peptide
+- `charge_facs::Vector{T}`: Vector of charge-specific adjustment factors
+
+# Returns
+- Adjusted NCE value scaled according to the charge state
+
+# Notes
+This function applies charge-specific adjustment factors to the base NCE value.
+"""
 function adjustNCE(NCE::T, default_charge::Integer, peptide_charge::Integer, charge_facs::Vector{T}) where {T<:AbstractFloat}
     return NCE*(charge_facs[default_charge]/charge_facs[peptide_charge])
 end
 
 """
-Prepare input data for retention time prediction with chronologer.
+    prepare_chronologer_input(
+        params::Dict{String, Any},
+        mz_to_ev_interp::Union{Missing, InterpolationTypeAlias},
+        prec_mz_min::Float32,
+        prec_mz_max::Float32,
+        chronologer_out_path::String)
 
-Parameters:
-- params: Dictionary containing all build parameters
-- mz_to_ev_interp: Optional interpolation function for m/z to eV conversion
-- prec_mz_min: Minimum precursor m/z to include
-- prec_mz_max: Maximum precursor m/z to include 
-- chronologer_out_path: Path to save the prepared data
+Prepare input data for retention time prediction with Chronologer.
 
-Returns:
-Writes prepared data to chronologer_out_path
+# Parameters
+- `params::Dict{String, Any}`: Dictionary containing all build parameters including:
+  - `fasta_digest_params`: Settings for FASTA digestion
+  - `nce_params`: Settings for collision energy calculation
+  - `library_params`: General spectral library settings
+  - `variable_mods`: Variable modification specifications
+  - `fixed_mods`: Fixed modification specifications
+  - `fasta_paths`: Paths to FASTA files
+  - `fasta_names`: Names for the proteomes in FASTA files
+- `mz_to_ev_interp::Union{Missing, InterpolationTypeAlias}`: Optional interpolation function for m/z to eV conversion
+- `prec_mz_min::Float32`: Minimum precursor m/z to include
+- `prec_mz_max::Float32`: Maximum precursor m/z to include 
+- `chronologer_out_path::String`: Path to save the prepared data
+
+# Returns
+`nothing` - Writes prepared data to chronologer_out_path in Arrow format
+
+# Notes
+This function processes FASTA files according to the specified parameters, generating
+peptides with proper modifications and charge states. It applies fixed and variable modifications
+to the sequences, and uses a regular expression to determine the enzymatic cleavage site. 
+It outputs a file suitable for input to the Chronologer retention time prediction algorithm.
+
+Order of operations is: 
+digest fasta -> 
+add entrapment sequences -> 
+add mods -> 
+add charge states -> 
+add decoys -> 
+build dataframe for chronologer 
 """
 function prepare_chronologer_input(
     params::Dict{String, Any},
@@ -82,14 +128,16 @@ function prepare_chronologer_input(
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
-    # Add decoy sequences
-    fasta_entries = add_reverse_decoys(fasta_entries)
-
+  
     fasta_entries = add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
     )
+
+    # Add decoy sequences
+    fasta_entries = add_reverse_decoys(fasta_entries)
+  
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
         fasta_entries,
@@ -139,74 +187,32 @@ function prepare_chronologer_input(
     return nothing
 end
 
-function getFixedMods!(
-                        fixed_mods::Vector{PeptideMod},
-                        mod_matches::Base.RegexMatchIterator,
-                        mod_name::String)
-    for mod_match in mod_matches
-        index = UInt8(mod_match.offset)
-        aa = mod_match.match
-        push!(fixed_mods, PeptideMod(index, first(aa), mod_name))
-    end
-    return nothing
-end
+"""
+    add_mods(
+        fasta_peptides::Vector{FastaEntry},
+        fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
+        var_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}},
+        max_var_mods::Int)
 
-function fillVarModStrings!(
-                            all_mods::Vector{Vector{PeptideMod}},
-                            var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
-                            fixed_mods::Vector{PeptideMod},
-                            max_var_mods::Int
-                            )
-    i = 1
-    for N in 1:min(max_var_mods, length(var_mod_matches))
-        for mods in combinations(var_mod_matches, N)
-            #Need a unique key that can map between the target and reverse decoy verion of a sequence. 
-            peptide_all_mods = copy(fixed_mods)
-            for mod in mods
-                index = UInt8(mod[:regex_match].offset)
-                aa = mod[:regex_match].match
-                push!(peptide_all_mods, PeptideMod(index, first(aa), mod[:name]))
-            end
-            all_mods[i] = peptide_all_mods
-            i += 1
-        end
-    end
-    #Version with 0 variable mods
-    all_mods[end] = fixed_mods
-    #sort!(x->(x.position, x.mod_name, x.aa), all_mods)
-    sort!(all_mods)
-    return nothing
-end
+Generate peptide variants with all valid combinations of modifications.
 
-function add_charge(
-    fasta_peptides::Vector{FastaEntry},
-    min_charge::Int,
-    max_charge::Int,
-)
-    min_charge, max_charge = UInt8(min_charge), UInt8(max_charge)
-    fasta_peptides_wcharge = Vector{FastaEntry}()
-    base_prec_id = one(UInt32)
-    for fasta_peptide in fasta_peptides
-        for charge in range(UInt8(min_charge), UInt8(max_charge))
-            push!(fasta_peptides_wcharge,
-                FastaEntry(
-                    get_id(fasta_peptide),
-                    get_description(fasta_peptide),
-                    get_proteome(fasta_peptide),
-                    get_sequence(fasta_peptide),
-                    get_structural_mods(fasta_peptide),
-                    get_isotopic_mods(fasta_peptide),
-                    charge,
-                    get_base_pep_id(fasta_peptide),
-                    base_prec_id,
-                    get_entrapment_group_id(fasta_peptide),
-                    is_decoy(fasta_peptide)
-                ))
-            base_prec_id += one(UInt32)
-        end
-    end
-    return fasta_peptides_wcharge
-end
+# Parameters
+- `fasta_peptides::Vector{FastaEntry}`: Input peptides
+- `fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Fixed modification patterns and names
+  - `:p`: Regex pattern to match modification sites
+  - `:r`: Name of the modification to apply
+- `var_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Variable modification patterns and names
+- `max_var_mods::Int`: Maximum number of variable modifications allowed per peptide
+
+# Returns
+- `Vector{FastaEntry}`: New vector containing all peptides with all valid modification combinations
+
+# Notes
+This function combines fixed modifications (always applied) with all valid combinations
+of variable modifications (subject to `max_var_mods` limit). The number of entries in
+the output will typically be larger than the input as each peptide can generate
+multiple modification variants.
+"""
 function add_mods(
     fasta_peptides::Vector{FastaEntry},
     fixed_mod_names::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}, 
@@ -261,6 +267,147 @@ function add_mods(
     return fasta_mods 
 end
 
+"""
+    add_charge(
+        fasta_peptides::Vector{FastaEntry},
+        min_charge::Int,
+        max_charge::Int)
+
+Create multiple precursor variants with different charge states for each peptide.
+
+# Parameters
+- `fasta_peptides::Vector{FastaEntry}`: Input peptides
+- `min_charge::Int`: Minimum charge state to apply
+- `max_charge::Int`: Maximum charge state to apply
+
+# Returns
+- `Vector{FastaEntry}`: New vector containing all peptides with all specified charge states
+
+# Notes
+This function expands the input peptide set by creating variants with each possible
+charge state between `min_charge` and `max_charge`, inclusive. The returned vector
+will have length = original_length × number_of_charge_states.
+"""
+function add_charge(
+    fasta_peptides::Vector{FastaEntry},
+    min_charge::Int,
+    max_charge::Int,
+)
+    min_charge, max_charge = UInt8(min_charge), UInt8(max_charge)
+    fasta_peptides_wcharge = Vector{FastaEntry}()
+    base_prec_id = one(UInt32)
+    for fasta_peptide in fasta_peptides
+        for charge in range(UInt8(min_charge), UInt8(max_charge))
+            push!(fasta_peptides_wcharge,
+                FastaEntry(
+                    get_id(fasta_peptide),
+                    get_description(fasta_peptide),
+                    get_proteome(fasta_peptide),
+                    get_sequence(fasta_peptide),
+                    get_structural_mods(fasta_peptide),
+                    get_isotopic_mods(fasta_peptide),
+                    charge,
+                    get_base_pep_id(fasta_peptide),
+                    base_prec_id,
+                    get_entrapment_group_id(fasta_peptide),
+                    is_decoy(fasta_peptide)
+                ))
+            base_prec_id += one(UInt32)
+        end
+    end
+    return fasta_peptides_wcharge
+end
+
+"""
+   add_pair_indexes!(df) -> DataFrame
+
+Add a `precursor_pair_idx` column to a DataFrame that contains `pair_id` values.
+
+For each row, the function looks for another row with the same `pair_id`:
+- If found, `precursor_pair_idx` contains the row index of the paired entry
+- If the `pair_id` is unique (no partner found), `precursor_pair_idx` is set to `missing`
+
+# Arguments
+- `df`: DataFrame containing a `pair_id` column where each value appears at most twice
+
+# Returns
+- The input DataFrame with an added `precursor_pair_idx` column of type `Union{Int, Missing}`
+
+# Example
+```julia
+seq_df = DataFrame(
+   pair_id = UInt32[1, 2, 2, 3]
+)
+add_pair_indices!(seq_df)
+# Result: seq_df now contains a precursor_pair_idx column with values [missing, 3, 2, missing]
+Note: This function modifies the input DataFrame in-place.
+"""
+function add_pair_indices!(df)
+    n = nrow(df)
+    
+    # Create a dictionary mapping pair_ids to their row indices
+    pair_id_to_rows = Dict{UInt32, Vector{Int}}()
+    for i in 1:n
+        pair_id = df.pair_id[i]
+        if !haskey(pair_id_to_rows, pair_id)
+            pair_id_to_rows[pair_id] = [i]
+        else
+            push!(pair_id_to_rows[pair_id], i)
+        end
+    end
+    
+    # Create the precursor_pair_idx column
+    precursor_pair_idx = Vector{Union{Int, Missing}}(missing, n)
+    
+    for i in 1:n
+        pair_id = df.pair_id[i]
+        rows = pair_id_to_rows[pair_id]
+        
+        # If there are exactly 2 rows with this pair_id
+        if length(rows) == 2
+            # Set the index to point to the other row
+            other_idx = (rows[1] == i) ? rows[2] : rows[1]
+            precursor_pair_idx[i] = other_idx
+        end
+        # If only 1 row with this pair_id, leave as missing
+    end
+    
+    # Add the column to the DataFrame
+    df[!,:partner_precursor_idx] = precursor_pair_idx
+    
+    return nothing
+end
+
+"""
+    build_fasta_df(
+        fasta_peptides::Vector{FastaEntry};
+        mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
+        nce::Float64 = 30.0,
+        default_charge::Int = 3,
+        dynamic_nce::Bool = true)
+
+Create a DataFrame containing peptide information from FASTA entries.
+
+# Parameters
+- `fasta_peptides::Vector{FastaEntry}`: Processed FASTA entries with modifications and charge states
+- `mod_to_mass_dict::Dict{String, String}`: Mapping from modification names to mass shifts (as strings)
+- `nce::Float64`: Base normalized collision energy value
+- `default_charge::Int`: Default charge state for NCE calculation
+- `dynamic_nce::Bool`: Whether to adjust NCE based on charge state
+
+# Returns
+- `DataFrame`: DataFrame containing peptide information including:
+  - Precursor identification info (upid, accession_number)
+  - Sequence information (sequence, mods, isotopic_mods)
+  - Charge and energy (precursor_charge, collision_energy)
+  - Group information (decoy, entrapment_group_id, base_pep_id, pair_id)
+  - Koina-compatible sequence representation
+
+# Notes
+The returned DataFrame is formatted for compatibility
+Koina-specific sequence representations that contain embedded modification
+information.
+"""
 function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                            mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
                            nce::Float64 = 30.0,
@@ -341,19 +488,6 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _pair_id[n] = get_base_prec_id(peptide)
     end
     n = length(fasta_peptides)
-    #=
-    pair_id = UInt32(0)
-    base_prec_id_to_pair_id = Dictionary{UInt32, UInt32}()
-    @info "Building pair IDs..."
-    for i in ProgressBar(collect(range(1, n)))
-        base_prec_id = _base_prec_id[i]
-        if !haskey(base_prec_id_to_pair_id , base_prec_id)
-            pair_id += one(UInt32)
-            insert!(base_prec_id_to_pair_id, base_prec_id, pair_id)
-        end
-        _pair_id[i] = base_prec_id_to_pair_id[base_prec_id]
-    end
-    =#
     
     seq_df = DataFrame(
         (upid = _upid[1:n],
@@ -378,63 +512,3 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     return seq_df
 end
 
-"""
-   add_pair_indexes!(df) -> DataFrame
-
-Add a `precursor_pair_idx` column to a DataFrame that contains `pair_id` values.
-
-For each row, the function looks for another row with the same `pair_id`:
-- If found, `precursor_pair_idx` contains the row index of the paired entry
-- If the `pair_id` is unique (no partner found), `precursor_pair_idx` is set to `missing`
-
-# Arguments
-- `df`: DataFrame containing a `pair_id` column where each value appears at most twice
-
-# Returns
-- The input DataFrame with an added `precursor_pair_idx` column of type `Union{Int, Missing}`
-
-# Example
-```julia
-seq_df = DataFrame(
-   pair_id = UInt32[1, 2, 2, 3]
-)
-add_pair_indices!(seq_df)
-# Result: seq_df now contains a precursor_pair_idx column with values [missing, 3, 2, missing]
-Note: This function modifies the input DataFrame in-place.
-"""
-
-function add_pair_indices!(df)
-    n = nrow(df)
-    
-    # Create a dictionary mapping pair_ids to their row indices
-    pair_id_to_rows = Dict{UInt32, Vector{Int}}()
-    for i in 1:n
-        pair_id = df.pair_id[i]
-        if !haskey(pair_id_to_rows, pair_id)
-            pair_id_to_rows[pair_id] = [i]
-        else
-            push!(pair_id_to_rows[pair_id], i)
-        end
-    end
-    
-    # Create the precursor_pair_idx column
-    precursor_pair_idx = Vector{Union{Int, Missing}}(missing, n)
-    
-    for i in 1:n
-        pair_id = df.pair_id[i]
-        rows = pair_id_to_rows[pair_id]
-        
-        # If there are exactly 2 rows with this pair_id
-        if length(rows) == 2
-            # Set the index to point to the other row
-            other_idx = (rows[1] == i) ? rows[2] : rows[1]
-            precursor_pair_idx[i] = other_idx
-        end
-        # If only 1 row with this pair_id, leave as missing
-    end
-    
-    # Add the column to the DataFrame
-    df[!,:partner_precursor_idx] = precursor_pair_idx
-    
-    return nothing
-end

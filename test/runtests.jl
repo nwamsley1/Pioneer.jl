@@ -101,6 +101,7 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
+    
     @testset "process_test_speclib" begin 
         @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     end
@@ -116,4 +117,6 @@ end
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
     include("./UnitTests/proteinInference.jl")
+    
+    #include("./UnitTests/new_tests_041725.jl")
 end

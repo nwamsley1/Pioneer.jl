@@ -1,31 +1,61 @@
 """
-    matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
+    getFixedMods!(
+        fixed_mods::Vector{PeptideMod},
+        mod_matches::Base.RegexMatchIterator,
+        mod_name::String)
 
-Find all positions in a peptide sequence where variable modifications can be applied based on specified patterns.
+Add fixed modifications to the provided vector based on regex matches.
 
-# Arguments
-- `sequence::String`: The peptide sequence to search for modification sites
-- `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Vector of modification patterns and their corresponding names
-    - `:p`: Regex pattern that matches amino acids to be modified
-    - `:r`: String identifier for the modification (e.g., "Unimod:35")
+# Parameters
+- `fixed_mods::Vector{PeptideMod}`: Vector to store fixed modifications
+- `mod_matches::Base.RegexMatchIterator`: Iterator of regex matches for modification sites
+- `mod_name::String`: Name of the modification to apply
+
+# Effects
+Adds `PeptideMod` objects to the `fixed_mods` vector for each regex match
 
 # Returns
-- `Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Vector of matches and their associated modification names
-    - `:regex_match`: RegexMatch object containing the match position and matched text
-    - `:name`: String identifier of the modification
+`nothing` - Modifies `fixed_mods` in place
+"""
+function getFixedMods!(
+                        fixed_mods::Vector{PeptideMod},
+                        mod_matches::Base.RegexMatchIterator,
+                        mod_name::String)
+    for mod_match in mod_matches
+        index = UInt8(mod_match.offset)
+        aa = mod_match.match
+        push!(fixed_mods, PeptideMod(index, first(aa), mod_name))
+    end
+    return nothing
+end
+
+
+"""
+    matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
+
+Find all potential variable modification sites in a peptide sequence based on regex patterns.
+
+# Parameters
+- `sequence::String`: The peptide sequence to search for modification sites
+- `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Vector of modification patterns and names
+  - `:p`: Regex pattern that matches amino acids to be modified
+  - `:r`: String identifier for the modification (e.g., "Unimod:35")
+
+# Returns
+- `Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Vector of matches with:
+  - `:regex_match`: RegexMatch object containing position and matched text
+  - `:name`: String identifier of the modification
 
 # Examples
 ```julia
-sequence = "PEPMTIDME"
-var_mods = [(p=r"M", r="Unimod:35")]
+sequence = "PEPTMSK"
+var_mods = [(p=r"M", r="Oxidation"), (p=r"[ST]", r="Phospho")]
 matches = matchVarMods(sequence, var_mods)
-# Returns matches for M at positions 4 and 8 with Unimod:35 modification
-
-# Multiple modification patterns
-var_mods = [(p=r"M", r="Unimod:35"), (p=r"[ST]", r="Unimod:21")]
-matches = matchVarMods(sequence, var_mods)
-# Returns matches for M (Unimod:35) and S/T (Unimod:21) positions
-```
+# Returns matches for M (Oxidation) and S/T (Phospho) positions
+Notes
+This function identifies all potential modification sites without applying any
+constraints on the maximum number of modifications. The returned matches can be
+used to generate valid combinations of modifications in subsequent processing.
 """
 function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
     var_mod_matches = Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}()
@@ -73,6 +103,7 @@ function countVarModCombinations(var_mod_matches::Vector{NamedTuple{(:regex_matc
     return n_var_mod_combinations
 end
 
+#=
 """
     fillVarModStrings!(var_mod_strings::Vector{String},
                        var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
@@ -129,6 +160,62 @@ function fillVarModStrings!(
     end
     #Version with 0 variable mods
     var_mod_strings[end] = fixed_mods_string
+end
+=#
+
+"""
+    fillVarModStrings!(
+        all_mods::Vector{Vector{PeptideMod}},
+        var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
+        fixed_mods::Vector{PeptideMod},
+        max_var_mods::Int)
+
+Fill a vector with all valid combinations of variable modifications up to a specified maximum.
+
+# Parameters
+- `all_mods::Vector{Vector{PeptideMod}}`: Pre-allocated vector to store all modification combinations
+- `var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Potential variable modification sites
+- `fixed_mods::Vector{PeptideMod}`: Fixed modifications to include in all combinations
+- `max_var_mods::Int`: Maximum number of variable modifications to apply to a single peptide
+
+# Effects
+Fills `all_mods` with different combinations of modifications, each element containing 
+a complete set of modifications (both fixed and variable) for a peptide variant
+
+# Returns
+`nothing` - Modifies `all_mods` in place
+
+# Notes
+The function generates combinations using the `combinations` function and ensures
+that each combination includes all fixed modifications. The combinations are
+sorted for consistent output.
+"""
+function fillVarModStrings!(
+                            all_mods::Vector{Vector{PeptideMod}},
+                            var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},
+                            fixed_mods::Vector{PeptideMod},
+                            max_var_mods::Int
+                            )
+    i = 1
+    #from 1 to length(var_mod_matches) variable mods 
+    for N in 1:min(max_var_mods, length(var_mod_matches))
+        #Each combination of 'N' var mods 
+        for mods in combinations(var_mod_matches, N)
+            #Need a unique key that can map between the target and reverse decoy verion of a sequence. 
+            peptide_all_mods = copy(fixed_mods)
+            for mod in mods
+                index = UInt8(mod[:regex_match].offset)
+                aa = mod[:regex_match].match
+                push!(peptide_all_mods, PeptideMod(index, first(aa), mod[:name]))
+            end
+            all_mods[i] = peptide_all_mods
+            i += 1
+        end
+    end
+    #Version with 0 variable mods
+    all_mods[end] = fixed_mods
+    sort!(all_mods)
+    return nothing
 end
 
 """

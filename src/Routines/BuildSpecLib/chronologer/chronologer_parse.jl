@@ -60,7 +60,7 @@ function parse_chronologer_output(
         return sulfur_count
     end
     # Read chronologer output
-    precursors_df = DataFrame(Arrow.Table(path_to_precursors))
+    precursors_df = DataFrame(Tables.columntable(Arrow.Table(path_to_precursors)))
     # Rename columns to match Pioneer format
     rename!(precursors_df, Dict(
         :rt => :irt,
@@ -87,14 +87,14 @@ function parse_chronologer_output(
     precursors_df[!, :isotope_mods] = Vector{Union{Missing, String}}(missing, nrow(precursors_df))
 
     # Add isotope-modified precursors if specified
-    println("Initial precursor count: ", nrow(precursors_df))
+    #=
     precursors_df = addIsotopeModifiedPrecursors!(
         precursors_df,
         iso_mod_to_mass,
         isotope_mods_groups
     )
     println("Precursor count after isotope mods: ", nrow(precursors_df))
-
+    =#
     ########
     #Sort 
     #Need same sort order as fragment index.

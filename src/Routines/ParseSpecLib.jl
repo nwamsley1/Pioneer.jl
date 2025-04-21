@@ -49,63 +49,6 @@ function nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Abstrac
     
     return nothing
 end
-#=
-"""
-    parse_mods(mod_string::String)::Vector{Tuple{String, Int}}
-
-Parse modification string in the format "[Mod1]Res1[Mod2]Res2" and return a vector of 
-(modification, position) tuples.
-
-# Arguments
-- `mod_string::String`: String containing modifications in brackets
-
-# Returns
-- Vector{Tuple{String, Int}}: Vector of (modification name, position) tuples
-
-# Example
-```julia
-julia> parse_mods("_[Unimod:35]M[Unimod:4]PEPTIDE_")
-2-element Vector{Tuple{String, Int}}:
- ("Unimod:35", 1)
- ("Unimod:4", 2)
-"""
-function parse_mods(mod_string::Union{String, Missing})::Vector{Tuple{String, Int}} if ismissing(mod_string) || isempty(mod_string) return Tuple{String, Int}[] end
-    # Match pattern [ModName]Residue
-    mod_pattern = r"\[([^\]]+)\]([A-Z])"
-
-    # Find all matches and their positions
-    matches = collect(eachmatch(mod_pattern, mod_string))
-
-    # Convert matches to vector of (mod_name, position) tuples
-    mods = Vector{Tuple{String, Int}}(undef, length(matches))
-    for (i, m) in enumerate(matches)
-        mod_name = m.captures[1]
-        position = count(!=('_'), SubString(mod_string, 1, m.offset)) + 1
-        mods[i] = (mod_name, position)
-    end
-
-    return mods
-end
-=#
-
-#=
-sequence = "PEPMTIDME"
-
-# Create the variable modifications vector
-var_mods = Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}()
-push!(var_mods, (p=r"M", r="Unimod:35"))
-=#
-
-# Function to match variable modifications (from your code)
-function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})
-    var_mod_matches = Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}()
-    for mod in var_mods
-        for mod_match in eachmatch(mod[:p], sequence)
-            push!(var_mod_matches, (regex_match=mod_match, name=mod[:r]))
-        end
-    end
-    return var_mod_matches
-end
 
 """
     create_precursor_idx!(df::DataFrame)
