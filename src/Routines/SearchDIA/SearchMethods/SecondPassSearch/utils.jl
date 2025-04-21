@@ -566,7 +566,7 @@ function add_features!(psms::DataFrame,
                 adjusted_intensity_explained[i] = Float16(log2(TIC[i]) + log2_intensity_explained[i]);
                 prec_charges[i] = prec_charge[prec_idx]
                 #b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
-                pair_idxs[i] = precursor_pair_idxs[prec_idx]
+                pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
          
                 prec_mzs[i] = prec_mz[prec_idx];

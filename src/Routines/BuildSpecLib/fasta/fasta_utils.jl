@@ -93,6 +93,11 @@ Used in entrapment sequence generation where C-terminal preservation is importan
 for maintaining enzymatic cleavage properties.
 """
 function shuffle_fast(s::String)
+    # Handle special cases
+    if length(s) <= 1
+        return s  # Return as-is for empty or single-character strings
+    end
+
     ss = sizeof(s)
     l = length(s) - 1  # Preserve last amino acid
 

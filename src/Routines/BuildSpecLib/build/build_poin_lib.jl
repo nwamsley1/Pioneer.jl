@@ -1,4 +1,3 @@
-
 """
     buildPionLib(spec_lib_path::String,
                 y_start_index::UInt8,
@@ -20,20 +19,48 @@
                 rt_bin_tol_ppm::Float32,
                 model_type::KoinaModelType = InstrumentSpecificModel("default"))
 
-Build Pioneer spectral library including fragment indices.
+Build a Pioneer spectral library from preprocessed fragment and precursor data.
 
-Parameters:
-- spec_lib_path: Path to library directory
-- y/b_start_index: Minimum index for index-building
-- y/b_start: Minimum index for detailed fragments 
-- include_*: Flags for fragment type inclusion
-- max_frag_charge: Maximum fragment charge to include
-- max_frag_rank: Maximum number of fragments per precursor
-- min_frag_intensity: Minimum relative intensity threshold
-- rank_to_score: Mapping from rank to scoring value
-- frag_bounds: Model for fragment m/z bounds
-- frag/rt_bin_tol_ppm: Binning tolerances
-- model_type: Type of prediction model used
+# Parameters
+- `spec_lib_path`: Path to the directory containing input files and where output files will be written
+- `y_start_index`: Minimum index for y-ions to include in the fragment index
+- `y_start`: Minimum index for y-ions to include in detailed fragments
+- `b_start_index`: Minimum index for b-ions to include in the fragment index
+- `b_start`: Minimum index for b-ions to include in detailed fragments
+- `include_p_index`: Whether to include precursor ions in the fragment index
+- `include_p`: Whether to include precursor ions in detailed fragments
+- `include_isotope`: Whether to include isotope peaks 
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
+- `min_frag_intensity`: Minimum relative intensity threshold for fragments
+- `rank_to_score`: Vector mapping intensity rank to scoring value
+- `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
+- `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
+- `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
+- `model_type`: Type of prediction model used (default: InstrumentSpecificModel("default"))
+
+# Returns
+- `nothing`: Results are written to files in `spec_lib_path`
+
+# Input Files
+Requires the following files in `spec_lib_path`:
+- fragments_table.arrow: Table of fragment data
+- prec_to_frag.arrow: Table mapping precursors to fragments
+- precursors_table.arrow: Table of precursor data
+
+# Output Files
+Creates the following files in `spec_lib_path`:
+- f_index_fragments.arrow: Fragment index
+- f_index_rt_bins.arrow: Retention time bins
+- f_index_fragment_bins.arrow: Fragment m/z bins
+- presearch_f_index_fragments.arrow: Presearch fragment index
+- presearch_f_index_rt_bins.arrow: Presearch retention time bins
+- presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
+- detailed_fragments.jld2: Detailed fragment information
+- precursor_to_fragment_indices.jld2: Mapping of precursors to fragment indices
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -61,6 +88,7 @@ function buildPionLib(spec_lib_path::String,
         prec_to_frag = Arrow.Table(joinpath(spec_lib_path,"prec_to_frag.arrow"));
         precursors_table = Arrow.Table(joinpath(spec_lib_path,"precursors_table.arrow"));
     catch e 
+        throw(e)
         @error "could not find library..."
         return nothing
     end
@@ -184,20 +212,48 @@ end
                 rt_bin_tol_ppm::Float32,
                 model_type::KoinaModelType = InstrumentSpecificModel("default"))
 
-Build Pioneer spectral library including fragment indices.
+Build a Pioneer spectral library from preprocessed fragment and precursor data.
 
-Parameters:
-- spec_lib_path: Path to library directory
-- y/b_start_index: Minimum index for index-building
-- y/b_start: Minimum index for detailed fragments 
-- include_*: Flags for fragment type inclusion
-- max_frag_charge: Maximum fragment charge to include
-- max_frag_rank: Maximum number of fragments per precursor
-- min_frag_intensity: Minimum relative intensity threshold
-- rank_to_score: Mapping from rank to scoring value
-- frag_bounds: Model for fragment m/z bounds
-- frag/rt_bin_tol_ppm: Binning tolerances
-- model_type: Type of prediction model used
+# Parameters
+- `spec_lib_path`: Path to the directory containing input files and where output files will be written
+- `y_start_index`: Minimum index for y-ions to include in the fragment index
+- `y_start`: Minimum index for y-ions to include in detailed fragments
+- `b_start_index`: Minimum index for b-ions to include in the fragment index
+- `b_start`: Minimum index for b-ions to include in detailed fragments
+- `include_p_index`: Whether to include precursor ions in the fragment index
+- `include_p`: Whether to include precursor ions in detailed fragments
+- `include_isotope`: Whether to include isotope peaks 
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
+- `min_frag_intensity`: Minimum relative intensity threshold for fragments
+- `rank_to_score`: Vector mapping intensity rank to scoring value
+- `frag_bounds`: Model defining minimum and maximum fragment m/z bounds
+- `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
+- `rt_bin_tol_ppm`: Retention time binning tolerance in parts per million
+- `model_type`: Type of prediction model used (default: InstrumentSpecificModel("default"))
+
+# Returns
+- `nothing`: Results are written to files in `spec_lib_path`
+
+# Input Files
+Requires the following files in `spec_lib_path`:
+- fragments_table.arrow: Table of fragment data
+- prec_to_frag.arrow: Table mapping precursors to fragments
+- precursors_table.arrow: Table of precursor data
+
+# Output Files
+Creates the following files in `spec_lib_path`:
+- f_index_fragments.arrow: Fragment index
+- f_index_rt_bins.arrow: Retention time bins
+- f_index_fragment_bins.arrow: Fragment m/z bins
+- presearch_f_index_fragments.arrow: Presearch fragment index
+- presearch_f_index_rt_bins.arrow: Presearch retention time bins
+- presearch_f_index_fragment_bins.arrow: Presearch fragment m/z bins
+- detailed_fragments.jld2: Detailed fragment information
+- precursor_to_fragment_indices.jld2: Mapping of precursors to fragment indices
 """
 function buildPionLib(spec_lib_path::String,
                       y_start_index::UInt8,
@@ -327,6 +383,23 @@ function buildPionLib(spec_lib_path::String,
     return nothing
 end
 
+"""
+    cleanUpLibrary(spec_lib_path::String)
+
+Remove intermediate files after library building is complete.
+
+# Parameters
+- `spec_lib_path::String`: Path to the library directory
+
+# Effects
+Removes the following files if they exist:
+- fragments_table.arrow
+- prec_to_frag.arrow
+- precursors.arrow
+
+# Returns
+- `nothing`
+"""
 function cleanUpLibrary(spec_lib_path::String)
     GC.gc()
     for fname in ["fragments_table.arrow", "prec_to_frag.arrow", "precursors.arrow"]
@@ -337,6 +410,56 @@ function cleanUpLibrary(spec_lib_path::String)
     end
 end
 
+"""
+    fragFilter(
+        frag_is_y::Bool,
+        frag_is_b::Bool,
+        frag_is_p::Bool,
+        frag_index::UInt8,
+        frag_charge::UInt8,
+        frag_isotope::UInt8,
+        frag_internal::Bool,
+        frag_immonium::Bool,
+        frag_neutral_diff::Bool,
+        frag_mz::Float32,
+        frag_bounds::FragBoundModel,
+        prec_mz::Float32,
+        y_start::UInt8,
+        b_start::UInt8,
+        include_p::Bool,
+        include_isotope::Bool,
+        include_immonium::Bool,
+        include_internal::Bool,
+        include_neutral_diff::Bool,
+        max_frag_charge::UInt8)::Bool
+
+Filter fragments based on type, index, charge, and additional criteria.
+
+# Parameters
+- `frag_is_y`: Whether the fragment is a y-ion
+- `frag_is_b`: Whether the fragment is a b-ion
+- `frag_is_p`: Whether the fragment is a precursor ion
+- `frag_index`: Index of the fragment in the peptide sequence
+- `frag_charge`: Charge state of the fragment
+- `frag_isotope`: Isotope state of the fragment
+- `frag_internal`: Whether the fragment is an internal fragment
+- `frag_immonium`: Whether the fragment is an immonium ion
+- `frag_neutral_diff`: Whether the fragment has neutral losses
+- `frag_mz`: m/z value of the fragment
+- `frag_bounds`: Model defining valid m/z range based on precursor m/z
+- `prec_mz`: m/z value of the precursor
+- `y_start`: Minimum index for y-ions to include
+- `b_start`: Minimum index for b-ions to include
+- `include_p`: Whether to include precursor ions
+- `include_isotope`: Whether to include isotope peaks
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+
+# Returns
+- `Bool`: true if fragment passes all filters, false otherwise
+"""
 function fragFilter(
     frag_is_y::Bool,
     frag_is_b::Bool,
@@ -394,7 +517,7 @@ function fragFilter(
             return false
         end
     end
-    if include_isotope
+    if !include_isotope
         if !iszero(frag_isotope)
             return false
         end
@@ -408,6 +531,65 @@ function fragFilter(
     return true
 end
 
+"""
+    getSimpleFrags(
+        frag_mz::AbstractVector{Float32},
+        frag_is_y::AbstractVector{Bool},
+        frag_is_b::AbstractVector{Bool},
+        frag_is_p::AbstractVector{Bool},
+        frag_index::AbstractVector{UInt8},
+        frag_charge::AbstractVector{UInt8},
+        frag_isotope::AbstractVector{UInt8},
+        frag_internal::AbstractVector{Bool},
+        frag_immonium::AbstractVector{Bool},
+        frag_neutral_diff::AbstractVector{Bool},
+        precursor_mz::AbstractVector{Float32},
+        precursor_irt::AbstractVector{Float32},
+        precursor_charge::AbstractVector{UInt8},
+        prec_to_frag_idx::AbstractVector{UInt64},
+        y_start::UInt8,
+        b_start::UInt8,
+        include_p::Bool,
+        include_isotope::Bool,
+        include_immonium::Bool,
+        include_internal::Bool,
+        include_neutral_diff::Bool,
+        max_frag_charge::UInt8,
+        frag_bounds::FragBoundModel,
+        rank_to_score::Vector{UInt8}
+    )::Vector{SimpleFrag{Float32}}
+
+Extract fragments for the fragment index from raw fragment data.
+
+# Parameters
+- `frag_mz`: Fragment m/z values
+- `frag_is_y`: Whether each fragment is a y-ion
+- `frag_is_b`: Whether each fragment is a b-ion  
+- `frag_is_p`: Whether each fragment is a precursor ion
+- `frag_index`: Index of each fragment in its peptide sequence
+- `frag_charge`: Charge state of each fragment
+- `frag_isotope`: Isotope state of each fragment
+- `frag_internal`: Whether each fragment is an internal fragment
+- `frag_immonium`: Whether each fragment is an immonium ion
+- `frag_neutral_diff`: Whether each fragment has neutral losses
+- `precursor_mz`: m/z values of precursors
+- `precursor_irt`: Retention time values of precursors
+- `precursor_charge`: Charge states of precursors
+- `prec_to_frag_idx`: Index mapping precursors to their fragments
+- `y_start`: Minimum index for y-ions to include
+- `b_start`: Minimum index for b-ions to include
+- `include_p`: Whether to include precursor ions
+- `include_isotope`: Whether to include isotope peaks
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+- `frag_bounds`: Model defining valid m/z range based on precursor m/z
+- `rank_to_score`: Vector mapping intensity rank to scoring value
+
+# Returns
+- Vector of SimpleFrag objects, containing filtered fragments for the index
+"""
 function getSimpleFrags(
     frag_mz::AbstractVector{Float32},
     frag_is_y::AbstractVector{Bool},
@@ -490,6 +672,40 @@ function getSimpleFrags(
     return simple_frags[1:simple_frag_idx]
 end
 
+"""
+    buildFragmentIndex!(
+        folder_out::String,
+        frag_ions::Vector{SimpleFrag{T}}, 
+        frag_bin_tol_ppm::AbstractFloat, 
+        rt_bin_tol::AbstractFloat;
+        index_name::String = ""
+    ) where {T<:AbstractFloat}
+
+Build a hierarchical fragment index from a list of fragments.
+
+# Parameters
+- `folder_out`: Path to the directory where index files will be written
+- `frag_ions`: Vector of SimpleFrag objects to index
+- `frag_bin_tol_ppm`: Fragment binning tolerance in parts per million
+- `rt_bin_tol`: Retention time bin width
+- `index_name`: Prefix for output file names (default: "")
+
+# Effects
+Creates and writes the following files to `folder_out`:
+- `index_name`f_index_fragments.arrow: Fragment entries sorted by retention time and m/z
+- `index_name`f_index_rt_bins.arrow: Two-level binning structure for retention time
+- `index_name`f_index_fragment_bins.arrow: Fragment m/z bins within each RT bin
+
+# Returns
+- `nothing`
+
+# Implementation Notes
+The indexing is hierarchical:
+1. First bins by retention time
+2. Within each RT bin, fragments are sorted by m/z
+3. Then bins by m/z within each RT bin
+This enables efficient fragment lookup during search.
+"""
 function buildFragmentIndex!(
                             folder_out::String,
                             frag_ions::Vector{SimpleFrag{T}}, 
@@ -687,6 +903,75 @@ function buildFragmentIndex!(
     return 
 end
 
+"""
+    getDetailedFrags(
+        frag_mz::AbstractVector{Float32},
+        frag_intensity::AbstractVector{Float16},
+        frag_is_y::AbstractVector{Bool},
+        frag_is_b::AbstractVector{Bool},
+        frag_is_p::AbstractVector{Bool},
+        frag_index::AbstractVector{UInt8},
+        frag_charge::AbstractVector{UInt8},
+        frag_sulfur_count::AbstractVector{UInt8},
+        frag_ion_type::AbstractVector{UInt16},
+        frag_isotope::AbstractVector{UInt8},
+        frag_internal::AbstractVector{Bool},
+        frag_immonium::AbstractVector{Bool},
+        frag_neutral_diff::AbstractVector{Bool},
+        precursor_mz::AbstractVector{Float32},
+        precursor_charge::AbstractVector{UInt8},
+        prec_to_frag_idx::AbstractVector{UInt64},
+        y_start::UInt8,
+        b_start::UInt8,
+        include_p::Bool,
+        include_isotope::Bool,
+        include_immonium::Bool,
+        include_internal::Bool,
+        include_neutral_diff::Bool,
+        max_frag_charge::UInt8,
+        frag_bounds::FragBoundModel,
+        max_frag_rank::UInt8,
+        min_frag_intensity::AbstractFloat,
+        koina_model::KoinaModelType
+    )::Tuple{Vector{DetailedFrag{Float32}}, Vector{UInt64}}
+
+Extract detailed fragment information for peptide scoring.
+
+# Parameters
+- `frag_mz`: Fragment m/z values
+- `frag_intensity`: Fragment intensities
+- `frag_is_y`: Whether each fragment is a y-ion
+- `frag_is_b`: Whether each fragment is a b-ion
+- `frag_is_p`: Whether each fragment is a precursor ion
+- `frag_index`: Index of each fragment in its peptide sequence
+- `frag_charge`: Charge state of each fragment
+- `frag_sulfur_count`: Sulfur count for each fragment
+- `frag_ion_type`: Ion type identifier for each fragment
+- `frag_isotope`: Isotope state of each fragment
+- `frag_internal`: Whether each fragment is an internal fragment
+- `frag_immonium`: Whether each fragment is an immonium ion
+- `frag_neutral_diff`: Whether each fragment has neutral losses
+- `precursor_mz`: m/z values of precursors
+- `precursor_charge`: Charge states of precursors
+- `prec_to_frag_idx`: Index mapping precursors to their fragments
+- `y_start`: Minimum index for y-ions to include
+- `b_start`: Minimum index for b-ions to include
+- `include_p`: Whether to include precursor ions
+- `include_isotope`: Whether to include isotope peaks
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+- `frag_bounds`: Model defining valid m/z range based on precursor m/z
+- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
+- `min_frag_intensity`: Minimum relative intensity threshold for fragments
+- `koina_model`: Type of prediction model used
+
+# Returns
+- Tuple containing:
+  - Vector of DetailedFrag objects with comprehensive fragment information
+  - Vector mapping precursor indices to fragment indices
+"""
 function getDetailedFrags(
     frag_mz::AbstractVector{Float32},
     frag_intensity::AbstractVector{Float16},
@@ -840,6 +1125,80 @@ function getDetailedFrags(
     return detailed_frags[1:detailed_frag_idx-1], prec_to_frag_idx_new
 end
 
+"""
+    getDetailedFrags(
+        frag_mz::AbstractVector{Float32},
+        frag_coef::AbstractVector{NTuple{N, Float32}},
+        frag_intensity::AbstractVector{Float16},
+        frag_is_y::AbstractVector{Bool},
+        frag_is_b::AbstractVector{Bool},
+        frag_is_p::AbstractVector{Bool},
+        frag_index::AbstractVector{UInt8},
+        frag_charge::AbstractVector{UInt8},
+        frag_sulfur_count::AbstractVector{UInt8},
+        frag_ion_type::AbstractVector{UInt16},
+        frag_isotope::AbstractVector{UInt8},
+        frag_internal::AbstractVector{Bool},
+        frag_immonium::AbstractVector{Bool},
+        frag_neutral_diff::AbstractVector{Bool},
+        precursor_mz::AbstractVector{Float32},
+        precursor_charge::AbstractVector{UInt8},
+        prec_to_frag_idx::AbstractVector{UInt64},
+        y_start::UInt8,
+        b_start::UInt8,
+        include_p::Bool,
+        include_isotope::Bool,
+        include_immonium::Bool,
+        include_internal::Bool,
+        include_neutral_diff::Bool,
+        max_frag_charge::UInt8,
+        frag_bounds::FragBoundModel,
+        max_frag_rank::UInt8,
+        min_frag_intensity::AbstractFloat,
+        koina_model::SplineCoefficientModel
+    )::Tuple{Vector{SplineDetailedFrag{N, Float32}}, Vector{UInt64}} where {N}
+
+Extract detailed fragment information for peptide scoring, including spline coefficients.
+
+# Parameters
+- `frag_mz`: Fragment m/z values
+- `frag_coef`: Spline coefficients for each fragment
+- `frag_intensity`: Fragment intensities
+- `frag_is_y`: Whether each fragment is a y-ion
+- `frag_is_b`: Whether each fragment is a b-ion
+- `frag_is_p`: Whether each fragment is a precursor ion
+- `frag_index`: Index of each fragment in its peptide sequence
+- `frag_charge`: Charge state of each fragment
+- `frag_sulfur_count`: Sulfur count for each fragment
+- `frag_ion_type`: Ion type identifier for each fragment
+- `frag_isotope`: Isotope state of each fragment
+- `frag_internal`: Whether each fragment is an internal fragment
+- `frag_immonium`: Whether each fragment is an immonium ion
+- `frag_neutral_diff`: Whether each fragment has neutral losses
+- `precursor_mz`: m/z values of precursors
+- `precursor_charge`: Charge states of precursors
+- `prec_to_frag_idx`: Index mapping precursors to their fragments
+- `y_start`: Minimum index for y-ions to include
+- `b_start`: Minimum index for b-ions to include
+- `include_p`: Whether to include precursor ions
+- `include_isotope`: Whether to include isotope peaks
+- `include_immonium`: Whether to include immonium ions
+- `include_internal`: Whether to include internal fragment ions
+- `include_neutral_diff`: Whether to include fragments with neutral losses
+- `max_frag_charge`: Maximum fragment charge state to include
+- `frag_bounds`: Model defining valid m/z range based on precursor m/z
+- `max_frag_rank`: Maximum number of fragments per precursor (ranked by intensity)
+- `min_frag_intensity`: Minimum relative intensity threshold for fragments
+- `koina_model`: Type of spline coefficient model used
+
+# Returns
+- Tuple containing:
+  - Vector of SplineDetailedFrag objects with fragment info including spline coefficients
+  - Vector mapping precursor indices to fragment indices
+
+# Type Parameters
+- `N`: Number of spline coefficients per fragment
+"""
 function getDetailedFrags(
     frag_mz::AbstractVector{Float32},
     frag_coef::AbstractVector{NTuple{N, Float32}},
