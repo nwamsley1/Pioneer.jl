@@ -382,9 +382,9 @@ function build_chromatograms(
         end
 
         # Reset arrays
-        for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
-        end
+        #for i in 1:Hs.n
+        #    getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
+        #end
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end

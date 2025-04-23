@@ -304,9 +304,11 @@ function LFQ(prot::DataFrame,
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         #Get rid of low scoring proteins 
+        println("a size(subdf, 1)", size(subdf, 1))
         filter!(x->
         score_to_qval(coalesce(x.pg_score, 0.0f0))::Float32<q_value_threshold, 
         subdf);
+        println("a size(subdf, 1)", size(subdf, 1))
         #Exclude precursors with mods that impact quantitation
         filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
@@ -314,6 +316,7 @@ function LFQ(prot::DataFrame,
             [:target, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
+        println("ngroups $ngroups")
         nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
         nrows = nfiles*ngroups
@@ -356,6 +359,7 @@ function LFQ(prot::DataFrame,
                             )
         end
         out = DataFrame(out)
+        println("size(out, 1)", size(out, 1))
         out[!,:n_peptides] = countPeptides(out[!,:peptides]);
         out[!,:file_name] = Vector{Union{Missing, String}}(undef, size(out, 1))
         for i in range(1, size(out, 1))
@@ -366,6 +370,7 @@ function LFQ(prot::DataFrame,
             end
         end
         filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>min_peptides), out);
+        println("b size(out, 1)", size(out, 1))
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
         if size(out, 1) == 0
             continue

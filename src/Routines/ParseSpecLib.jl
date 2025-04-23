@@ -203,6 +203,7 @@ function ParseSpecLib(params_path::String)
         decoy_lib = getRevDecoys!(test_lib)
     end
     append!(test_lib.libdf, decoy_lib)
+    println("206m size(test_lib.libdf) ", size(test_lib.libdf))
     #Channel decoys are the target sequences but in the decoy/fake isotope channels. 
     #Probably need to add a check to not add decoys in cases were there are no isotope labesl. 
     if params["channel_decoys"]
@@ -246,21 +247,25 @@ function ParseSpecLib(params_path::String)
             push!(channel_dfs, channel_df)
         end
     end
+    println("250m size(test_lib.libdf) ", size(test_lib.libdf))
     # If channels were processed, update the DataFrame
     if !isempty(channel_dfs)
         channels_df = vcat(channel_dfs...)
         decoy_channel_dfs = vcat(decoy_channel_dfs...)
+        println("size(channels_df) ", size(channels_df))
+        println("size(decoy_channel_dfs) ", size(decoy_channel_dfs))
         empty!(test_lib.libdf)
         append!(test_lib.libdf, channels_df)
         append!(test_lib.libdf, decoy_channel_dfs)
     end
+    println("259m size(test_lib.libdf) ", size(test_lib.libdf))
     #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out2.csv", test_lib.libdf)
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     #Now need to recalculate masses for precursors and fragments with the new modifications 
     # Create precursor indices
     create_precursor_idx!(test_lib.libdf)
-    
+    println("263m size(test_lib.libdf) ", size(test_lib.libdf))
     # Calculate m/z and sulfur count
     mods_to_sulfur_diff = Dict{String, Int8}()
     for mod_group in get(params, "sulfur_mod_groups", [])
@@ -293,7 +298,7 @@ function ParseSpecLib(params_path::String)
             end
         end
     end
-
+    println("296 size(test_lib.libdf) ", size(test_lib.libdf))
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
@@ -302,7 +307,7 @@ function ParseSpecLib(params_path::String)
     )
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
-
+    println("size(test_lib.libdf) ", size(test_lib.libdf))
     # Sort library by retention time and then by precursor_mz within retention time bins
     nestedLibrarySort!(test_lib, rt_bin_tol=rt_bin_tol)
 

@@ -223,6 +223,8 @@ function summarize_results!(
             getIsDecoy(getPrecursors(getSpecLib(search_context)))
         )
         # Create protein group q-value interpolation
+        jldsave("/Users/nathanwamsley/Desktop/protein_inference_dict"; protein_inference_dict)
+        println("sorted_pg_score_path $sorted_pg_score_path")
         search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_score_path,
             :pg_score,
