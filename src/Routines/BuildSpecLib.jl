@@ -21,6 +21,7 @@ Output:
 function BuildSpecLib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
+    Random.seed!(1844)
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, Any}()
