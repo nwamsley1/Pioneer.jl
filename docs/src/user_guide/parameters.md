@@ -149,6 +149,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `write_csv` | Boolean | Whether to write results to CSV |
+| `write_decoys` | Boolean | Where to quantify and include decoys in the output files |
 | `delete_temp` | Boolean | Whether to delete temporary files |
 | `plots_per_page` | Int | Number of plots per page in reports (default: 12) |
 
@@ -201,7 +202,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `prec_mz_min` | Float | Minimum precursor m/z (default: 390.0) |
 | `prec_mz_max` | Float | Maximum precursor m/z (default: 1010.0) |
 | `max_frag_charge` | Int | Maximum fragment ion charge (default: 3) |
-| `max_frag_rank` | Int | Maximum fragment rank (default: 255) |
+| `max_frag_rank` | Int | Maximum fragment rank (default: 50) |
 | `min_frag_intensity` | Float | Minimum relative fragment intensity (default: 0.00) |
 | `include_isotope` | Boolean | Include isotope peak annotations (default: false) |
 | `include_internal` | Boolean | Include internal fragment annotations (default: false) |

@@ -226,6 +226,8 @@ function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, sp
         fitted_dotp_norm1 = zero(T)
         sum_of_fitted_peaks_matched = zero(T)
         sum_of_fitted_peaks_unmatched = zero(T)
+        sum_of_fitted_peaks_matched_squared = zero(T)
+        sum_of_fitted_peaks_unmatched_squared = zero(T)
 
         @inbounds @fastmath for i in range(H.colptr[col], H.colptr[col + 1]-1)
 
@@ -239,31 +241,34 @@ function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, sp
             h2_sum += (H.nzval[i])^2 
     
 
-            sum_of_residuals += abs(r[H.rowval[i]])
-
             fitted_peak = w[col]*H.nzval[i]
             r_abs = abs(r[H.rowval[i]])
-            sum_of_residuals += r_abs
+            sum_of_residuals += r_abs  
 
             if H.matched[i]
                 matched_sum += H.nzval[i]
-                fitted_dotp += sqrt(fitted_peak + r_abs)*sqrt(fitted_peak)
-                fitted_dotp_norm1 += fitted_peak + r_abs
+                shadow_peak = fitted_peak - r[H.rowval[i]]
+                fitted_dotp += shadow_peak*fitted_peak
+                fitted_dotp_norm1 += shadow_peak^2
+                
                 sum_of_fitted_peaks_matched += fitted_peak
+                sum_of_fitted_peaks_matched_squared += fitted_peak^2
                 if r_abs > max_matched_residual
                     max_matched_residual = r_abs
                 end
             else
                 unmatched_sum += H.nzval[i]
                 sum_of_fitted_peaks_unmatched += fitted_peak
+                sum_of_fitted_peaks_unmatched_squared += fitted_peak^2
                 if r_abs > max_unmatched_residual
                     max_unmatched_residual = r_abs
                 end
             end
         end
         sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
+        sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
 
-        fitted_dotp_norm = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks))
+        fitted_dotp_norm = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
         fitted_spectral_contrast = fitted_dotp_norm#1 - 2*acos(fitted_dotp_norm)/π
         dot_product_norm = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
         spectral_contrast = dot_product_norm#1 - 2*acos(dot_product_norm)/π

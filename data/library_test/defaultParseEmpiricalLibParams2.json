@@ -16,7 +16,7 @@
         "include_internal": false,
         "include_neutral_diff": false,
         "max_frag_charge": 2,
-        "max_frag_rank": 255,
+        "max_frag_rank": 50,
         "min_frag_intensity": 0.0,
         "generate_decoys": true,
         "generate_entrapment": true,

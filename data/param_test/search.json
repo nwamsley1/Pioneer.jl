@@ -137,6 +137,7 @@
     },
     "output": {
         "write_csv": true,
+        "write_decoys": false,
         "delete_temp": true,
         "plots_per_page": 12
     },

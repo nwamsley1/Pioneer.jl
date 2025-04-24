@@ -157,6 +157,7 @@ function checkParams(json_path::String)
     output = params["output"]
     check_param(output, "write_csv", Bool)
     check_param(output, "delete_temp", Bool)
+    check_param(output, "write_decoys", Bool)
     check_param(output, "plots_per_page", Integer)
 
     # Validate path parameters
