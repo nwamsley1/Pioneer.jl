@@ -33,14 +33,15 @@ function predict_fragments(
     peptides_df = DataFrame(Arrow.Table(peptide_table_path))
 
     # Process in batches
+    koina_pool_size = max_koina_batches * 10
     nprecs = nrow(peptides_df)
     batch_size = min(batch_size, 1000)
-    batch_start_idxs = collect(one(UInt32):UInt32(batch_size*max_koina_batches):UInt32(nprecs))
+    batch_start_idxs = collect(one(UInt32):UInt32(batch_size*koina_pool_size):UInt32(nprecs))
 
     rm(frags_out_path, force=true)
     
     for start_idx in ProgressBar(batch_start_idxs)
-        stop_idx = min(start_idx + batch_size*max_koina_batches - 1, nrow(peptides_df))
+        stop_idx = min(start_idx + batch_size*koina_pool_size - 1, nrow(peptides_df))
         batch_df = peptides_df[start_idx:stop_idx, :]
         
         # Generate predictions for batch
@@ -49,7 +50,9 @@ function predict_fragments(
             model_type,
             instrument_type,
             batch_size,
-            start_idx
+            max_koina_batches,
+            start_idx,
+            
         )
 
         # Write or append results
@@ -72,6 +75,7 @@ function predict_fragments_batch(
     model::InstrumentSpecificModel,
     instrument_type::String,
     batch_size::Int,
+    concurrent_koina_requests::Int,
     first_prec_idx::UInt32
 )::DataFrame
     # Verify instrument compatibility
@@ -87,7 +91,7 @@ function predict_fragments_batch(
         batch_size=batch_size
     )
     # Request predictions
-    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name])
+    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests)
     # Process responses
     batch_dfs = []
     for (i, response) in enumerate(responses)
@@ -120,6 +124,7 @@ function predict_fragments_batch(
     model::InstrumentAgnosticModel,
     _::String,  # instrument type not used
     batch_size::Int,
+    concurrent_koina_requests::Int,
     first_prec_idx::UInt32
 )::DataFrame
     # Prepare batches (no instrument type needed)
@@ -130,7 +135,7 @@ function predict_fragments_batch(
     )
 
     # Request predictions
-    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name])
+    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests)
 
     # Process responses
     batch_dfs = []
@@ -162,6 +167,7 @@ function predict_fragments_batch(
     model::SplineCoefficientModel,
     instrument_type::String,
     batch_size::Int,
+    concurrent_koina_requests::Int,
     first_prec_idx::UInt32
 )::DataFrame
     # Similar to InstrumentSpecificModel but handles spline coefficients
@@ -172,7 +178,7 @@ function predict_fragments_batch(
         batch_size=batch_size
     )
 
-    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name])
+    responses = make_koina_batch_requests(json_batches, KOINA_URLS[model.name]; concurrency=concurrent_koina_requests)
 
     batch_dfs = []
     knot_vectors = []

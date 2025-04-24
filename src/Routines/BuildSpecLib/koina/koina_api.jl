@@ -32,10 +32,42 @@ function make_koina_request(json_data::String,
     error("Failed after $max_attempts attempts")
 end
 
+
+
 """
-Make multiple Koina requests asynchronously.
+    make_koina_batch_requests(json_vec, model_url;
+                              concurrency = 24)
+
+Send every JSON string in `json_vec` to `model_url` while keeping at most
+`concurrency` HTTP requests active at the same time.
+Returns a vector of responses in the **original order**.
 """
-function make_koina_batch_requests(json_data_list::Vector{String}, model_url::String)
-    tasks = [@async make_koina_request(json_data, model_url) for json_data in json_data_list]
-    return fetch.(tasks)
+function make_koina_batch_requests(json_vec::Vector{String},
+                                   model_url::String;
+                                   concurrency::Int = 24)
+
+    n          = length(json_vec)
+    results    = Vector{Any}(undef, n)          # output buffer
+    job_chan   = Channel{Tuple{Int,String}}(n)  # work queue
+
+    # ───────────────── fill the channel (producer) ────────────────────
+    @async begin
+        for (idx, js) in pairs(json_vec)
+            put!(job_chan, (idx, js))
+        end
+        close(job_chan)                         # signal "no more jobs"
+    end
+
+    # ───────────────── worker task definition ─────────────────────────
+    function worker()
+        for (idx, js) in job_chan               # blocks until work available
+            results[idx] = make_koina_request(js, model_url)
+        end
+        return nothing
+    end
+
+    # ───────────────── launch the pool of workers ─────────────────────
+    tasks = [@async worker() for _ in 1:concurrency]
+    fetch.(tasks)                               # wait for all workers
+    return results
 end
