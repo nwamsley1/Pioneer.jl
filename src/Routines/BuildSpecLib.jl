@@ -329,6 +329,7 @@ function BuildSpecLib(params_path::String)
     rm(joinpath(lib_dir,"fragments_table.arrow"), force=true);
     rm(joinpath(lib_dir,"prec_to_frag.arrow"), force=true);
     rm(joinpath(lib_dir,"precursors.arrow"), force=true);
+    GC.gc()
 
     return nothing
 end
