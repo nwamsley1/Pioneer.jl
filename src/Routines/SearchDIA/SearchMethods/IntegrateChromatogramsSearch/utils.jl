@@ -536,8 +536,8 @@ function build_chromatograms(
             if getIdToCol(search_data).size > length(weights)
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+                #resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                #append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
             # Initialize weights
@@ -638,9 +638,9 @@ function build_chromatograms(
         end
 
         # Reset arrays
-        for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
-        end
+        #for i in 1:Hs.n
+        #    getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
+        #end
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end

@@ -203,6 +203,7 @@ function ParseSpecLib(params_path::String)
         decoy_lib = getRevDecoys!(test_lib)
     end
     append!(test_lib.libdf, decoy_lib)
+    println("size(test_lib.libdf) ", size(test_lib.libdf))
     #Channel decoys are the target sequences but in the decoy/fake isotope channels. 
     #Probably need to add a check to not add decoys in cases were there are no isotope labesl. 
     if params["channel_decoys"]
@@ -216,10 +217,13 @@ function ParseSpecLib(params_path::String)
 
         # Apply isotopic modifications
         decoy_channel_dfs = []
+        plex_id = one(UInt8)
         for (mod_key, channels) in pairs(decoy_mod_channels)
             for channel in channels
                 channel_df = addIsoModsToLib(test_lib, mod_key, channel)
                 channel_df[!,:channel_decoy] = ones(Bool, size(channel_df, 1))
+                channel_df[!,:plex_id] .= plex_id
+                plex_id += one(UInt8)
                 push!(decoy_channel_dfs, channel_df)
             end
         end
@@ -240,9 +244,12 @@ function ParseSpecLib(params_path::String)
     #Important!
     ##########
     channel_dfs = []
+    plex_id = one(UInt8)
     for (mod_key, channels) in pairs(mod_channels)
         for channel in channels
             channel_df = addIsoModsToLib(test_lib, mod_key, channel)
+            channel_df[!,:plex_id] .= plex_id
+            plex_id += one(UInt8)
             push!(channel_dfs, channel_df)
         end
     end
@@ -250,6 +257,9 @@ function ParseSpecLib(params_path::String)
     if !isempty(channel_dfs)
         channels_df = vcat(channel_dfs...)
         decoy_channel_dfs = vcat(decoy_channel_dfs...)
+        println("size(channels_df) ", size(channels_df))
+        println("size(decoy_channel_dfs) ", size(decoy_channel_dfs))
+        test_lib.libdf[!,:plex_id] .= zero(UInt8)
         empty!(test_lib.libdf)
         append!(test_lib.libdf, channels_df)
         append!(test_lib.libdf, decoy_channel_dfs)
@@ -374,17 +384,22 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     irt = zeros(Float32, n_precursors)
     sulfur_count = zeros(UInt8, n_precursors)
     pair_id = zeros(UInt32, n_precursors)
-
+    plex_id = zeros(UInt8, n_precursors)
     for frag_idx in ProgressBar(range(one(UInt64), UInt64(n_frags)))
         current_prec_idx = speclib_df[frag_idx, :precursor_idx]
         #Encountered a new precursor
         if current_prec_idx != prev_prec_idx 
+            
             prev_prec_idx = current_prec_idx
             prec_idx += one(UInt32)
             #Index for first fragment corresponding to the precursor
             pid_to_fid[prec_idx] = frag_idx
+            _plex_id_ = getPlexId(speclib, frag_idx)
+            plex_id[prec_idx] = _plex_id_
+            _accession_numbers_ = getProteinGroupId(speclib, frag_idx)
+            _accession_numbers_ = join([accession_number*"_"*string(_plex_id_) for accession_number in split(_accession_numbers_, ";")], ';')
+            accession_numbers[prec_idx] = _accession_numbers_
             proteome_identifiers[prec_idx] = getProteomeId(speclib, frag_idx)
-            accession_numbers[prec_idx] = getProteinGroupId(speclib, frag_idx)
             sequence[prec_idx] = getSequence(speclib, frag_idx)
             structural_mods[prec_idx] = getStructuralMods(speclib, frag_idx)
             isotopic_mods[prec_idx] = getIsotopicMods(speclib, frag_idx)
@@ -429,10 +444,16 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
             missed_cleavages = missed_cleavages,
             irt = irt,
             sulfur_count = sulfur_count,
-            pair_id = pair_id
+            pair_id = pair_id,
+            plex_id = plex_id
         )
     )
-    add_pair_indices!(precursors_df)
+    if length(unique(precursors_df[!,:plex_id])) > 1
+        println("TEST !!")
+        add_plex_indices!(precursors_df)
+    else
+        add_pair_indices!(precursors_df)
+    end
     Arrow.write(
         joinpath(speclib_dir, "precursors_table.arrow"),
         precursors_df

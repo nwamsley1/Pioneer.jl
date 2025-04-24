@@ -72,8 +72,11 @@ function _select_transitions_impl!(
             # Update counters and temp storage
             precs_temp_size += 1
             n += 1
+            if precs_temp_size > length(precs_temp)
+                append!(precs_temp, zeros(UInt32, length(precs_temp)))
+            end
             precs_temp[precs_temp_size] = prec_idx
-
+            
             #nce = getNCE(lookup, prec_charge, prec_mz)
         
             

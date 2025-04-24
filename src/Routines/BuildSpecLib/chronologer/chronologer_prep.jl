@@ -378,6 +378,52 @@ function add_pair_indices!(df)
     return nothing
 end
 
+
+function add_plex_indices!(df)
+    n = nrow(df)
+    n_plexes = length(unique(df[!,:plex_id]))
+    n_pairs = maximum(df[!,:pair_id])
+    pair_id_to_rows_targets = Vector{Union{UInt32, Missing}}(missing, n_pairs*n_plexes)
+    pair_id_to_rows_decoys = Vector{Union{UInt32, Missing}}(missing, n_pairs*n_plexes)
+    for i in 1:n
+        pair_id = df.pair_id[i]
+        plex_id = df.plex_id[i] 
+        idx = plex_id + (pair_id - 1)*n_plexes
+        if df.is_decoy[i]
+            pair_id_to_rows_decoys[idx] = i
+        else
+            pair_id_to_rows_targets[idx] = i
+        end
+    end
+    
+    # Create the precursor_pair_idx Column
+    precursor_pair_idx = Vector{
+        Union{
+            @NamedTuple{
+                target::NTuple{n_plexes, Union{UInt32,  Missing}},
+                decoy::NTuple{n_plexes, Union{UInt32,  Missing}}
+            }, 
+            Missing
+        }
+    }(missing, n)
+    
+    for i in 1:n_pairs
+        precursor_pair_idx[i] = (
+            target = Tuple(
+                pair_id_to_rows_targets[(i-1)*n_plexes + 1: i*n_plexes]
+            ),
+            decoy = Tuple(
+            pair_id_to_rows_decoys[(i-1)*n_plexes + 1: i*n_plexes]
+            )
+        )
+    end
+    
+    # Add the column to the DataFrame
+    df[!,:partner_precursor_idx] = precursor_pair_idx
+    
+    return nothing
+end
+
 """
     build_fasta_df(
         fasta_peptides::Vector{FastaEntry};
