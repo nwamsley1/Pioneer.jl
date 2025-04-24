@@ -250,8 +250,7 @@ function BuildSpecLib(params_path::String)
                     :accession_number => :accession_numbers,
                     :precursor_charge => :prec_charge,
                     :decoy => :is_decoy,
-                    :mods => :structural_mods,
-                    :isotope_mods => :isotopic_mods
+                    :mods => :structural_mods
                 ])
 
                 # Convert types
