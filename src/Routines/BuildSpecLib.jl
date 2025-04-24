@@ -242,8 +242,8 @@ function BuildSpecLib(params_path::String)
                 # Process precursor table
                 N_FRAGMENTS = length(fragments_table[:mz])
                 N_PRECURSORS = length(precursors_table[:mz])
-                N_TARGETS = sum(precursors_table[:decoy])
-                N_DECOYS = N_PRECURSORS - N_TARGETS
+                N_DECOYS  = sum(precursors_table[:decoy])
+                N_TARGETS = N_PRECURSORS - N_DECOYS
                 fragments_table = nothing
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
