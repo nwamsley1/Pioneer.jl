@@ -360,3 +360,16 @@ function getAnnotationToID(answer_dict::Dict{String, PioneerFragAnnotation})
     end
     return id_to_annotation, annotation_to_id
 end
+
+
+function get_altimeter_ion_dict(ion_table_path::String)
+    ion_index_to_name = Dict{Int32, String}()
+    open(ion_table_path) do file
+        for (i, l) in enumerate(eachline(file))
+            ion_name, _, _, _ = split(l, '\t')
+            ion_index_to_name[Int32(i-1)] = ion_name
+        end
+    end
+
+    return ion_index_to_name
+end

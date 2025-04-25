@@ -33,7 +33,7 @@ function predict_fragments(
     peptides_df = DataFrame(Arrow.Table(peptide_table_path))
 
     # Process in batches
-    koina_pool_size = max_koina_batches * 10
+    koina_pool_size = max_koina_batches * 5
     nprecs = nrow(peptides_df)
     batch_size = min(batch_size, 1000)
     batch_start_idxs = collect(one(UInt32):UInt32(batch_size*koina_pool_size):UInt32(nprecs))

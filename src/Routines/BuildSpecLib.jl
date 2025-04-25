@@ -218,26 +218,43 @@ function BuildSpecLib(params_path::String)
                         joinpath(lib_dir, "spline_knots.jld2");
                         spl_knots
                     )
+                    ion_dictionary = get_altimeter_ion_dict(joinpath(@__DIR__, "../../data/ion_dictionary.txt"))
+
+                    parse_altimeter_fragments(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        ion_dictionary,
+                        10000,
+                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+
                 catch
                     println("No spline knots. static library")
-                end
-                # Process ion annotations
-                ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
-                frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
 
-                ion_annotation_dict = parse_koina_fragments(
-                    precursors_table,
-                    fragments_table,
-                    frag_annotation_type,
-                    ion_annotation_set,
-                    frag_name_to_idx,
-                    10000,
-                    joinpath(@__DIR__, "../../data/immonium.txt"),
-                    lib_dir,
-                    Dict{String, Int8}(),
-                    iso_mod_to_mass,
-                    koina_model_type
-                )
+                    # Process ion annotations
+                    ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
+                    frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
+
+                    ion_annotation_dict = parse_koina_fragments(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        ion_annotation_set,
+                        frag_name_to_idx,
+                        10000,
+                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+                end
+                
 
                 # Process precursor table
                 N_FRAGMENTS = length(fragments_table[:mz])

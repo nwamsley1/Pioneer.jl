@@ -58,7 +58,7 @@ function parse_koina_batch(model::SplineCoefficientModel,
         elseif col_name == :mz
             df[!, col_name] = Float32.(col["data"])
         elseif col_name == :annotations
-            df[!, :annotation] = string.(col["data"])
+            df[!, :annotation] = Int32.(col["data"])
         end
     end
     

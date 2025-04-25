@@ -511,8 +511,7 @@ function append_pioneer_lib_batch(
     n_precursors_in_batch::Int64,
     precursor_table::Arrow.Table,
     fragment_table::Arrow.Table,
-    ion_annotation_to_data_dict::Dict{String, PioneerFragAnnotation},
-    frag_name_to_idx::Dict{String, UInt16},
+    ion_annotation_to_data_dict::Dict{Int32, PioneerFragAnnotation},
     mods_to_sulfur_diff::Dict{String, Int8},
     iso_mod_to_mass::Dict{String, Float32},
     ::SplineCoefficientModel
@@ -557,7 +556,6 @@ function append_pioneer_lib_batch(
         precursor_table,
         fragment_table,
         ion_annotation_to_data_dict,
-        frag_name_to_idx,
         mods_to_sulfur_diff,
         iso_mod_to_mass
     )
@@ -731,8 +729,7 @@ function process_spline_batch!(
     first_frag_idx::UInt64,
     precursor_table::Arrow.Table,
     fragment_table::Arrow.Table,
-    ion_annotation_to_data_dict::Dict{String, PioneerFragAnnotation},
-    frag_name_to_idx::Dict{String, UInt16},
+    ion_annotation_to_data_dict::Dict{Int32, PioneerFragAnnotation},
     mods_to_sulfur_diff::Dict{String, Int8},
     iso_mod_to_mass::Dict{String, Float32}
 ) where N
@@ -786,12 +783,12 @@ function process_spline_batch!(
         end
 
         # Get fragment data
-        frag_name = if startswith(frag_annotation, "Int")
-            "Int/" * parse_internal_ion(frag_annotation)
-        else
-            frag_annotation
-        end
-        frag_data = ion_annotation_to_data_dict[frag_name]
+        #frag_name = if startswith(frag_annotation, "Int")
+        #    "Int/" * parse_internal_ion(frag_annotation)
+        #else
+        #    frag_annotation
+        #end
+        frag_data = ion_annotation_to_data_dict[frag_annotation]
 
         # Get basic fragment information
         frag_mz = fragment_table[:mz][actual_frag_idx]
@@ -814,12 +811,12 @@ function process_spline_batch!(
         end
 
         # Handle internal fragments
-        if frag_data.internal
-            start_idx = parse(UInt8, first(match(r"/([0-9]+)", frag_annotation).captures)) + one(UInt8)
-            internal_ion_seq = match(r"(?<=/)[A-Za-z]+(?=[^A-Za-z])", frag_annotation).match
-            internal_ion_length = length(internal_ion_seq)
-            stop_idx = UInt8(start_idx + internal_ion_length - one(UInt8))
-        end
+        #if frag_data.internal
+        #    start_idx = parse(UInt8, first(match(r"/([0-9]+)", frag_annotation).captures)) + one(UInt8)
+        #    internal_ion_seq = match(r"(?<=/)[A-Za-z]+(?=[^A-Za-z])", frag_annotation).match
+        #    internal_ion_length = length(internal_ion_seq)
+        #    stop_idx = UInt8(start_idx + internal_ion_length - one(UInt8))
+        #end
 
         # Add modification-based sulfur changes
         sulfur_count += frag_data.sulfur_diff
@@ -838,7 +835,7 @@ function process_spline_batch!(
             frag_mz,
             frag_coef,  # Spline coefficients
             Float16(frag_intensity),
-            frag_name_to_idx[frag_name],
+            UInt16(frag_annotation),
             
             # Ion type flags
             frag_data.base_type == 'y',
@@ -862,4 +859,73 @@ function process_spline_batch!(
             min(sulfur_count, precursor_sulfur_count)
         )
     end
+end
+
+
+function parse_altimeter_fragments(
+    precursor_table::Arrow.Table,
+    fragment_table::Arrow.Table,
+    annotation_type::FragAnnotation,  # Changed parameter type
+    ion_dictionary::Dict{Int32, String},
+    precursor_batch_size::Int64,
+    immonium_data_path::String,
+    out_dir::String,
+    mods_to_sulfur_diff::Dict{String, Int8},
+    iso_mod_to_mass::Dict{String, Float32},
+    model_type::KoinaModelType
+)
+    # Create output paths
+    fragment_table_path = joinpath(out_dir, "fragments_table.arrow")
+    fragment_indices_path = joinpath(out_dir, "prec_to_frag.arrow")
+
+    # Clean existing files
+    rm(fragment_table_path, force=true)
+    rm(fragment_indices_path, force=true)
+
+    # Load immonium ion data
+    immonium_to_sulfur_count = get_immonium_sulfur_dict(immonium_data_path)
+
+    # Process annotations
+    ion_annotation_to_features_dict = Dict{Int32, PioneerFragAnnotation}()
+    annotation_type = typeof(annotation_type)
+    for (ion_idx, ion_name) in ion_dictionary
+        # Create the annotation instance here
+        frag_annotation = annotation_type(ion_name)  # Now properly constructing instance
+        ion_annotation_to_features_dict[ion_idx] = parse_fragment_annotation(
+            frag_annotation,
+            immonium_to_sulfur_count=immonium_to_sulfur_count
+        )
+    end
+    # Process fragments in batches
+    precursor_idx, frag_idx = one(UInt32), one(UInt64)
+    total_precursors = length(precursor_table[1])
+    
+    pbar = ProgressBar(total=ceil(Int64, total_precursors/precursor_batch_size))
+    
+    while precursor_idx <= total_precursors
+        precursor_idx, frag_idx = append_pioneer_lib_batch(
+            UInt32(precursor_idx),
+            UInt64(frag_idx),
+            fragment_table_path,
+            fragment_indices_path,
+            precursor_batch_size,
+            precursor_table,
+            fragment_table,
+            ion_annotation_to_features_dict,
+            mods_to_sulfur_diff,
+            iso_mod_to_mass,
+            model_type
+        )
+        update(pbar)
+    end
+    
+    # Write final index
+    Arrow.append(
+        fragment_indices_path,
+        DataFrame((start_idx = UInt64[frag_idx - 1],))
+    )
+
+    jldsave(joinpath(out_dir, "frag_name_to_idx.jld2"); ion_dictionary)
+    jldsave(joinpath(out_dir, "ion_annotations.jld2"); ion_annotation_to_features_dict)
+    return ion_annotation_to_features_dict
 end
