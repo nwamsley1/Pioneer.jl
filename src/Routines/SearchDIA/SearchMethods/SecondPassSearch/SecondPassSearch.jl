@@ -77,6 +77,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     isotope_tracetype::I
     prec_estimation::P
 
+    # Collect MS1 data?
+    ms1_quant::Bool
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -108,6 +111,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
+        ms1_quant = Bool(global_params.ms1_quant)
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -134,7 +138,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Int64(frag_params.max_rank),
             
             isotope_trace_type,
-            prec_estimation
+            prec_estimation,
+
+            ms1_quant
         )
     end
 end
@@ -186,8 +192,23 @@ function process_file!(
             rt_index,
             search_context,
             params,
-            ms_file_idx
+            ms_file_idx,
+            MS2CHROM()
         )
+        @timed begin
+        ms1_psms = perform_second_pass_search(
+            spectra,
+            rt_index,
+            search_context,
+            params,
+            ms_file_idx,
+            unique(psms[!,:precursor_idx]),
+            MS1CHROM()
+        )
+        end
+        println("size(ms1_psms) = ", size(ms1_psms))
+        println("\n")
+
 
         results.psms[] = psms
 
