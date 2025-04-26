@@ -504,6 +504,7 @@ function add_features!(psms::DataFrame,
     ###########################
     #Allocate new columns
     N = size(psms, 1)
+    K_term = zeros(Bool, N)
     irt_diff = zeros(Float32, N)
     irt_obs = zeros(Float32, N)
     irt_pred = zeros(Float32, N)
@@ -568,7 +569,7 @@ function add_features!(psms::DataFrame,
                 #b_y_overlap[i] = ((sequence_length[i] - longest_y[i])>longest_b[i]) &  (longest_b[i] > 0) & (longest_y[i] > 0);
                 pair_idxs[i] = extract_pair_idx(precursor_pair_idxs, prec_idx)
                 spectrum_peak_count[i] = length(masses[scan_idx[i]])
-         
+                K_term[i] = endswith(precursor_sequence[prec_idx], 'K')
                 prec_mzs[i] = prec_mz[prec_idx];
             end
         end
@@ -578,7 +579,7 @@ function add_features!(psms::DataFrame,
     psms[!,:irt_pred] = irt_pred
     psms[!,:irt_diff] = irt_diff
     psms[!,:irt_error] = irt_error
-
+    psms[!,:K_term] = K_term
     psms[!,:missed_cleavage] = missed_cleavage
     #psms[!,:sequence] = sequence
     #psms[!,:stripped_sequence] = stripped_sequence

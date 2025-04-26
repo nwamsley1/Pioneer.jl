@@ -345,39 +345,7 @@ function getFragIsotopes!(frag_isotopes::Vector{Float32},
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end
 end
-#=
-function getFragIsotopes!(
-                            ::PartialPrec,
-                            frag_isotopes::Vector{Float32}, 
-                            precursor_transmition::Vector{Float32},
-                            iso_splines::IsotopeSplineModel, 
-                            prec_mz::Float32,
-                            prec_charge::UInt8,
-                            prec_sulfur_count::UInt8,
-                            frag::SplineDetailedFrag{N, Float32}, 
-                            knots::NTuple{M, Float32},
-                            nce::Float32) where {M, N}
-    #Reset relative abundances of isotopes to zero 
-    fill!(frag_isotopes, zero(eltype(frag_isotopes)))
-    #Predicted total fragment ion intensity (sum of fragment isotopes)
-    total_fragment_intensity =  getIntensity(frag, knots, 3, nce)
 
-    getFragAbundance!(
-                    frag_isotopes, 
-                    precursor_transmition,
-                    iso_splines,  
-                    prec_mz,
-                    prec_charge,
-                    prec_sulfur_count, 
-                    frag
-                    )
-
-    #Estimate abundances of M+n fragment ions relative to the monoisotope
-    for i in reverse(range(1, length(frag_isotopes)))
-        frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
-    end
-end
-=#
 """
     getPrecursorIsotopeSet(prec_mz::T, prec_charge::U, window::Tuple{T, T})where {T<:Real,U<:Unsigned}
 

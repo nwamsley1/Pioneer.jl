@@ -173,7 +173,7 @@ Output:
 function ParseSpecLib(params_path::String)
 
     params = checkParseSpecLibParams(params_path)
-    
+    iso_splines = parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml"))
     # Extract parameters
     lib_path = params["library_params"]["input_lib_path"]
     rt_bin_tol = Float32(params["library_params"]["rt_bin_tol"])
@@ -201,6 +201,8 @@ function ParseSpecLib(params_path::String)
     # Generate reversed decoys if requested
     if generate_decoys
         decoy_lib = getRevDecoys!(test_lib)
+        println("size(decoy_lib) ", size(decoy_lib))
+        println("size(test_lib.libdf) ", size(test_lib.libdf))
     end
     append!(test_lib.libdf, decoy_lib)
     println("size(test_lib.libdf) ", size(test_lib.libdf))
@@ -322,7 +324,8 @@ function ParseSpecLib(params_path::String)
     end
 
     # Parse library to Pioneer format
-    parseLib(test_lib, output_path)
+    println("iso splines roger")
+    parseLib(test_lib, output_path, iso_splines)
 
     buildPionLib(
         output_path,
@@ -353,7 +356,7 @@ function ParseSpecLib(params_path::String)
 end
 
 
-function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
+function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String, iso_splines::IsotopeSplineModel)
     speclib_df = getDF(speclib)
     n_precursors = maximum(speclib_df[!,:precursor_idx]) #Unique precursors in the data fraqme
     n_frags = UInt64(size(speclib_df, 1)) #Total number of fragments
@@ -485,7 +488,6 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
     for frag_idx in range(one(UInt64), n_frags)
         max_frag_intensity = max_frag_intensities[new_precursor_idxs[frag_idx]]
         frag_mz[frag_idx] = getFragMz(speclib, frag_idx)
-        frag_intensity[frag_idx] = Float16(getFragIntensity(speclib, frag_idx)/max_frag_intensity)
         ion_type[frag_idx] = getIonType(speclib, frag_idx)
         is_y[frag_idx] = getIsY(speclib, frag_idx)
         is_b[frag_idx] = getIsB(speclib, frag_idx)
@@ -498,6 +500,17 @@ function parseLib(speclib::BasicEmpiricalLibrary, speclib_dir::String)
         immonium[frag_idx] = isImmonium(speclib, frag_idx)
         internal_ind[frag_idx] = getInternalInd(speclib, frag_idx)
         frag_sulfur_count[frag_idx] = getFragSulfurCount(speclib, frag_idx)
+
+        _frag_intensity_ = getFragIntensity(speclib, frag_idx)/max_frag_intensity
+        frag_intensity[frag_idx] = Float16(_frag_intensity_/iso_splines(
+            min(frag_sulfur_count[frag_idx], 5), 
+            0, 
+            frag_mz[frag_idx]*frag_charge[frag_idx] 
+            )
+        )
+        #frag_intensity[frag_idx] = Float16(getFragIntensity(speclib, frag_idx)/max_frag_intensity)
+        
+
     end
     Arrow.write(
         joinpath(speclib_dir, "fragments_table.arrow"),

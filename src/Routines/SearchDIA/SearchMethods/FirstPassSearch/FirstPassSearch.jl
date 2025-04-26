@@ -416,6 +416,7 @@ function summarize_results!(
         #In the target/decoy scoring (see SearchMethods/ScoringSearch)
         #the maximum score for each target/decoy pair is shared accross runs
         #in an iterative training scheme. 
+        #=
         precursors = getPrecursors(getSpecLib(search_context))
         i = 1
         for (pid, val) in pairs(precursor_dict)
@@ -436,12 +437,50 @@ function summarize_results!(
             end
             
         end
+        =#
+        println("length(collect(pairs(precursor_dict))) = $(length(collect(pairs(precursor_dict))))")
+        println("first pass mbr... \n")
+        precursors = getPrecursors(getSpecLib(search_context))
+        i = 1
+        for (pid, val) in ProgressBar(collect(pairs(precursor_dict)))
+            i += 1
+            setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+            partner_pids = getPartnerPrecursorIdx(precursors)[precursors.data[:pair_id][pid]]
+            target_pids = partner_pids[:target]
+            decoy_pids = partner_pids[:decoy]
+            for partner_pid in target_pids
+                if ismissing(partner_pid)
+                    continue
+                end
+                # If the partner needs to be added, then give it the irt of the currently identified precursor
+                # Otherwise if the partner was ID'ed, it should keep its original predicted iRT
+                if !haskey(precursor_dict, partner_pid)
+                    insert!(precursor_dict, partner_pid, val)
+                    setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+                else
+                    setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
+                end
+            end
+            for partner_pid in decoy_pids
+                if ismissing(partner_pid)
+                    continue
+                end
+                # If the partner needs to be added, then give it the irt of the currently identified precursor
+                # Otherwise if the partner was ID'ed, it should keep its original predicted iRT
+                if !haskey(precursor_dict, partner_pid)
+                    insert!(precursor_dict, partner_pid, val)
+                    setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
+                else
+                    setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])
+                end
+            end
+        end
     else
         for (pid, val) in pairs(precursor_dict)
             setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])
         end
     end
-
+    println("length(collect(pairs(precursor_dict))) = $(length(collect(pairs(precursor_dict))))")
     setPrecursorDict!(search_context, precursor_dict)
     # Calculate RT indices
     create_rt_indices!(search_context, results, precursor_dict, params)

@@ -139,7 +139,8 @@ function score_precursor_isotope_traces_in_memory!(
             :log2_intensity_explained,
             :tic,
             :num_scans,
-            :smoothness
+            :smoothness,
+            :K_term
         ];
 
         if match_between_runs

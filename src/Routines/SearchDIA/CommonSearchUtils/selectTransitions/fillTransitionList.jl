@@ -125,6 +125,9 @@ function getFragIsotopes!(
                     )
 
     #Estimate abundances of M+n fragment ions relative to the monoisotope
+    #If the library gives M0 intensity rather than total intensity
+    #total_fragment_intensity = total_fragment_intensity/frag_isotopes[1]
+    
     for i in reverse(range(1, length(frag_isotopes)))
         frag_isotopes[i] = total_fragment_intensity*frag_isotopes[i]
     end
@@ -148,6 +151,14 @@ function getFragIsotopes!(
     frag_mz = getMz(frag)
     frag_charge = getPrecCharge(frag)
     frag_nsulfur = Int64(getSulfurCount(frag))
+
+    #=If the library gives M0 intensity rather than total intensity
+    total_fragment_intensity = total_fragment_intensity/iso_splines(
+                                min(frag_nsulfur, 5), 
+                                0, 
+                                frag_mz*frag_charge
+                                )
+    =#
     for iso_idx in frag_iso_idx_range
         frag_isotopes[iso_idx+1] = iso_splines(
                                 min(frag_nsulfur, 5), 

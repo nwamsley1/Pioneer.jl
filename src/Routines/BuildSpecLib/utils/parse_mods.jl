@@ -854,7 +854,7 @@ function getRevDecoys!(speclibdf::BasicEmpiricalLibrary)
     sort!(rev_libdf, :precursor_idx)
     
     # Create a Set of forward sequences for O(1) lookup
-    forward_seqs = Set(speclibdf.libdf.sequence)
+    forward_seqs = Set([(seq, charge) for (seq, charge) in zip(speclibdf.libdf.sequence, speclibdf.libdf.prec_charge)])
     
     # Track which rows to keep
     keep_rows = trues(size(rev_libdf, 1))
@@ -874,7 +874,7 @@ function getRevDecoys!(speclibdf::BasicEmpiricalLibrary)
             rev_sequence, rev_structural_mods = reverseSequence(row.sequence, row.structural_mods)
             
             # If reversed sequence exists in forward set, mark all rows of this precursor for removal
-            if rev_sequence in forward_seqs
+            if (rev_sequence, row.prec_charge) in forward_seqs
                 idx_start = idx
                 while idx_start <= size(rev_libdf, 1) && 
                       rev_libdf[idx_start, :precursor_idx] == current_precursor
@@ -887,7 +887,7 @@ function getRevDecoys!(speclibdf::BasicEmpiricalLibrary)
             # Store reversed sequence for this precursor group
             current_rev_seq = rev_sequence
             current_rev_mods = rev_structural_mods
-            push!(forward_seqs, rev_sequence)
+            push!(forward_seqs, (rev_sequence, row.prec_charge))
         end
         
         # Apply current reversed sequence to this row

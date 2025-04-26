@@ -305,8 +305,8 @@ function build_chromatograms(
             if getIdToCol(search_data).size > length(weights)
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
-                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+                #resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                #append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
             # Initialize weights
@@ -382,9 +382,9 @@ function build_chromatograms(
         end
 
         # Reset arrays
-        for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
-        end
+        #for i in 1:Hs.n
+        #    getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
+        #end
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
@@ -477,6 +477,9 @@ function build_chromatograms(
                     precs_temp[prec_temp_size] = prec_idx
                     for iso in isotopes_dict[prec_idx]
                         ion_idx += 1
+                        if ion_idx > length(ion_templates)
+                            append!(ion_templates, Vector{Isotope{Float32}}(undef, length(ion_templates)))
+                        end
                         ion_templates[ion_idx] = iso
                     end
                 end
@@ -536,8 +539,8 @@ function build_chromatograms(
             if getIdToCol(search_data).size > length(weights)
                 new_entries = getIdToCol(search_data).size - length(weights) + 1000
                 resize!(weights, length(weights) + new_entries)
-                #resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
-                #append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
             # Initialize weights
