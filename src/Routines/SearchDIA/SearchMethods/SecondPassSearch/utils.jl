@@ -421,66 +421,33 @@ function process_scans!(
                 params.max_diff,
                 params.reg_type,#NoNorm()
             )
-            # Record chromatogram points with weights
-            for j in 1:prec_temp_size
-                rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
-                end
-
-                if !iszero(getIdToCol(search_data)[precs_temp[j]])
-                    chromatograms[rt_idx] = MS1ChromObject(
-                        Float32(getRetentionTime(spectra, scan_idx)),
-                        weights[getIdToCol(search_data)[precs_temp[j]]],
-                        false,
-                        UInt8(0),
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                else
-                    chromatograms[rt_idx] = MS1ChromObject(
-                        Float32(getRetentionTime(spectra, scan_idx)),
-                        zero(Float32),
-                        false,
-                        UInt8(0),
-                        scan_idx,
-                        precs_temp[j]
-                    )
-                end
-            end
-
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size
                 precursor_weights[getIdToCol(search_data).keys[i]] = 
                     weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
             end
 
-        else
-            for j in 1:prec_temp_size
-                rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
-                end
-                chromatograms[rt_idx] = MS1ChromObject(
-                    Float32(getRetentionTime(spectra, scan_idx)),
-                    zero(Float32),
-                    false,
-                    UInt8(0),
-                    scan_idx,
-                    precs_temp[j]
+            getDistanceMetrics(weights, residuals, Hs, getMs1SpectralScores(search_data))
+
+            ScoreFragmentMatches!(
+                getMs1UnscoredPsms(search_data),
+                getIdToCol(search_data),
+                ion_matches,
+                nmatches,
+                getMassErrorModel(search_context, ms_file_idx),
+                last(params.min_topn_of_m)
                 )
-            end
         end
 
         # Reset arrays
         for i in 1:Hs.n
-            getUnscoredPsms(search_data)[i] = eltype(getUnscoredPsms(search_data))()
+            getMs1UnscoredPsms(search_data)[i] = eltype(getMs1UnscoredPsms(search_data))()
         end
         reset!(getIdToCol(search_data))
         reset!(Hs)
     end
 
-    return DataFrame(@view(chromatograms[1:rt_idx]))
+    return DataFrame(@view(getMs1ScoredPsms(search_data)[1:last_val]))
 end
 
 

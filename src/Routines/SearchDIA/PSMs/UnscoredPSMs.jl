@@ -37,6 +37,54 @@ end
 
 ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
+struct Ms1PSM{T<:AbstractFloat} <: UnscoredPSM{T}
+    m0::Bool #Highest ranking predicted framgent that was observed
+    n_iso::UInt8
+    big_iso::UInt8 #How many of the topN predicted fragments were observed. 
+    m0_error::Union{Missing,T}
+    error::T
+    precursor_idx::UInt32
+end
+
+Ms1PSM{Float32}() = Ms1PSM(
+    false,
+    zero(UInt8),
+    zero(UInt8),
+    missing,
+    zero(Float32),
+    zero(UInt32)
+)
+
+function ModifyFeatures!(score::Ms1PSM{T},  prec_id::UInt32, match::FragmentMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
+    
+    m0 = score.m0
+    n_iso = score.n_iso
+    big_iso = score.big_iso
+    m0_error = score.m0_error
+    error = score.error
+    precursor_idx = prec_id
+
+    n_iso += one(UInt8) 
+    if match.iso_idx > big_iso
+        big_iso = match.iso_idx
+    end
+    ppm_err =  (getMZ(match) - getMatchMZ(match))/(getMZ(match)/1e6)
+    error += abs(ppm_err)
+    precursor_idx = getPrecID(match)
+    if iszero(getIsoIdx(match))#Is the m0
+        m0 = true
+        m0_error = ppm_err 
+    end
+
+    return Ms1PSM{T}(
+        m0,
+        n_iso,
+        big_iso,
+        m0_error,
+        error,
+        precursor_idx
+)
+end
 
 function ScoreFragmentMatches!(results::Vector{P}, 
                                 IDtoCOL::ArrayDict{UInt32, UInt16}, 

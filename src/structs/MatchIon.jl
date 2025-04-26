@@ -83,6 +83,7 @@ struct PrecursorMatch{T<:AbstractFloat} <: MatchIon{T}
     predicted_intensity::T
     intensity::T
     theoretical_mz::T
+    observed_mz::T
     iso_idx::UInt8
     peak_ind::Int64
     prec_id::UInt32
@@ -93,4 +94,6 @@ getIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.intensity
 getPeakInd(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.peak_ind
 getPredictedIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predicted_intensity
 getIsoIdx(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.iso_idx
+getMZ(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.theoretical_mz
+getMatchMz(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.observed_mz
 PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Float32), zero(UInt8), zero(Int64), zero(UInt32))

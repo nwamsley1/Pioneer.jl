@@ -20,6 +20,17 @@ struct SpectralScoresSimple{T<:AbstractFloat} <: SpectralScores{T}
     percent_theoretical_ignored::T
 end
 
+struct SpectralScoresMs1{T<:AbstractFloat} <: SpectralScores{T}
+    spectral_contrast::T
+    fitted_spectral_contrast::T
+    gof::T
+    max_matched_residual::T
+    max_unmatched_residual::T
+    fitted_manhattan_distance::T
+    matched_ratio::T
+    #entropy_score::T
+end
+
 function getDistanceMetrics(H::SparseArray{Ti,T}, 
     spectral_scores::Vector{SpectralScoresSimple{U}};
     relative_improvement_threshold::Float32 = 1.25f0,
@@ -75,7 +86,6 @@ function getDistanceMetrics(H::SparseArray{Ti,T},
 
     end
 end
-
 
 function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {Ti<:Integer,T<:AbstractFloat}
     # We'll accumulate partial sums and compute the same metrics as your snippet.
@@ -183,7 +193,6 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
 
     return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
-
 function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresComplex{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
 
 
@@ -285,7 +294,107 @@ function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, sp
         )
     end
 end
+function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresMs1{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+
+
+    ########
+    #Get residuals
+    #########
+    @turbo for i in range(1, H.m)
+        r[i] = zero(T)
+    end
+
+    for n in range(1, H.n_vals)
+        if iszero(r[H.rowval[n]])
+            r[H.rowval[n]] = -H.x[n]
+        end
+    end
+
+    for col in range(1, H.n)
+        start = H.colptr[col]
+        stop = H.colptr[col+1] - 1
+        for n in start:stop
+            r[H.rowval[n]] += w[col]*H.nzval[n]
+        end
+    end
+
+    for col in range(1, H.n)
+        
+        h2_sum = zero(T)
+        x2_sum = zero(T)
+        x_sum = zero(T)
+        dot_product = zero(T)
+        fitted_dotp = zero(T)
+        matched_sum = zero(T)
+        unmatched_sum = zero(T)    
+
+        manhattan_distance = zero(T)
+        max_matched_residual = zero(T)
+        max_unmatched_residual = zero(T)
+        sum_of_residuals = zero(T)
+        fitted_dotp = zero(T)        
+        fitted_dotp_norm1 = zero(T)
+        sum_of_fitted_peaks_matched = zero(T)
+        sum_of_fitted_peaks_unmatched = zero(T)
+        sum_of_fitted_peaks_matched_squared = zero(T)
+        sum_of_fitted_peaks_unmatched_squared = zero(T)
+
+        @inbounds @fastmath for i in range(H.colptr[col], H.colptr[col + 1]-1)
+
+            #Fitted Manhattan Distance
+            x_sum += H.x[i]
+            manhattan_distance += abs(w[col]*H.nzval[i] - H.x[i])
+
+            #Normalized Dot Product 
+            dot_product += H.nzval[i]*H.x[i]
+            x2_sum += (H.x[i])^2
+            h2_sum += (H.nzval[i])^2 
     
+
+            fitted_peak = w[col]*H.nzval[i]
+            r_abs = abs(r[H.rowval[i]])
+            sum_of_residuals += r_abs  
+
+            if H.matched[i]
+                matched_sum += H.nzval[i]
+                shadow_peak = fitted_peak - r[H.rowval[i]]
+                fitted_dotp += shadow_peak*fitted_peak
+                fitted_dotp_norm1 += shadow_peak^2
+                
+                sum_of_fitted_peaks_matched += fitted_peak
+                sum_of_fitted_peaks_matched_squared += fitted_peak^2
+                if r_abs > max_matched_residual
+                    max_matched_residual = r_abs
+                end
+            else
+                unmatched_sum += H.nzval[i]
+                sum_of_fitted_peaks_unmatched += fitted_peak
+                sum_of_fitted_peaks_unmatched_squared += fitted_peak^2
+                if r_abs > max_unmatched_residual
+                    max_unmatched_residual = r_abs
+                end
+            end
+        end
+        sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
+        sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
+
+        fitted_dotp_norm = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
+        fitted_spectral_contrast = fitted_dotp_norm#1 - 2*acos(fitted_dotp_norm)/π
+        dot_product_norm = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
+        spectral_contrast = dot_product_norm#1 - 2*acos(dot_product_norm)/π
+
+        spectral_scores[col] = SpectralScoresMs1(
+            Float16(spectral_contrast), #spectral_contrast
+            Float16(fitted_spectral_contrast), #fitted_spectral_contrast
+            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks)), #gof
+            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched)),#max_matched_residual
+            Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #max_unmatched_residual
+            Float16(-log2(manhattan_distance/x_sum)), #fitted_manhattan_distance
+            Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
+            #Float16(-1.0*getEntropy(H, r, col)) #entropy
+        )
+    end
+end
 function getEntropy(H::SparseArray{Ti, T}, col::Int64) where {Ti<:Integer,T<:AbstractFloat}
     #println("col $col")
     Hsum = zero(T)
