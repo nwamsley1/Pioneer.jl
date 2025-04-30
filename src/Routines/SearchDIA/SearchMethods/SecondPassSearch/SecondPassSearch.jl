@@ -245,9 +245,9 @@ function process_search_results!(
             return group[idx:idx, :]
         end
     
-        Arrow.write("/Users/nathanwamsley/Desktop/test_ms1_psms.arrow", ms1_psms)
-        println("size(ms1_psms) = ", size(ms1_psms))
-        println("\n")
+        #Arrow.write("/Users/nathanwamsley/Desktop/test_ms1_psms.arrow", ms1_psms)
+        #println("size(ms1_psms) = ", size(ms1_psms))
+        #println("\n")
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -304,9 +304,9 @@ function process_search_results!(
             renamecols = "" => "_ms1"
         )
         psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
-        Arrow.write("/Users/nathanwamsley/Desktop/test_ms2_psms.arrow", psms)
-        println("size(ms1_psms) = ", size(psms))
-        println("\n")
+        #Arrow.write("/Users/nathanwamsley/Desktop/test_ms2_psms.arrow", psms)
+        #println("size(ms1_psms) = ", size(psms))
+        #println("\n")
         # Add additional features for final analysis
         add_features!(
             psms,
