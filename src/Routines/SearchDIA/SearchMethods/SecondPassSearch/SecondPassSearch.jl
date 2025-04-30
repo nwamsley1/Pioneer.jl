@@ -303,7 +303,7 @@ function process_search_results!(
             makeunique = true,
             renamecols = "" => "_ms1"
         )
-            
+        psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
         Arrow.write("/Users/nathanwamsley/Desktop/test_ms2_psms.arrow", psms)
         println("size(ms1_psms) = ", size(psms))
         println("\n")
