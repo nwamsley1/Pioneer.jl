@@ -296,6 +296,7 @@ function process_search_results!(
 
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
+        filter!(x->!iszero(x.weight), ms1_psms);
         psms = leftjoin(
             psms,
             ms1_psms,
