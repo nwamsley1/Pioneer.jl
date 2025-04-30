@@ -91,6 +91,7 @@ function setMatch!(matches::Vector{M},
                                 Float32(getIntensity(precursor_isotope)), 
                                  intensity,
                                  getMZ(precursor_isotope),
+                                 mass,
                                  getIsoIdx(precursor_isotope),
                                  peak_ind,
                                  getPrecID(precursor_isotope)

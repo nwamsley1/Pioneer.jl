@@ -305,7 +305,6 @@ function process_scans!(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
@@ -320,10 +319,11 @@ function process_scans!(
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
-    rt_idx = 0
+    last_val = 0
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    cycle_idx = 0
     i = 1
     for scan_idx in scan_range
         
@@ -333,8 +333,9 @@ function process_scans!(
         #msn ∉ one(UInt8) && continue
         if getMsOrder(spectra, scan_idx) != 1
             continue
+        else
+            cycle_idx += 1
         end
-        iso_count = Dictionary{UInt32, @NamedTuple{matched_mono::Bool, iso_count::UInt8}}()
         # Calculate RT window
         irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
@@ -439,6 +440,18 @@ function process_scans!(
                 )
         end
 
+        last_val = Score!(
+            getMs1ScoredPsms(search_data),
+            getMs1UnscoredPsms(search_data),
+            getMs1SpectralScores(search_data),
+            weights,
+            getIdToCol(search_data),
+            cycle_idx,
+            last_val,
+            Hs.n,
+            scan_idx;
+            block_size = 500000
+        )
         # Reset arrays
         for i in 1:Hs.n
             getMs1UnscoredPsms(search_data)[i] = eltype(getMs1UnscoredPsms(search_data))()

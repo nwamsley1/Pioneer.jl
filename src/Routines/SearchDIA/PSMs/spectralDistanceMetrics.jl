@@ -193,7 +193,10 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
 
     return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
-function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresComplex{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+function getDistanceMetrics(w::Vector{T}, 
+                            r::Vector{T}, 
+                            H::SparseArray{Ti,T}, 
+                            spectral_scores::Vector{SpectralScoresComplex{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
 
 
     ########
@@ -294,7 +297,10 @@ function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, sp
         )
     end
 end
-function getDistanceMetrics(w::Vector{T}, r::Vector{T}, H::SparseArray{Ti,T}, spectral_scores::Vector{SpectralScoresMs1{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+function getDistanceMetrics(w::Vector{T}, 
+                            r::Vector{T}, 
+                            H::SparseArray{Ti,T}, 
+                            spectral_scores::Vector{SpectralScoresMs1{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
 
 
     ########

@@ -40,6 +40,7 @@ Results container for second pass search.
 """
 struct SecondPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}          # PSMs for each file
+    ms1_psms::Base.Ref{DataFrame}
 end
 
 """
@@ -156,6 +157,7 @@ function init_search_results(::P, search_context::SearchContext) where {P<:Secon
     second_pass_psms = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
+        DataFrame(),
         DataFrame()
     )
 end
@@ -206,11 +208,11 @@ function process_file!(
             MS1CHROM()
         )
         end
-        println("size(ms1_psms) = ", size(ms1_psms))
-        println("\n")
+
 
 
         results.psms[] = psms
+        results.ms1_psms[] = ms1_psms
 
     catch e
         @warn "Second pass search failed" ms_file_idx exception=e
@@ -231,7 +233,21 @@ function process_search_results!(
     try
         # Get PSMs from results container
         psms = results.psms[]
-        
+        ms1_psms = results.ms1_psms[]
+        rts = getRetentionTimes(spectra)
+        ms1_psms[!,:rt] = [rts[scan_idx] for scan_idx in ms1_psms[!,:scan_idx]]
+        sort!(ms1_psms, :rt);
+        # Use DataFrames.combine with do syntax instead of map
+        ms1_psms = combine(groupby(ms1_psms,:precursor_idx)) do group
+            # Find the row with the maximum value
+            idx = argmax(group[:, :weight])
+            # Return that row as a 1-row DataFrame
+            return group[idx:idx, :]
+        end
+    
+        Arrow.write("/Users/nathanwamsley/Desktop/test_ms1_psms.arrow", ms1_psms)
+        println("size(ms1_psms) = ", size(ms1_psms))
+        println("\n")
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -280,7 +296,17 @@ function process_search_results!(
 
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-
+        psms = leftjoin(
+            psms,
+            ms1_psms,
+            on = :precursor_idx,
+            makeunique = true,
+            renamecols = "" => "_ms1"
+        )
+            
+        Arrow.write("/Users/nathanwamsley/Desktop/test_ms2_psms.arrow", psms)
+        println("size(ms1_psms) = ", size(psms))
+        println("\n")
         # Add additional features for final analysis
         add_features!(
             psms,

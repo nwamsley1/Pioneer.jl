@@ -96,4 +96,8 @@ getPredictedIntensity(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.predi
 getIsoIdx(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.iso_idx
 getMZ(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.theoretical_mz
 getMatchMz(pm::PrecursorMatch{T}) where {T<:AbstractFloat} = pm.observed_mz
-PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), zero(Float32), zero(Float32), zero(UInt8), zero(Int64), zero(UInt32))
+PrecursorMatch{Float32}() = PrecursorMatch(zero(Float32), 
+zero(Float32), 
+zero(Float32), 
+zero(Float32),
+zero(UInt8), zero(Int64), zero(UInt32))
