@@ -397,6 +397,9 @@ function process_scans!(
                 resize!(weights, length(weights) + new_entries)
                 resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
                 append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+
+                resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
+                append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
             end
 
             # Initialize weights
