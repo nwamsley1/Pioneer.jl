@@ -339,6 +339,22 @@ function ParseSpecLib(params_path::String)
     Arrow.write("/Users/nathanwamsley/Desktop/test_lib.arrow", entrapment_lib[!,collect(values(column_mapping))]);
     CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_jmod.tsv", 
     entrapment_lib[!,collect(values(column_mapping))]; delim = '\t')
+    #=
+    histogram(test_table[test_table[!,:EntrapmentGroupId].==0,:PrecursorCharge], alpha = 0.5, label = "orig")
+    histogram!(test_table[test_table[!,:EntrapmentGroupId].==1,:PrecursorCharge], alpha = 0.5, label = "trap")
+
+    histogram(length.(test_table[test_table[!,:EntrapmentGroupId].==0,:PeptideSequence]), alpha = 0.5, label = "orig")
+    histogram!(length.(test_table[test_table[!,:EntrapmentGroupId].==1,:PeptideSequence]), alpha = 0.5, label = "trap")
+
+
+
+    histogram(test_table[test_table[!,:EntrapmentGroupId].==0,:PrecursorMz], alpha = 0.5, label = "orig")
+    histogram!(test_table[test_table[!,:EntrapmentGroupId].==1,:PrecursorMz], alpha = 0.5, label = "trap")
+
+    histogram(test_table[test_table[!,:EntrapmentGroupId].==0,:ProductMz], alpha = 0.5, label = "orig")
+    histogram!(test_table[test_table[!,:EntrapmentGroupId].==1,:ProductMz], alpha = 0.5, label = "trap")
+    =#
+    
     return 
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
