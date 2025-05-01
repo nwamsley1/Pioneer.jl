@@ -700,7 +700,7 @@ function calculate_mz_and_sulfur_count!(df::DataFrame,
         # Calculate masses
         get_aa_masses!(aa_masses, row.sequence)
         get_structural_mod_masses!(structural_mod_masses, row.structural_mods, structural_mod_to_mass)
-        getIsoModMasses!(iso_mod_masses, row.structural_mods, row.isotopic_mods, iso_mods_dict)
+        #getIsoModMasses!(iso_mod_masses, row.structural_mods, row.isotopic_mods, iso_mods_dict)
         
         # Calculate sulfur counts
         get_sulfur_counts!(sulfur_counts, row.sequence, row.structural_mods, mods_to_sulfur_diff)
@@ -1058,11 +1058,11 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
     # Make a deep copy and sort by precursor_idx
     shuffle_libdf = deepcopy(speclibdf.libdf)
     pair_id = UInt32(size(shuffle_libdf, 1) + 1)
-    sort!(shuffle_libdf, :precursor_idx)
+    sort!(shuffle_libdf, :modified_sequence)
     shuffle_libdf[!,:entrapment_group_id] .= UInt8(entrapment_group_id)
     # Create a Set of forward sequences for O(1) lookup
     forward_seqs = Set(speclibdf.libdf.sequence)
-    
+    println("length(forward_seqs) = ", length(forward_seqs))
     # Track which rows to keep
     keep_rows = trues(size(shuffle_libdf, 1))
     
@@ -1073,15 +1073,16 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
     
     # Process rows maintaining precursor consistency
     for (idx, row) in enumerate(eachrow(shuffle_libdf))
-        if row.precursor_idx != current_precursor
+        if row.modified_sequence != current_precursor
             # New precursor encountered - need to generate new shuffle
-            current_precursor = row.precursor_idx
+            current_precursor = row.modified_sequence
             
             # Try to find a valid shuffle
             found_valid_shuffle = false
             shuffle_attempts = 0
             while shuffle_attempts < 20 && !found_valid_shuffle
                 shuffled_sequence, shuffled_mods = shuffleSequence(row.sequence, row.structural_mods)
+                 
                 if !(shuffled_sequence in forward_seqs)
                     current_shuffled_seq = shuffled_sequence
                     current_shuffled_mods = shuffled_mods
@@ -1090,25 +1091,20 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
                 end
                 shuffle_attempts += 1
             end
-            
-            # If no valid shuffle found, mark all rows of this precursor for removal
+            # If no valid shuffle found
             if !found_valid_shuffle
-                idx_start = idx
-                while idx_start <= size(shuffle_libdf, 1) && 
-                      shuffle_libdf[idx_start, :precursor_idx] == current_precursor
-                    keep_rows[idx_start] = false
-                    idx_start += 1
-                end
                 continue
             end
         end
         
         # Apply current shuffled sequence to this row
-        row.sequence = current_shuffled_seq
-        row.structural_mods = current_shuffled_mods
-        row.pair_id = pair_id
+        #println("row.sequence = ", row.sequence, " current_shuffled_seq = ", current_shuffled_seq)
+        
+        shuffle_libdf[idx, :sequence] = current_shuffled_seq
+        shuffle_libdf[idx, :structural_mods] = current_shuffled_mods
+        shuffle_libdf[idx, :is_decoy] = false
+        shuffle_libdf[idx, :pair_id] = pair_id
         pair_id += one(UInt32)
-        row.is_decoy = false
     end
     
     # Filter out failed shuffles and append

@@ -198,11 +198,13 @@ function ParseSpecLib(params_path::String)
             getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
         end
     end
+
+    
     # Generate reversed decoys if requested
-    if generate_decoys
-        decoy_lib = getRevDecoys!(test_lib)
-    end
-    append!(test_lib.libdf, decoy_lib)
+    #if generate_decoys
+    #    decoy_lib = getRevDecoys!(test_lib)
+    #end
+    #append!(test_lib.libdf, decoy_lib)
     #Channel decoys are the target sequences but in the decoy/fake isotope channels. 
     #Probably need to add a check to not add decoys in cases were there are no isotope labesl. 
     if params["channel_decoys"]
@@ -293,13 +295,51 @@ function ParseSpecLib(params_path::String)
             end
         end
     end
-
+    
+    println("A")
     calculate_mz_and_sulfur_count!(
         test_lib.libdf, 
         structural_mod_to_mass,
         iso_mods_dict,
         mods_to_sulfur_diff
     )
+    println("B")
+    entrapment_lib = copy(test_lib.libdf)
+    entrapment_lib[!,:modified_sequence] = copy(entrapment_lib[!,:sequence])
+
+    column_mapping = Dict(
+        "prec_mz" => "PrecursorMz",
+        "prec_charge" => "PrecursorCharge",
+        "irt" => "Tr_recalibrated",
+        "modified_sequence" => "ModifiedSequence",
+        "sequence" => "PeptideSequence",
+        "ion_mobility" => "IonMobility",
+        "frag_mz" => "ProductMz",
+        "library_intensity" => "LibraryIntensity",
+        "protein_group" => "ProteinGroup",
+        "protein_name" => "ProteinName",
+        "genes" => "genes",
+        "frag_type" => "FragmentType",
+        "frag_charge" => "FragmentCharge",
+        "frag_series_number" => "FragmentSeriesNumber",
+        "frag_loss_type" => "FragmentLossType",
+        "entrapment_group_id" => "EntrapmentGroupId",
+    )
+    # Filter to only include columns that exist in the dataframe
+    existing_columns = filter(col -> col in names(entrapment_lib), keys(column_mapping))
+    filtered_mapping = Dict(col => column_mapping[col] for col in existing_columns)
+    # Apply the rename
+    rename!(entrapment_lib, filtered_mapping)
+
+    trap_seqs = Set(replace.(entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==1,:PeptideSequence], "I"=>"L"))
+    orig_seqs = Set(replace.(entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==0,:PeptideSequence], "I"=>"L"))
+    duplicated_seqs =  trap_seqs ∩ orig_seqs
+    println("length(duplicateed_seqs), ", length(duplicated_seqs))
+    filter!(x->replace(x.PeptideSequence, "I"=>"L") ∉ duplicated_seqs, entrapment_lib);
+    Arrow.write("/Users/nathanwamsley/Desktop/test_lib.arrow", entrapment_lib[!,collect(values(column_mapping))]);
+    CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_jmod.tsv", 
+    entrapment_lib[!,collect(values(column_mapping))]; delim = '\t')
+    return 
     # Update precursor indices after m/z calculation
     create_precursor_idx!(test_lib.libdf)
 
