@@ -151,7 +151,7 @@ function score_precursor_isotope_traces_in_memory!(
             :n_iso_ms1,
             :big_iso_ms1
         ];
-
+        features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
                 :max_prob, 
@@ -312,7 +312,7 @@ function score_precursor_isotope_traces_out_of_memory!(
             :n_iso_ms1,
             :big_iso_ms1
         ];
-        
+        features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
                 :max_prob, 

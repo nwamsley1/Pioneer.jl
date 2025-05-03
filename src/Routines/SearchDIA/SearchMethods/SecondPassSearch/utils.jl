@@ -973,6 +973,9 @@ function parseMs1Psms(
     psms::DataFrame,
     spectra::MassSpecData
 )
+    if !hasproperty(psms, :precursor_idx) || (size(psms, 1) == 0)
+        return DataFrame()
+    end
     rts = getRetentionTimes(spectra)
     rts = zeros(Float32, size(psms, 1))
     for i in range(1, size(psms, 1))

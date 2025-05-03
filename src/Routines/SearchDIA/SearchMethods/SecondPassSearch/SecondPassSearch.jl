@@ -79,7 +79,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     prec_estimation::P
 
     # Collect MS1 data?
-    ms1_quant::Bool
+    ms1_scoring::Bool
 
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -112,7 +112,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
-        ms1_quant = Bool(global_params.ms1_quant)
+        ms1_scoring = Bool(global_params.ms1_scoring)
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -141,7 +141,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             isotope_trace_type,
             prec_estimation,
 
-            ms1_quant
+            ms1_scoring
         )
     end
 end
@@ -197,19 +197,20 @@ function process_file!(
             ms_file_idx,
             MS2CHROM()
         )
-        @timed begin
-        ms1_psms = perform_second_pass_search(
-            spectra,
-            rt_index,
-            search_context,
-            params,
-            ms_file_idx,
-            unique(psms[!,:precursor_idx]),
-            MS1CHROM()
-        )
+        if params.ms1_scoring
+            # Perform MS1 search
+            ms1_psms = perform_second_pass_search(
+                spectra,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                unique(psms[!,:precursor_idx]),
+                MS1CHROM()
+            )
+        else
+            ms1_psms = DataFrame()
         end
-
-
 
         results.psms[] = psms
         results.ms1_psms[] = ms1_psms
@@ -287,15 +288,16 @@ function process_search_results!(
         filter!(x->x.best_scan, psms);
 
         #Join MS1 PSMs to MS2 PSMs
-        psms = leftjoin(
-            psms,
-            ms1_psms,
-            on = :precursor_idx,
-            makeunique = true,
-            renamecols = "" => "_ms1"
-        )
-        psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
-
+        if size(ms1_psms, 1) > 0
+            psms = leftjoin(
+                psms,
+                ms1_psms,
+                on = :precursor_idx,
+                makeunique = true,
+                renamecols = "" => "_ms1"
+            )
+            psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
+        end
         #Add additional features for final analysis
         add_features!(
             psms,
