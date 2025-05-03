@@ -234,20 +234,10 @@ function process_search_results!(
         # Get PSMs from results container
         psms = results.psms[]
         ms1_psms = results.ms1_psms[]
-        rts = getRetentionTimes(spectra)
-        ms1_psms[!,:rt] = [rts[scan_idx] for scan_idx in ms1_psms[!,:scan_idx]]
-        sort!(ms1_psms, :rt);
-        # Use DataFrames.combine with do syntax instead of map
-        ms1_psms = combine(groupby(ms1_psms,:precursor_idx)) do group
-            # Find the row with the maximum value
-            idx = argmax(group[:, :weight])
-            # Return that row as a 1-row DataFrame
-            return group[idx:idx, :]
-        end
-    
-        #Arrow.write("/Users/nathanwamsley/Desktop/test_ms1_psms.arrow", ms1_psms)
-        #println("size(ms1_psms) = ", size(ms1_psms))
-        #println("\n")
+        ms1_psms = parseMs1Psms( #Reduce to max intensity scan per precursor_idx
+            ms1_psms,
+            spectra
+        )
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -293,10 +283,10 @@ function process_search_results!(
                 getRtIrtModel(search_context, ms_file_idx)
             );
         end
-
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-        filter!(x->!iszero(x.weight), ms1_psms);
+
+        #Join MS1 PSMs to MS2 PSMs
         psms = leftjoin(
             psms,
             ms1_psms,
@@ -305,10 +295,8 @@ function process_search_results!(
             renamecols = "" => "_ms1"
         )
         psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
-        #Arrow.write("/Users/nathanwamsley/Desktop/test_ms2_psms.arrow", psms)
-        #println("size(ms1_psms) = ", size(psms))
-        #println("\n")
-        # Add additional features for final analysis
+
+        #Add additional features for final analysis
         add_features!(
             psms,
             search_context,

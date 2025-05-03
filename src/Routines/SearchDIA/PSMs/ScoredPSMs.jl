@@ -325,6 +325,8 @@ function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
            (unscored_PSMs[i].m0) == true
         )&(
             (unscored_PSMs[i].n_iso) >= 2
+        )&(
+            weight[i] >= 1e-6
         )
         #passing_filter = true
         if !passing_filter #Skip this scan
@@ -342,7 +344,7 @@ function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}},
             unscored_PSMs[i].n_iso,
             unscored_PSMs[i].big_iso,
             L(coalesce(unscored_PSMs[i].m0_error, zero(H))),
-            Float16(log2(unscored_PSMs[i].error)),
+            Float16(log2(unscored_PSMs[i].error + 1e-6)),
             
             spectral_scores[scores_idx].spectral_contrast,
             spectral_scores[scores_idx].fitted_spectral_contrast,

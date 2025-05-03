@@ -315,7 +315,7 @@ function process_scans!(
     pmz = [getMz(precursors)[pid] for pid in precursors_passing]
     isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
 
-   
+    
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -673,7 +673,6 @@ function get_isotopes_captured!(chroms::DataFrame,
                 mz = prec_mz[prec_id]
                 charge = prec_charge[prec_id]
                 sulfur = sulfur_count[prec_id]
-
                 scan_id = scan_idx[i]
                 scan_mz = coalesce(centerMz[scan_id], zero(Float32))::Float32
                 window_width = coalesce(isolationWidthMz[scan_id], zero(Float32))::Float32
@@ -970,3 +969,23 @@ function get_summary_scores!(
 
 end
 
+function parseMs1Psms(
+    psms::DataFrame,
+    spectra::MassSpecData
+)
+    rts = getRetentionTimes(spectra)
+    rts = zeros(Float32, size(psms, 1))
+    for i in range(1, size(psms, 1))
+        scan_idx = psms[i, :scan_idx]
+        rts[i] = getRetentionTime(spectra, scan_idx)
+    end
+    psms[!,:rt] = rts
+
+    #Group the psms by precursor_idx and return apex scan 
+    return combine(groupby(psms,:precursor_idx)) do group
+        # Find the row with the maximum value
+        idx = argmax(group[!, :weight])
+        # Return that row as a 1-row DataFrame
+        return group[idx, :]
+    end
+end
