@@ -261,7 +261,7 @@ function ParseSpecLib(params_path::String)
     test_lib.libdf[!,:prec_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
     #Now need to recalculate masses for precursors and fragments with the new modifications 
     # Create precursor indices
-    create_precursor_idx!(test_lib.libdf)
+    #create_precursor_idx!(test_lib.libdf)
     
     # Calculate m/z and sulfur count
     mods_to_sulfur_diff = Dict{String, Int8}()
@@ -324,6 +324,7 @@ function ParseSpecLib(params_path::String)
         "frag_series_number" => "FragmentSeriesNumber",
         "frag_loss_type" => "FragmentLossType",
         "entrapment_group_id" => "EntrapmentGroupId",
+        "precursor_idx" => "PrecursorIdx",
     )
     # Filter to only include columns that exist in the dataframe
     existing_columns = filter(col -> col in names(entrapment_lib), keys(column_mapping))
@@ -337,7 +338,7 @@ function ParseSpecLib(params_path::String)
     println("length(duplicateed_seqs), ", length(duplicated_seqs))
     filter!(x->replace(x.PeptideSequence, "I"=>"L") ∉ duplicated_seqs, entrapment_lib);
     Arrow.write("/Users/nathanwamsley/Desktop/test_lib.arrow", entrapment_lib[!,collect(values(column_mapping))]);
-    CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_jmod.tsv", 
+    CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_paired_jmod.tsv", 
     entrapment_lib[!,collect(values(column_mapping))]; delim = '\t')
     #=
     histogram(test_table[test_table[!,:EntrapmentGroupId].==0,:PrecursorCharge], alpha = 0.5, label = "orig")

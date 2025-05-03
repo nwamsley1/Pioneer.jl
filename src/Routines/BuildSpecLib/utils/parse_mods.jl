@@ -1057,7 +1057,7 @@ end
 function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment_group_id::Integer)
     # Make a deep copy and sort by precursor_idx
     shuffle_libdf = deepcopy(speclibdf.libdf)
-    pair_id = UInt32(size(shuffle_libdf, 1) + 1)
+    #pair_id = UInt32(size(shuffle_libdf, 1) + 1)
     sort!(shuffle_libdf, :modified_sequence)
     shuffle_libdf[!,:entrapment_group_id] .= UInt8(entrapment_group_id)
     # Create a Set of forward sequences for O(1) lookup
@@ -1103,8 +1103,7 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
         shuffle_libdf[idx, :sequence] = current_shuffled_seq
         shuffle_libdf[idx, :structural_mods] = current_shuffled_mods
         shuffle_libdf[idx, :is_decoy] = false
-        shuffle_libdf[idx, :pair_id] = pair_id
-        pair_id += one(UInt32)
+        #shuffle_libdf[idx, :pair_id] = row.pair_id
     end
     
     # Filter out failed shuffles and append

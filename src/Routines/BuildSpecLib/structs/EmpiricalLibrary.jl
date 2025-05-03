@@ -246,7 +246,12 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         
         # Reorder columns to put precursor_idx first
         new_df = select(new_df, :precursor_idx, Not(:precursor_idx))
-        new_df[!,:pair_id] = collect(range(one(UInt32), UInt32(size(new_df, 1))))
+
+        #unique_peptides = unique(new_df.modified_sequence)
+        #peptide_dict = Dict(key => UInt32(i) for (i, key) in enumerate(unique_peptides))
+        #new_df[!,:pair_id]= new_df[!,:precursor_idx] #UInt32[peptide_dict[key] for key in new_df.modified_sequence]
+        #Dict(zip(unique_precursors, new_df.precursor_idx))
+        #new_df[!,:pair_id] = new_df[!,:precursor_idx] #collect(range(one(UInt32), UInt32(size(new_df, 1))))
         new(new_df)
     end
 end
