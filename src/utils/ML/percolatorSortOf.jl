@@ -82,6 +82,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                 num_round = num_round,
                 colsample_bytree = colsample_bytree,
                 colsample_bynode = colsample_bynode,
+                scale_pos_weight = sum(psms_train_itr.decoy) / sum(psms_train_itr.target),
                 gamma = gamma,
                 max_depth = max_depth,
                 eta = eta,
@@ -121,6 +122,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     psms[!,:prob] = prob_estimates
     dropVectorColumns!(psms) # avoids writing issues
 
+    transform!(
+        groupby(psms, :precursor_idx),
+        :prob => (p -> maximum(p)) => :global_prob
+    )
+    
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
         fpath = file_paths[ms_file_idx[:ms_file_idx]]
         writeArrow(fpath, gpsms)
@@ -164,6 +170,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         bst::Booster,
         features::Vector{Symbol};
         dropVectorCols::Bool = false)
+
+        prec_to_global_score = Dictionary{UInt32, Float32}()
     
         #Reset counts for new scores
         for (key, value) in pairs(prec_to_best_score_new)
@@ -216,6 +224,17 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                             is_best_decoy = psms_subset.decoy[i]))
                 end
             end
+
+            # update global prob
+            for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
+                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                prob = probs[i]
+                if haskey(prec_to_global_score, precursor_idx)
+                    prec_to_global_score[precursor_idx] = max(prob, prec_to_global_score[precursor_idx])
+                else
+                    insert!(prec_to_global_score, precursor_idx, prob)
+                end
+            end
         end
     
         for file_path in file_paths
@@ -246,7 +265,16 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            if dropVectorCols
+            # update global prob
+            psms_subset.global_prob = zeros(Float32, size(psms_subset, 1))
+            for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
+                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                if haskey(prec_to_global_score, precursor_idx)
+                    psms_subset[i,:global_prob] = prec_to_global_score[precursor_idx]
+                end
+            end
+
+            if dropVectorCols # last iteration
                 Arrow.write(file_path, dropVectorColumns!(psms_subset))
             else
                 Arrow.write(file_path, convert_subarrays(psms_subset))
@@ -325,6 +353,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             #monotone_constraints = monotone_constraints,
                             colsample_bytree = colsample_bytree, 
                             colsample_bynode = colsample_bynode,
+                            scale_pos_weight = sum(psms_train_itr.decoy) / sum(psms_train_itr.target),
                             gamma = gamma, 
                             max_depth=max_depth, 
                             eta = eta, 

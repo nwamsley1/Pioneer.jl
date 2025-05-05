@@ -80,13 +80,14 @@ function writePrecursorCSV(
     function makeWideFormat(
         longdf::DataFrame,
         normalized::Bool)
+        cols = [:species,:accession_numbers,:sequence,:charge,:structural_mods,:isotopic_mods,:precursor_idx,:target,:global_qval]
         if normalized
             return unstack(longdf,
-            [:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],
+            cols,
             :file_name,:peak_area_normalized)
         else
             return unstack(longdf,
-            [:species,:accession_numbers,:sequence,:structural_mods,:isotopic_mods,:precursor_idx,:target],
+            cols,
             :file_name,:peak_area)
         end
     end
@@ -103,10 +104,12 @@ function writePrecursorCSV(
     wide_columns = ["species"
     "accession_numbers"
     "sequence"
+    "charge"
     "structural_mods"
     "isotopic_mods"
     "precursor_idx"
-    "target"]
+    "target"
+    "global_qval"]
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_precursors_path,"w") do io1

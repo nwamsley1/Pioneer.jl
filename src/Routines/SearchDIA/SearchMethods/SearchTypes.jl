@@ -188,6 +188,7 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     irt_errors::Dict{Int64, Float32}
     irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
+    global_pg_score_to_qval::Ref{Any}
 
     
     # Configuration
