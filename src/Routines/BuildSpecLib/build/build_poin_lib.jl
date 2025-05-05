@@ -522,9 +522,6 @@ function fragFilter(
             return false
         end
     end
-    if frag_index < b_start
-        return false
-    end
     if frag_charge > max_frag_charge
         return false
     end

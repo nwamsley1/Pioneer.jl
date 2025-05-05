@@ -21,6 +21,7 @@ Output:
 function BuildSpecLib(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
+    Random.seed!(1844)
     # Initialize timing dictionary for performance tracking
     #params_path = "/Users/n.t.wamsley/RIS_temp/koina_testing/config.json"
     timings = Dict{String, Any}()
@@ -217,40 +218,56 @@ function BuildSpecLib(params_path::String)
                         joinpath(lib_dir, "spline_knots.jld2");
                         spl_knots
                     )
+                    ion_dictionary = get_altimeter_ion_dict(joinpath(@__DIR__, "../../data/ion_dictionary.txt"))
+
+                    parse_altimeter_fragments(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        ion_dictionary,
+                        10000,
+                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+
                 catch
                     println("No spline knots. static library")
-                end
-                # Process ion annotations
-                ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
-                frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
 
-                ion_annotation_dict = parse_koina_fragments(
-                    precursors_table,
-                    fragments_table,
-                    frag_annotation_type,
-                    ion_annotation_set,
-                    frag_name_to_idx,
-                    10000,
-                    joinpath(@__DIR__, "../../data/immonium.txt"),
-                    lib_dir,
-                    Dict{String, Int8}(),
-                    iso_mod_to_mass,
-                    koina_model_type
-                )
+                    # Process ion annotations
+                    ion_annotation_set = get_ion_annotation_set(fragments_table[:annotation])
+                    frag_name_to_idx = Dict(ion => UInt16(i) for (i, ion) in enumerate(ion_annotation_set))
+
+                    ion_annotation_dict = parse_koina_fragments(
+                        precursors_table,
+                        fragments_table,
+                        frag_annotation_type,
+                        ion_annotation_set,
+                        frag_name_to_idx,
+                        10000,
+                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        lib_dir,
+                        Dict{String, Int8}(),
+                        iso_mod_to_mass,
+                        koina_model_type
+                    )
+                end
+                
 
                 # Process precursor table
                 N_FRAGMENTS = length(fragments_table[:mz])
                 N_PRECURSORS = length(precursors_table[:mz])
-                N_TARGETS = sum(precursors_table[:decoy])
-                N_DECOYS = N_PRECURSORS - N_TARGETS
+                N_DECOYS  = sum(precursors_table[:decoy])
+                N_TARGETS = N_PRECURSORS - N_DECOYS
                 fragments_table = nothing
                 precursors_table = DataFrame(precursors_table)
                 rename!(precursors_table, [
                     :accession_number => :accession_numbers,
                     :precursor_charge => :prec_charge,
                     :decoy => :is_decoy,
-                    :mods => :structural_mods,
-                    :isotope_mods => :isotopic_mods
+                    :mods => :structural_mods
                 ])
 
                 # Convert types
@@ -328,6 +345,7 @@ function BuildSpecLib(params_path::String)
     rm(joinpath(lib_dir,"fragments_table.arrow"), force=true);
     rm(joinpath(lib_dir,"prec_to_frag.arrow"), force=true);
     rm(joinpath(lib_dir,"precursors.arrow"), force=true);
+    GC.gc()
 
     return nothing
 end

@@ -17,7 +17,8 @@ struct ScoringSearchResults <: SearchResults
     # Paths to results
     best_traces::Dict{Int64, Float32}
     precursor_pep_spline::Base.Ref{<:UniformSpline}  # Spline for PEP calculation
-    precursor_qval_interp::Base.Ref{Any} # Interpolation for q-values
+    precursor_global_qval_interp::Base.Ref{Any} # Interpolation for global q-values
+    precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
     pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
     merged_quant_path::String # Path to merged quantification results
 end
@@ -71,6 +72,7 @@ function init_search_results(::ScoringSearchParameters, search_context::SearchCo
     return ScoringSearchResults(
         Dict{Int64, Float32}(),  # best_traces
         Ref{UniformSpline}(),  # precursor_pep_spline
+        Ref(undef),  # precursor_global_qval_interp
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # pg_qval_interp
         joinpath(getDataOutDir(search_context), "merged_quant.arrow")
@@ -166,34 +168,36 @@ function summarize_results!(
         sort_and_filter_quant_tables(
             getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path,
+            :global_prob,
             best_traces
         )
 
-        # Step 4: Merge PSM Scores
-        @info "Merging PSM scores..."
+        # Step 4: Merge PSM Scores by max_prob
+        @info "Merging PSM scores for global q-value estimation..."
         merge_sorted_psms_scores(
             getSecondPassPsms(getMSData(search_context)),
-            results.merged_quant_path
+            results.merged_quant_path,
+            :global_prob
         )
 
-        # Step 5: Calculate Error Probabilities
-        @info "Calculating error probabilities..."
+        # Step 5: Create q-value interpolation
+        @info "Calculating global q-values..."
         # Create PEP spline
-        results.precursor_pep_spline[] = get_pep_spline(
+        #results.precursor_pep_spline[] = get_pep_spline(
+        #    results.merged_quant_path,
+        #    :global_prob,
+        #    min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
+        #    n_spline_bins = 5
+        #)
+        results.precursor_global_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
-            :prob,
-            min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
-            n_spline_bins = 5
-        )
-        # Create q-value interpolation
-        results.precursor_qval_interp[] = get_qvalue_spline(
-            results.merged_quant_path,
-            :prob,
+            :global_prob,
+            true; # use unique precursors
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
         )
 
-        # Step 6: Filter PSMs
-        @info "Filtering passing PSMs..."
+        # Step 6: Filter PSMs by global q-value
+        @info "Filtering passing PSMs by global q-value threshold..."
         # Apply q-value threshold and store passing PSMs
         passing_psms_paths = getSecondPassPsms(getMSData(search_context))
         get_psms_passing_qval(
@@ -201,15 +205,62 @@ function summarize_results!(
             getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
             passing_psms_paths,
-            results.precursor_pep_spline[],
-            results.precursor_qval_interp[],
-            params.q_value_threshold
+            #results.precursor_pep_spline[],
+            results.precursor_global_qval_interp[],
+            params.q_value_threshold,
+            :global_prob,
+            :global_qval
         )
 
-        # Step 7: Score Protein Groups
+
+        # Step 7: Merge PSM Scores by prob
+        @info "Merging PSM scores for run-specific q-value estimation..."
+        merge_sorted_psms_scores(
+            getPassingPsms(getMSData(search_context)),
+            results.merged_quant_path,
+            :prob
+        )
+
+        # Step 8: Calculate Error Probabilities
+        @info "Calculating run-specific q-values..."
+        # Create PEP spline
+        #results.precursor_pep_spline[] = get_pep_spline(
+        #    results.merged_quant_path,
+        #    :prob,
+        #    min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
+        #    n_spline_bins = 5
+        #)
+        # Create q-value interpolation
+        results.precursor_qval_interp[] = get_qvalue_spline(
+            results.merged_quant_path,
+            :prob,
+            false; # use all precursors
+            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
+        )
+
+        # Step 9: Filter PSMs
+        @info "Filtering passing PSMs by run-specific q-value threshold..."
+        # Apply q-value threshold and store passing PSMs
+        passing_psms_paths = getPassingPsms(getMSData(search_context))
+        get_psms_passing_qval(
+            getPrecursors(getSpecLib(search_context)),
+            getPassingPsms(getMSData(search_context)),
+            passing_psms_folder,
+            passing_psms_paths,
+            #results.precursor_pep_spline[],
+            results.precursor_qval_interp[],
+            params.q_value_threshold,
+            :prob,
+            :run_specific_qval
+        )
+
+
+
+
+        # Step 10: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores
-        sorted_pg_score_path, protein_inference_dict = get_protein_groups(
+        protein_inference_dict = get_protein_groups(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
@@ -224,10 +275,49 @@ function summarize_results!(
             getSequence(getPrecursors(getSpecLib(search_context))),
             getIsDecoy(getPrecursors(getSpecLib(search_context)))
         )
-        # Create protein group q-value interpolation
-        search_context.pg_score_to_qval[] = get_qvalue_spline(
-            sorted_pg_score_path,
+
+        # Merge protein groups by global prob
+        sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+        merge_sorted_protein_groups(
+            passing_proteins_folder,
+            sorted_pg_scores_path,
+            :global_pg_score,
+            N = 1000000
+        )
+
+        # Create protein group global q-value interpolation
+        search_context.global_pg_score_to_qval[] = get_qvalue_spline(
+            sorted_pg_scores_path,
+            :global_pg_score,
+            true; # use unique protein groups
+            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+        )
+
+        # Filter proteins by global q-value
+        get_proteins_passing_qval(
+            passing_proteins_folder,
+            search_context.global_pg_score_to_qval[],
+            params.q_value_threshold,
+            :global_pg_score,
+            :global_qval
+        )
+
+        # Merge protein groups by run-specific prob
+        if isfile(sorted_pg_scores_path)
+            rm(sorted_pg_scores_path)
+        end
+        merge_sorted_protein_groups(
+            passing_proteins_folder,
+            sorted_pg_scores_path,
             :pg_score,
+            N = 1000000
+        )
+
+        # Create protein group run-specific q-value interpolation
+        search_context.pg_score_to_qval[] = get_qvalue_spline(
+            sorted_pg_scores_path,
+            :pg_score,
+            false; # use all protein groups
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
