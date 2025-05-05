@@ -147,7 +147,10 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     complex_scored_psms::Vector{ComplexScoredPSM{Float32, Float16}}
     complex_unscored_psms::Vector{ComplexUnscoredPSM{Float32}}
     complex_spectral_scores::Vector{SpectralScoresComplex{Float16}}
-    
+    ms1_scored_psms::Vector{Ms1ScoredPSM{Float32, Float16}}
+    ms1_unscored_psms::Vector{Ms1UnscoredPSM{Float32}}
+    ms1_spectral_scores::Vector{SpectralScoresMs1{Float16}}
+
     # Working arrays
     Hs::SparseArray
     prec_ids::Vector{UInt32}
@@ -300,12 +303,20 @@ getIdToCol(s::SearchDataStructures) = s.id_to_col
 getPrecursorScores(s::SearchDataStructures) = s.prec_count
 getIonTemplates(s::SearchDataStructures) = s.ion_templates
 getIsoSplines(s::SearchDataStructures) = s.iso_splines
+
 getScoredPsms(s::SearchDataStructures) = s.scored_psms
 getUnscoredPsms(s::SearchDataStructures) = s.unscored_psms
 getSpectralScores(s::SearchDataStructures) = s.spectral_scores
+
 getComplexScoredPsms(s::SearchDataStructures) = s.complex_scored_psms
 getComplexUnscoredPsms(s::SearchDataStructures) = s.complex_unscored_psms
 getComplexSpectralScores(s::SearchDataStructures) = s.complex_spectral_scores
+
+getMs1ScoredPsms(s::SearchDataStructures) = s.ms1_scored_psms
+getMs1UnscoredPsms(s::SearchDataStructures) = s.ms1_unscored_psms
+getMs1SpectralScores(s::SearchDataStructures) = s.ms1_spectral_scores
+
+
 getHs(s::SearchDataStructures) = s.Hs
 getPrecIds(s::SearchDataStructures) = s.prec_ids
 getWeights(s::SearchDataStructures) = s.weights

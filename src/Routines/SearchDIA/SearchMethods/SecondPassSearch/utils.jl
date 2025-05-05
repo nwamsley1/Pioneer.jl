@@ -25,7 +25,8 @@ function perform_second_pass_search(
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     params::SecondPassSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::MS2CHROM
 )
     thread_tasks = partition_scans(spectra, Threads.nthreads())
 
@@ -41,7 +42,40 @@ function perform_second_pass_search(
                 search_context,
                 search_data,
                 params,
-                ms_file_idx
+                ms_file_idx,
+                MS2CHROM()
+            )
+        end
+    end
+    
+    return vcat(fetch.(tasks)...)
+end
+
+function perform_second_pass_search(
+    spectra::MassSpecData,
+    rt_index::retentionTimeIndex,
+    search_context::SearchContext,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    precursors_passing::Vector{UInt32},
+    ::MS1CHROM
+)
+    thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 1)
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            thread_id = first(thread_task)
+            search_data = getSearchData(search_context)[thread_id]
+            
+            return process_scans!(
+                last(thread_task),
+                spectra,
+                rt_index,
+                search_context,
+                search_data,
+                params,
+                ms_file_idx,
+                precursors_passing,
+                MS1CHROM()
             )
         end
     end
@@ -73,7 +107,8 @@ function process_scans!(
     search_context::SearchContext,
     search_data::SearchDataStructures,
     params::SecondPassSearchParameters,
-    ms_file_idx::Int64
+    ms_file_idx::Int64,
+    ::MS2CHROM
 )
     # Get working arrays
     Hs = getHs(search_data)
@@ -233,6 +268,202 @@ function process_scans!(
         reset_arrays!(search_data, Hs)
     end
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
+end
+
+"""
+    build_chromatograms(spectra::MassSpecData, scan_range::Vector{Int64},
+                       precursors_passing::Set{UInt32}, rt_index::retentionTimeIndex,
+                       search_context::SearchContext, search_data::SearchDataStructures,
+                       params::IntegrateChromatogramSearchParameters,
+                       ms_file_idx::Int64) -> DataFrame
+
+Build chromatograms for a range of scans with RT bin caching.
+
+# Process
+1. Tracks RT bins for efficient transition selection
+2. Selects transitions based on RT windows
+3. Matches peaks and performs deconvolution
+4. Records chromatogram points with weights
+"""
+function process_scans!(
+    scan_range::Vector{Int64},
+    spectra::MassSpecData,
+    rt_index::retentionTimeIndex,
+    search_context::SearchContext,
+    search_data::SearchDataStructures,
+    params::SecondPassSearchParameters,
+    ms_file_idx::Int64,
+    precursors_passing::Vector{UInt32},
+    ::MS1CHROM
+)
+    # Initialize working arrays
+    mem = MassErrorModel(
+        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+        (12.0f0, 12.0f0)
+    )
+    Hs = getHs(search_data)
+    weights = getTempWeights(search_data)
+    precursor_weights = getPrecursorWeights(search_data)
+    residuals = getResiduals(search_data)
+    ion_templates = Vector{Isotope{Float32}}(undef, 100000)
+    ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    precursors = getPrecursors(getSpecLib(search_context))
+    seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
+    pids = [pid for pid in precursors_passing]
+    pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
+    pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+    isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+
+    
+    # RT bin tracking state
+    irt_start, irt_stop = 1, 1
+    ion_idx = 0
+    last_val = 0
+    precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
+    prec_temp_size = 0
+    irt_tol = getIrtErrors(search_context)[ms_file_idx]
+    cycle_idx = 0
+    i = 1
+    for scan_idx in scan_range
+        
+        ((scan_idx<1) | (scan_idx > length(spectra))) && continue
+        # Process MS1 scans
+        #msn = getMsOrder(spectra, scan_idx)
+        #msn ∉ one(UInt8) && continue
+        if getMsOrder(spectra, scan_idx) != 1
+            continue
+        else
+            cycle_idx += 1
+        end
+        # Calculate RT window
+        irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
+        irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
+        irt_stop = min(searchsortedlast(rt_index.rt_bins, irt + irt_tol, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
+
+        # Update transitions if window changed
+        prec_temp_size = 0
+        ion_idx = 0
+        for rt_bin_idx in irt_start:irt_stop
+            precs = rt_index.rt_bins[rt_bin_idx].prec
+            for i in 1:length(precs)
+                prec_idx = first(precs[i])
+                if prec_idx in precursors_passing
+                    prec_temp_size += 1
+                    if prec_temp_size > length(precs_temp)
+                        append!(precs_temp, Vector{UInt32}(undef, 1000))
+                    end
+                    precs_temp[prec_temp_size] = prec_idx
+                    for iso in isotopes_dict[prec_idx]
+                        ion_idx += 1
+                        ion_templates[ion_idx] = iso
+                    end
+                end
+            end
+        end
+        sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
+        # Match peaks
+        nmatches, nmisses = matchPeaks!(
+            ion_matches,
+            ion_misses,
+            ion_templates,
+            ion_idx,
+            getMzArray(spectra, scan_idx),
+            getIntensityArray(spectra, scan_idx),
+            mem,
+            getHighMz(spectra, scan_idx),
+            UInt32(scan_idx),
+            UInt32(ms_file_idx)
+        )
+
+        #nmisses -= 1
+        sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
+        #println("nmatches $nmatches nmisses $nmisses")
+        # Process matches
+        if nmatches > 2
+            i += 1
+            buildDesignMatrix!(
+                Hs,
+                ion_matches,
+                ion_misses,
+                nmatches,
+                nmisses,
+                getIdToCol(search_data)
+            )
+
+            # Handle array resizing
+            if getIdToCol(search_data).size > length(weights)
+                new_entries = getIdToCol(search_data).size - length(weights) + 1000
+                resize!(weights, length(weights) + new_entries)
+                resize!(getSpectralScores(search_data), length(getSpectralScores(search_data)) + new_entries)
+                append!(getUnscoredPsms(search_data), [eltype(getUnscoredPsms(search_data))() for _ in 1:new_entries])
+
+                resize!(getMs1SpectralScores(search_data), length(getMs1SpectralScores(search_data)) + new_entries)
+                append!(getMs1UnscoredPsms(search_data), [eltype(getMs1UnscoredPsms(search_data))() for _ in 1:new_entries])
+            end
+
+            # Initialize weights
+            for i in 1:getIdToCol(search_data).size
+                weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]] = 
+                    precursor_weights[getIdToCol(search_data).keys[i]]
+            end
+
+            # Solve deconvolution
+            initResiduals!(residuals, Hs, weights)
+            solveHuber!(
+                Hs,
+                residuals,
+                weights,
+                getHuberDelta(search_context),
+                params.lambda,
+                params.max_iter_newton,
+                params.max_iter_bisection,
+                params.max_iter_outer,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
+                search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
+                search_context.deconvolution_stop_tolerance[],
+                params.max_diff,
+                params.reg_type,#NoNorm()
+            )
+            # Update precursor weights
+            for i in 1:getIdToCol(search_data).size
+                precursor_weights[getIdToCol(search_data).keys[i]] = 
+                    weights[getIdToCol(search_data)[getIdToCol(search_data).keys[i]]]
+            end
+
+            getDistanceMetrics(weights, residuals, Hs, getMs1SpectralScores(search_data))
+
+            ScoreFragmentMatches!(
+                getMs1UnscoredPsms(search_data),
+                getIdToCol(search_data),
+                ion_matches,
+                nmatches,
+                getMassErrorModel(search_context, ms_file_idx),
+                last(params.min_topn_of_m)
+                )
+        end
+
+        last_val = Score!(
+            getMs1ScoredPsms(search_data),
+            getMs1UnscoredPsms(search_data),
+            getMs1SpectralScores(search_data),
+            weights,
+            getIdToCol(search_data),
+            cycle_idx,
+            last_val,
+            Hs.n,
+            scan_idx;
+            block_size = 500000
+        )
+        # Reset arrays
+        for i in 1:Hs.n
+            getMs1UnscoredPsms(search_data)[i] = eltype(getMs1UnscoredPsms(search_data))()
+        end
+        reset!(getIdToCol(search_data))
+        reset!(Hs)
+    end
+
+    return DataFrame(@view(getMs1ScoredPsms(search_data)[1:last_val]))
 end
 
 
@@ -442,7 +673,6 @@ function get_isotopes_captured!(chroms::DataFrame,
                 mz = prec_mz[prec_id]
                 charge = prec_charge[prec_id]
                 sulfur = sulfur_count[prec_id]
-
                 scan_id = scan_idx[i]
                 scan_mz = coalesce(centerMz[scan_id], zero(Float32))::Float32
                 window_width = coalesce(isolationWidthMz[scan_id], zero(Float32))::Float32
@@ -739,4 +969,26 @@ function get_summary_scores!(
 
 end
 
+function parseMs1Psms(
+    psms::DataFrame,
+    spectra::MassSpecData
+)
+    if !hasproperty(psms, :precursor_idx) || (size(psms, 1) == 0)
+        return DataFrame()
+    end
+    rts = getRetentionTimes(spectra)
+    rts = zeros(Float32, size(psms, 1))
+    for i in range(1, size(psms, 1))
+        scan_idx = psms[i, :scan_idx]
+        rts[i] = getRetentionTime(spectra, scan_idx)
+    end
+    psms[!,:rt] = rts
 
+    #Group the psms by precursor_idx and return apex scan 
+    return combine(groupby(psms,:precursor_idx)) do group
+        # Find the row with the maximum value
+        idx = argmax(group[!, :weight])
+        # Return that row as a 1-row DataFrame
+        return group[idx, :]
+    end
+end

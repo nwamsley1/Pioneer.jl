@@ -40,6 +40,7 @@ Results container for second pass search.
 """
 struct SecondPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}          # PSMs for each file
+    ms1_psms::Base.Ref{DataFrame}
 end
 
 """
@@ -77,6 +78,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
     isotope_tracetype::I
     prec_estimation::P
 
+    # Collect MS1 data?
+    ms1_scoring::Bool
+
     function SecondPassSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
         global_params = params.global_settings
@@ -108,6 +112,7 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             @warn "Warning. Reg type `$reg_type` not recognized. Using NoNorm. Accepted types are `none`, `l1`, `l2`"
         end
 
+        ms1_scoring = Bool(global_params.ms1_scoring)
         new{typeof(prec_estimation), typeof(isotope_trace_type)}(
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(min_fraction_transmitted),
@@ -134,7 +139,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
             Int64(frag_params.max_rank),
             
             isotope_trace_type,
-            prec_estimation
+            prec_estimation,
+
+            ms1_scoring
         )
     end
 end
@@ -150,6 +157,7 @@ function init_search_results(::P, search_context::SearchContext) where {P<:Secon
     second_pass_psms = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
+        DataFrame(),
         DataFrame()
     )
 end
@@ -186,10 +194,26 @@ function process_file!(
             rt_index,
             search_context,
             params,
-            ms_file_idx
+            ms_file_idx,
+            MS2CHROM()
         )
+        if params.ms1_scoring
+            # Perform MS1 search
+            ms1_psms = perform_second_pass_search(
+                spectra,
+                rt_index,
+                search_context,
+                params,
+                ms_file_idx,
+                unique(psms[!,:precursor_idx]),
+                MS1CHROM()
+            )
+        else
+            ms1_psms = DataFrame()
+        end
 
         results.psms[] = psms
+        results.ms1_psms[] = ms1_psms
 
     catch e
         @warn "Second pass search failed" ms_file_idx exception=e
@@ -210,7 +234,11 @@ function process_search_results!(
     try
         # Get PSMs from results container
         psms = results.psms[]
-        
+        ms1_psms = results.ms1_psms[]
+        ms1_psms = parseMs1Psms( #Reduce to max intensity scan per precursor_idx
+            ms1_psms,
+            spectra
+        )
         # Add basic search columns (RT, charge, target/decoy status)
         add_second_search_columns!(psms, 
             getRetentionTimes(spectra),
@@ -256,11 +284,21 @@ function process_search_results!(
                 getRtIrtModel(search_context, ms_file_idx)
             );
         end
-
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-
-        # Add additional features for final analysis
+        #Need to remove inf gof_ms1?
+        #Join MS1 PSMs to MS2 PSMs
+        if size(ms1_psms, 1) > 0
+            psms = leftjoin(
+                psms,
+                ms1_psms,
+                on = :precursor_idx,
+                makeunique = true,
+                renamecols = "" => "_ms1"
+            )
+            psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
+        end
+        #Add additional features for final analysis
         add_features!(
             psms,
             search_context,

@@ -71,12 +71,43 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     scan_idx::UInt32
 end
 
+struct Ms1ScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
+    #H is "high precision"
+    #L is "low precision"
+
+    m0::Bool #Highest ranking predicted framgent that was observed
+    n_iso::UInt8
+    big_iso::UInt8 #How many of the topN predicted fragments were observed. 
+    m0_error::Union{Missing,L}
+    error::L
+
+    #Spectral Simmilarity
+    spectral_contrast::L
+    fitted_spectral_contrast::L
+    gof::L
+    max_matched_residual::L
+    max_unmatched_residual::L 
+    fitted_manhattan_distance::L 
+    matched_ratio::L 
+    #entropy_score::L
+    weight::H
+
+    #Non-scores/Labels
+    precursor_idx::UInt32
+    ms_file_idx::UInt32
+    scan_idx::UInt32
+end
+
 function growScoredPSMs!(scored_psms::Vector{SimpleScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     scored_psms = append!(scored_psms, Vector{SimpleScoredPSM{H,L}}(undef, block_size))
 end
 
 function growScoredPSMs!(scored_psms::Vector{ComplexScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     scored_psms = append!(scored_psms, Vector{ComplexScoredPSM{H,L}}(undef, block_size))
+end
+
+function growScoredPSMs!(scored_psms::Vector{Ms1ScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
+    scored_psms = append!(scored_psms, Vector{Ms1ScoredPSM{H,L}}(undef, block_size))
 end
 
 function Score!(scored_psms::Vector{SimpleScoredPSM{H, L}}, 
@@ -266,6 +297,67 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             
             UInt32(unscored_PSMs[i].precursor_idx),
             #UInt32(unscored_PSMs[i].ms_file_idx),
+            UInt32(cycle_idx),
+            UInt32(scan_idx)
+        )
+        last_val += 1
+    end
+    return last_val
+end
+
+function Score!(scored_psms::Vector{Ms1ScoredPSM{H, L}}, 
+                unscored_PSMs::Vector{Ms1UnscoredPSM{H}}, 
+                spectral_scores::Vector{SpectralScoresMs1{L}},
+                weight::Vector{H}, 
+                IDtoCOL::ArrayDict{UInt32, UInt16},
+                cycle_idx::Int64,
+                last_val::Int64,
+                n_vals::Int64,
+                scan_idx::Int64;
+                block_size::Int64 = 10000
+                ) where {L,H<:AbstractFloat}
+
+    start_idx = last_val
+    skipped = 0
+    for i in range(1, n_vals)
+        
+        passing_filter = (
+           (unscored_PSMs[i].m0) == true
+        )&(
+            (unscored_PSMs[i].n_iso) >= 2
+        )&(
+            weight[i] >= 1e-6
+        )
+        #passing_filter = true
+        if !passing_filter #Skip this scan
+            skipped += 1
+            continue
+        end
+
+        if start_idx + i - skipped > length(scored_psms)
+            growScoredPSMs!(scored_psms, block_size);
+        end
+        precursor_idx = UInt32(unscored_PSMs[i].precursor_idx)
+        scores_idx = IDtoCOL[precursor_idx]
+        scored_psms[start_idx + i - skipped] = Ms1ScoredPSM(
+            unscored_PSMs[i].m0,
+            unscored_PSMs[i].n_iso,
+            unscored_PSMs[i].big_iso,
+            L(coalesce(unscored_PSMs[i].m0_error, zero(H))),
+            Float16(log2(unscored_PSMs[i].error + 1e-6)),
+            
+            spectral_scores[scores_idx].spectral_contrast,
+            spectral_scores[scores_idx].fitted_spectral_contrast,
+            spectral_scores[scores_idx].gof,
+            spectral_scores[scores_idx].max_matched_residual,
+            spectral_scores[scores_idx].max_unmatched_residual,
+            spectral_scores[scores_idx].fitted_manhattan_distance,
+            min(spectral_scores[scores_idx].matched_ratio, Float16(10.0)),
+            #spectral_scores[scores_idx].entropy_score,
+            weight[scores_idx],
+
+            
+            UInt32(unscored_PSMs[i].precursor_idx),
             UInt32(cycle_idx),
             UInt32(scan_idx)
         )

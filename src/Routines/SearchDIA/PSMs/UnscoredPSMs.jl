@@ -37,13 +37,30 @@ end
 
 ComplexUnscoredPSM{Float32}() = ComplexUnscoredPSM(UInt8(255), UInt8(255), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), zero(UInt8), Float32(0), zero(UInt8), Float32(0), zero(UInt8), zero(UInt8), Float32(0), UInt32(0), UInt32(0))
 
+struct Ms1UnscoredPSM{T<:AbstractFloat} <: UnscoredPSM{T}
+    m0::Bool #Highest ranking predicted framgent that was observed
+    n_iso::UInt8
+    big_iso::UInt8 #How many of the topN predicted fragments were observed. 
+    m0_error::Union{Missing,T}
+    error::T
+    precursor_idx::UInt32
+end
+
+Ms1UnscoredPSM{Float32}() = Ms1UnscoredPSM(
+    false,
+    zero(UInt8),
+    zero(UInt8),
+    missing,
+    zero(Float32),
+    zero(UInt32)
+)
 
 function ScoreFragmentMatches!(results::Vector{P}, 
                                 IDtoCOL::ArrayDict{UInt32, UInt16}, 
-                                matches::Vector{FragmentMatch{Float32}}, 
+                                matches::Vector{M}, 
                                 nmatches::Int64, 
                                 errdist::MassErrorModel,
-                                 m_rank::Int64) where {P<:UnscoredPSM}
+                                 m_rank::Int64) where {P<:UnscoredPSM,M<:MatchIon}
     for i in range(1, nmatches)
         match = matches[i]
         prec_id = getPrecID(match)
@@ -180,5 +197,36 @@ function ModifyFeatures!(score::ComplexUnscoredPSM{T},  prec_id::UInt32, match::
         error,
         precursor_idx,
         score.ms_file_idx)
+end
+
+function ModifyFeatures!(score::Ms1UnscoredPSM{T},  prec_id::UInt32, match::PrecursorMatch{T}, errdist::MassErrorModel, m_rank::Int64) where {T<:Real}
+    
+    m0 = score.m0
+    n_iso = score.n_iso
+    big_iso = score.big_iso
+    m0_error = score.m0_error
+    error = score.error
+    precursor_idx = prec_id
+
+    n_iso += one(UInt8) 
+    if match.iso_idx > big_iso
+        big_iso = match.iso_idx
+    end
+    ppm_err =  (getMZ(match) - match.observed_mz)/(getMZ(match)/1e6)
+    error += abs(ppm_err)
+    precursor_idx = getPrecID(match)
+    if getIsoIdx(match)==one(UInt8)#Is the m0
+        m0 = true
+        m0_error = ppm_err
+    end
+
+    return Ms1UnscoredPSM{T}(
+        m0,
+        n_iso,
+        big_iso,
+        m0_error,
+        error,
+        precursor_idx
+)
 end
 using SpecialFunctions

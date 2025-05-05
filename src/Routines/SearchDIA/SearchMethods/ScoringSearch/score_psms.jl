@@ -139,9 +139,19 @@ function score_precursor_isotope_traces_in_memory!(
             :log2_intensity_explained,
             :tic,
             :num_scans,
-            :smoothness
+            :smoothness,
+            :rt_diff,
+            :weight_ms1,
+            :gof_ms1,
+            :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1,
+            :fitted_spectral_contrast_ms1,
+            :error_ms1,
+            :m0_error_ms1,
+            :n_iso_ms1,
+            :big_iso_ms1
         ];
-
+        features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
                 :max_prob, 
@@ -290,9 +300,19 @@ function score_precursor_isotope_traces_out_of_memory!(
             :log2_intensity_explained,
             :tic,
             :num_scans,
-            :smoothness
+            :smoothness,
+            :rt_diff,
+            :weight_ms1,
+            :gof_ms1,
+            :max_matched_residual_ms1,
+            :max_unmatched_residual_ms1,
+            :fitted_spectral_contrast_ms1,
+            :error_ms1,
+            :m0_error_ms1,
+            :n_iso_ms1,
+            :big_iso_ms1
         ];
-        
+        features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
                 :max_prob, 
