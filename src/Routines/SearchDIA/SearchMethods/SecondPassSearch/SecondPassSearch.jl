@@ -286,7 +286,7 @@ function process_search_results!(
         end
         # Keep only apex scans for each PSM group
         filter!(x->x.best_scan, psms);
-
+        #Need to remove inf gof_ms1?
         #Join MS1 PSMs to MS2 PSMs
         if size(ms1_psms, 1) > 0
             psms = leftjoin(
