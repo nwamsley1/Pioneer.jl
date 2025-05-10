@@ -95,8 +95,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `fragment_settings.min_log2_ratio` | Float | Minimum log2 ratio of intensities (default: -1.7) |
 | `fragment_settings.min_top_n` | [Int, Int] | Minimum top N matches - [requirement, denominator]. Default: `[2, 3]` |
 | `fragment_settings.n_isotopes` | Int | Number of isotopes for quantification (default: 2, include the M1 and M2 isotopes) |
-| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 0.0002) |
-| `chromatogram.padding` | Int | Number of zeros to pad chromatograms on either side (default: 20) |
+| `chromatogram.smoothing_strength` | Float | Strength of chromatogram smoothing (default: 1e-6) |
+| `chromatogram.padding` | Int | Number of zeros to pad chromatograms on either side (default: 0) |
 | `chromatogram.max_apex_offset` | Int | Maximum allowed apex offset in #scans where the precursor could have been detected between the second-pass search and re-integration with 1 percent FDR precursors (default: 2) |
 
 ### Acquisition Parameters
