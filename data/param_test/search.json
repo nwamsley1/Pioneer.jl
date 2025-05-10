@@ -91,8 +91,8 @@
             "n_isotopes": 2
         },
         "chromatogram": {
-            "smoothing_strength": 0.0002,
-            "padding": 20,
+            "smoothing_strength": 1e-6,
+            "padding": 0,
             "max_apex_offset": 2
         }
     },

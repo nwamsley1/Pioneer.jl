@@ -17,20 +17,26 @@ of Paul Eilers’ 2003 MATLAB function.
 function whitsmddw(x::AbstractVector{Float32},
                    y::AbstractVector{Float32},
                    w::AbstractVector{Float32},
+                   n::Int,
                    λ::Float32 = 0.0002f0;
                    d::Int64=2)
 
+    # create constant‑time views on the active slice
+    xs = @view x[1:n]
+    ys = @view y[1:n]
+    ws = @view w[1:n]
+
     # Build the dth-order differencing matrix
-    D = ddmat(x, d)  # (m-d) x m
+    D = ddmat(xs, d)  # (n-d) x n
 
     # Build weights as a sparse diagonal matrix
-    W = spdiagm(0 => w)  # m x m
+    W = spdiagm(0 => ws)  # n x n
 
     # Form the system M*z = w.*y, where M = (W + λ * D' * D)
     M = W + λ * (D' * D)
 
     # CHOLMODFactorization requires Float64
-    b = convert(Vector{Float64}, w .* y)
+    b = convert(Vector{Float64}, ws .* ys)
 
     # Initialize
     prob = LinearProblem(Symmetric(M), b)
@@ -39,14 +45,13 @@ function whitsmddw(x::AbstractVector{Float32},
     sol = solve(prob, CHOLMODFactorization())
 
     # Downstream requires Float32
-    z = convert(Vector{Float32}, sol.u)
+    z = Float32.(sol.u)
 
     # Don't allow negatives
-    z[z .< 0] .= 0
+    @. z = max(z, 0f0)
 
     return z
 end
-
 
 """
     ddmat(x, d)

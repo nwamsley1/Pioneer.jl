@@ -346,7 +346,7 @@ function process_scans!(
         ion_idx = 0
         for rt_bin_idx in irt_start:irt_stop
             precs = rt_index.rt_bins[rt_bin_idx].prec
-            for i in 1:length(precs)
+            for i in eachindex(precs)
                 prec_idx = first(precs[i])
                 if prec_idx in precursors_passing
                     prec_temp_size += 1
@@ -356,6 +356,9 @@ function process_scans!(
                     precs_temp[prec_temp_size] = prec_idx
                     for iso in isotopes_dict[prec_idx]
                         ion_idx += 1
+                        if ion_idx > length(ion_templates)
+                            append!(ion_templates, Vector{Isotope{Float32}}(undef, 10000))
+                        end
                         ion_templates[ion_idx] = iso
                     end
                 end
