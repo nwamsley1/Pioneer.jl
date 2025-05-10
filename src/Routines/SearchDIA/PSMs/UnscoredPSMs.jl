@@ -217,7 +217,7 @@ function ModifyFeatures!(score::Ms1UnscoredPSM{T},  prec_id::UInt32, match::Prec
     precursor_idx = getPrecID(match)
     if getIsoIdx(match)==one(UInt8)#Is the m0
         m0 = true
-        m0_error = ppm_err
+        m0_error = abs(ppm_err)
     end
 
     return Ms1UnscoredPSM{T}(
