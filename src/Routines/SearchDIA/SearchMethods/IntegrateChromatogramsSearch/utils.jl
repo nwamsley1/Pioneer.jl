@@ -78,6 +78,7 @@ function integrate_precursors(chromatograms::DataFrame,
                 end
 
                 sort!(chrom, :rt, alg = QuickSort)
+                avg_cycle_time = (chrom.rt[end] - chrom.rt[1]) /  length(chrom.rt)
                 first_pos = findfirst(x->x>0.0, chrom[!,:intensity]) # start from first positive weight
                 last_pos = findlast(x->x>0.0, chrom[!,:intensity]) # end at last positive weight
                 isnothing(first_pos) ? continue : nothing
@@ -100,22 +101,21 @@ function integrate_precursors(chromatograms::DataFrame,
                         end
                     end
                     apex_scan = nearest_idx#argmax(chrom[!,:intensity])
-                    #apex_scan = nearest_idx  # Use the index of the nearest scan
                 end
+
                 peak_area[i], new_best_scan[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
                                 b,
                                 u2,
                                 state,
+                                avg_cycle_time,
                                 λ,
                                 n_pad = n_pad,
                                 max_apex_offset = max_apex_offset,
                                 isplot = false
                                 );
-                #if test_print
-                #    println(" i $i")
-                #end
+
                 reset!(state)
             end
             return #chromdf
