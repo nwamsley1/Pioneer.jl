@@ -46,4 +46,6 @@ function importScripts()
     include(joinpath(root_path, "chronologer", "chronologer_prep.jl"))
     include(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
     include(joinpath(root_path, "chronologer", "chronologer_parse.jl"))
+    # Profiling
+    include(joinpath(package_root, "src", "utils", "profile.jl"))
 end
