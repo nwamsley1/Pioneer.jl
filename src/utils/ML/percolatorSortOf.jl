@@ -133,7 +133,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         test_fold_idx::UInt8,
         file_paths::Vector{String},
         bst::Booster,
-        features::Vector{Symbol};
+        features::Vector{Symbol},
+        match_between_runs::Bool;
         dropVectorCols::Bool = false)
 
         prec_to_global_score = Dictionary{UInt32, Float32}()
@@ -154,39 +155,41 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             psms_subset = DataFrame(Arrow.Table(file_path))
             probs = XGBoost.predict(bst, psms_subset[!,features])
             
-            #Update maximum probabilities for tracked precursors 
-            for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
-                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
-                prob = probs[i]
-                key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
-                if haskey(prec_to_best_score_new, key)
-                    max_prob, mean_prob, min_prob, n, best_log2_weights, best_irts, is_best_decoy = prec_to_best_score_new[key]
-                    if max_prob < prob
-                        max_prob = prob
-                        best_log2_weights = log2.(psms_subset.weights[i])
-                        best_irts = psms_subset.irts[i]
-                        is_best_decoy = psms_subset.decoy[i]
+            if match_between_runs
+                #Update maximum probabilities for tracked precursors 
+                for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
+                    if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                    prob = probs[i]
+                    key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
+                    if haskey(prec_to_best_score_new, key)
+                        max_prob, mean_prob, min_prob, n, best_log2_weights, best_irts, is_best_decoy = prec_to_best_score_new[key]
+                        if max_prob < prob
+                            max_prob = prob
+                            best_log2_weights = log2.(psms_subset.weights[i])
+                            best_irts = psms_subset.irts[i]
+                            is_best_decoy = psms_subset.decoy[i]
+                        end
+                        if min_prob > prob
+                            min_prob = prob
+                        end
+                        mean_prob += prob
+                        n += one(UInt16)
+                        prec_to_best_score_new[key] = (max_prob = max_prob, 
+                                                        mean_prob = mean_prob, 
+                                                        min_prob = min_prob, 
+                                                        n = n,
+                                                        best_log2_weights = best_log2_weights,
+                                                        best_irts = best_irts,
+                                                        is_best_decoy = is_best_decoy)
+                    else
+                        insert!(prec_to_best_score_new, key, (max_prob = prob, 
+                                                                mean_prob = prob, 
+                                                                min_prob = prob, 
+                                                                n = one(UInt16),
+                                                                best_log2_weights = log2.(psms_subset.weights[i]),
+                                                                best_irts = psms_subset.irts[i],
+                                                                is_best_decoy = psms_subset.decoy[i]))
                     end
-                    if min_prob > prob
-                        min_prob = prob
-                    end
-                    mean_prob += prob
-                    n += one(UInt16)
-                    prec_to_best_score_new[key] = (max_prob = max_prob, 
-                                                    mean_prob = mean_prob, 
-                                                    min_prob = min_prob, 
-                                                    n = n,
-                                                    best_log2_weights = best_log2_weights,
-                                                    best_irts = best_irts,
-                                                    is_best_decoy = is_best_decoy)
-                else
-                    insert!(prec_to_best_score_new, key, (max_prob = prob, 
-                                                            mean_prob = prob, 
-                                                            min_prob = prob, 
-                                                            n = one(UInt16),
-                                                            best_log2_weights = log2.(psms_subset.weights[i]),
-                                                            best_irts = psms_subset.irts[i],
-                                                            is_best_decoy = psms_subset.decoy[i]))
                 end
             end
 
@@ -205,28 +208,31 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
             probs = XGBoost.predict(bst, psms_subset[!,features])
+            
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
                 psms_subset[i,:prob] = probs[i]
-                key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
-                if haskey(prec_to_best_score_new, key)
-                    max_prob, mean_prob, min_prob, n, best_log2_weights, best_irts, is_best_decoy = prec_to_best_score_new[key]
-                    psms_subset[i,:max_prob] = max_prob
-                    psms_subset[i,:min_prob] = min_prob
-                    if n > 0
-                        psms_subset[i,:mean_prob] = mean_prob/n
-                    else
-                        psms_subset[i,:mean_prob] = zero(Float32)
-                    end
-                    
-                    best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(psms_subset.weights[i]))
-                    best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_irts, psms_subset.irts[i])
+                if match_between_runs
+                    key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
+                    if haskey(prec_to_best_score_new, key)
+                        max_prob, mean_prob, min_prob, n, best_log2_weights, best_irts, is_best_decoy = prec_to_best_score_new[key]
+                        psms_subset[i,:max_prob] = max_prob
+                        psms_subset[i,:min_prob] = min_prob
+                        if n > 0
+                            psms_subset[i,:mean_prob] = mean_prob/n
+                        else
+                            psms_subset[i,:mean_prob] = zero(Float32)
+                        end
+                        
+                        best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(psms_subset.weights[i]))
+                        best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_irts, psms_subset.irts[i])
 
-                    best_irt_at_apex = best_irts[argmax(best_log2_weights)]
-                    psms_subset.best_irt_diff[i] = abs(best_irt_at_apex - psms_subset.irts[i][argmax(psms_subset.weights[i])])
-                    psms_subset.rv_coefficient[i] = rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
-                    psms_subset.is_best_decoy[i] = is_best_decoy
-                    psms_subset.num_runs[i] = n
+                        best_irt_at_apex = best_irts[argmax(best_log2_weights)]
+                        psms_subset.best_irt_diff[i] = abs(best_irt_at_apex - psms_subset.irts[i][argmax(psms_subset.weights[i])])
+                        psms_subset.rv_coefficient[i] = rv_coefficient(best_log2_weights_padded, best_iRTs_padded, weights_padded, iRTs_padded)
+                        psms_subset.is_best_decoy[i] = is_best_decoy
+                        psms_subset.num_runs[i] = n
+                    end
                 end
             end
 
@@ -338,7 +344,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 test_fold_idx,
                 file_paths,
                 model,
-                features;
+                features,
+                match_between_runs;
                 dropVectorCols = (train_iter == length(iter_scheme)) && (test_fold_idx == unique_cv_folds[end]) # remove on last iteration
             )
             update(pbar)
