@@ -57,9 +57,10 @@ function perform_second_pass_search(
     search_context::SearchContext,
     params::SecondPassSearchParameters,
     ms_file_idx::Int64,
-    precursors_passing::Vector{UInt32},
+    precursors_passing::Set{UInt32},
+    isotopes_dict::UnorderedDictionary{UInt32, Vector{Isotope{T}}},
     ::MS1CHROM
-)
+) where {T<:AbstractFloat}
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 1)
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -75,6 +76,7 @@ function perform_second_pass_search(
                 params,
                 ms_file_idx,
                 precursors_passing,
+                isotopes_dict,
                 MS1CHROM()
             )
         end
@@ -293,13 +295,14 @@ function process_scans!(
     search_data::SearchDataStructures,
     params::SecondPassSearchParameters,
     ms_file_idx::Int64,
-    precursors_passing::Vector{UInt32},
+    precursors_passing::Set{UInt32},
+    isotopes_dict::UnorderedDictionary{UInt32, Vector{Isotope{T}}},
     ::MS1CHROM
-)
+) where {T<:AbstractFloat}
     # Initialize working arrays
     mem = MassErrorModel(
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (12.0f0, 12.0f0)
+        (6.0f0, 6.0f0)
     )
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
@@ -309,12 +312,7 @@ function process_scans!(
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
-    seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
-    pids = [pid for pid in precursors_passing]
-    pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
-    pmz = [getMz(precursors)[pid] for pid in precursors_passing]
-    isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
-
+    decoys = getIsDecoy(precursors)
     
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -325,6 +323,7 @@ function process_scans!(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     cycle_idx = 0
     i = 1
+    targets, decoys = 0, 0
     for scan_idx in scan_range
         
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
@@ -336,6 +335,9 @@ function process_scans!(
         else
             cycle_idx += 1
         end
+        #if rand() >= 0.05
+        #    continue
+        #end
         # Calculate RT window
         irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
@@ -351,11 +353,14 @@ function process_scans!(
                 if prec_idx in precursors_passing
                     prec_temp_size += 1
                     if prec_temp_size > length(precs_temp)
-                        append!(precs_temp, Vector{UInt32}(undef, 1000))
+                        append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
                     end
                     precs_temp[prec_temp_size] = prec_idx
                     for iso in isotopes_dict[prec_idx]
                         ion_idx += 1
+                        if ion_idx > length(ion_templates)
+                            append!(ion_templates, Vector{Isotope{Float32}}(undef, length(ion_templates)))
+                        end
                         ion_templates[ion_idx] = iso
                     end
                 end
@@ -414,16 +419,16 @@ function process_scans!(
                 Hs,
                 residuals,
                 weights,
-                getHuberDelta(search_context),
-                params.lambda,
+                Float32(1e8),#getHuberDelta(search_context),
+                Float32(1.0),#params.lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
-                params.max_iter_outer,
+                1000,#params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                params.reg_type,#NoNorm()
+                L2Norm()#params.reg_type,#NoNorm()
             )
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size

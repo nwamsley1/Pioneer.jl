@@ -57,6 +57,8 @@ results_dir/
 function SearchDIA(params_path::String)
     # Clean up any old file handlers in case the program crashed
     GC.gc()
+     #params_path = normpath("C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralMS1SpeedTest\\OlsenAstralMS1SpeedTest.json.json")
+   
     # === Initialize logging ===
     checkParams(params_path)
     params_string = read(params_path, String)

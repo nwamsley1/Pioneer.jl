@@ -392,10 +392,10 @@ function getDistanceMetrics(w::Vector{T},
         spectral_scores[col] = SpectralScoresMs1(
             Float16(spectral_contrast), #spectral_contrast
             Float16(fitted_spectral_contrast), #fitted_spectral_contrast
-            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks)), #gof
-            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched)),#max_matched_residual
+            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks+ 1e-10)), #gof
+            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched+ 1e-10)),#max_matched_residual
             Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #max_unmatched_residual
-            Float16(-log2(manhattan_distance/x_sum)), #fitted_manhattan_distance
+            Float16(-log2(manhattan_distance/x_sum + 1e-10)), #fitted_manhattan_distance
             Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
             #Float16(-1.0*getEntropy(H, r, col)) #entropy
         )

@@ -198,16 +198,57 @@ function process_file!(
             MS2CHROM()
         )
         if params.ms1_scoring
+            precursors_passing = unique(psms[!,:precursor_idx])
+            precursors = getPrecursors(getSpecLib(search_context));
+            seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
+            pids = [pid for pid in precursors_passing]
+            pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
+            pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+            @time isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+            precursors_passing = Set(precursors_passing)
             # Perform MS1 search
+            times = @timed begin
+            Profile.clear()
+            @profile begin
             ms1_psms = perform_second_pass_search(
                 spectra,
                 rt_index,
                 search_context,
                 params,
                 ms_file_idx,
-                unique(psms[!,:precursor_idx]),
+                precursors_passing,
+                isotopes_dict,
                 MS1CHROM()
             )
+            pair_idx = getPairIdx(precursors);
+            is_decoy = getIsDecoy(precursors);
+            ms1_psms[!,:pair_idx] = [pair_idx[pid] for pid in ms1_psms[!,:precursor_idx]]
+            ms1_psms[!,:is_decoy] = [is_decoy[pid] for pid in ms1_psms[!,:precursor_idx]]
+            
+            Arrow.write(
+                "/Users/n.t.wamsley/Desktop/test_ms1_lambda1_0.arrow",
+                ms1_psms
+            )
+
+            #=
+            out_path =  "/Users/n.t.wamsley/Desktop/test_ms1_lambda1_0.arrow"
+            test_ms1 = DataFrame(Tables.columntable(Arrow.Table(out_path)))
+            sort!(test_ms1,:pair_idx)
+            gms1 = groupby(test_ms1, :scan_idx)
+            gms1[500][!,[:m0,:n_iso,:m0_error,:spectral_contrast,:gof,:weight,:scan_idx,:precursor_idx,:is_decoy,:pair_idx]]
+            =#
+            end
+            pprof();
+            end
+            println("times ")
+            println("time.time ", times.time)
+            println("times.bytes ", times.bytes)
+            println("times.gctime ", times.gctime)
+            println("times.gcstats", times.gcstats)
+            println("loc_conflicts ", times.lock_conflicts)
+            println("compile_time ", times.compile_time)
+            println("recompile_time ", times.recompile_time)
+            println("\n")
         else
             ms1_psms = DataFrame()
         end

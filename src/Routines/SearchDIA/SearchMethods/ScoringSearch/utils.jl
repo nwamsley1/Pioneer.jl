@@ -187,7 +187,11 @@ function merge_sorted_psms_scores(
     end
     i = 1
     n_writes = 0
-    rm(output_path, force=true)
+    if Sys.iswindows()
+        writeArrow(output_path, DataFrame())
+    else
+        rm(output_path, force=true)
+    end
     while length(psms_heap)>0
         _, table_idx = pop!(psms_heap)
         table = tables[table_idx]
@@ -241,10 +245,17 @@ function merge_sorted_psms_scores(
             i
         )
     end
-    Arrow.append(
-        output_path,
-        psms_batch[range(1, max(1, i - 1)),:]
-    )
+    if n_writes > 0
+        Arrow.append(
+            output_path,
+            psms_batch[range(1, max(1, i - 1)),:]
+        )
+    else
+        writeArrow(
+            output_path,
+            psms_batch[range(1, max(1, i - 1)),:]
+        )
+    end
     #println("output_path $output_path")
     return nothing
 end
@@ -427,10 +438,12 @@ function get_psms_passing_qval(
         select!(passing_psms,available_cols)
         filter!(x->x[qval_col]<=q_val_threshold, passing_psms)
         # Append to the result DataFrame
-        Arrow.write(
-            joinpath(passing_psms_folder, basename(file_path)),
-            passing_psms
-        )
+        #Arrow.write(
+        #    joinpath(passing_psms_folder, basename(file_path)),
+        #    passing_psms
+        #)
+        writeArrow(joinpath(passing_psms_folder, basename(file_path)),
+        passing_psms)
         passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
     end
     return
@@ -987,10 +1000,17 @@ function merge_sorted_protein_groups(
             i
         )
     end
-    Arrow.append(
-        output_path,
-        pg_batch[range(1, max(1, i - 1)),:]
-    )
+    if n_writes > 0
+        Arrow.append(
+            output_path,
+            pg_batch[range(1, max(1, i - 1)),:]
+        )
+    else
+        writeArrow(
+            output_path,
+            pg_batch[range(1, max(1, i - 1)),:]
+        )
+    end
     return nothing
 end
 
@@ -1012,10 +1032,9 @@ function get_proteins_passing_qval(
         # Sample the rows and convert to DataFrame
         filter!(x->x[qval_col]<=q_val_threshold, passing_proteins)
         # Append to the result DataFrame
-        Arrow.write(
-            joinpath(passing_proteins_folder, basename(file_path)),
-            passing_proteins
-        )
+        writeArrow(            joinpath(passing_proteins_folder, basename(file_path)),
+        passing_proteins)
     end
+    
     return
 end

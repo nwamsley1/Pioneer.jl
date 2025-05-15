@@ -76,7 +76,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                                 match_between_runs, 
                                                                 max_q_value_xgboost_rescore,
                                                                 max_q_value_xgboost_mbr_rescore)
-
+                                         
             bst = xgboost(
                 (psms_train_itr[!, features], psms_train_itr[!, :target]),
                 num_round = num_round,
@@ -94,6 +94,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
+            print_importance = true
             if print_importance
                 println(collect(zip(importance(bst))))
             end
