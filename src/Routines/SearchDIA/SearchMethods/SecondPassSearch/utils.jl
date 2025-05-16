@@ -313,7 +313,15 @@ function process_scans!(
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
     decoys = getIsDecoy(precursors)
-    
+    pair_id = getPairIdx(precursors)
+    pair_id_dict = Dictionary{
+        UInt32, #precursor idx 
+        @NamedTuple{
+            nmatch::UInt8, #Number of topN isotopes that matched (need 2)
+            decoy::Bool, #Did the complement decoy of the precursor match any peaks?
+            target::Bool #Did the complement target of the precursor match any peaks?
+        }
+    }
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -356,6 +364,10 @@ function process_scans!(
                         append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
                     end
                     precs_temp[prec_temp_size] = prec_idx
+
+                    if !haskey(pair_id_dict, prec_idx)
+                        insert!(pair_id_dict, prec_idx, (nmatch = zero(UInt8), decoy = false, target = false))
+                    end
                     for iso in isotopes_dict[prec_idx]
                         ion_idx += 1
                         if ion_idx > length(ion_templates)
@@ -366,6 +378,9 @@ function process_scans!(
                 end
             end
         end
+
+        sort!(@view(ion_templates[1:ion_idx]), by = x->(getPrecID(x)), alg=PartialQuickSort(1:ion_idx))
+
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
         # Match peaks
         nmatches, nmisses = matchPeaks!(
