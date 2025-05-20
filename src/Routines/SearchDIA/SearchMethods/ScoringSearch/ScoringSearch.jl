@@ -304,7 +304,16 @@ function summarize_results!(
 
         # Merge protein groups by run-specific prob
         if isfile(sorted_pg_scores_path)
-            rm(sorted_pg_scores_path)
+
+            #rm(sorted_pg_scores_path)
+            if Sys.iswindows()
+                writeArrow(
+                    sorted_pg_scores_path,
+                    DataFrame()
+                )
+            else
+                rm(sorted_pg_scores_path)
+            end
         end
         merge_sorted_protein_groups(
             passing_proteins_folder,
