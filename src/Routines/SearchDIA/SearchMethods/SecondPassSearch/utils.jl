@@ -299,6 +299,7 @@ function process_scans!(
     isotopes_dict::UnorderedDictionary{UInt32, Vector{Isotope{T}}},
     ::MS1CHROM
 ) where {T<:AbstractFloat}
+    #######
     # Initialize working arrays
     mem = MassErrorModel(
         getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
@@ -312,16 +313,11 @@ function process_scans!(
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     precursors = getPrecursors(getSpecLib(search_context))
-    decoys = getIsDecoy(precursors)
-    pair_id = getPairIdx(precursors)
+    pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
-        UInt32, #precursor idx 
-        @NamedTuple{
-            nmatch::UInt8, #Number of topN isotopes that matched (need 2)
-            decoy::Bool, #Did the complement decoy of the precursor match any peaks?
-            target::Bool #Did the complement target of the precursor match any peaks?
-        }
-    }
+        UInt32, #pair_id
+        UInt8 #Number of matches to spectrum 
+    }()
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
     ion_idx = 0
@@ -329,23 +325,16 @@ function process_scans!(
     precs_temp = getPrecIds(search_data)  # Use search_data's prec_ids
     prec_temp_size = 0
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
-    cycle_idx = 0
-    i = 1
-    targets, decoys = 0, 0
+
     for scan_idx in scan_range
-        
+        empty!(pair_id_dict)
         ((scan_idx<1) | (scan_idx > length(spectra))) && continue
+
         # Process MS1 scans
-        #msn = getMsOrder(spectra, scan_idx)
-        #msn ∉ one(UInt8) && continue
         if getMsOrder(spectra, scan_idx) != 1
             continue
-        else
-            cycle_idx += 1
         end
-        #if rand() >= 0.05
-        #    continue
-        #end
+
         # Calculate RT window
         irt = getRtIrtModel(search_context, ms_file_idx)(getRetentionTime(spectra, scan_idx))
         irt_start = max(searchsortedfirst(rt_index.rt_bins, irt - irt_tol, lt=(r,x)->r.lb<x) - 1, 1)
@@ -354,21 +343,26 @@ function process_scans!(
         # Update transitions if window changed
         prec_temp_size = 0
         ion_idx = 0
-        for rt_bin_idx in irt_start:irt_stop
-            precs = rt_index.rt_bins[rt_bin_idx].prec
+        for rt_bin_idx in irt_start:irt_stop #All retention time bins covering the current scan 
+            precs = rt_index.rt_bins[rt_bin_idx].prec #Precursor idxs for the current retention time bin
             for i in 1:length(precs)
                 prec_idx = first(precs[i])
-                if prec_idx in precursors_passing
-                    prec_temp_size += 1
-                    if prec_temp_size > length(precs_temp)
+                if prec_idx in precursors_passing #If the precursor passed the first search ('precursors_passing' is a set)
+                    pair_id = pair_ids[prec_idx] #Each target precursor has a complement decoy with the same 'pair_id' and vice versa
+                    if !haskey(pair_id_dict, pair_id)
+                        insert!(pair_id_dict, pair_id, zero(UInt8))
+                    else
+                        #If another precursor (the respective target or decoy complement) in this pair has already been added. 
+                        continue
+                    end
+                    prec_temp_size += 1 #Precursors in the scan 
+                    if prec_temp_size > length(precs_temp) #Adjust size of placeholder if necessary 
                         append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
                     end
                     precs_temp[prec_temp_size] = prec_idx
 
-                    if !haskey(pair_id_dict, prec_idx)
-                        insert!(pair_id_dict, prec_idx, (nmatch = zero(UInt8), decoy = false, target = false))
-                    end
-                    for iso in isotopes_dict[prec_idx]
+
+                    for iso in isotopes_dict[prec_idx] #Add the isotopes for the precursor to match to the scan 
                         ion_idx += 1
                         if ion_idx > length(ion_templates)
                             append!(ion_templates, Vector{Isotope{Float32}}(undef, length(ion_templates)))
@@ -378,9 +372,8 @@ function process_scans!(
                 end
             end
         end
-
-        sort!(@view(ion_templates[1:ion_idx]), by = x->(getPrecID(x)), alg=PartialQuickSort(1:ion_idx))
-
+        
+        #Sort the precursor isotopes by m/z
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
         # Match peaks
         nmatches, nmisses = matchPeaks!(
@@ -396,12 +389,44 @@ function process_scans!(
             UInt32(ms_file_idx)
         )
 
-        #nmisses -= 1
+        #Which precursors matched isotopes
+        for i in range(1, nmatches)
+            pair_id = pair_ids[getPrecID(ion_matches[i])]
+            n_match = pair_id_dict[pair_id]
+            if getIsoIdx(ion_matches[i]) <= 2
+                n_match += 1
+            end
+            pair_id_dict[pair_id] = n_match 
+        end
+
+        #Removed matched fragments for precursors that did not match sufficiently many isotopes 
+        new_nmatches = 0
+        for i in range(1, nmatches)
+            pair_id = pair_ids[getPrecID(ion_matches[i])]
+            n_match = pair_id_dict[pair_id]
+            if n_match >= 2
+                new_nmatches += 1
+                ion_matches[new_nmatches] = ion_matches[i]
+            end
+        end
+
+        #Removed unmatched fragments for precursors that did not match sufficiently many isotopes 
+        new_nmisses = 0
+        for i in range(1, nmisses)
+            pair_id = pair_ids[getPrecID(ion_misses[i])]
+            n_match = pair_id_dict[pair_id]
+            if n_match >= 2
+                new_nmisses += 1
+                ion_misses[new_nmisses] = ion_misses[i]
+            end
+        end
+
+        nmatches = new_nmatches
+        nmisses = new_nmisses 
+        
         sort!(@view(ion_matches[1:nmatches]), by = x->(x.peak_ind, x.prec_id), alg=QuickSort)
-        #println("nmatches $nmatches nmisses $nmisses")
         # Process matches
         if nmatches > 2
-            i += 1
             buildDesignMatrix!(
                 Hs,
                 ion_matches,
@@ -435,7 +460,7 @@ function process_scans!(
                 residuals,
                 weights,
                 Float32(1e8),#getHuberDelta(search_context),
-                Float32(1.0),#params.lambda,
+                Float32(0.001),#params.lambda,
                 params.max_iter_newton,
                 params.max_iter_bisection,
                 1000,#params.max_iter_outer,
@@ -469,7 +494,7 @@ function process_scans!(
             getMs1SpectralScores(search_data),
             weights,
             getIdToCol(search_data),
-            cycle_idx,
+            zero(Int64),
             last_val,
             Hs.n,
             scan_idx;
