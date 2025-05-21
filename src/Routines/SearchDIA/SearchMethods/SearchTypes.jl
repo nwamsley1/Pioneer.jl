@@ -175,10 +175,12 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     qc_plot_folder::Base.Ref{String}
     rt_alignment_plot_folder::Base.Ref{String}
     mass_err_plot_folder::Base.Ref{String}
+    ms1_mass_err_plot_folder::Base.Ref{String}
     
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
     mass_error_model::Dict{Int64, MassErrorModel}
+    ms1_mass_error_model::Dict{Int64, MassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
     nce_model::Dict{Int64, NceModel}
     huber_delta::Base.Ref{Float32}
@@ -211,8 +213,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
         N = length(temp_structures)
         new{N,L,M}(
             spec_lib, temp_structures, mass_spec_data_reference,
-            Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),
+            Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
+            Dict{Int64, MassErrorModel}(),
             Dict{Int64, MassErrorModel}(),
             Dict{Int64, NceModel}(), Ref(100000.0f0), 10.0f0,
             Dict{Int64, RtConversionModel}(), 
@@ -343,6 +346,7 @@ getDataOutDir(s::SearchContext) = s.data_out_dir[]
 getQcPlotfolder(s::SearchContext) = s.qc_plot_folder[]
 getRtAlignPlotFolder(s::SearchContext) = s.rt_alignment_plot_folder[]
 getMassErrPlotFolder(s::SearchContext) = s.mass_err_plot_folder[]
+getMs1MassErrPlotFolder(s::SearchContext) = s.ms1_mass_err_plot_folder[]
 getParsedFileName(s::SearchContext, ms_file_idx::Int64) = getParsedFileName(s.mass_spec_data_reference, ms_file_idx)
 getIrtRtMap(s::SearchContext) = s.irt_rt_map
 getRtIrtMap(s::SearchContext) = s.rt_irt_map
@@ -385,8 +389,24 @@ function getMassErrorModel(s::SearchContext, index::I) where {I<:Integer}
        return MassErrorModel(zero(Float32), (30.0f0, 30.0f0))
    end
 end
-
 setMassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:Integer} = (s.mass_error_model[index] = model)
+
+"""
+   getMassErrorModel(s::SearchContext, index::Integer)
+
+Get mass error model for MS file index. Returns default ±30ppm model if not found.
+"""
+function getMs1MassErrorModel(s::SearchContext, index::I) where {I<:Integer} 
+   if haskey(s.ms1_mass_error_model, index)
+       return s.ms1_mass_error_model[index]
+   else
+       @warn "Mass error model not found for ms_file_idx $index. Returning default +/- 30ppm"
+       return MassErrorModel(zero(Float32), (30.0f0, 30.0f0))
+   end
+end
+
+
+setMs1MassErrorModel!(s::SearchContext, index::I, model::MassErrorModel) where {I<:Integer} = (s.ms1_mass_error_model[index] = model)
 
 """
    getRtIrtModel(s::SearchContext, index::Integer)

@@ -204,7 +204,7 @@ function process_file!(
             pids = [pid for pid in precursors_passing]
             pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
             pmz = [getMz(precursors)[pid] for pid in precursors_passing]
-            @time isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+            isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
             precursors_passing = Set(precursors_passing)
             # Perform MS1 search
             #times = @timed begin
@@ -274,7 +274,7 @@ end
 function process_search_results!(
     results::SecondPassSearchResults,
     params::P,
-    search_context::SearchContext,
+    search_context::SearchContext, 
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}

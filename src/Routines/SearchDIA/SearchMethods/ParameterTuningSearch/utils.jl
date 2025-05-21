@@ -403,7 +403,8 @@ function mass_error_search(
     spec_lib::SpectralLibrary,
     search_data::AbstractVector{S},
     mem::M,
-    params::P
+    params::P,
+    ::MS2CHROM
 ) where {
         M<:MassErrorModel, 
         S<:SearchDataStructures, 
@@ -467,6 +468,111 @@ function mass_error_search(
     fetch.(tasks)
 end
 
+function mass_error_search(
+    spectra::MassSpecData,
+    scan_idxs::Vector{UInt32},
+    precursor_idxs::Vector{UInt32},
+    ms_file_idx::UInt32,
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    mem::M,
+    params::P,
+    ::MS1CHROM
+) where {
+        M<:MassErrorModel, 
+        S<:SearchDataStructures, 
+        P<:SearchParameters
+        }
+
+    # Sort scans and setup thread tasks
+    sorted_indices = sortperm(scan_idxs)
+    scan_idxs = scan_idxs[sorted_indices]
+    precursor_idxs = precursor_idxs[sorted_indices]
+    prec_mzs = getMz(getPrecursors(spec_lib))
+    prec_charges = getCharge(getPrecursors(spec_lib))
+    #Convert MS2 scan idxs to nearest ms2 scan idxs
+    ms1_scan_idx = 1
+    for (i, scan_idx) in enumerate(scan_idxs)
+        while (ms1_scan_idx < length(spectra))
+            if (getMsOrder(spectra, ms1_scan_idx) == 1) & (ms1_scan_idx > scan_idx)
+                break
+            end
+            ms1_scan_idx += 1
+        end
+        scan_idxs[i] = ms1_scan_idx
+    end
+    scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra))
+    thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 1)
+    #println("thread_tasks $thread_tasks")
+    # Process mass errors in parallel
+    tasks = map(thread_tasks) do thread_task
+        Threads.@spawn begin
+            mass_errs = Vector{Float32}(undef, 1000)
+            ion_templates = Vector{Isotope{Float32}}(undef, 10000)
+            ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
+            ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
+            ion_idx = 0
+            frag_err_idx = 0
+            ion_idx = 0
+            for scan_idx in last(thread_task)
+                ion_idx = 0
+                (scan_idx == 0 || scan_idx > length(spectra)) && continue
+                ismissing(scan_to_prec_idx[scan_idx]) && continue
+                prec_idx_range = nothing
+                prec_idx_range = scan_to_prec_idx[scan_idx]
+
+                #println("prec_idx_range $prec_idx_range")
+                for i in prec_idx_range
+                    prec_idx = precursor_idxs[i]
+                    prec_mz = prec_mzs[prec_idx]
+                    prec_charge = prec_charges[prec_idx]
+                    for iso in range(0, 1)
+                        ion_idx += 1
+                        if ion_idx > length(ion_templates)
+                            append!(ion_templates, Vector{Isotope{Float32}}(undef, length(ion_templates)))
+                        end
+                        mz = Float32(prec_mz + iso*NEUTRON/prec_charge)
+                        ion_templates[ion_idx] = Isotope( #precursor monoisotope
+                            mz,
+                            0.0f0,
+                            UInt8(iso),
+                            prec_idx
+                        )
+                    end
+                end
+
+                #Sort the precursor isotopes by m/z
+                sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
+
+                # Match peaks and collect errors
+                nmatches, nmisses = matchPeaks!(
+                    ion_matches,
+                    ion_misses,
+                    ion_templates,
+                    ion_idx,
+                    getMzArray(spectra, scan_idx),
+                    getIntensityArray(spectra, scan_idx),
+                    mem,
+                    getHighMz(spectra, scan_idx),
+                    UInt32(scan_idx),
+                    UInt32(ms_file_idx)
+                )
+
+                for match_idx in range(1, nmatches)
+                    frag_err_idx += 1
+                    if frag_err_idx > length(mass_errs)
+                        append!(mass_errs, Vector{Float32}(undef, length(mass_errs)))
+                    end
+                    match = ion_matches[match_idx]
+                    mass_errs[frag_err_idx] = Float32((getMatchMz(match) - getMZ(match))/(getMZ(match)/1e6))
+                end
+            end
+            @view(mass_errs[1:frag_err_idx])
+        end
+    end
+    fetch.(tasks)
+end
+
 function fit_mass_err_model(
     params::P,
     fragments::Vector{FragmentMatch{Float32}}
@@ -501,6 +607,20 @@ function fit_mass_err_model(
     ), ppm_errs
 end
 
+function mass_err_ms1(ppm_errs::Vector{Float32},
+    params::P) where {P<:FragmentIndexSearchParameters}
+    mass_err = median(ppm_errs)
+    ppm_errs .-= mass_err
+    # Calculate error bounds
+    frag_err_quantile = getFragErrQuantile(params) + 0.01
+    l_bound = quantile(ppm_errs, frag_err_quantile)
+    r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
+
+    return MassErrorModel(
+        Float32(mass_err),
+        (Float32(abs(l_bound)), Float32(abs(r_bound)))
+    ), ppm_errs
+end
 """
     get_matched_fragments(spectra::MassSpecData, psms::DataFrame,
                          results::ParameterTuningSearchResults,
@@ -536,7 +656,30 @@ function get_matched_fragments(
         getSpecLib(search_context),
         getSearchData(search_context),
         getMassErrorModel(results),
-        params
+        params,
+        MS2CHROM()
+    )...)
+end
+
+function get_matched_precursors(
+    spectra::MassSpecData,
+    psms::DataFrame,
+    results::ParameterTuningSearchResults,
+    search_context::SearchContext,
+    params::P,
+    ms_file_idx::Int64
+) where {P<:FragmentIndexSearchParameters}
+    
+    return vcat(mass_error_search(
+        spectra,
+        psms[!,:scan_idx],
+        psms[!,:precursor_idx],
+        UInt32(ms_file_idx),
+        getSpecLib(search_context),
+        getSearchData(search_context),
+        getMassErrorModel(results),
+        params,
+        MS1CHROM()
     )...)
 end
 
@@ -635,6 +778,48 @@ function generate_mass_error_plot(
 
 end
 
+function generate_ms1_mass_error_plot(
+    results::ParameterTuningSearchResults,
+    fname::String,
+    plot_path::String
+)
+    #p = histogram(results.ppm_errs)
+    #savefig(p, plot_path)
+    mem = results.ms1_mass_err_model[]
+    errs = results.ms1_ppm_errs .+ getMassOffset(mem)
+    n = length(errs)
+    plot_title = fname
+    mass_err = getMassOffset(mem)
+    bins = LinRange(mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem), 50)
+    p = Plots.histogram(errs,
+    orientation = :h, 
+    yflip = true,
+    #seriestype=:scatter,
+    title = plot_title*"\n n = $n",
+    xlabel = "Count",
+    ylabel = "Mass Error (ppm)",
+    label = nothing,
+    bins = bins,
+    ylim = (mass_err - 2*getLeftTol(mem), mass_err + 2*getRightTol(mem)),
+    topmargin =15mm,
+    #bottommargin = 10mm,
+    )
+
+    mass_err = getMassOffset(mem)
+    Plots.hline!([mass_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), mass_err, text("$mass_err", :black, :right, :bottom, 12))
+
+
+    l_err = mass_err - getLeftTol(mem)
+    Plots.hline!([l_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), l_err, text("$l_err", :black, :right, :bottom, 12))
+    r_err = mass_err + getRightTol(mem)
+    Plots.hline!([r_err], label = nothing, color = :black, lw = 2)
+    Plots.annotate!(last(xlims(p)), r_err, text("$r_err", :black, :right, :bottom, 12))
+
+    savefig(p, plot_path)
+
+end
 #==========================================================
 Utility Functions
 ==========================================================#

@@ -173,7 +173,7 @@ function process_file!(
         end
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
-        chromatograms = extract_chromatograms(
+        @time chromatograms = extract_chromatograms(
             spectra,
             passing_psms,
             rt_index,
@@ -182,11 +182,13 @@ function process_file!(
             ms_file_idx,
             MS2CHROM(),
         )
+        println("\n")
         #sort!(chromatograms, :rt)
         #out_dir = getDataOutDir(search_context)
         #Arrow.write(joinpath(out_dir, "test_chroms_ms2.arrow"), chromatograms)
         #jldsave("/Users/nathanwamsley/Desktop/rt_index.jld2"; rt_index)
         if params.ms1_quant==true
+            println("hey \n")
             ms1_chromatograms = extract_chromatograms(
                 spectra,
                 passing_psms,
@@ -221,7 +223,7 @@ function process_file!(
         
         # Integrate chromatographic peaks for each precursor
         # Updates peak_area and new_best_scan in passing_psms   
-        integrate_precursors(
+        @time integrate_precursors(
             chromatograms,
             params.isotope_tracetype,
             params.min_fraction_transmitted,
@@ -235,6 +237,7 @@ function process_file!(
             n_pad = params.n_pad,
             max_apex_offset = params.max_apex_offset
         )
+        println("\n")
         if params.ms1_quant==true
             integrate_precursors(
                 ms1_chromatograms,

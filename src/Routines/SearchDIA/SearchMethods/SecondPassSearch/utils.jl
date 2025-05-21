@@ -301,10 +301,11 @@ function process_scans!(
 ) where {T<:AbstractFloat}
     #######
     # Initialize working arrays
-    mem = MassErrorModel(
-        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (6.0f0, 6.0f0)
-    )
+    #mem = MassErrorModel(
+    #    getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+    #    (6.0f0, 6.0f0)
+    #)
+    mem = getMs1MassErrorModel(search_context, ms_file_idx)
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
