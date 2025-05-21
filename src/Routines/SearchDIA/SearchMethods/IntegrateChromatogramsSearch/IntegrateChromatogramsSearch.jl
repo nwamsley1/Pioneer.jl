@@ -166,10 +166,12 @@ function process_file!(
         # new_best_scan: Updated apex scan after refinement
         passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
         passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
+        passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
         if params.ms1_quant==true
             passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
-            passing_psms[!,:peak_area_ms1] = zeros(Float32, nrow(passing_psms)) 
-            passing_psms[!,:ms1_best_scan] = zeros(UInt32, nrow(passing_psms)) 
+            passing_psms[!, :peak_area_ms1] = zeros(Float32, nrow(passing_psms)) 
+            passing_psms[!, :ms1_best_scan] = zeros(UInt32, nrow(passing_psms))
+            passing_psms[!, :ms1_points_integrated] = zeros(UInt32, nrow(passing_psms))
         end
         # Extract chromatograms for all passing PSMs
         # Builds chromatograms using parallel processing across scan ranges
@@ -230,6 +232,7 @@ function process_file!(
             passing_psms[!, :scan_idx],
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
+            passing_psms[!, :points_integrated],
             ms_file_idx,
             λ = params.wh_smoothing_strength,
             n_pad = params.n_pad,
@@ -245,6 +248,7 @@ function process_file!(
                 passing_psms[!, :scan_idx],
                 passing_psms[!, :peak_area_ms1],
                 passing_psms[!, :ms1_best_scan],
+                passing_psms[!, :ms1_points_integrated],
                 ms_file_idx,
                 λ = params.wh_smoothing_strength,
                 n_pad = params.n_pad,

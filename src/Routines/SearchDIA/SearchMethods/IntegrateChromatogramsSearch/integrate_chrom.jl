@@ -417,7 +417,8 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     end
 
     trapezoid_area = rt_norm * norm_factor * integrateTrapezoidal(state, avg_cycle_time)
+    num_points_integrated = (last(scan_range) - first(scan_range)) + 1
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, chrom[!,:scan_idx][apex_scan]
+    return trapezoid_area, chrom[!,:scan_idx][apex_scan], num_points_integrated
 end
