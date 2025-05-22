@@ -52,12 +52,10 @@ Holds mass error models, RT alignment models, and associated data.
 """
 struct ParameterTuningSearchResults <: SearchResults 
     mass_err_model::Base.Ref{<:MassErrorModel}
-    ms1_mass_err_model::Base.Ref{<:MassErrorModel}
     rt_to_irt_model::Base.Ref{<:RtConversionModel}
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
-    ms1_ppm_errs::Vector{Float32}
     qc_plots_folder_path::String
 end
 
@@ -181,9 +179,7 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
     !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return ParameterTuningSearchResults(
         Base.Ref{MassErrorModel}(),
-        Base.Ref{MassErrorModel}(),
         Ref{SplineRtConversionModel}(),
-        Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
@@ -245,8 +241,6 @@ function process_file!(
             
             add_columns_and_concat!(psms, new_psms, spectra, 
                                 getPrecursors(getSpecLib(search_context)), params)
-            #Arrow.write("C:\\Users\\n.t.wamsley\\Desktop\\testpsms.arrow", psms)
-            #[println(x) for x in names(psms)]
             try 
                 filter_and_score_psms!(psms, params) >= getMinPsms(params) && break
             catch e
@@ -262,7 +256,6 @@ function process_file!(
             0.0f0, 
             (getFragTolPpm(params), getFragTolPpm(params)))
         ppm_errs = nothing
-        ms1_ppm_errs = nothing
         prev_mass_err = 0.0f0
         for i in range(0, 1)
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
@@ -278,22 +271,17 @@ function process_file!(
             # Get fragments and fit mass error model
             fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
             mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
-            mass_errs = get_matched_precursors(spectra, psms, results,search_context, params, ms_file_idx)
-            ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(mass_errs, params)
             #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
             if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
                 prev_mass_err = getMassOffset(mass_err_model)
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
-                results.ms1_mass_err_model[] = ms1_mass_err_model
             else
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
-                results.ms1_mass_err_model[] = ms1_mass_err_model
                 break
             end
         end
 
         append!(results.ppm_errs, ppm_errs)
-        append!(results.ms1_ppm_errs, ms1_ppm_errs)
     catch e
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         @warn "Could not tune parameters for $ms_file_idx"
@@ -316,7 +304,6 @@ function process_search_results!(
     try
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
     mass_error_folder = getMassErrPlotFolder(search_context)
-    ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
     # Generate and save RT alignment plot
@@ -327,15 +314,8 @@ function process_search_results!(
     mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
     generate_mass_error_plot(results, parsed_fname, mass_plot_path)
     
-    # Generate and save mass error plot
-    mass_plot_path = joinpath(ms1_mass_error_folder, parsed_fname*".pdf")
-    generate_ms1_mass_error_plot(results, parsed_fname, mass_plot_path)
-    
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-
-    # Update models in search context
-    setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
     
     setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
     catch
@@ -348,7 +328,6 @@ function reset_results!(ptsr::ParameterTuningSearchResults)
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
     resize!(ptsr.ppm_errs, 0)
-    resize!(ptsr.ms1_ppm_errs, 0)
 end
 
 
@@ -399,25 +378,6 @@ function summarize_results!(
         merge_pdfs(mass_plots, 
                   output_path, 
                   cleanup=true)
-    end
-    
-    # Merge mass error plots
-    ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
-    output_path = joinpath(ms1_mass_error_folder, "ms1_mass_error_plots.pdf")
-    try
-        if isfile(output_path)
-            rm(output_path)
-        end
-    catch e
-        @warn "Could not clear existing file: $e"
-    end
-    mass_plots = [joinpath(ms1_mass_error_folder, x) for x in readdir(ms1_mass_error_folder) 
-                    if endswith(x, ".pdf")]
-
-    if !isempty(mass_plots)
-        merge_pdfs(mass_plots, 
-                    output_path, 
-                    cleanup=true)
     end
 
     @info "QC plot merging complete"
