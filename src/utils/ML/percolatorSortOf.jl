@@ -48,7 +48,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     #Faster if sorted first 
     @info "sort time..."
-    @time sort!(psms, [:pair_id, :isotopes_captured])
+    sort!(psms, [:pair_id, :isotopes_captured])
 
     #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
@@ -94,7 +94,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
-            print_importance = true
+            #print_importance = true
             if print_importance
                 println(collect(zip(importance(bst))))
             end
@@ -374,6 +374,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 push!(models[test_fold_idx], bst)
             end
             bst.feature_names = [string(x) for x in features]
+            #print_importance = true
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
 
             #println(collect(zip(importance(bst)))[1:5])

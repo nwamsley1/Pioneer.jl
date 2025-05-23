@@ -490,16 +490,28 @@ function mass_error_search(
     precursor_idxs = precursor_idxs[sorted_indices]
     prec_mzs = getMz(getPrecursors(spec_lib))
     prec_charges = getCharge(getPrecursors(spec_lib))
-    #Convert MS2 scan idxs to nearest ms2 scan idxs
+    #Convert MS2 scan idxs to nearest MS1 scan idxs
+    prev_ms1_scan_idx = 1
+    next_ms1_scan_idx = 1
     ms1_scan_idx = 1
     for (i, scan_idx) in enumerate(scan_idxs)
-        while (ms1_scan_idx < length(spectra))
-            if (getMsOrder(spectra, ms1_scan_idx) == 1) & (ms1_scan_idx > scan_idx)
-                break
+        if scan_idx > next_ms1_scan_idx
+            while (ms1_scan_idx < length(spectra))
+                if getMsOrder(spectra, ms1_scan_idx) == 1
+                    prev_ms1_scan_idx = next_ms1_scan_idx
+                    next_ms1_scan_idx = ms1_scan_idx 
+                    if ms1_scan_idx  > scan_idx 
+                        break
+                    end
+                end
+                ms1_scan_idx += 1
             end
-            ms1_scan_idx += 1
         end
-        scan_idxs[i] = ms1_scan_idx
+        if abs(next_ms1_scan_idx - scan_idx) < abs(prev_ms1_scan_idx - scan_idx)
+            scan_idxs[i] = next_ms1_scan_idx
+        else
+            scan_idxs[i] =  prev_ms1_scan_idx
+        end
     end
     scan_to_prec_idx = getScanToPrecIdx(scan_idxs, length(spectra))
     thread_tasks = partition_scans(spectra, Threads.nthreads(), ms_order_select = 1)
@@ -508,13 +520,21 @@ function mass_error_search(
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             mass_errs = Vector{Float32}(undef, 1000)
+            peak_intensities = Vector{Float32}(undef, 1000)
             ion_templates = Vector{Isotope{Float32}}(undef, 10000)
             ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
             ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 1000)]
             ion_idx = 0
             frag_err_idx = 0
             ion_idx = 0
+
+
+            prec_to_match_dict = Dictionary{
+                UInt32, #predc_id
+                UInt8 #Number of matches to spectrum 
+            }() 
             for scan_idx in last(thread_task)
+                empty!( prec_to_match_dict)
                 ion_idx = 0
                 (scan_idx == 0 || scan_idx > length(spectra)) && continue
                 ismissing(scan_to_prec_idx[scan_idx]) && continue
@@ -526,7 +546,7 @@ function mass_error_search(
                     prec_idx = precursor_idxs[i]
                     prec_mz = prec_mzs[prec_idx]
                     prec_charge = prec_charges[prec_idx]
-                    for iso in range(0, 1)
+                    for iso in range(0, 3)
                         ion_idx += 1
                         if ion_idx > length(ion_templates)
                             append!(ion_templates, Vector{Isotope{Float32}}(undef, length(ion_templates)))
@@ -535,7 +555,7 @@ function mass_error_search(
                         ion_templates[ion_idx] = Isotope( #precursor monoisotope
                             mz,
                             0.0f0,
-                            UInt8(iso),
+                            UInt8(iso+1),
                             prec_idx
                         )
                     end
@@ -558,16 +578,53 @@ function mass_error_search(
                     UInt32(ms_file_idx)
                 )
 
+                #Which precursors matched isotopes
+                for i in range(1, nmatches)
+                    prec_idx = getPrecID(ion_matches[i])
+                    if !haskey( prec_to_match_dict, prec_idx)
+                        insert!(prec_to_match_dict, prec_idx, zero(UInt8))
+                    end
+                    n_match = prec_to_match_dict[prec_idx]
+                    if getIsoIdx(ion_matches[i]) <= 4
+                        n_match += 1
+                    end
+                    prec_to_match_dict[prec_idx] = n_match 
+                end
+
+                #Removed matched fragments for precursors that did not match sufficiently many isotopes 
+                new_nmatches = 0
+                for i in range(1, nmatches)
+                    prec_idx = getPrecID(ion_matches[i])
+                    n_match = prec_to_match_dict[prec_idx]
+                    if n_match >= 4
+                        new_nmatches += 1
+                        ion_matches[new_nmatches] = ion_matches[i]
+                    end
+                end
+                
+                nmatches = new_nmatches
+
                 for match_idx in range(1, nmatches)
+                    match = ion_matches[match_idx]
+                    if getIsoIdx(match)>3
+                        continue
+                    end
                     frag_err_idx += 1
                     if frag_err_idx > length(mass_errs)
                         append!(mass_errs, Vector{Float32}(undef, length(mass_errs)))
+                        append!(peak_internsities, Vector{Float32}(undef, length(peak_intensities)))
                     end
-                    match = ion_matches[match_idx]
                     mass_errs[frag_err_idx] = Float32((getMatchMz(match) - getMZ(match))/(getMZ(match)/1e6))
+                    peak_intensities[frag_err_idx] = Float32(getIntensity(match))
                 end
             end
-            @view(mass_errs[1:frag_err_idx])
+
+            ########
+            #Intensity filter to remove potentially erroneous matches 
+            mass_errs = mass_errs[1:frag_err_idx]
+            peak_intensities = peak_intensities[1:frag_err_idx]
+            med_intensity = quantile(peak_intensities, 0.75)
+            @view(mass_errs[peak_intensities.>med_intensity])
         end
     end
     fetch.(tasks)
@@ -612,7 +669,7 @@ function mass_err_ms1(ppm_errs::Vector{Float32},
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
     # Calculate error bounds
-    frag_err_quantile = getFragErrQuantile(params) + 0.01
+    frag_err_quantile = getFragErrQuantile(params)
     l_bound = quantile(ppm_errs, frag_err_quantile)
     r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
 
@@ -668,7 +725,7 @@ function get_matched_precursors(
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64
-) where {P<:FragmentIndexSearchParameters}
+) where {P<:SearchParameters}
     
     return vcat(mass_error_search(
         spectra,
@@ -677,7 +734,7 @@ function get_matched_precursors(
         UInt32(ms_file_idx),
         getSpecLib(search_context),
         getSearchData(search_context),
-        getMassErrorModel(results),
+        getMs1MassErrorModel(results),
         params,
         MS1CHROM()
     )...)
@@ -779,10 +836,10 @@ function generate_mass_error_plot(
 end
 
 function generate_ms1_mass_error_plot(
-    results::ParameterTuningSearchResults,
+    results::R,
     fname::String,
     plot_path::String
-)
+) where {R<:SearchResults}
     #p = histogram(results.ppm_errs)
     #savefig(p, plot_path)
     mem = results.ms1_mass_err_model[]

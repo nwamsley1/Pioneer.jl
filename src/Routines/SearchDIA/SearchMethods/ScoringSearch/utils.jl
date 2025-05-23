@@ -777,7 +777,7 @@ function get_protein_groups(
     protein_peptide_rows = collect(protein_peptide_rows)
     peptides = [row.sequence for row in protein_peptide_rows]
     proteins = [(protein_name = row.protein_name, decoy = row.decoy) for row in protein_peptide_rows]
-    @time protein_inference_dict = infer_proteins(
+    protein_inference_dict = infer_proteins(
         proteins,
         peptides
         )
