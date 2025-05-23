@@ -357,14 +357,22 @@ function process_file!(
                 MS1CHROM()
             )...
         )
-        mad_dev= mad(ms1_errs)
-        med_errs = median(ms1_errs)
-        low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
-        filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)
-        ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
-        results.ms1_mass_err_model[] = ms1_mass_err_model
-        append!(results.ms1_ppm_errs, ms1_ppm_errs)
-        select!(results.psms[] , Not(:log2_summed_intensity))
+        if length(ms1_errs) > 1
+            mad_dev= mad(ms1_errs)
+            med_errs = median(ms1_errs)
+            low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
+            filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)
+            ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
+            results.ms1_mass_err_model[] = ms1_mass_err_model
+            append!(results.ms1_ppm_errs, ms1_ppm_errs)
+            select!(results.psms[] , Not(:log2_summed_intensity))
+        else
+            #ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
+            #Default to MS2 pattern 
+            results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+            append!(results.ms1_ppm_errs, Float32[])
+            select!(results.psms[] , Not(:log2_summed_intensity))
+        end
     catch e
         @warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
