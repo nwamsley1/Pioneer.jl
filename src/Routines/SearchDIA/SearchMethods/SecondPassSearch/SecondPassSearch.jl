@@ -345,6 +345,8 @@ function process_search_results!(
                 renamecols = "" => "_ms1"
             )
             psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
+        else
+            psms[!,:rt_ms1] = zeros(Float32, size(psms, 1))
         end
         #Add additional features for final analysis
         add_features!(

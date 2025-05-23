@@ -622,9 +622,13 @@ function mass_error_search(
             ########
             #Intensity filter to remove potentially erroneous matches 
             mass_errs = mass_errs[1:frag_err_idx]
-            peak_intensities = peak_intensities[1:frag_err_idx]
-            med_intensity = quantile(peak_intensities, 0.75)
-            @view(mass_errs[peak_intensities.>med_intensity])
+            if frag_err_idx > 1
+                peak_intensities = peak_intensities[1:frag_err_idx]
+                med_intensity = quantile(peak_intensities, 0.75)
+                return @view(mass_errs[peak_intensities.>med_intensity])
+            else
+                return mass_errs
+            end
         end
     end
     fetch.(tasks)
