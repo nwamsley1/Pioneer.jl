@@ -21,7 +21,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     #Faster if sorted first 
     @info "sort time..."
-    @time sort!(psms, [:pair_id, :isotopes_captured])
+    sort!(psms, [:pair_id, :isotopes_captured])
 
     #Final prob estimates
     prob_estimates = zeros(Float32, size(psms, 1))
@@ -51,7 +51,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                                 match_between_runs, 
                                                                 max_q_value_xgboost_rescore,
                                                                 max_q_value_xgboost_mbr_rescore)
-
+                                         
             bst = xgboost(
                 (psms_train_itr[!, features], psms_train_itr[!, :target]),
                 num_round = num_round,
@@ -69,6 +69,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             )
             # Store feature names and print importance if requested
             bst.feature_names = string.(features)
+            #print_importance = true
             if print_importance
                 println(collect(zip(importance(bst))))
             end
@@ -317,8 +318,23 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 push!(models[test_fold_idx], bst)
             end
             bst.feature_names = [string(x) for x in features]
-            print_importance ? println(collect(zip(importance(bst)))) : nothing
+            #print_importance = true
+            print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
 
+            #println(collect(zip(importance(bst)))[1:5])
+            prec_to_best_score = getBestScorePerPrec!(
+                prec_to_best_score,
+                excludeTestFold,
+                test_fold_idx,
+                file_paths,
+                bst,
+                features
+            )
+            getBestScorePerPrec!(
+                prec_to_best_score,
+                psms_train
+            )
+            
             # Get probabilities for training sample so we can get q-values
             psms_train[!,:prob] = XGBoost.predict(bst, psms_train[!, features])
             

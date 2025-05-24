@@ -198,16 +198,64 @@ function process_file!(
             MS2CHROM()
         )
         if params.ms1_scoring
+            precursors_passing = unique(psms[!,:precursor_idx])
+            precursors = getPrecursors(getSpecLib(search_context));
+            seqs = [getSequence(precursors)[pid] for pid in precursors_passing]
+            pids = [pid for pid in precursors_passing]
+            pcharge = [getCharge(precursors)[pid] for pid in precursors_passing]
+            pmz = [getMz(precursors)[pid] for pid in precursors_passing]
+            isotopes_dict = getIsotopes(seqs, pmz, pids, pcharge, QRoots(5), 5)
+            precursors_passing = Set(precursors_passing)
             # Perform MS1 search
+            #times = @timed begin
+            #Profile.clear()
+            #@profile begin
             ms1_psms = perform_second_pass_search(
                 spectra,
                 rt_index,
                 search_context,
                 params,
                 ms_file_idx,
-                unique(psms[!,:precursor_idx]),
+                precursors_passing,
+                isotopes_dict,
                 MS1CHROM()
             )
+            pair_idx = getPairIdx(precursors);
+            is_decoy = getIsDecoy(precursors);
+            partner_idx = getPartnerPrecursorIdx(precursors);
+            ms1_psms[!,:pair_idx] = [pair_idx[pid] for pid in ms1_psms[!,:precursor_idx]]
+            ms1_psms_partner = copy(ms1_psms)
+            for i in range(1, size(ms1_psms_partner, 1))
+                p = partner_idx[ms1_psms_partner[i,:precursor_idx]]
+                if !ismissing(p)
+                    ms1_psms_partner[i,:precursor_idx] = p
+                else
+                    ms1_psms_partner[i,:precursor_idx] = 0
+                end
+            end
+            filter!(x->!iszero(x.precursor_idx), ms1_psms_partner);
+            ms1_psms = vcat([ms1_psms, ms1_psms_partner]...)
+            #rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
+            #ms1_psms[!,:irt] = zeros(Float32, size(ms1_psms, 1))
+            #ms1_psms[!,:pred_irt] = zeros(Float32, size(ms1_psms, 1))
+            #for i in range(1, size(ms1_psms, 1))
+            #    ms1_psms[i,:irt] = rt_irt_model(getRetentionTime(spectra, ms1_psms[i,:scan_idx]))
+            #    ms1_psms[i,:pred_irt] = getIrt(precursors)[ms1_psms[i,:precursor_idx]]
+            #end
+
+            #ms1_psms[!,:is_decoy_] = [is_decoy[pid] for pid in ms1_psms[!,:precursor_idx]]
+            #end
+                #pprof();
+            #end
+            #println("times ")
+            #println("time.time ", times.time)
+            #println("times.bytes ", times.bytes)
+            #println("times.gctime ", times.gctime)
+            #println("times.gcstats", times.gcstats)
+            #println("loc_conflicts ", times.lock_conflicts)
+            #println("compile_time ", times.compile_time)
+            #println("recompile_time ", times.recompile_time)
+            #println("\n")
         else
             ms1_psms = DataFrame()
         end
@@ -226,7 +274,7 @@ end
 function process_search_results!(
     results::SecondPassSearchResults,
     params::P,
-    search_context::SearchContext,
+    search_context::SearchContext, 
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:SecondPassSearchParameters}
@@ -297,6 +345,8 @@ function process_search_results!(
                 renamecols = "" => "_ms1"
             )
             psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
+        else
+            psms[!,:rt_ms1] = zeros(Float32, size(psms, 1))
         end
         #Add additional features for final analysis
         add_features!(

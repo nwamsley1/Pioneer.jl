@@ -56,6 +56,9 @@ Holds FWHM statistics, PSM file paths, and model updates.
 struct FirstPassSearchResults <: SearchResults
     fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}
     psms::Base.Ref{DataFrame}
+    ms1_mass_err_model::Base.Ref{<:MassErrorModel}
+    ms1_ppm_errs::Vector{Float32}
+    qc_plots_folder_path::String
 end
 
 """
@@ -67,6 +70,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
     frag_tol_ppm::Float32
+    frag_err_quantile::Float32
     min_index_search_score::UInt8
     min_frag_count::Int64
     min_spectral_contrast::Float32
@@ -113,6 +117,7 @@ struct FirstPassSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParame
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             0.0f0,  # No transmission threshold for first pass
             0.0f0,  # No fragment tolerance for first pass
+            Float32(params.parameter_tuning.search_settings.frag_err_quantile),
             UInt8(frag_params.min_score),
             Int64(frag_params.min_count),
             Float32(frag_params.min_spectral_contrast),
@@ -148,6 +153,7 @@ Interface Implementation
 ==========================================================#
 
 get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(params)
+getMs1MassErrorModel(ptsr::FirstPassSearchResults) = ptsr.ms1_mass_err_model[]
 
 function init_search_results(
     ::FirstPassSearchParameters,
@@ -155,10 +161,16 @@ function init_search_results(
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data", "first_pass_psms")
     !isdir(temp_folder) && mkdir(temp_folder)
-    
+    out_dir = getDataOutDir(search_context)
+    qc_dir = joinpath(out_dir, "qc_plots")
+    ms1_mass_error_plots = joinpath(qc_dir, "ms1_mass_error_plots")
+    !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return FirstPassSearchResults(
         Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),
-        Base.Ref{DataFrame}()
+        Base.Ref{DataFrame}(),
+        Base.Ref{MassErrorModel}(),
+        Vector{Float32}(),
+        qc_dir
     )
 end
 
@@ -324,6 +336,43 @@ function process_file!(
         # Get models and update fragment lookup table
         psms = perform_library_search(spectra, search_context, params, ms_file_idx)
         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)
+
+        temp_psms = results.psms[] 
+        temp_psms = temp_psms[temp_psms[!,:q_value].<=0.001,:]
+        most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)
+        ms1_errs = vcat(
+            mass_error_search(
+                spectra, 
+                temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],
+                temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],
+                UInt32(ms_file_idx),
+                getSpecLib(search_context),
+                getSearchData(search_context),
+                MassErrorModel(
+                0.0f0, 
+                #(getFragTolPpm(params), getFragTolPpm(params))
+                (20.0f0, 20.0f0)
+                ),
+                params,
+                MS1CHROM()
+            )...
+        )
+        if length(ms1_errs) > 1
+            mad_dev= mad(ms1_errs)
+            med_errs = median(ms1_errs)
+            low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7
+            filter!(x->(low_bound<x)&(high_bound>x), ms1_errs)
+            ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
+            results.ms1_mass_err_model[] = ms1_mass_err_model
+            append!(results.ms1_ppm_errs, ms1_ppm_errs)
+            select!(results.psms[] , Not(:log2_summed_intensity))
+        else
+            #ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)
+            #Default to MS2 pattern 
+            results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
+            append!(results.ms1_ppm_errs, Float32[])
+            select!(results.psms[] , Not(:log2_summed_intensity))
+        end
     catch e
         @warn "First pass search failed" ms_file_idx exception=e
         rethrow(e)
@@ -364,6 +413,16 @@ function process_search_results!(
             :irt_predicted, :q_value, :score, :prob, :scan_count])
     )
     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
+
+    #####
+    #MS1 mass tolerance 
+    ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    # Generate and save mass error plot
+    mass_plot_path = joinpath(ms1_mass_error_folder, parsed_fname*".pdf")
+    generate_ms1_mass_error_plot(results, parsed_fname, mass_plot_path)
+    # Update models in search context
+    setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
 end
 
 """
@@ -371,6 +430,7 @@ No cleanup needed between files.
 """
 function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
+    resize!(results.ms1_ppm_errs, 0)
     return nothing
 end
 
@@ -447,5 +507,26 @@ function summarize_results!(
     create_rt_indices!(search_context, results, precursor_dict, params)
     
     @info "Search results summarization complete"
+
+    # Merge mass error plots
+    ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
+    output_path = joinpath(ms1_mass_error_folder, "ms1_mass_error_plots.pdf")
+    try
+        if isfile(output_path)
+            rm(output_path)
+        end
+    catch e
+        @warn "Could not clear existing file: $e"
+    end
+    mass_plots = [joinpath(ms1_mass_error_folder, x) for x in readdir(ms1_mass_error_folder) 
+                    if endswith(x, ".pdf")]
+
+    if !isempty(mass_plots)
+        merge_pdfs(mass_plots, 
+                    output_path, 
+                    cleanup=true)
+    end
+
+        
 end
 

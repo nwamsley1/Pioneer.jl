@@ -139,13 +139,9 @@ end
 Results Access Methods
 ==========================================================#
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
+getMs1MassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.ms1_mass_err_model[]
 getRtToIrtModel(ptsr::ParameterTuningSearchResults) = ptsr.rt_to_irt_model[]
 getQcPlotsFolder(ptsr::ParameterTuningSearchResults) = ptsr.qc_plots_folder_path
-
-function set_mass_err_model!(ptsr::ParameterTuningSearchResults, model::Tuple{MassErrorModel, Vector{Float32}})
-    ptsr.mass_err_model[] = model[1]
-    append!(ptsr.ppm_errs, model[2])
-end
 
 function set_rt_to_irt_model!(
     ptsr::ParameterTuningSearchResults, 
@@ -179,6 +175,8 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
     !isdir(rt_alingment_plots) && mkdir(rt_alingment_plots)
     mass_error_plots = joinpath(qc_dir, "mass_error_plots")
     !isdir(mass_error_plots) && mkdir(mass_error_plots)
+    ms1_mass_error_plots = joinpath(qc_dir, "ms1_mass_error_plots")
+    !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return ParameterTuningSearchResults(
         Base.Ref{MassErrorModel}(),
         Ref{SplineRtConversionModel}(),
@@ -243,8 +241,6 @@ function process_file!(
             
             add_columns_and_concat!(psms, new_psms, spectra, 
                                 getPrecursors(getSpecLib(search_context)), params)
-            #Arrow.write("C:\\Users\\n.t.wamsley\\Desktop\\testpsms.arrow", psms)
-            #[println(x) for x in names(psms)]
             try 
                 filter_and_score_psms!(psms, params) >= getMinPsms(params) && break
             catch e
@@ -320,6 +316,7 @@ function process_search_results!(
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
+    
     setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
     catch
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
@@ -382,7 +379,7 @@ function summarize_results!(
                   output_path, 
                   cleanup=true)
     end
-    
+
     @info "QC plot merging complete"
 end
 

@@ -421,10 +421,7 @@ function build_chromatograms(
     ::MS1CHROM
 )
     # Initialize working arrays
-    mem = MassErrorModel(
-        getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
-        (12.0f0, 12.0f0)
-    )
+    mem = getMs1MassErrorModel(search_context, ms_file_idx)
     Hs = getHs(search_data)
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)

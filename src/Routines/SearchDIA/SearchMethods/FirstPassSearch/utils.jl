@@ -287,7 +287,7 @@ function get_best_psms!(psms::DataFrame,
     n = size(psms, 1)
     
 
-    select!(psms, [:precursor_idx,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr,:target])
+    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr,:target])
     #Instead of max_psms, 2x the number at 10% fdr. 
     psms_passing = 0
     local_fdrs = psms[!,:local_fdr]::Vector{Float16}

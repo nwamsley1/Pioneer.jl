@@ -197,13 +197,16 @@ function setDataOutDir!(s::SearchContext, dir::String)
     # Create subdirectories for specific plot types 
     rt_alignment_folder = joinpath(qc_plot_folder, "rt_alignment_plots")
     mass_error_folder = joinpath(qc_plot_folder, "mass_error_plots")
+    ms1_mass_error_folder = joinpath(qc_plot_folder, "ms1_mass_error_plots")
     !isdir(rt_alignment_folder) && mkdir(rt_alignment_folder)
     !isdir(mass_error_folder) && mkdir(mass_error_folder)
+    !isdir(ms1_mass_error_folder) && mkdir(ms1_mass_error_folder)
 
     # Store paths in search context
     s.qc_plot_folder[] = qc_plot_folder
     s.rt_alignment_plot_folder[] = rt_alignment_folder
     s.mass_err_plot_folder[] = mass_error_folder
+    s.ms1_mass_err_plot_folder[] = ms1_mass_error_folder
 
     temp_data_dir = joinpath(dir, "temp_data")
     # Delete previous temp data if it exists
