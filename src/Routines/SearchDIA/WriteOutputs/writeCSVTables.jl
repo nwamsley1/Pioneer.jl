@@ -79,17 +79,17 @@ function writePrecursorCSV(
 
     function makeWideFormat(
         longdf::DataFrame,
+        cols::AbstractVector{Symbol},
         normalized::Bool)
-        cols = [:species,:accession_numbers,:sequence,:charge,:structural_mods,:isotopic_mods,:precursor_idx,:target,:global_qval]
-        if normalized
-            return unstack(longdf,
-            cols,
-            :file_name,:peak_area_normalized)
-        else
-            return unstack(longdf,
-            cols,
-            :file_name,:peak_area)
-        end
+        
+        value_col = normalized ? :peak_area_normalized : :peak_area
+
+        return unstack(longdf,
+                    cols,
+                    :file_name,
+                    value_col;
+                    combine = sum)      # or combine = maximum, first, etc.
+
     end
     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
     n_rows = size(precursors_long, 1)
@@ -102,14 +102,55 @@ function writePrecursorCSV(
         rm(wide_precursors_arrow_path)
     end
     wide_columns = ["species"
+    "inferred_protein_group"
     "accession_numbers"
     "sequence"
     "charge"
     "structural_mods"
     "isotopic_mods"
+    "prec_mz"
+    "global_qval"
+    "use_for_protein_quant"
     "precursor_idx"
     "target"
-    "global_qval"]
+    ]
+#file_name	protein	peptides	n_peptides	global_qval	run_specific_qval	abundance	species	target
+
+    long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
+    select!(precursors_long, Not(long_columns_exclude))
+    rename!(precursors_long, [:new_best_scan => :apex_scan,
+                              :prob => :run_specific_prob,
+                              :pg_score => :run_specific_pg_score,
+                              :isotopes_captured_traces => :isotopes_captured,
+                              :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted])
+    # order columns
+    select!(precursors_long, [:file_name,
+                             :species,
+                             :inferred_protein_group,
+                             :accession_numbers,
+                             :sequence,
+                             :charge,
+                             :structural_mods,
+                             :isotopic_mods,
+                             :prec_mz,
+                             :missed_cleavage,
+                             :global_prob,
+                             :run_specific_prob,
+                             :global_qval,
+                             :run_specific_qval,
+                             :peak_area,
+                             :peak_area_normalized,
+                             :points_integrated,
+                             :precursor_fraction_transmitted,
+                             :isotopes_captured,
+                             #:irt_obs,
+                             :rt,
+                             :apex_scan,
+                             :global_pg_score,
+                             :run_specific_pg_score,
+                             :use_for_protein_quant,
+                             :precursor_idx,
+                             :target])
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_precursors_path,"w") do io1
@@ -137,11 +178,11 @@ function writePrecursorCSV(
                 if write_csv 
                     CSV.write(io1, subdf, append=true, header=false, delim="\t")
                 end
-                subunstack = makeWideFormat(subdf, normalized)
+                subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
                 col_names = names(subunstack)
                 for fname in file_names
                     if fname ∉ col_names
-                        subunstack[!,fname] .= missing
+                        subunstack[!,fname] .= Vector{Union{Missing,Float32}}(missing, nrow(subunstack))
                     end
                 end
                 if write_csv

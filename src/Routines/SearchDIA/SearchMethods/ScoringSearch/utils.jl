@@ -29,13 +29,7 @@ function get_best_traces(
         for i in range(1, length(psms_table[1]))
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
-            if (psms_table[:prob][i]>min_prob)#&(psms_table[:fraction_transmitted]>0.25)
-                row_score = psms_table[:weight][i]
-            else
-                row_score = zero(Float32)
-            end
-
-            row_score = log2(psms_table[:prob][i])
+            row_score = psms_table[:prob][i]
             if haskey(psms_trace_scores, psms_key)
                 psms_trace_scores[psms_key] = psms_trace_scores[psms_key] + row_score
             else
@@ -75,6 +69,7 @@ Modifies files in place to optimize storage.
 function sort_and_filter_quant_tables(
     second_pass_psms_paths::Vector{String},
     merged_quant_path::String,
+    isotope_trace_type::IsotopeTraceType,
     prob_col::Symbol,
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 )
@@ -88,14 +83,22 @@ function sort_and_filter_quant_tables(
     for fpath in second_pass_psms_paths
         psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
 
-        #Indicator variable of whether each psm is from the best trace 
-        psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
-        for i in range(1, size(psms_table, 1))
-            key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
-            if key ∈ best_traces
-                psms_table[i,:best_trace]=true
+        if seperateTraces(isotope_trace_type)
+            #Indicator variable of whether each psm is from the best trace 
+            psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
+            for i in range(1, size(psms_table, 1))
+               key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
+               if key ∈ best_traces
+                   psms_table[i,:best_trace]=true
+               end
             end
+        else
+            transform!(
+                groupby(psms_table, :precursor_idx),
+                :prob => (p -> p .== maximum(p)) => :best_trace
+            )
         end
+
         #Filter out unused traces 
         filter!(x->x.best_trace,psms_table)
         #Sort in descending order of probability
@@ -417,15 +420,19 @@ function get_psms_passing_qval(
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
         passing_psms[!,qval_col] = qval_interp.(passing_psms[!,prob_col])
         #passing_psms[!,:pep] = pep_spline.(passing_psms[!,prob_col])
+
         cols = [
             :precursor_idx,
             :global_prob,
+            :prec_prob,
             :prob,
             :global_qval,
             :run_specific_qval,
+            :prec_mz,
             #:pep,
             :weight,
             :target,
+            :rt,
             :irt_obs,
             :missed_cleavage,
             :isotopes_captured,
@@ -581,9 +588,11 @@ function get_psms_passing_qval(
         :prob,
         :run_specific_qval,
         :min_qval,
+        :prec_mz,
         #:pep,
         :weight,
         :target,
+        :rt,
         :irt_obs,
         :missed_cleavage,
         :isotopes_captured,

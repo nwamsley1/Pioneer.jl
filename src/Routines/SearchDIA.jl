@@ -201,6 +201,7 @@ function print_performance_report(timings, ms_table_paths, search_context, print
     println_func(repeat("-", 90))
 
     # Calculate totals
+    peak_memory = peak_rss()
     total_time = 0.0
     total_memory = 0
     total_gc = 0.0
@@ -227,7 +228,7 @@ function print_performance_report(timings, ms_table_paths, search_context, print
 
     # Print summary statistics
     print_summary_statistics(
-        total_time, total_memory, total_gc,
+        total_time, total_memory, peak_memory, total_gc,
         length(timings), length(ms_table_paths),
         println_func, search_context
     )
@@ -236,7 +237,7 @@ end
 """
 Helper function to print summary statistics
 """
-function print_summary_statistics(total_time, total_memory, total_gc, 
+function print_summary_statistics(total_time, total_memory, peak_memory, total_gc, 
                                 n_steps, n_files, println_func, search_context)
     # Print totals
     println_func(repeat("-", 90))
@@ -251,6 +252,7 @@ function print_summary_statistics(total_time, total_memory, total_gc,
     println_func(repeat("-", 90))
     current_mem = Sys.total_memory() / 1024^3
     println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
+    println_func("Peak  Memory Allocated: $(round(peak_memory/1024^3, digits=2)) GB")
     println_func("Total Available Memory: $(round(current_mem, digits=2)) GB")
     
     # Runtime summary

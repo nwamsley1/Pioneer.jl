@@ -326,7 +326,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
         @inbounds @fastmath for i in scan_start:scan_stop
             xi = x[i]
             baseline = lmin + (xi - x_left) * slope
-            u[i] -= baseline
+            u[i] = max(0, u[i] - baseline)
         end
     
         return nothing
@@ -402,7 +402,7 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     )
     
     if isplot
-    #if chrom.precursor_idx[1] == 4910216
+    #if chrom.precursor_idx[1] == 2098
         mi = state.max_index
         start = max(apex_scan - 18, 1)
         stop = min(apex_scan + 18, length(chrom.rt))
@@ -417,7 +417,8 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     end
 
     trapezoid_area = rt_norm * norm_factor * integrateTrapezoidal(state, avg_cycle_time)
+    num_points_integrated = (last(scan_range) - first(scan_range)) + 1
 
     #trapezoid_area = 0.0f0
-    return trapezoid_area, chrom[!,:scan_idx][apex_scan]
+    return trapezoid_area, chrom[!,:scan_idx][apex_scan], num_points_integrated
 end

@@ -384,6 +384,7 @@ function print_performance_report(timings, println_func; kwargs...)
     println_func(repeat("-", 90))
 
     # Calculate totals
+    peak_memory = peak_rss()
     total_time = 0.0
     total_memory = 0
     total_gc = 0.0
@@ -420,7 +421,6 @@ function print_performance_report(timings, println_func; kwargs...)
     println_func("\nPerformance Summary:")
     println_func(repeat("-", 90))
     println_func("Total Runtime: $(round(total_time/60, digits=2)) minutes")
-    println_func("Peak Memory Usage: $(round(total_memory/1024^3, digits=2)) GB")
     println_func("Total Garbage Collection Time: $(round(total_gc, digits=2)) seconds")
     println_func("Number of Steps: $(length(timings))")
     println_func("Average Step Runtime: $(round(total_time/length(timings), digits=2)) seconds")
@@ -430,8 +430,8 @@ function print_performance_report(timings, println_func; kwargs...)
     println_func(repeat("-", 90))
     current_mem = Sys.total_memory() / 1024^3
     println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
+    println_func("Peak  Memory Usage: $(round(peak_memory/1024^3, digits=2)) GB")
     println_func("Total Available System Memory: $(round(current_mem, digits=2)) GB")
-    println_func("Peak Memory Usage: $(round(maximum([t.bytes for t in values(timings)])/1024^3, digits=2)) GB")
     
     # Process statistics
     println_func("\nProcess Information:")

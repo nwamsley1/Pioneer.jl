@@ -26,7 +26,7 @@ end
 """
 Parameters for scoring search.
 """
-struct ScoringSearchParameters <: SearchParameters
+struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     # XGBoost parameters
     max_psms_in_memory::Int64
     min_best_trace_prob::Float32
@@ -39,14 +39,22 @@ struct ScoringSearchParameters <: SearchParameters
     max_q_value_xgboost_rescore::Float32
     max_q_value_xgboost_mbr_rescore::Float32
     q_value_threshold::Float32
+    isotope_tracetype::I
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
         ml_params = params.optimization.machine_learning
         global_params = params.global_settings 
         protein_inference_params = params.protein_inference
+
+        # Determine isotope trace type
+        isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && global_params.isotope_settings.combine_traces
+            CombineTraces(0.0f0)  # Default min_fraction_transmitted
+        else
+            SeperateTraces()
+        end
         
-        new(
+        new{typeof(isotope_trace_type)}(
             Int64(ml_params.max_psms_in_memory),
             Float32(ml_params.min_trace_prob),
             Int64(ml_params.spline_points),
@@ -57,7 +65,8 @@ struct ScoringSearchParameters <: SearchParameters
             Int64(protein_inference_params.min_peptides),
             Float32(ml_params.max_q_value_xgboost_rescore),
             Float32(ml_params.max_q_value_xgboost_mbr_rescore),
-            Float32(global_params.scoring.q_value_threshold)
+            Float32(global_params.scoring.q_value_threshold),
+            isotope_trace_type
         )
     end
 end
@@ -168,6 +177,7 @@ function summarize_results!(
         sort_and_filter_quant_tables(
             getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path,
+            params.isotope_tracetype,
             :global_prob,
             best_traces
         )
@@ -218,7 +228,7 @@ function summarize_results!(
         merge_sorted_psms_scores(
             getPassingPsms(getMSData(search_context)),
             results.merged_quant_path,
-            :prob
+            :prec_prob
         )
 
         # Step 8: Calculate Error Probabilities
@@ -233,7 +243,7 @@ function summarize_results!(
         # Create q-value interpolation
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
-            :prob,
+            :prec_prob,
             false; # use all precursors
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
         )
@@ -250,7 +260,7 @@ function summarize_results!(
             #results.precursor_pep_spline[],
             results.precursor_qval_interp[],
             params.q_value_threshold,
-            :prob,
+            :prec_prob,
             :run_specific_qval
         )
 
