@@ -167,6 +167,8 @@ function process_file!(
         passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
         passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
         passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
+        passing_psms[!, :precursor_fraction_transmitted_traces] = fill("", nrow(passing_psms))
+        passing_psms[!, :isotopes_captured_traces] = fill("", nrow(passing_psms))
         if params.ms1_quant==true
             passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
             passing_psms[!, :peak_area_ms1] = zeros(Float32, nrow(passing_psms)) 
@@ -233,6 +235,8 @@ function process_file!(
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
+            passing_psms[!, :precursor_fraction_transmitted_traces],
+            passing_psms[!, :isotopes_captured_traces],
             ms_file_idx,
             λ = params.wh_smoothing_strength,
             n_pad = params.n_pad,
@@ -249,6 +253,8 @@ function process_file!(
                 passing_psms[!, :peak_area_ms1],
                 passing_psms[!, :ms1_best_scan],
                 passing_psms[!, :ms1_points_integrated],
+                missing, # precursor_fraction_transmitted_traces
+                missing, # isotopes_captured_traces
                 ms_file_idx,
                 λ = params.wh_smoothing_strength,
                 n_pad = params.n_pad,

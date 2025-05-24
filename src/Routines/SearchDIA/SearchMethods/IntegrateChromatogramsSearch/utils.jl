@@ -31,6 +31,9 @@ function integrate_precursors(chromatograms::DataFrame,
                              apex_scan_idx::AbstractVector{UInt32},
                              peak_area::AbstractVector{Float32},
                              new_best_scan::AbstractVector{UInt32},
+                             points_integrated::AbstractVector{UInt32},
+                             precursor_fraction_transmitted_traces::AbstractVector{String},
+                             isotopes_captured_traces::AbstractVector{String},
                              ms_file_idx::Int64; 
                              λ::Float32 = 1.0f0,
                              n_pad::Int64 = 20,
@@ -45,13 +48,8 @@ function integrate_precursors(chromatograms::DataFrame,
     dtype = Float32
     thread_tasks = partitionThreadTasks(length(precursor_idx), 10, Threads.nthreads())
     #Maximal size of a chromatogram
-    N = 0
-    for (chrom_id, chrom) in pairs(grouped_chroms)
-        if size(chrom, 1) > N
-            N = size(chrom, 1)
-        end
-    end
-    N += n_pad*2
+    N = maximum(size(c,1) for c in grouped_chroms) + (2*n_pad)
+
     group_keys = keys(grouped_chroms)
     tasks = map(thread_tasks) do chunk
         Threads.@spawn begin
@@ -103,7 +101,11 @@ function integrate_precursors(chromatograms::DataFrame,
                     apex_scan = nearest_idx#argmax(chrom[!,:intensity])
                 end
 
-                peak_area[i], new_best_scan[i] = integrate_chrom(
+                if !ismissing(precursor_fraction_transmitted_traces)
+                    precursor_fraction_transmitted_traces[i], isotopes_captured_traces[i] = get_isolated_isotopes_strings(chrom[!, :precursor_fraction_transmitted],                                                                                                          chrom[!, :isotopes_captured])
+                end
+
+                peak_area[i], new_best_scan[i], points_integrated[i] = integrate_chrom(
                                 chrom,
                                 apex_scan,
                                 b,
@@ -731,3 +733,37 @@ function process_final_psms!(
 end
 
 
+
+
+"""
+    unique_pair_strings(pt::AbstractVector,
+                        iso::AbstractVector) -> (String, String)
+
+`pt`  - precursor_fraction_transmitted  (e.g. Vector{Float32})  
+`iso` - isotopes_captured                (e.g. Vector{Tuple{Int8,Int8}})
+
+Returns a pair of semicolon-separated strings that list **unique** `(pt,iso)`
+pairs in the *order of their first appearance*.
+"""
+function get_isolated_isotopes_strings(pt::AbstractVector, iso::AbstractVector)
+    @assert length(pt) == length(iso)
+
+    seen   = Dict{Tuple{Any,Any},Bool}()   # tracks already‑emitted pairs
+    uniq_pt  = String[]                    # keeps order
+    uniq_iso = String[]
+
+    sig2 = x -> @sprintf("%.2g", x)
+
+    for (p, t) in zip(pt, iso)
+        key = (p,t)
+        haskey(seen, key) && continue      # skip duplicates
+
+        push!(uniq_pt,  sig2.(p))         # or @sprintf("%.3f", p) for fixed format
+        push!(uniq_iso, string(t))         # Tuple prints as "(0,1)" etc.
+        seen[key] = true
+    end
+
+    order = reverse(sortperm(uniq_pt))
+
+    return join(uniq_pt[order], ';'), join(uniq_iso[order], ';')
+end
