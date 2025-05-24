@@ -432,7 +432,6 @@ function print_performance_report(timings, println_func; kwargs...)
     println_func("Total Memory Allocated: $(round(total_memory/1024^3, digits=2)) GB")
     println_func("Peak  Memory Usage: $(round(peak_memory/1024^3, digits=2)) GB")
     println_func("Total Available System Memory: $(round(current_mem, digits=2)) GB")
-    println_func("Peak Memory Usage: $(round(maximum([t.bytes for t in values(timings)])/1024^3, digits=2)) GB")
     
     # Process statistics
     println_func("\nProcess Information:")
