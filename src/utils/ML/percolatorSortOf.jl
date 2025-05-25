@@ -245,6 +245,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             # update global prob
             if !("global_prob" in names(psms_subset))
                 psms_subset.global_prob = zeros(Float32, size(psms_subset, 1))
+                psms_subset.prec_prob = zeros(Float32, size(psms_subset, 1))
             end
 
             for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
@@ -253,6 +254,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     psms_subset[i,:global_prob] = prec_to_global_score[precursor_idx]
                 end
             end
+
+            transform!(
+                groupby(psms_subset, [:precursor_idx]),
+                :prob => (p -> 1-exp(sum(log1p.(-p)))) => :prec_prob
+            )
 
             if dropVectorCols # last iteration
                 Arrow.write(file_path, dropVectorColumns!(psms_subset))
@@ -321,20 +327,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             #print_importance = true
             print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
 
-            #println(collect(zip(importance(bst)))[1:5])
-            prec_to_best_score = getBestScorePerPrec!(
-                prec_to_best_score,
-                excludeTestFold,
-                test_fold_idx,
-                file_paths,
-                bst,
-                features
-            )
-            getBestScorePerPrec!(
-                prec_to_best_score,
-                psms_train
-            )
-            
             # Get probabilities for training sample so we can get q-values
             psms_train[!,:prob] = XGBoost.predict(bst, psms_train[!, features])
             

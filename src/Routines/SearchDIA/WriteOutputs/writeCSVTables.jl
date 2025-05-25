@@ -81,7 +81,7 @@ function writePrecursorCSV(
         longdf::DataFrame,
         cols::AbstractVector{Symbol},
         normalized::Bool)
-        
+
         value_col = normalized ? :peak_area_normalized : :peak_area
 
         return unstack(longdf,
@@ -114,12 +114,11 @@ function writePrecursorCSV(
     "precursor_idx"
     "target"
     ]
-#file_name	protein	peptides	n_peptides	global_qval	run_specific_qval	abundance	species	target
 
     long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
     rename!(precursors_long, [:new_best_scan => :apex_scan,
-                              :prob => :run_specific_prob,
+                              :prec_prob => :run_specific_prob,
                               :pg_score => :run_specific_pg_score,
                               :isotopes_captured_traces => :isotopes_captured,
                               :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted])
