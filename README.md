@@ -26,6 +26,3 @@ Pioneer and its companion tool, Altimeter, are together an open-source and perfo
 
 ## ASMS 2024
 <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/asms_2024_image.jpg"/>
-
-## US HUPO 2024
-<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/HUPO_POSTER_2024_FORFEDEX.jpg"/>
