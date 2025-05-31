@@ -156,35 +156,35 @@ Mol Cell Proteomics. 2005 Oct;4(10):1419-40. doi: 10.1074/mcp.R500012-MCP200.
 Zhang B, Chambers MC, Tabb DL. Proteomic parsimony through bipartite graph analysis improves accuracy
 and transparency. J Proteome Res. 2007 Sep;6(9):3549-57. doi: 10.1021/pr070230d.
 """
-function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}, 
-                        peptides::Vector{String})::Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}}
+function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}, 
+                        peptides::Vector{String})::Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}}
     # Build peptide-to-protein and protein-to-peptide mappings
-    peptide_to_proteins = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}}()
-    original_groups = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+    peptide_to_proteins = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}}()
+    original_groups = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
     
     for i in 1:length(peptides)
         peptide = peptides[i]
-        peptide_key = (peptide = peptide, decoy = proteins[i].decoy)
+        peptide_key = (peptide = peptide, decoy = proteins[i].decoy, proteins[i].entrap_id)
         
         if !haskey(peptide_to_proteins, peptide_key)
-            insert!(peptide_to_proteins, peptide_key, Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}())
+            insert!(peptide_to_proteins, peptide_key, Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}())
             # Store the original protein group
             insert!(original_groups, peptide_key, proteins[i])
         end
         
         # Split the protein name string by ";" and treat each part as a protein
         for protein_part in split(proteins[i].protein_name, ";")
-            push!(peptide_to_proteins[peptide_key], (protein_name = protein_part, decoy = proteins[i].decoy))
+            push!(peptide_to_proteins[peptide_key], (protein_name = protein_part, decoy = proteins[i].decoy, entrap_id = proteins[i].entrap_id))
         end
     end
     
     # Map from protein (name + decoy status) to peptides
-    protein_to_peptides = Dictionary{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}, Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}}()
+    protein_to_peptides = Dictionary{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}}()
     
     for (peptide_key, protein_set) in pairs(peptide_to_proteins)
         for protein_tuple in protein_set
             if !haskey(protein_to_peptides, protein_tuple)
-                insert!(protein_to_peptides, protein_tuple, Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}())
+                insert!(protein_to_peptides, protein_tuple, Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}())
             end
             
             push!(protein_to_peptides[protein_tuple], peptide_key)
@@ -192,18 +192,18 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
     end
     
     # Find connected components (independent protein-peptide clusters)
-    visited_peptides = Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}()
-    components = Vector{Tuple{Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}, Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}}}()  # (peptides, proteins)
+    visited_peptides = Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
+    components = Vector{Tuple{Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}, Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}}}()  # (peptides, proteins)
     
     for i in 1:length(peptides)
-        peptide_key = (peptide = peptides[i], decoy = proteins[i].decoy)
+        peptide_key = (peptide = peptides[i], decoy = proteins[i].decoy, entrap_id = proteins[i].entrap_id)
         
         if peptide_key in visited_peptides
             continue
         end
         
-        component_peptides = Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}()
-        component_proteins = Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+        component_peptides = Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
+        component_proteins = Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         queue = [peptide_key]
         
         while !isempty(queue)
@@ -233,7 +233,7 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
     end
     
     # Initialize result dictionary
-    result = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}}()
+    result = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}}()
     
     # Process each component independently
     for (component_peptides, component_proteins) in components
@@ -256,17 +256,18 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
             if identical_sets
                 # Case where all proteins are indistinguishable
                 # Group proteins by their decoy status (composite keys already ensure this grouping)
-                protein_groups = Dictionary{Bool, Vector{String}}()
+                protein_groups = Dictionary{NamedTuple{(:decoy, :entrap_id), Tuple{Bool, UInt8}}, Vector{String}}()
                 
                 for protein in component_proteins
-                    if !haskey(protein_groups, protein.decoy)
-                        insert!(protein_groups, protein.decoy, String[])
+                    key = (decoy = protein.decoy, entrap_id = protein.entrap_id)
+                    if !haskey(protein_groups, key)
+                        insert!(protein_groups, key, String[])
                     end
-                    push!(protein_groups[protein.decoy], protein.protein_name)
+                    push!(protein_groups[key], protein.protein_name)
                 end
                 
                 # Process each group and assign peptides
-                for (is_decoy, protein_names) in pairs(protein_groups)
+                for (pg_key, protein_names) in pairs(protein_groups)
                     if !isempty(protein_names)
                         # Get protein names sorted and joined
                         sorted_protein_names = sort(protein_names)
@@ -274,10 +275,11 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
                         
                         # Assign to peptides with matching decoy status
                         for peptide_key in component_peptides
-                            if peptide_key.decoy == is_decoy
+                            if (pg_key.decoy == peptide_key.decoy) & (pg_key.entrap_id == peptide_key.entrap_id)
                                 insert!(result, peptide_key, (
                                     protein_name = protein_group,
-                                    decoy = is_decoy,
+                                    decoy = pg_key.decoy,
+                                    entrap_id = pg_key.entrap_id,
                                     retain = true
                                 ))
                             end
@@ -290,10 +292,10 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
         
         # Apply greedy set cover for minimal protein list
         remaining_peptides = copy(component_peptides)
-        necessary_proteins = Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+        necessary_proteins = Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         
         # Find peptides unique to a protein
-        unique_peptide_to_protein = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+        unique_peptide_to_protein = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         
         for peptide_key in component_peptides
             proteins_for_peptide = intersect(peptide_to_proteins[peptide_key], component_proteins)
@@ -305,17 +307,18 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
         # Case F handling: No protein has unique peptides
         if isempty(unique_peptide_to_protein) && !isempty(component_proteins)
             # Group proteins by their decoy status (composite keys already ensure this grouping)
-            protein_groups = Dictionary{Bool, Vector{String}}()
+            protein_groups = Dictionary{NamedTuple{(:decoy, :entrap_id), Tuple{Bool, UInt8}}, Vector{String}}()
             
             for protein in component_proteins
-                if !haskey(protein_groups, protein.decoy)
-                    insert!(protein_groups, protein.decoy, String[])
+                key = (decoy = protein.decoy, entrap_id = protein.entrap_id)
+                if !haskey(protein_groups, key)
+                    insert!(protein_groups, (decoy = protein.decoy, entrap_id = protein.entrap_id), String[])
                 end
-                push!(protein_groups[protein.decoy], protein.protein_name)
+                push!(protein_groups[(decoy = protein.decoy, entrap_id = protein.entrap_id)], protein.protein_name)
             end
             
             # Process each group and assign peptides
-            for (is_decoy, protein_names) in pairs(protein_groups)
+            for (pg_key, protein_names) in pairs(protein_groups)
                 if !isempty(protein_names)
                     # Get protein names sorted and joined
                     sorted_protein_names = sort(protein_names)
@@ -323,10 +326,11 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
                     
                     # Assign to peptides with matching decoy status
                     for peptide_key in component_peptides
-                        if peptide_key.decoy == is_decoy
+                        if (pg_key.decoy == peptide_key.decoy) & (pg_key.entrap_id == peptide_key.entrap_id)
                             insert!(result, peptide_key, (
                                 protein_name = protein_group,
-                                decoy = is_decoy,
+                                decoy = pg_key.decoy,
+                                entrap_id = pg_key.entrap_id,
                                 retain = true
                             ))
                         end
@@ -337,7 +341,7 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
         end
         
         # First include proteins with unique peptides
-        unique_proteins = Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+        unique_proteins = Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         for (_, protein) in pairs(unique_peptide_to_protein)
             push!(unique_proteins, protein)
         end
@@ -378,14 +382,14 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
         end
         
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
-        peptide_to_necessary_protein = Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+        peptide_to_necessary_protein = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         
         # Track peptides that can be attributed to multiple necessary proteins
-        ambiguous_peptides = Set{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}}()
+        ambiguous_peptides = Set{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
         
         for peptide_key in component_peptides
             # Get all necessary proteins that contain this peptide
-            proteins_with_peptide = Set{NamedTuple{(:protein_name, :decoy), Tuple{String, Bool}}}()
+            proteins_with_peptide = Set{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
             for protein in necessary_proteins
                 if peptide_key in protein_to_peptides[protein]
                     push!(proteins_with_peptide, protein)
@@ -409,6 +413,7 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
                 insert!(result, peptide_key, (
                     protein_name = protein.protein_name,
                     decoy = protein.decoy,
+                    entrap_id = protein.entrap_id,
                     retain = true
                 ))
             else
@@ -417,6 +422,7 @@ function infer_proteins(proteins::Vector{NamedTuple{(:protein_name, :decoy), Tup
                 insert!(result, peptide_key, (
                     protein_name = original_group.protein_name,
                     decoy = original_group.decoy,
+                    entrap_id = original_group.entrap_id,
                     retain = false
                 ))
             end
