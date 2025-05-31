@@ -133,6 +133,10 @@
     insert!(dict_g, (peptide = "pep4", decoy = false, entrap_id = UInt8(1)), (protein_name = "B", decoy = false, entrap_id = UInt8(1), retain = true))
     
     result_g = infer_proteins(proteins, peptides)
+    for (key, value) in pairs(dict_g)
+        println("key $key")
+        println("value a $value value b ", result_g[key])
+    end
     @test dict_g == sort_by_key(result_g)
     
     # Test Case H: Combination of all previous test cases (MODIFIED to reflect changes in D, E, G)
