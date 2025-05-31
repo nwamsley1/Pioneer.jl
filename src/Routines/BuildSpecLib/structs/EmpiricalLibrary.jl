@@ -143,9 +143,17 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
     # Internal constructor to standardize column names
     function BasicEmpiricalLibrary(df::DataFrame)
         # Check if required columns exist
-        required_cols = ["Tr_recalibrated", "ModifiedPeptide", "PrecursorMz",
-                         "PrecursorCharge", "ProductMz", "FragmentCharge",
+        required_cols = [
+            #"Tr_recalibrated", 
+            "ModifiedPeptide", "PrecursorMz",
+                         "PrecursorCharge", 
+                         #"ProductMz", 
+                         "FragmentCharge",
+
                          "FragmentType", "FragmentSeriesNumber"]
+        println("a size(df, 1) ", size(df, 1))
+        filter!(x->x.FragmentLossType=="noloss", df);
+        println("b size(df, 1) ", size(df, 1))
         missing_cols = setdiff(required_cols, names(df))
         if !isempty(missing_cols)
             throw(ArgumentError("Missing required columns: $(join(missing_cols, ", "))"))
@@ -156,18 +164,23 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         column_mapping = Dict(
             "PrecursorMz" => "prec_mz",
             "Tr_recalibrated" => "irt",
+            #"RT" => "irt",
             "PeptideSequence" => "sequence",
+            #"StrippedPeptide" => "sequence",
             "ModifiedPeptide" => "modified_sequence",
             "PrecursorCharge" => "prec_charge",
             "IonMobility" => "ion_mobility",
             "ProductMz" => "frag_mz",
+            #"FragmentMz" => "frag_mz",
             "LibraryIntensity" => "library_intensity", 
+            #"RelativeIntensity" => "library_intensity",
             "FragmentCharge" => "frag_charge",
             "FragmentType" => "frag_type",
             "FragmentSeriesNumber" => "frag_series_number",
             "FragmentLossType" => "frag_loss_type",
             "ProteinGroup" => "protein_group",
             "ProteinName" => "protein_name",
+            #"ProteinNames" => "protein_name",
             "Genes" => "genes"
         )
 
@@ -228,6 +241,8 @@ struct BasicEmpiricalLibrary <: EmpiricalLibrary
         #new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "[Carbamidomethyl (C)]"=>"(Unimod:35)")
         #new_df[!,:modified_sequence] = replace.(new_df[!,:modified_sequence], "K"=>"K(de)")
         #new_df[!,:modified_sequence] = ["n(de)"*seq for seq in new_df[!,:modified_sequence]]
+        new_df[!,:modified_sequence] = String.(new_df[!,:modified_sequence])
+        new_df[!,:sequence] = String.(new_df[!,:sequence])
         # Create precursor_idx based on unique ModifiedPeptide + PrecursorCharge combinations
         # Create a temporary column combining peptide and charge
         new_df.precursor_key = new_df.modified_sequence .* "_" .* string.(new_df.prec_charge)

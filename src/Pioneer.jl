@@ -1,6 +1,7 @@
 module Pioneer
 __precompile__(false)
 using Arrow, ArrowTypes, ArgParse
+using StringDistances
 #using BSplineKit Don't need this imports anymore?
 using Base64
 using Base.Order

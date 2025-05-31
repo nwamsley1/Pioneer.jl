@@ -1065,12 +1065,12 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
     println("length(forward_seqs) = ", length(forward_seqs))
     # Track which rows to keep
     keep_rows = trues(size(shuffle_libdf, 1))
-    
+    shuffle_libdf[!,:delete_sequence] .= false
     # Track current precursor and its shuffled sequence
     current_precursor = nothing
     current_shuffled_seq = nothing
     current_shuffled_mods = nothing
-    
+    shuffle_attempts = 0
     # Process rows maintaining precursor consistency
     for (idx, row) in enumerate(eachrow(shuffle_libdf))
         if row.modified_sequence != current_precursor
@@ -1082,8 +1082,13 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
             shuffle_attempts = 0
             while shuffle_attempts < 20 && !found_valid_shuffle
                 shuffled_sequence, shuffled_mods = shuffleSequence(row.sequence, row.structural_mods)
-                 
-                if !(shuffled_sequence in forward_seqs)
+                r = evaluate(Hamming(), shuffled_sequence, row.sequence)
+                r_decoy = evaluate(Hamming(), shuffled_sequence, reverse(row.sequence[1:end-1])*row.sequence[end])
+                r_e_decoy = evaluate(Hamming(), shuffled_sequence, reverse(shuffled_sequence[1:end-1])*shuffled_sequence[end])
+                #if (r <= 3)
+                #    println("r $r shuffled_sequence = ", shuffled_sequence, " row.sequence = ", row.sequence)
+                #end
+                if (!(shuffled_sequence in forward_seqs)) & (r > 0) && (r_decoy > 0) &&(r_e_decoy > 0)
                     current_shuffled_seq = shuffled_sequence
                     current_shuffled_mods = shuffled_mods
                     push!(forward_seqs, shuffled_sequence)
@@ -1093,19 +1098,30 @@ function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment
             end
             # If no valid shuffle found
             if !found_valid_shuffle
+                current_shuffled_seq = nothing
                 continue
             end
         end
         
         # Apply current shuffled sequence to this row
         #println("row.sequence = ", row.sequence, " current_shuffled_seq = ", current_shuffled_seq)
-        
-        shuffle_libdf[idx, :sequence] = current_shuffled_seq
-        shuffle_libdf[idx, :structural_mods] = current_shuffled_mods
-        shuffle_libdf[idx, :is_decoy] = false
+        if isnothing(current_shuffled_seq)
+            println("shuffle_attempts = ", shuffle_attempts)
+            println("row.sequence = ", row.sequence)
+            #shuffle_libdf[idx, :delete_sequence] = true
+            shuffle_libdf[idx, :sequence] = row.modified_sequence
+            shuffle_libdf[idx, :structural_mods] = row.structural_mods
+            shuffle_libdf[idx, :is_decoy] = false
+        else
+            shuffle_libdf[idx, :sequence] = current_shuffled_seq
+            shuffle_libdf[idx, :structural_mods] = ""#current_shuffled_mods
+            shuffle_libdf[idx, :is_decoy] = false
+        end
         #shuffle_libdf[idx, :pair_id] = row.pair_id
     end
-    
+
+    #filter!(x->!x.delete_sequence, shuffle_libdf);
+    select!(shuffle_libdf, Not([:delete_sequence]))
     # Filter out failed shuffles and append
     append!(speclibdf.libdf, shuffle_libdf[keep_rows, :])
 end

@@ -88,7 +88,7 @@ function parseStructralModsFromLib!(speclib::BasicEmpiricalLibrary)
     )
         structural_mods = length(modified_seqs) > 0 ? Vector{String}(undef, length(modified_seqs)) : Vector{String}()
         for (i, seq) in enumerate(modified_seqs)
-            structural_mods[i] = parseEmpiricalLibraryMods(seq)
+            structural_mods[i] = parseEmpiricalLibraryMods(String(seq))
         end
         return structural_mods  
     end
@@ -193,8 +193,11 @@ function ParseSpecLib(params_path::String)
     #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out.csv", test_lib.libdf)
     #println("test_lib.libdf[1:3,:], ", test_lib.libdf[1:3,:])
     # Generate entrapment sequences if requested
+    println("size(unique(test_lib.libdf[!,[:modified_sequence,:prec_charge]])) ",size(unique(test_lib.libdf[!,[:modified_sequence,:prec_charge]])))
+
     if generate_entrapment
         for i in 1:entrapment_groups
+            println("i $i")
             getShuffledEntrapmentSeqs!(test_lib, UInt8(i))
         end
     end
@@ -251,10 +254,10 @@ function ParseSpecLib(params_path::String)
     # If channels were processed, update the DataFrame
     if !isempty(channel_dfs)
         channels_df = vcat(channel_dfs...)
-        decoy_channel_dfs = vcat(decoy_channel_dfs...)
+        #decoy_channel_dfs = vcat(decoy_channel_dfs...)
         empty!(test_lib.libdf)
         append!(test_lib.libdf, channels_df)
-        append!(test_lib.libdf, decoy_channel_dfs)
+        #append!(test_lib.libdf, decoy_channel_dfs)
     end
     #CSV.write("/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/test_out2.csv", test_lib.libdf)
     test_lib.libdf[!,:frag_sulfur_count] = zeros(UInt8, size(test_lib.libdf, 1))
@@ -306,6 +309,7 @@ function ParseSpecLib(params_path::String)
     println("B")
     entrapment_lib = copy(test_lib.libdf)
     entrapment_lib[!,:modified_sequence] = copy(entrapment_lib[!,:sequence])
+    println("size(unique(entrapment_lib[!,[:modified_sequence,:prec_charge]])) ",size(unique(entrapment_lib[!,[:modified_sequence,:prec_charge]])))
 
     column_mapping = Dict(
         "prec_mz" => "PrecursorMz",
@@ -313,7 +317,7 @@ function ParseSpecLib(params_path::String)
         "irt" => "Tr_recalibrated",
         "modified_sequence" => "ModifiedSequence",
         "sequence" => "PeptideSequence",
-        "ion_mobility" => "IonMobility",
+        #"ion_mobility" => "IonMobility",
         "frag_mz" => "ProductMz",
         "library_intensity" => "LibraryIntensity",
         "protein_group" => "ProteinGroup",
@@ -324,22 +328,42 @@ function ParseSpecLib(params_path::String)
         "frag_series_number" => "FragmentSeriesNumber",
         "frag_loss_type" => "FragmentLossType",
         "entrapment_group_id" => "EntrapmentGroupId",
-        "precursor_idx" => "PrecursorIdx",
+        "precursor_idx" => "PrecursorIdx"
     )
     # Filter to only include columns that exist in the dataframe
     existing_columns = filter(col -> col in names(entrapment_lib), keys(column_mapping))
     filtered_mapping = Dict(col => column_mapping[col] for col in existing_columns)
     # Apply the rename
+    #select!(entrapment_lib, Not([:PrecursorIdx]))
+    #select!(entrapment_lib, Not([:EntrapmentGroupId]))
     rename!(entrapment_lib, filtered_mapping)
-
+    println(first(entrapment_lib, 5))
     trap_seqs = Set(replace.(entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==1,:PeptideSequence], "I"=>"L"))
     orig_seqs = Set(replace.(entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==0,:PeptideSequence], "I"=>"L"))
+    orig_decoys = Set(replace.([reverse(seq[1:end-1])*seq[end] for seq in entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==0,:PeptideSequence]], "I"=>"L"))
+    trap_decoys = Set(replace.([reverse(seq[1:end-1])*seq[end] for seq in entrapment_lib[entrapment_lib[!,:EntrapmentGroupId].==1,:PeptideSequence]], "I"=>"L"))
+
     duplicated_seqs =  trap_seqs ∩ orig_seqs
     println("length(duplicateed_seqs), ", length(duplicated_seqs))
     filter!(x->replace(x.PeptideSequence, "I"=>"L") ∉ duplicated_seqs, entrapment_lib);
-    Arrow.write("/Users/nathanwamsley/Desktop/test_lib.arrow", entrapment_lib[!,collect(values(column_mapping))]);
-    CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_paired_jmod.tsv", 
+    duplicated_seqs =  trap_seqs ∩ orig_decoys
+    println("decoys length(duplicateed_seqs), ", length(duplicated_seqs))
+    filter!(x->replace(x.PeptideSequence, "I"=>"L") ∉ duplicated_seqs, entrapment_lib);
+    duplicated_seqs =  trap_seqs ∩ trap_decoys
+    println("decoys length(duplicateed_seqs), ", length(duplicated_seqs))
+    filter!(x->replace(x.PeptideSequence, "I"=>"L") ∉ duplicated_seqs, entrapment_lib);
+    #Arrow.write("/Users/nathanwamsley/Desktop/test_lib.arrow", entrapment_lib[!,collect(values(column_mapping))]);
+    #CSV.write("/Users/nathanwamsley/Data/Apr_2025/EntrapmentLib/hs_tag6_predlib_JDRT_480_1000_subset_wshuffledentrap_paired_jmod.tsv", 
+    #Arrow.write("/Users/nathanwamsley/Data/May2025/spec_libs/parsed_libs/JD_LF_HY_wshuffledentrap_paired_jmod_editdistance0_05072025_02.tsv", entrapment_lib[!,collect(values(column_mapping))]);
+    CSV.write("/Users/nathanwamsley/Data/May2025/spec_libs/parsed_libs/JD_LF_HY_wshuffledentrap_paired_noloss_051925.tsv", 
     entrapment_lib[!,collect(values(column_mapping))]; delim = '\t')
+    #=
+    original_path = "/Users/nathanwamsley/Data/May2025/spec_libs/parsed_libs/JD_LF_HY_wshuffledentrap_paired_jmod_editdistance4_05072025_02.tsv"
+    test_table = DataFrame(CSV.File(original_path, delim = '\t', header = true))
+    rename!(test_table, Dict("ModifiedSequence"=>"ModifiedPeptide"))
+    diann_path = split(original_path, ".tsv")[1] * "_diann.tsv"
+    CSV.write(diann_path, test_table, delim = '\t')
+    =#
     #=
     histogram(test_table[test_table[!,:EntrapmentGroupId].==0,:PrecursorCharge], alpha = 0.5, label = "orig")
     histogram!(test_table[test_table[!,:EntrapmentGroupId].==1,:PrecursorCharge], alpha = 0.5, label = "trap")
