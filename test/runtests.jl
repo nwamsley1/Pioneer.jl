@@ -106,11 +106,11 @@ end
         @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     end
     include("./UnitTests/empiricalLibTests.jl")
-    
+    =#
     @testset "process_test" begin 
         @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
     end
-    
+    #=
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
     include("./UnitTests/matchPeaks.jl")

@@ -437,6 +437,7 @@ function get_psms_passing_qval(
             :missed_cleavage,
             :isotopes_captured,
             :scan_idx,
+            :entrapment_group_id,
             :ms_file_idx
         ]
         available_cols = intersect(cols, Symbol.(names(passing_psms)))
@@ -637,7 +638,7 @@ function get_protein_groups(
 )
 
     function getProteinGroupsDict(
-        protein_inference_dict::Dictionary{NamedTuple{(:peptide, :decoy), Tuple{String, Bool}}, NamedTuple{(:protein_name, :decoy, :retain), Tuple{String, Bool, Bool}}},
+        protein_inference_dict::Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}},
         psm_precursor_idx::AbstractVector{UInt32},
         psm_score::AbstractVector{Float32},
         psm_is_target::AbstractVector{Bool},
@@ -716,7 +717,7 @@ function get_protein_groups(
             protein_name = protein_inference_dict[peptide_key][:protein_name]
             inferred_protein_group_names[i] = protein_name
 
-            key = (protein_name = protein_name, target = psm_is_target[i])
+            key = (protein_name = protein_name, target = psm_is_target[i], entrap_id = psm_entrapment_id[i])
             
             if haskey(protein_groups, key)
                 pg_score[i] = protein_groups[key][:pg_score]
@@ -770,9 +771,17 @@ function get_protein_groups(
     ##########
     #Protein inference
     ##########
+    
+    # Load all passing PSMs
     passing_psms = Arrow.Table(passing_psms_paths)
-    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy), Tuple{String, String, Bool}}}()
+
+    # Build protein_peptide_rows using data from PSMs
+    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy, :entrap_id), Tuple{String, String, Bool, UInt8}}}()
+    
+    # Get data from PSMs
     passing_precursor_idx = passing_psms[:precursor_idx]
+
+    # Get other data from precursors
     accession_numbers = getAccessionNumbers(precursors)
     decoys = getIsDecoy(precursors)
     entrap_ids = getEntrapmentGroupId(precursors)
@@ -791,6 +800,7 @@ function get_protein_groups(
     protein_peptide_rows = collect(protein_peptide_rows)
     peptides = [row.sequence for row in protein_peptide_rows]
     proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
+    
     protein_inference_dict = infer_proteins(
         proteins,
         peptides
@@ -817,7 +827,7 @@ function get_protein_groups(
             psms_table[:precursor_idx],
             psms_table[:prob],
             psms_table[:target],
-            psms_table[:entrap_id],
+            psms_table[:entrapment_group_id],
             precursors;
             min_peptides = min_peptides
         )
@@ -845,7 +855,7 @@ function get_protein_groups(
 
         psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
         psms_table[!,:global_pg_score] = [ get(acc_to_max_pg_score, (protein_name = prot, target = tgt, entrap_id = entrap_id), 0.0f0)
-            for (prot, tgt, entrap_id) in zip(psms_table.inferred_protein_group, psms_table.target, psms_table.entrap_id) ]
+            for (prot, tgt, entrap_id) in zip(psms_table.inferred_protein_group, psms_table.target, psms_table.entrapment_group_id) ]
 
         writeArrow(file_path, psms_table)
 
@@ -873,9 +883,10 @@ function add_protein_inferrence_col(
         inferred_protein_group = Vector{String}(undef, length(precursor_idx))
         use_for_protein_quant = zeros(Bool, length(precursor_idx))
         for (i, pid) in enumerate(precursor_idx)
-            protein_group, decoy, use_for_inference = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
-            inferred_protein_group[i] = protein_group
-            use_for_protein_quant[i] = use_for_inference
+            #protein_group, decoy, entrap_id, use_for_inference = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
+            inferred_prot = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
+            inferred_protein_group[i] = inferred_prot.protein_name::String
+            use_for_protein_quant[i] = inferred_prot.retain::Bool
         end
         passing_psms[!,:use_for_protein_quant] = use_for_protein_quant
         passing_psms[!,:inferred_protein_group] = inferred_protein_group
@@ -885,6 +896,7 @@ function add_protein_inferrence_col(
         )
     end
 end
+
 
 """
     merge_sorted_protein_groups(input_dir::String, output_path::String,

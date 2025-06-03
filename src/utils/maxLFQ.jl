@@ -179,6 +179,7 @@ Dict{Symbol, Vector} with 4 entries:
 function getProtAbundance(protein::String, 
                             row_idx::Int64,
                             target::Bool,
+                            entrap_id::UInt8,
                             species::String,
                             peptides::AbstractVector{UInt32}, 
                             experiments::AbstractVector{UInt16}, 
@@ -187,6 +188,7 @@ function getProtAbundance(protein::String,
                             global_qvals::AbstractVector{Float32},
                             run_specific_qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
+                            entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
                             protein_out::Vector{Union{Missing, String}}, 
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}},
@@ -208,6 +210,7 @@ function getProtAbundance(protein::String,
     function appendResults!(row_idx::Int64,
                             N::Int64,
                             target::Bool,
+                            entrap_id::UInt8,
                             species::String,
                             protein::String,
                             unique_peptides::Vector{UInt32}, 
@@ -215,6 +218,7 @@ function getProtAbundance(protein::String,
                             global_qvals::AbstractVector{Float32},
                             run_specific_qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
+                            entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
                             protein_out::Vector{Union{Missing, String}}, 
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
@@ -254,6 +258,7 @@ function getProtAbundance(protein::String,
             protein_out[row_idx + i] = protein
             species_out[row_idx + i] = species
             target_out[row_idx + i] = target
+            entrap_id_out[row_idx + i] = entrap_id
         end
         appendPeptides!(peptides_out, 
                         row_idx,
@@ -277,6 +282,7 @@ function getProtAbundance(protein::String,
                    row_idx,
                    N,
                    target,
+                   entrap_id,
                    species, 
                    protein, 
                    unique_peptides, 
@@ -284,6 +290,7 @@ function getProtAbundance(protein::String,
                    global_qvals,
                    run_specific_qvals,
                    target_out,
+                   entrap_id_out,
                    species_out,
                    protein_out, 
                    peptides_out, 
@@ -307,6 +314,7 @@ function LFQ(prot::DataFrame,
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
+
     prot[!,:global_qval_pg] = zeros(Float32, nrow(prot))
     prot[!,:run_specific_qval_pg] = zeros(Float32, nrow(prot))
 
@@ -332,7 +340,7 @@ function LFQ(prot::DataFrame,
         filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
-            [:target, :species, :inferred_protein_group]
+            [:target, :entrapment_group_id, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))
@@ -341,6 +349,7 @@ function LFQ(prot::DataFrame,
         #pre allocate the batch
         out = Dict(
             :target => Vector{Union{Missing, Bool}}(undef, nrows),
+            :entrap_id => Vector{Union{Missing, UInt8}}(undef, nrows),
             :species => Vector{Union{Missing, String}}(undef, nrows),
             :protein => Vector{Union{Missing, String}}(undef, nrows),
             :peptides => Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}(undef, nrows),
@@ -351,6 +360,7 @@ function LFQ(prot::DataFrame,
         )
         for i in range(1, nrows)
             out[:target][i] = missing
+            out[:entrap_id][i] = missing
             out[:species][i] = missing
             out[:protein][i] = missing
             out[:peptides][i] = missing
@@ -366,6 +376,7 @@ function LFQ(prot::DataFrame,
             getProtAbundance(protein[:inferred_protein_group], 
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
+                                protein[:entrapment_group_id],
                                 protein[:species],
                                 data[!,:precursor_idx], 
                                 data[!,:ms_file_idx], 
@@ -374,6 +385,7 @@ function LFQ(prot::DataFrame,
                                 data[!,:global_qval_pg],
                                 data[!,:run_specific_qval_pg],
                                 out[:target],
+                                out[:entrap_id],
                                 out[:species],
                                 out[:protein],
                                 out[:peptides],
@@ -408,6 +420,7 @@ function LFQ(prot::DataFrame,
                     out,
                     [:file_name,
                     :target,
+                    :entrap_id,
                     :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance]); 
                 file=false)  # file=false creates stream format
             end
@@ -418,6 +431,7 @@ function LFQ(prot::DataFrame,
                     out,
                     [:file_name,
                     :target,
+                    :entrap_id,
                     :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance])
             )
         end

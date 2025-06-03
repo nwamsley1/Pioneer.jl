@@ -128,15 +128,11 @@
     dict_g = Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, 
     NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}}()
     insert!(dict_g, (peptide = "pep1", decoy = false, entrap_id = UInt8(1)), (protein_name = "A", decoy = false, entrap_id = UInt8(1), retain = true))
-    insert!(dict_g, (peptide = "pep2", decoy = false, entrap_id = UInt8(1)), (protein_name = "A;B", decoy = false, entrap_id = UInt8(1), retain = false))
-    insert!(dict_g, (peptide = "pep3", decoy = false, entrap_id = UInt8(1)), (protein_name = "B", decoy = false, entrap_id = UInt8(1), retain = true))
-    insert!(dict_g, (peptide = "pep4", decoy = false, entrap_id = UInt8(1)), (protein_name = "B", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_g, (peptide = "pep2", decoy = false, entrap_id = UInt8(1)), (protein_name = "A", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_g, (peptide = "pep3", decoy = false, entrap_id = UInt8(1)), (protein_name = "C", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_g, (peptide = "pep4", decoy = false, entrap_id = UInt8(1)), (protein_name = "C", decoy = false, entrap_id = UInt8(1), retain = true))
     
     result_g = infer_proteins(proteins, peptides)
-    for (key, value) in pairs(dict_g)
-        println("key $key")
-        println("value a $value value b ", result_g[key])
-    end
     @test dict_g == sort_by_key(result_g)
     
     # Test Case H: Combination of all previous test cases (MODIFIED to reflect changes in D, E, G)
@@ -212,9 +208,9 @@
     
     # Case G related (peptides 25-28) - Split between O and P;Q
     insert!(dict_h, (peptide = "pep25", decoy = false, entrap_id = UInt8(1)), (protein_name = "O", decoy = false, entrap_id = UInt8(1), retain = true))
-    insert!(dict_h, (peptide = "pep26", decoy = false, entrap_id = UInt8(1)), (protein_name = "O;P", decoy = false, entrap_id = UInt8(1), retain = false))
-    insert!(dict_h, (peptide = "pep27", decoy = false, entrap_id = UInt8(1)), (protein_name = "P", decoy = false, entrap_id = UInt8(1), retain = true))
-    insert!(dict_h, (peptide = "pep28", decoy = false, entrap_id = UInt8(1)), (protein_name = "P", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_h, (peptide = "pep26", decoy = false, entrap_id = UInt8(1)), (protein_name = "O", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_h, (peptide = "pep27", decoy = false, entrap_id = UInt8(1)), (protein_name = "Q", decoy = false, entrap_id = UInt8(1), retain = true))
+    insert!(dict_h, (peptide = "pep28", decoy = false, entrap_id = UInt8(1)), (protein_name = "Q", decoy = false, entrap_id = UInt8(1), retain = true))
     
     result_h = infer_proteins(proteins, peptides)
     expected_keys = Set(keys(dict_h))
