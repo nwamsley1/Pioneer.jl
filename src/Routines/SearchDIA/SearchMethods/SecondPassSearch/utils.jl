@@ -772,6 +772,7 @@ function add_features!(psms::DataFrame,
     prec_mz = getMz(getPrecursors(getSpecLib(search_context)))#[:mz],
     prec_irt = getIrt(getPrecursors(getSpecLib(search_context)))#[:irt],
     prec_charge = getCharge(getPrecursors(getSpecLib(search_context)))#[:prec_charge],
+    entrap_group_ids = getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
     precursor_missed_cleavage = getMissedCleavages(getPrecursors(getSpecLib(search_context)))#[:missed_cleavages],
     precursor_pair_idxs = getPairIdx(getPrecursors(getSpecLib(search_context)))
     #filter!(x -> x.best_scan, psms);
@@ -786,6 +787,7 @@ function add_features!(psms::DataFrame,
     irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
     pair_idxs = zeros(UInt32, N)
+    entrap_group_id = zeros(UInt8, N)
     #psms[!,:missed_cleavage] .= zero(UInt8);
     #psms[!,:sequence] .= "";
     missed_cleavage = zeros(UInt8, N);
@@ -829,7 +831,7 @@ function add_features!(psms::DataFrame,
         Threads.@spawn begin 
             for i in chunk
                 prec_idx = precursor_idx[i]
-
+                entrap_group_id[i] = entrap_group_ids[prec_idx]
                 irt_obs[i] = rt_to_irt_interp(rt[i])
                 irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
                 #irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
@@ -877,6 +879,7 @@ function add_features!(psms::DataFrame,
     psms[!,:spectrum_peak_count] = spectrum_peak_count
     psms[!,:pair_id] = pair_idxs
     psms[!,:prec_mz] = prec_mzs
+    psms[!,:entrapment_group_id] = entrap_group_id
     psms[!,:ms_file_idx] .= ms_file_idx
     return nothing
 end

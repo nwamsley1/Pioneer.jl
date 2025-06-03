@@ -283,7 +283,8 @@ function summarize_results!(
             getPassingPsms(getMSData(search_context)),
             protein_inference_dict,
             getSequence(getPrecursors(getSpecLib(search_context))),
-            getIsDecoy(getPrecursors(getSpecLib(search_context)))
+            getIsDecoy(getPrecursors(getSpecLib(search_context))),
+            getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
         )
 
         # Merge protein groups by global prob
