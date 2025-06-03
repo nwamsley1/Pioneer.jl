@@ -253,8 +253,6 @@ end
 """
     convertMzML(mzml_dir::String; skip_scan_header::Bool=true)
 
-**Note**: Experimental feature. Not ready for use. 
-
 Convert mzML mass spectrometry data files to Arrow IPC format.
 
 Takes either a directory containing mzML files or a path to a single mzML file and converts them to 

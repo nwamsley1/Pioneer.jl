@@ -160,6 +160,9 @@ end
 """
     ParseSpecLib(params_path::String)
 
+
+**Note**: Experimental feature. Not ready for use. 
+
 Main function to build a Pioneer formatted spectral library from an empirical library.
 
 Parameters:
