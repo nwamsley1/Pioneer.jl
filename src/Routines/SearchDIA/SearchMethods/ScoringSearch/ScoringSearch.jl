@@ -189,9 +189,8 @@ function summarize_results!(
             results.merged_quant_path,
             :global_prob
         )
-
         # Step 5: Create q-value interpolation
-        @info "Calculating global q-values..."
+        @info "Calculating global precursor q-values..."
         # Create PEP spline
         #results.precursor_pep_spline[] = get_pep_spline(
         #    results.merged_quant_path,
@@ -205,34 +204,22 @@ function summarize_results!(
             true; # use unique precursors
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
         )
-
-        # Step 6: Filter PSMs by global q-value
-        @info "Filtering passing PSMs by global q-value threshold..."
-        # Apply q-value threshold and store passing PSMs
-        passing_psms_paths = getSecondPassPsms(getMSData(search_context))
-        get_psms_passing_qval(
-            getPrecursors(getSpecLib(search_context)),
-            getPassingPsms(getMSData(search_context)),
-            passing_psms_folder,
-            passing_psms_paths,
-            #results.precursor_pep_spline[],
-            results.precursor_global_qval_interp[],
-            params.q_value_threshold,
-            :global_prob,
-            :global_qval
-        )
-
-
-        # Step 7: Merge PSM Scores by prob
-        @info "Merging PSM scores for run-specific q-value estimation..."
-        merge_sorted_psms_scores(
-            getPassingPsms(getMSData(search_context)),
+        # Step 6: Merge PSM Scores by prob
+        @info "Merging PSM scores for experiment-wide q-value estimation..."
+        #Individual PSMs files need to be re-rosted by prec_prob 
+        sort_quant_tables(
+            getSecondPassPsms(getMSData(search_context)),
             results.merged_quant_path,
             :prec_prob
         )
+        merge_sorted_psms_scores(
+             getSecondPassPsms(getMSData(search_context)),
+             results.merged_quant_path,
+             :prec_prob
+        )
 
-        # Step 8: Calculate Error Probabilities
-        @info "Calculating run-specific q-values..."
+        # Step 7: Create q-value interpolation
+        @info "Calculating experiment-wide precursor q-values..."
         # Create PEP spline
         #results.precursor_pep_spline[] = get_pep_spline(
         #    results.merged_quant_path,
@@ -248,24 +235,24 @@ function summarize_results!(
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
         )
 
-        # Step 9: Filter PSMs
-        @info "Filtering passing PSMs by run-specific q-value threshold..."
+        # Step 6: Filter PSMs by global q-value
+        @info "Filtering passing PSMs by global q-value and experiment-wide q-value threshold..."
         # Apply q-value threshold and store passing PSMs
-        passing_psms_paths = getPassingPsms(getMSData(search_context))
+        passing_psms_paths = getSecondPassPsms(getMSData(search_context))
         get_psms_passing_qval(
             getPrecursors(getSpecLib(search_context)),
             getPassingPsms(getMSData(search_context)),
             passing_psms_folder,
             passing_psms_paths,
             #results.precursor_pep_spline[],
+            results.precursor_global_qval_interp[],
             results.precursor_qval_interp[],
-            params.q_value_threshold,
+            :global_prob,
             :prec_prob,
-            :run_specific_qval
+            :global_qval,
+            :run_specific_qval,
+            params.q_value_threshold,
         )
-
-
-
 
         # Step 10: Score Protein Groups
         @info "Scoring protein groups..."
@@ -287,6 +274,8 @@ function summarize_results!(
             getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
         )
 
+        # Step 11: Merge PSM Scores by max_prob
+        @info "Merging protein group scores for global q-value estimation..."
         # Merge protein groups by global prob
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         merge_sorted_protein_groups(
@@ -296,21 +285,14 @@ function summarize_results!(
             N = 1000000
         )
 
+        # Step 12: Create q-value interpolation
+        @info "Calculating global q-values for protein groups..."
         # Create protein group global q-value interpolation
         search_context.global_pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_scores_path,
             :global_pg_score,
             true; # use unique protein groups
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-        )
-
-        # Filter proteins by global q-value
-        get_proteins_passing_qval(
-            passing_proteins_folder,
-            search_context.global_pg_score_to_qval[],
-            params.q_value_threshold,
-            :global_pg_score,
-            :global_qval
         )
 
         # Merge protein groups by run-specific prob
@@ -326,6 +308,16 @@ function summarize_results!(
                 rm(sorted_pg_scores_path)
             end
         end
+
+        # Step 12: Create q-value interpolation
+        @info "Sorting protein group tables by experiment-wide pg_score..."
+        sort_protein_tables(
+            getPassingProteins(getMSData(search_context)),
+            passing_proteins_folder,
+            :pg_score
+        )
+        # Step 13: Merge PSM Scores by prob
+        @info "Merging protein group scores for experiment-wide q-value estimation..."
         merge_sorted_protein_groups(
             passing_proteins_folder,
             sorted_pg_scores_path,
@@ -333,6 +325,8 @@ function summarize_results!(
             N = 1000000
         )
 
+        # Step 14: Create q-value interpolation
+        @info "Calculating experiment-wide q-values for protein groups..."
         # Create protein group run-specific q-value interpolation
         search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_scores_path,
@@ -340,6 +334,42 @@ function summarize_results!(
             false; # use all protein groups
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
+
+        # Load and summarize protein groups before filtering
+        @info "Loading protein groups for summary statistics..."
+        protein_files = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
+        all_proteins = DataFrame()
+        for file_path in protein_files
+            append!(all_proteins, DataFrame(Arrow.Table(file_path)))
+        end
+        
+        # Display summary statistics
+        @info "Protein group statistics before filtering:"
+        @info "Total protein groups: $(nrow(all_proteins))"
+        @info "Target protein groups: $(sum(all_proteins.target))"
+        @info "Decoy protein groups: $(sum(.!all_proteins.target))"
+        
+        # Column-wise statistics
+        for col in names(all_proteins)
+            col_data = all_proteins[!, col]
+            if eltype(col_data) <: Number && !all(ismissing.(col_data))
+                non_missing = skipmissing(col_data)
+                @info "Column '$col': min=$(minimum(non_missing)), max=$(maximum(non_missing)), mean=$(round(mean(non_missing), digits=4))"
+            end
+        end
+        
+        # Filter proteins by global q-value
+        get_proteins_passing_qval(
+            passing_proteins_folder,
+            search_context.global_pg_score_to_qval[],
+            search_context.pg_score_to_qval[],
+            :global_pg_score,
+            :pg_score,
+            :global_pg_qval,
+            :pg_qval,
+            params.q_value_threshold,
+        )
+
 
 
         best_traces = nothing # Free memory

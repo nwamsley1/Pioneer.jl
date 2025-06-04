@@ -109,6 +109,29 @@ function sort_and_filter_quant_tables(
     return nothing
 end
 
+function sort_quant_tables(
+    second_pass_psms_paths::Vector{String},
+    merged_quant_path::String,
+    prob_col::Symbol,
+)
+
+    #Remove if present 
+    if isfile(merged_quant_path)
+        rm(merged_quant_path)
+    end
+    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
+    #Sort and filter each psm table 
+    for fpath in second_pass_psms_paths
+        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        #Sort in descending order of probability
+        sort!(psms_table, prob_col, rev = true, alg=QuickSort)
+        #write back
+        writeArrow(fpath, psms_table)
+    end
+    return nothing
+end
+
+
 #==========================================================
 PSM score merging and processing 
 ==========================================================#
@@ -327,6 +350,10 @@ function get_qvalue_spline(
 
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
+
+    @info "# targets sum(psms_scores[!,:target])" sum(psms_scores[!,:target])
+    @info "# decoys sum(psms_scores[!,:target].==false)" sum(psms_scores[!,:target].==false)
+    
     if use_unique
         psms_scores = unique(psms_scores)
     end
@@ -411,14 +438,18 @@ function get_psms_passing_qval(
                             passing_psms_folder::String,
                             second_pass_psms_paths::Vector{String}, 
                             #pep_spline::UniformSpline,
-                            qval_interp::Interpolations.Extrapolation,
-                            q_val_threshold::Float32,
-                            prob_col::Symbol,
-                            qval_col::Symbol)
+                            qval_interp_global::Interpolations.Extrapolation,
+                            qval_interp_experiment_wide::Interpolations.Extrapolation,
+                            prob_col_global::Symbol,
+                            prob_col_experiment_wide::Symbol,
+                            qval_col_global::Symbol,
+                            qval_col_experiment_wide::Symbol,
+                            q_val_threshold::Float32,)
     for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
         # Read the Arrow table
         passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        passing_psms[!,qval_col] = qval_interp.(passing_psms[!,prob_col])
+        passing_psms[!,qval_col_global] = qval_interp_global.(passing_psms[!,prob_col_global])
+        passing_psms[!,qval_col_experiment_wide] = qval_interp_experiment_wide.(passing_psms[!,prob_col_experiment_wide])
         #passing_psms[!,:pep] = pep_spline.(passing_psms[!,prob_col])
 
         cols = [
@@ -444,7 +475,7 @@ function get_psms_passing_qval(
 
         # Sample the rows and convert to DataFrame
         select!(passing_psms,available_cols)
-        filter!(x->x[qval_col]<=q_val_threshold, passing_psms)
+        filter!(x->(x[qval_col_global]<=q_val_threshold)&(x[qval_col_experiment_wide]<=q_val_threshold), passing_psms)
         # Append to the result DataFrame
         #Arrow.write(
         #    joinpath(passing_psms_folder, basename(file_path)),
@@ -897,6 +928,27 @@ function add_protein_inferrence_col(
     end
 end
 
+function sort_protein_tables(
+    protein_groups_paths::Vector{String},
+    merged_pgs_path::String,
+    prob_col::Symbol,
+)
+
+    #Remove if present 
+    if isfile(merged_pgs_path)
+        rm(merged_pgs_path)
+    end
+    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
+    #Sort and filter each psm table 
+    for fpath in protein_groups_paths
+        pgs_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        #Sort in descending order of probability
+        sort!(pgs_table, prob_col, rev = true, alg=QuickSort)
+        #write back
+        writeArrow(fpath,  pgs_table)
+    end
+    return nothing
+end
 
 """
     merge_sorted_protein_groups(input_dir::String, output_path::String,
@@ -1044,10 +1096,13 @@ end
 
 function get_proteins_passing_qval(
     passing_proteins_folder::String,
-    qval_interp::Interpolations.Extrapolation,
-    q_val_threshold::Float32,
-    prob_col::Symbol,
-    qval_col::Symbol)
+    global_qval_interp::Interpolations.Extrapolation,
+    experiment_wide_qval_interp::Interpolations.Extrapolation,
+    global_prob_col::Symbol,
+    experiment_wide_prob_col::Symbol,
+    global_qval_col::Symbol,
+    experiment_wide_qval_col::Symbol,
+    q_val_threshold::Float32)
 
     #Get all .arrow files in the input 
     input_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
@@ -1055,10 +1110,11 @@ function get_proteins_passing_qval(
     for file_path in input_paths
         # Read the Arrow table
         passing_proteins = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        passing_proteins[!,qval_col] = qval_interp.(passing_proteins[!,prob_col])
+        passing_proteins[!,global_qval_col] = global_qval_interp.(passing_proteins[!,global_prob_col])
+        passing_proteins[!,experiment_wide_qval_col] = experiment_wide_qval_interp.(passing_proteins[!,experiment_wide_prob_col])
 
         # Sample the rows and convert to DataFrame
-        filter!(x->x[qval_col]<=q_val_threshold, passing_proteins)
+        filter!(x->(x[global_qval_col]<=q_val_threshold)&(x[experiment_wide_qval_col]<=q_val_threshold), passing_proteins)
         # Append to the result DataFrame
         writeArrow(            joinpath(passing_proteins_folder, basename(file_path)),
         passing_proteins)
