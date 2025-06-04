@@ -781,6 +781,10 @@ function get_protein_groups(
         pg_score = [v[:pg_score] for v in values_array]
         global_pg_score = [get(acc_to_max_pg_score, k, 0.0f0) for k in keys_array]
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
+        
+        # New feature columns
+        n_peptides = [length(v[:peptides]) for v in values_array]  # Number of unique peptides
+        total_peptide_length = [sum(length(pep) for pep in v[:peptides]) for v in values_array]  # Total length of all peptides
 
         # Create DataFrame
         df = DataFrame((
@@ -788,7 +792,9 @@ function get_protein_groups(
             target = target,
             entrap_id = entrap_id,
             pg_score = pg_score,
-            global_pg_score = global_pg_score
+            global_pg_score = global_pg_score,
+            n_peptides = n_peptides,
+            total_peptide_length = total_peptide_length
         ))
 
         sort!(df, :global_pg_score, rev = true)
