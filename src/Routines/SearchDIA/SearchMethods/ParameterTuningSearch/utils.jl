@@ -612,7 +612,7 @@ function mass_error_search(
                     frag_err_idx += 1
                     if frag_err_idx > length(mass_errs)
                         append!(mass_errs, Vector{Float32}(undef, length(mass_errs)))
-                        append!(peak_internsities, Vector{Float32}(undef, length(peak_intensities)))
+                        append!(peak_intensities, Vector{Float32}(undef, length(peak_intensities)))
                     end
                     mass_errs[frag_err_idx] = Float32((getMatchMz(match) - getMZ(match))/(getMZ(match)/1e6))
                     peak_intensities[frag_err_idx] = Float32(getIntensity(match))
