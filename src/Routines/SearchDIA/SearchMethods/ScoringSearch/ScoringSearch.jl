@@ -9,6 +9,7 @@ struct ScoringSearch <: SearchMethod end
 #==========================================================
 Type Definitions 
 ==========================================================#
+# include("utils_protein_ml.jl")  # Disabled for now
 
 """
 Results container for scoring search.
@@ -40,6 +41,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     max_q_value_xgboost_mbr_rescore::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
+    # ML protein scoring parameters (disabled for now)
+    use_ml_protein_scoring::Bool
+    n_top_precursors::Int
+    num_protein_trees::Int
 
     function ScoringSearchParameters(params::PioneerParameters)
         # Extract machine learning parameters from optimization section
@@ -66,7 +71,12 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Float32(ml_params.max_q_value_xgboost_rescore),
             Float32(ml_params.max_q_value_xgboost_mbr_rescore),
             Float32(global_params.scoring.q_value_threshold),
-            isotope_trace_type
+            isotope_trace_type,
+            # ML parameters disabled for now
+            Bool(get(ml_params, :use_ml_protein_scoring, true)),
+            Int64(get(ml_params, :n_top_precursors, 5)),
+            Int64(get(ml_params, :num_protein_trees, 100))
+
         )
     end
 end
@@ -269,15 +279,46 @@ function summarize_results!(
 
         # Step 10: Score Protein Groups
         @info "Scoring protein groups..."
-        # Create protein groups and calculate scores
-        protein_inference_dict = get_protein_groups(
-            getPassingPsms(getMSData(search_context)),
-            getPassingProteins(getMSData(search_context)),
-            passing_proteins_folder,
-            temp_folder,
-            getPrecursors(getSpecLib(search_context)),
-            min_peptides = params.min_peptides
-        )
+        
+        # Choose between ML-enhanced or standard protein scoring
+        if params.use_ml_protein_scoring
+            @info "Using ML-enhanced protein group scoring (top $(params.n_top_precursors) precursor scores)"
+            try
+                protein_inference_dict = get_protein_groups_with_ml(
+                    getPassingPsms(getMSData(search_context)),
+                    getPassingProteins(getMSData(search_context)),
+                    passing_proteins_folder,
+                    temp_folder,
+                    getPrecursors(getSpecLib(search_context)),
+                    min_peptides = params.min_peptides,
+                    use_ml_scoring = true,
+                    n_top_precursors = params.n_top_precursors,
+                    num_parallel_tree = params.num_protein_trees
+                )
+                @info "ML protein scoring completed successfully"
+            catch e
+                @error "ML protein scoring failed, falling back to standard scoring" exception=(e, catch_backtrace())
+                # Fallback to standard scoring
+                protein_inference_dict = get_protein_groups(
+                    getPassingPsms(getMSData(search_context)),
+                    getPassingProteins(getMSData(search_context)),
+                    passing_proteins_folder,
+                    temp_folder,
+                    getPrecursors(getSpecLib(search_context)),
+                    min_peptides = params.min_peptides
+                )
+            end
+        else
+            @info "Using standard protein group scoring (highest scoring child peptide)"
+            protein_inference_dict = get_protein_groups(
+                getPassingPsms(getMSData(search_context)),
+                getPassingProteins(getMSData(search_context)),
+                passing_proteins_folder,
+                temp_folder,
+                getPrecursors(getSpecLib(search_context)),
+                min_peptides = params.min_peptides
+            )
+        end
 
         add_protein_inferrence_col(
             getPassingPsms(getMSData(search_context)),

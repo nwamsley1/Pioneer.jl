@@ -65,6 +65,7 @@ function importScripts()
             "percolatorSortOf.jl",
             "piecewiseLinearFunction.jl",
             "probitRegression.jl",
+            "proteinGroupScoring.jl",
             "spectralLinearRegression.jl",
             "uniformBasisCubicSpline.jl",
             "wittakerHendersonSmoothing.jl",
@@ -111,7 +112,7 @@ function importScripts()
 
     [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs")) if jfile ∉ files_loaded]
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")) if jfile ∉ files_loaded]
+    [(include(jfile), println(jfile)) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")) if jfile ∉ files_loaded]
 
     [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs")) if jfile ∉ files_loaded]
 

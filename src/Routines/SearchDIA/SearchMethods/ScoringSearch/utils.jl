@@ -617,27 +617,16 @@ end
 #==========================================================
 Protein group analysis
 ==========================================================#
-#"""
-#    get_protein_groups(passing_psms_paths::Vector{String}, passing_pg_paths::Vector{String},
-#                      protein_groups_folder::String, temp_folder::String,
-#                      precursors::LibraryPrecursors; min_peptides=2,
-#                      protein_q_val_threshold::Float32=0.01f0) -> String
-#
-#Create and score protein groups from passing PSMs.
-#
-#Returns path to sorted protein group scores.
-#"""
-function get_protein_groups(
-    passing_psms_paths::Vector{String},
-    passing_pg_paths::Vector{String},
-    protein_groups_folder::String,
-    temp_folder::String,
-    precursors::LibraryPrecursors;
-    min_peptides = 2,
-    protein_q_val_threshold::Float32 = 0.01f0
-)
 
-    function getProteinGroupsDict(
+"""
+    getProteinGroupsDict(protein_inference_dict, psm_precursor_idx, psm_score, 
+                        psm_is_target, psm_entrapment_id, precursors; min_peptides=2)
+
+Create protein groups from PSM data and calculate initial scores using log-sum method.
+
+Returns tuple of (pg_score, inferred_protein_group_names, protein_groups).
+"""
+function getProteinGroupsDict(
         protein_inference_dict::Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}},
         psm_precursor_idx::AbstractVector{UInt32},
         psm_score::AbstractVector{Float32},
@@ -727,9 +716,16 @@ function get_protein_groups(
         end
         
         return pg_score, inferred_protein_group_names, protein_groups
-    end
+end
 
-    function writeProteinGroups(
+"""
+    writeProteinGroups(acc_to_max_pg_score, protein_groups, protein_groups_path)
+
+Write protein groups to Arrow file with both run-specific and global scores.
+
+Returns number of protein groups written.
+"""
+function writeProteinGroups(
                                     acc_to_max_pg_score::Dict{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                         Float32
@@ -764,8 +760,25 @@ function get_protein_groups(
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
         return size(df, 1)
-    end
+end
 
+"""
+    get_protein_groups(passing_psms_paths, passing_pg_paths, protein_groups_folder, 
+                      temp_folder, precursors; min_peptides=2, protein_q_val_threshold=0.01f0)
+
+Create and score protein groups from passing PSMs using standard log-sum scoring.
+
+Returns protein inference dictionary.
+"""
+function get_protein_groups(
+    passing_psms_paths::Vector{String},
+    passing_pg_paths::Vector{String},
+    protein_groups_folder::String,
+    temp_folder::String,
+    precursors::LibraryPrecursors;
+    min_peptides = 2,
+    protein_q_val_threshold::Float32 = 0.01f0
+)
     pg_count = 0
     #Concatenate psms 
     ##########
@@ -955,6 +968,7 @@ function merge_sorted_protein_groups(
     input_paths = [path for path in readdir(input_dir, join=true) if endswith(path, ".arrow")]
     #println("input_paths protein ", input_paths)
     #Keep track of which tables have 
+    @info "Input paths: $(input_paths)"
     tables = [Arrow.Table(path) for path in input_paths]
     table_idxs = ones(Int64, length(tables))
 
@@ -966,6 +980,7 @@ function merge_sorted_protein_groups(
     #Keeps track of the talbe with the highest ranked row
     pg_heap = BinaryMaxHeap{Tuple{Float32, Int64}}()
     for (i, table) in enumerate(tables)
+        @info "size(table) " size(DataFrame(table) )
         addRowToHeap!(
             pg_heap,
             table[sort_key],

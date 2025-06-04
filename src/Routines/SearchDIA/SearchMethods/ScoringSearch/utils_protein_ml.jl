@@ -1,8 +1,12 @@
 """
 Modified protein group scoring utilities that integrate ML-based scoring
-"""
 
-include("../../../utils/ML/proteinGroupScoring.jl")
+Note: This now uses the standalone getProteinGroupsDict and writeProteinGroups 
+functions from utils.jl instead of duplicating them.
+
+Uses memory-efficient out-of-memory (OOM) approach for ML protein scoring
+to handle large datasets without loading all protein groups into memory.
+"""
 
 """
     get_protein_groups_with_ml(
@@ -73,9 +77,6 @@ function get_protein_groups_with_ml(
     acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Float32}()
     run_to_protein_groups = Dict{UInt64, Dictionary}()
     
-    # If ML scoring is requested, we need to collect all PSMs with CV fold information
-    all_psms_df = DataFrame()
-    
     # First pass to compute initial protein group scores
     for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
         _, extension = splitext(file_path)
@@ -100,8 +101,7 @@ function get_protein_groups_with_ml(
         psms_df = DataFrame(Tables.columntable(psms_table))
         psms_df[!, :pg_score] = pg_score
         psms_df[!, :inferred_protein_group] = inferred_protein_group_names
-        psms_df[!, :ms_file_idx] = ms_file_idx
-        
+        psms_df[!, :ms_file_idx] .= ms_file_idx
         # Add CV fold information from precursors
         psms_df[!, :cv_fold] = [getCvFold(precursors, pid) for pid in psms_df.precursor_idx]
         
@@ -110,11 +110,6 @@ function get_protein_groups_with_ml(
         psms_df[!, :charge] = [getCharge(precursors)[pid] for pid in psms_df.precursor_idx]
         psms_df[!, :proteins] = [accession_numbers[pid] for pid in psms_df.precursor_idx]
         psms_df[!, :entrapment_group_id] = [entrap_ids[pid] for pid in psms_df.precursor_idx]
-        
-        # Collect for ML scoring if enabled
-        if use_ml_scoring
-            append!(all_psms_df, psms_df)
-        end
         
         # Store initial results
         writeArrow(file_path, psms_df)
@@ -127,61 +122,71 @@ function get_protein_groups_with_ml(
         end
     end
     
-    # Apply ML-based protein scoring if requested
-    if use_ml_scoring && nrow(all_psms_df) > 0
-        @info "Applying ML-based protein group scoring..."
-        
-        # Collect all protein groups across runs
-        all_protein_groups = Dictionary{
-            @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-            @NamedTuple{pg_score::Float32, peptides::Set{String}}
-        }()
-        
-        for (_, protein_groups) in run_to_protein_groups
-            for (k, v) in pairs(protein_groups)
-                if haskey(all_protein_groups, k)
-                    # Merge peptides and use max score
-                    existing = all_protein_groups[k]
-                    merged_peptides = union(existing.peptides, v.peptides)
-                    max_score = max(existing.pg_score, v.pg_score)
-                    all_protein_groups[k] = (pg_score = max_score, peptides = merged_peptides)
-                else
-                    all_protein_groups[k] = v
-                end
-            end
+    # Write initial protein group files BEFORE ML scoring
+    @info "Writing initial protein group files..."
+    pg_count = 0
+    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+        _, extension = splitext(file_path)
+        if extension != ".arrow"
+            continue
         end
         
-        # Apply ML scoring
-        protein_features, models = integrate_protein_scoring!(
-            all_psms_df,
-            all_protein_groups,
+        protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
+        passing_pg_paths[ms_file_idx] = protein_groups_path
+        protein_groups = run_to_protein_groups[ms_file_idx]
+        
+        # Write protein groups for this file
+        pg_count += writeProteinGroups(
+            acc_to_max_pg_score,
+            protein_groups,
+            protein_groups_path
+        )
+    end
+    @info "Wrote $pg_count protein groups to $(length(passing_pg_paths)) files"
+    
+    # Apply ML-based protein scoring if requested
+    if use_ml_scoring
+        @info "Applying memory-efficient ML-based protein group scoring..."
+        
+        # Use OOM approach to avoid loading all protein groups into memory
+        apply_ml_protein_scoring_oom!(
+            protein_groups_folder,
+            passing_psms_paths,
+            passing_pg_paths,
             precursors;
+            max_proteins_for_training = 50000,
             n_top_precursors = n_top_precursors,
-            num_parallel_tree = num_parallel_tree
+            num_parallel_tree = num_parallel_tree,
+            n_rounds = 1,
+            subsample = 0.5,
+            colsample_bynode = 0.3
         )
         
-        # Export protein features for debugging/analysis
-        protein_features_path = joinpath(temp_folder, "protein_features.arrow")
-        export_protein_features(protein_features, protein_features_path)
+        # Recompute max scores after ML scoring
+        @info "Recomputing global protein group scores after ML scoring..."
+        acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Float32}()
         
-        # Update protein groups in each run with ML scores
-        for (ms_file_idx, protein_groups) in run_to_protein_groups
-            for (k, v) in pairs(protein_groups)
-                if haskey(all_protein_groups, k)
-                    ml_data = all_protein_groups[k]
-                    # Update with ML score
-                    protein_groups[k] = (
-                        pg_score = ml_data.pg_score,
-                        peptides = v.peptides  # Keep run-specific peptides
+        # Read updated protein group files to get ML scores
+        for pg_path in passing_pg_paths
+            if isfile(pg_path)
+                pg_table = Arrow.Table(pg_path)
+                for i in 1:length(pg_table[1])
+                    key = (
+                        protein_name = pg_table.protein_name[i],
+                        target = pg_table.target[i],
+                        entrap_id = pg_table.entrap_id[i]
                     )
+                    # Use global_pg_score if available, otherwise pg_score
+                    score = hasproperty(pg_table, :global_pg_score) ? 
+                           pg_table.global_pg_score[i] : pg_table.pg_score[i]
+                    
+                    old_score = get(acc_to_max_pg_score, key, -Inf32)
+                    acc_to_max_pg_score[key] = max(score, old_score)
                 end
             end
         end
         
-        # Update max scores with ML scores
-        for (k, v) in pairs(all_protein_groups)
-            acc_to_max_pg_score[k] = v.pg_score
-        end
+        @info "Updated $(length(acc_to_max_pg_score)) protein groups with ML scores"
     end
     
     # Second pass to write results with updated scores

@@ -108,6 +108,9 @@
             "max_diff": 0.01
         },
         "machine_learning": {
+            "use_ml_protein_scoring": true,
+            "n_top_precursors": 5,
+            "num_protein_trees": 100,
             "max_psms_in_memory": 10000000,
             "min_trace_prob": 0.75,
 			"max_q_value_xgboost_rescore": 0.01,

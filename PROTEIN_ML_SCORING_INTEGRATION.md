@@ -13,11 +13,16 @@ This implementation adds machine learning-based protein group scoring using XGBo
 
 ## Integration Steps
 
-### 1. Add the new modules to the project
+### 1. Code Structure Changes
 
-The implementation consists of two new files:
-- `src/utils/ML/proteinGroupScoring.jl` - Core ML scoring functionality
-- `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils_protein_ml.jl` - Integration wrapper
+The implementation has been refactored for better maintainability:
+
+**Modified files:**
+- `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils.jl` - Extracted nested functions `getProteinGroupsDict` and `writeProteinGroups` to be standalone functions
+- `src/utils/ML/proteinGroupScoring.jl` - Core ML scoring functionality  
+- `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils_protein_ml.jl` - Integration wrapper (now uses functions from utils.jl)
+
+**Key improvement:** No more duplicate code - `getProteinGroupsDict` and `writeProteinGroups` are defined once in `utils.jl` and shared by both standard and ML workflows.
 
 ### 2. Modify ScoringSearch to use ML scoring
 
