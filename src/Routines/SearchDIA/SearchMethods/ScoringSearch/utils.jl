@@ -682,7 +682,7 @@ function get_protein_groups(
         protein_groups = Dictionary{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
         @NamedTuple{
             pg_score::Float32, 
-            peptides::Set{String}}
+            precursor_ids::Set{UInt32}}
         }()
 
         for i in range(1, length(psm_precursor_idx))
@@ -707,26 +707,26 @@ function get_protein_groups(
             keyname = (protein_name = protein_name, target = psm_is_target[i], entrap_id = psm_entrapment_id[i])
             
             if haskey(protein_groups, keyname)
-                pg_score, peptides = protein_groups[keyname]
+                pg_score, precursor_ids = protein_groups[keyname]
                 pg_score += log1p(-score)
-                push!(peptides, sequence)
-                protein_groups[keyname] = (pg_score = pg_score, peptides = peptides)
+                push!(precursor_ids, precursor_idx)
+                protein_groups[keyname] = (pg_score = pg_score, precursor_ids = precursor_ids)
             else
-                sequences = Set{String}((sequence,))
+                precursor_ids = Set{UInt32}((precursor_idx,))
                 insert!(protein_groups,
                     keyname,
                     (pg_score = log1p(-score),
-                    peptides = sequences)
+                    precursor_ids = precursor_ids)
                 )
             end
         end
         
-        filter!(x->length(x[:peptides])>=min_peptides, protein_groups)
+        filter!(x->length(x[:precursor_ids])>=min_peptides, protein_groups)
 
         for key in keys(protein_groups)
-            pg_score, peptides = protein_groups[key]
+            pg_score, precursor_ids = protein_groups[key]
             pg_score = -pg_score
-            protein_groups[key] = (pg_score = pg_score, peptides = peptides)
+            protein_groups[key] = (pg_score = pg_score, precursor_ids = precursor_ids)
         end
         
         # Rest of the function remains the same...
@@ -767,11 +767,11 @@ function get_protein_groups(
                                     },
                                     protein_groups::Dictionary{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-                                        @NamedTuple{pg_score::Float32,  peptides::Set{String}}
+                                        @NamedTuple{pg_score::Float32,  precursor_ids::Set{UInt32}}
                                     },
-                                    protein_to_possible_peptides::Dict{
+                                    protein_to_possible_precursors::Dict{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-                                        Set{String}
+                                        Set{UInt32}
                                     },
                                     protein_groups_path::String)
         # Extract keys and values
@@ -784,39 +784,39 @@ function get_protein_groups(
         entrap_id = [k[:entrap_id] for k in keys_array]
         pg_score = [v[:pg_score] for v in values_array]
         global_pg_score = [get(acc_to_max_pg_score, k, 0.0f0) for k in keys_array]
-        #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
+        #precursor_ids = [join(v[:precursor_ids], ";") for v in values_array]  # Convert Set to String
         
         # New feature columns
-        @info "Display values_array[1][:peptides] " [v[:peptides] for v in values_array][1]
-        n_peptides = [length(unique(v[:peptides])) for v in values_array]  # Number of unique peptides
-        total_peptide_length = [sum(length(pep) for pep in v[:peptides]) for v in values_array]  # Total length of all peptides
+        @info "Display values_array[1][:precursor_ids] " [v[:precursor_ids] for v in values_array][1]
+        n_precursors = [length(v[:precursor_ids]) for v in values_array]  # Number of unique precursor IDs
+        # Note: total_peptide_length doesn't make sense for precursor IDs, so we'll remove it
         
-        # Calculate possible peptides and peptide coverage
+        # Calculate possible precursors and precursor coverage
         # Handle protein groups with multiple proteins separated by semicolons
-        n_possible_peptides = zeros(Int64, length(keys_array))
+        n_possible_precursors = zeros(Int64, length(keys_array))
         for (i, k) in enumerate(keys_array)
             # Split the protein group name by semicolons
             protein_names_in_group = split(k[:protein_name], ';')
             
-            # Union of all peptide sets from proteins in the group
-            all_possible_peptides = Set{String}()
+            # Union of all precursor sets from proteins in the group
+            all_possible_precursors = Set{UInt32}()
             for individual_protein in protein_names_in_group
                 # Create key for each individual protein
                 individual_key = (protein_name = String(individual_protein), 
                                 target = k[:target], 
                                 entrap_id = k[:entrap_id])
-                # Get the set of peptides for this protein and union with existing
-                if haskey(protein_to_possible_peptides, individual_key)
-                    union!(all_possible_peptides, protein_to_possible_peptides[individual_key])
+                # Get the set of precursors for this protein and union with existing
+                if haskey(protein_to_possible_precursors, individual_key)
+                    union!(all_possible_precursors, protein_to_possible_precursors[individual_key])
                 end
             end
             
-            # Count unique peptides across all proteins in the group
-            n_possible_peptides[i] = max(length(all_possible_peptides), 1)
+            # Count unique precursors across all proteins in the group
+            n_possible_precursors[i] = max(length(all_possible_precursors), 1)
         end
         
-        peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
-        @info "Describe peptide coverage " describe(peptide_coverage)
+        precursor_coverage = [n_prec / n_poss for (n_prec, n_poss) in zip(n_precursors, n_possible_precursors)]
+        @info "Describe precursor coverage " describe(precursor_coverage)
         # Create DataFrame
         df = DataFrame((
             protein_name = protein_name,
@@ -824,10 +824,9 @@ function get_protein_groups(
             entrap_id = entrap_id,
             pg_score = pg_score,
             global_pg_score = global_pg_score,
-            n_peptides = n_peptides,
-            total_peptide_length = total_peptide_length,
-            n_possible_peptides = n_possible_peptides,
-            peptide_coverage = peptide_coverage
+            n_precursors = n_precursors,
+            n_possible_precursors = n_possible_precursors,
+            precursor_coverage = precursor_coverage
         ))
 
         sort!(df, :global_pg_score, rev = true)
@@ -838,12 +837,11 @@ function get_protein_groups(
 
     pg_count = 0
     
-    # First, count all possible peptides for each protein in the library
-    protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
+    # First, count all possible precursors for each protein in the library
+    protein_to_possible_precursors = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{UInt32}}()
     
-    # Count all peptides in the library for each protein
+    # Count all precursors in the library for each protein
     all_accession_numbers = getAccessionNumbers(precursors)
-    all_sequences = getSequence(precursors)
     all_decoys = getIsDecoy(precursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
     
@@ -851,13 +849,14 @@ function get_protein_groups(
         protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
         is_decoy = all_decoys[i]
         entrap_id = all_entrap_ids[i]
+        precursor_id = UInt32(i)  # The precursor ID is the index
         
         for protein_name in protein_names
             key = (protein_name = String(protein_name), target = !is_decoy, entrap_id = entrap_id)
-            if !haskey(protein_to_possible_peptides, key)
-                protein_to_possible_peptides[key] = Set{String}()
+            if !haskey(protein_to_possible_precursors, key)
+                protein_to_possible_precursors[key] = Set{UInt32}()
             end
-            push!(protein_to_possible_peptides[key], all_sequences[i])
+            push!(protein_to_possible_precursors[key], precursor_id)
         end
     end
     
@@ -956,7 +955,7 @@ function get_protein_groups(
         pg_count += writeProteinGroups(
             acc_to_max_pg_score,
             protein_groups,
-            protein_to_possible_peptides,
+            protein_to_possible_precursors,
             protein_groups_path
         )
     end
@@ -980,11 +979,24 @@ function get_protein_groups(
         # First, let's analyze the features to understand their distributions
         @info "Feature analysis before LDA:"
         
-        # Add log-transformed n_possible_peptides
-        all_protein_groups[!, :log_n_possible_peptides] = log.(all_protein_groups.n_possible_peptides .+ 1)
+        # Add log-transformed n_possible_precursors
+        all_protein_groups[!, :log_n_possible_precursors] = log.(all_protein_groups.n_possible_precursors .+ 1)
+        
+        # Add log binomial coefficient feature
+        # log(C(n_possible, n_observed)) = log(n_possible!) - log(n_observed!) - log((n_possible - n_observed)!)
+        # Using lgamma for numerical stability: log(n!) = lgamma(n+1)
+        all_protein_groups[!, :log_binom_coeff] = [
+            if n_obs <= n_poss && n_obs >= 0
+                lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
+            else
+                # Handle edge case where n_obs > n_poss (shouldn't happen but be safe)
+                0.0
+            end
+            for (n_poss, n_obs) in zip(all_protein_groups.n_possible_precursors, all_protein_groups.n_precursors)
+        ]
         
         # Analyze each potential feature
-        for feat in [:pg_score, :peptide_coverage, :n_possible_peptides, :log_n_possible_peptides]
+        for feat in [:pg_score, :precursor_coverage, :n_possible_precursors, :log_binom_coeff]
             feat_data = all_protein_groups[!, feat]
             target_data = feat_data[all_protein_groups.target]
             decoy_data = feat_data[.!all_protein_groups.target]
@@ -1011,7 +1023,7 @@ function get_protein_groups(
         end
         
         # Extract features for Probit Regression
-        feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_n_possible_peptides]
+        feature_names = [:pg_score, :precursor_coverage, :n_possible_precursors, :log_binom_coeff]
         X = Matrix{Float64}(all_protein_groups[:, feature_names])
         y = all_protein_groups.target
         
@@ -1222,28 +1234,28 @@ function get_protein_groups(
         @info "    Additional targets at 5% FDR with Probit: $improvement_5pct ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
         @info "    Additional targets at 10% FDR with Probit: $improvement_10pct ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
         
-        # Create scatter plot of pg_score vs peptide_coverage
-        @info "Creating scatter plot of pg_score vs peptide_coverage..."
+        # Create scatter plot of pg_score vs precursor_coverage
+        @info "Creating scatter plot of pg_score vs precursor_coverage..."
         
         # Separate targets and decoys
         target_mask = all_protein_groups.target
         decoy_mask = .!all_protein_groups.target
         
         # Create the scatter plot
-        p = scatter(log2.(all_protein_groups[target_mask, :peptide_coverage]), 
+        p = scatter(log2.(all_protein_groups[target_mask, :precursor_coverage]), 
                    all_protein_groups[target_mask, :pg_score],
                    label="Targets",
                    color=:blue,
                    alpha=0.1,
                    markersize=3,
-                   xlabel="Peptide Coverage",
+                   xlabel="Precursor Coverage (log2)",
                    ylabel="PG Score",
-                   title="Protein Group Score vs Peptide Coverage",
+                   title="Protein Group Score vs Precursor Coverage",
                    legend=:topright,
                    yscale=:log10,  # Log scale for pg_score due to wide range
                    ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
         
-        scatter!(p, log2.(all_protein_groups[decoy_mask, :peptide_coverage]),
+        scatter!(p, log2.(all_protein_groups[decoy_mask, :precursor_coverage]),
                 all_protein_groups[decoy_mask, :pg_score],
                 label="Decoys",
                 color=:red,
@@ -1251,24 +1263,24 @@ function get_protein_groups(
                 markersize=3)
         
         # Save the plot
-        plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_peptide_coverage.png"
+        plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_precursor_coverage.png"
         savefig(p, plot_path)
 
         # Create the scatter plot
-        p = scatter(log2.(all_protein_groups[target_mask, :n_possible_peptides]), 
+        p = scatter(log2.(all_protein_groups[target_mask, :n_possible_precursors]), 
                 all_protein_groups[target_mask, :pg_score],
                 label="Targets",
                 color=:blue,
                 alpha=0.1,
                 markersize=3,
-                xlabel="N Possible Peptides",
+                xlabel="N Possible Precursors (log2)",
                 ylabel="PG Score",
-                title="Protein Group Score vs Peptide Coverage",
+                title="Protein Group Score vs N Possible Precursors",
                 legend=:topright,
                 yscale=:log10,  # Log scale for pg_score due to wide range
                 ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
      
-     scatter!(p, log2.(all_protein_groups[decoy_mask, :n_possible_peptides]),
+     scatter!(p, log2.(all_protein_groups[decoy_mask, :n_possible_precursors]),
              all_protein_groups[decoy_mask, :pg_score],
              label="Decoys",
              color=:red,
@@ -1276,9 +1288,34 @@ function get_protein_groups(
              markersize=3)
      
      # Save the plot
-     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_n_possible.png"
+     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_n_possible_precursors.png"
      savefig(p, plot_path)
-        @info "Scatter plot saved to: $plot_path"
+     
+     # Create scatter plot for log_binom_coeff
+     p = scatter(all_protein_groups[target_mask, :log_binom_coeff], 
+                all_protein_groups[target_mask, :pg_score],
+                label="Targets",
+                color=:blue,
+                alpha=0.1,
+                markersize=3,
+                xlabel="Log Binomial Coefficient",
+                ylabel="PG Score",
+                title="Protein Group Score vs Log Binomial Coefficient",
+                legend=:topright,
+                yscale=:log10,
+                ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
+     
+     scatter!(p, all_protein_groups[decoy_mask, :log_binom_coeff],
+             all_protein_groups[decoy_mask, :pg_score],
+             label="Decoys",
+             color=:red,
+             alpha=0.1,
+             markersize=3)
+     
+     # Save the plot
+     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_log_binom_coeff.png"
+     savefig(p, plot_path)
+        @info "Scatter plots saved to desktop"
         
     else
         @info "Skipping LDA: insufficient data (targets: $n_targets, decoys: $n_decoys)"
