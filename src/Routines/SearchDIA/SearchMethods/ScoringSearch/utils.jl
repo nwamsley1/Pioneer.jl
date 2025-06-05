@@ -1010,8 +1010,8 @@ function get_protein_groups(
             end
         end
         
-        # Extract features for LDA - using pg_score and log_n_possible_peptides (peptide_coverage commented out)
-        feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]  # :peptide_coverage removed
+        # Extract features for Probit Regression
+        feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_n_possible_peptides]
         X = Matrix{Float64}(all_protein_groups[:, feature_names])
         y = all_protein_groups.target
         
@@ -1032,48 +1032,41 @@ function get_protein_groups(
         X_std[X_std .== 0] .= 1.0  # Avoid division by zero
         X_standardized = (X .- X_mean) ./ X_std
         
-        # Calculate class means
+        # Prepare for Probit Regression
+        @info "Running Probit Regression instead of LDA..."
+        
+        # Add intercept column
+        X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
+        X_df = DataFrame(X_with_intercept, [:intercept; feature_names])
+        
+        # Initialize coefficients
+        β = zeros(Float64, size(X_with_intercept, 2))
+        
+        # Create data chunks for parallel processing
+        n_chunks = max(1, Threads.nthreads())
+        chunk_size = max(1, ceil(Int, length(y) / n_chunks))
+        data_chunks = Iterators.partition(1:length(y), chunk_size)
+        
+        # Fit probit model
+        @info "Fitting probit model..."
+        β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
+        
+        # Get predicted probabilities
+        prob_scores = zeros(Float64, length(y))
+        Pioneer.ModelPredictProbs!(prob_scores, X_df, β_fitted, data_chunks)
+        
+        # Calculate classification metrics
+        threshold = 0.5
+        predictions = prob_scores .> threshold
+        accuracy = mean(predictions .== y)
+        
+        # Separate target and decoy scores
         target_idx = findall(y)
         decoy_idx = findall(.!y)
         
-        mean_target = vec(mean(X_standardized[target_idx, :], dims=1))
-        mean_decoy = vec(mean(X_standardized[decoy_idx, :], dims=1))
-        
-        # Calculate within-class scatter matrix (pooled covariance)
-        S_w = zeros(size(X, 2), size(X, 2))
-        
-        # Target class scatter
-        for i in target_idx
-            xi = X_standardized[i, :]
-            diff = xi - mean_target
-            S_w += diff * diff'
-        end
-        
-        # Decoy class scatter
-        for i in decoy_idx
-            xi = X_standardized[i, :]
-            diff = xi - mean_decoy
-            S_w += diff * diff'
-        end
-        
-        S_w = S_w / (length(target_idx) + length(decoy_idx) - 2)
-        
-        # Calculate LDA coefficients (Fisher's discriminant)
-        # w = S_w^(-1) * (mean_target - mean_decoy)
-        w = S_w \ (mean_target - mean_decoy)
-        w = w / norm(w)  # Normalize
-        
-        # Calculate discriminant scores
-        discriminant_scores = X_standardized * w
-        
-        # Calculate classification accuracy
-        threshold = 0.0  # Decision boundary at 0 for standardized data
-        predictions = discriminant_scores .> threshold
-        accuracy = mean(predictions .== y)
-        
-        # Calculate AUC-like metric (area under ROC curve approximation)
-        target_scores = discriminant_scores[target_idx]
-        decoy_scores = discriminant_scores[decoy_idx]
+        # Get target and decoy probability scores
+        target_scores = prob_scores[target_idx]
+        decoy_scores = prob_scores[decoy_idx]
         
         # Simple AUC calculation
         auc = 0.0
@@ -1082,29 +1075,30 @@ function get_protein_groups(
         end
         auc = auc / length(target_scores)
         
-        # Print LDA results
-        @info "LDA Results:"
+        # Print Probit Regression results
+        @info "Probit Regression Results:"
         @info "  Number of targets: $n_targets"
         @info "  Number of decoys: $n_decoys"
         @info "  Classification accuracy: $(round(accuracy * 100, digits=2))%"
         @info "  AUC: $(round(auc, digits=3))"
         
         @info "  Feature coefficients (standardized):"
+        @info "    Intercept: $(round(β_fitted[1], digits=3))"
         for (i, fname) in enumerate(feature_names)
-            @info "    $fname: $(round(w[i], digits=3))"
+            @info "    $fname: $(round(β_fitted[i+1], digits=3))"
         end
         
-        @info "  Discriminant score statistics:"
+        @info "  Probability score statistics:"
         @info "    Target mean: $(round(mean(target_scores), digits=3))"
         @info "    Target std: $(round(std(target_scores), digits=3))"
         @info "    Decoy mean: $(round(mean(decoy_scores), digits=3))"
         @info "    Decoy std: $(round(std(decoy_scores), digits=3))"
         @info "    Separation: $(round(abs(mean(target_scores) - mean(decoy_scores)) / sqrt(0.5 * (var(target_scores) + var(decoy_scores))), digits=3))"
         
-        # Calculate q-values based on LDA scores
-        # Combine all scores and labels
-        all_scores = vcat(discriminant_scores...)
-        all_labels = vcat(y...)
+        # Calculate q-values based on Probit probability scores
+        # Use prob_scores directly (already a vector)
+        all_scores = prob_scores
+        all_labels = y
         
         # Sort by score in descending order (higher score = more likely to be target)
         sort_idx = sortperm(all_scores, rev=true)
@@ -1152,7 +1146,7 @@ function get_protein_groups(
         targets_at_5pct = sum(all_labels .& (unsorted_qvalues .<= 0.05))
         targets_at_10pct = sum(all_labels .& (unsorted_qvalues .<= 0.10))
         
-        @info "  Q-value analysis (LDA-based):"
+        @info "  Q-value analysis (Probit-based):"
         @info "    Targets at 1% FDR: $targets_at_1pct / $n_targets ($(round(targets_at_1pct/n_targets*100, digits=1))%)"
         @info "    Targets at 5% FDR: $targets_at_5pct / $n_targets ($(round(targets_at_5pct/n_targets*100, digits=1))%)"
         @info "    Targets at 10% FDR: $targets_at_10pct / $n_targets ($(round(targets_at_10pct/n_targets*100, digits=1))%)"
@@ -1168,7 +1162,7 @@ function get_protein_groups(
         end
         
         if !isnothing(score_at_1pct)
-            @info "    LDA score threshold at 1% FDR: $(round(score_at_1pct, digits=3))"
+            @info "    Probit probability threshold at 1% FDR: $(round(score_at_1pct, digits=3))"
         end
         
         # Now calculate q-values using just pg_score for comparison
@@ -1218,15 +1212,15 @@ function get_protein_groups(
         @info "    Targets at 5% FDR: $pg_targets_at_5pct / $n_targets ($(round(pg_targets_at_5pct/n_targets*100, digits=1))%)"
         @info "    Targets at 10% FDR: $pg_targets_at_10pct / $n_targets ($(round(pg_targets_at_10pct/n_targets*100, digits=1))%)"
         
-        # Compare LDA vs pg_score performance
-        @info "  Performance comparison (LDA vs pg_score):"
+        # Compare Probit vs pg_score performance
+        @info "  Performance comparison (Probit vs pg_score):"
         improvement_1pct = targets_at_1pct - pg_targets_at_1pct
         improvement_5pct = targets_at_5pct - pg_targets_at_5pct
         improvement_10pct = targets_at_10pct - pg_targets_at_10pct
         
-        @info "    Additional targets at 1% FDR with LDA: $improvement_1pct ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
-        @info "    Additional targets at 5% FDR with LDA: $improvement_5pct ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
-        @info "    Additional targets at 10% FDR with LDA: $improvement_10pct ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
+        @info "    Additional targets at 1% FDR with Probit: $improvement_1pct ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
+        @info "    Additional targets at 5% FDR with Probit: $improvement_5pct ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
+        @info "    Additional targets at 10% FDR with Probit: $improvement_10pct ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
         
         # Create scatter plot of pg_score vs peptide_coverage
         @info "Creating scatter plot of pg_score vs peptide_coverage..."
