@@ -266,7 +266,7 @@ function summarize_results!(
             min_peptides = params.min_peptides
         )
 
-        add_protein_inferrence_col(
+        add_protein_inference_col(
             getPassingPsms(getMSData(search_context)),
             protein_inference_dict,
             getSequence(getPrecursors(getSpecLib(search_context))),

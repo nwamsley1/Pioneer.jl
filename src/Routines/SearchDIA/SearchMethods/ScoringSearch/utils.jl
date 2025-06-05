@@ -350,9 +350,6 @@ function get_qvalue_spline(
 
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
-
-    @info "# targets sum(psms_scores[!,:target])" sum(psms_scores[!,:target])
-    @info "# decoys sum(psms_scores[!,:target].==false)" sum(psms_scores[!,:target].==false)
     
     if use_unique
         psms_scores = unique(psms_scores)
@@ -648,16 +645,33 @@ end
 #==========================================================
 Protein group analysis
 ==========================================================#
-#"""
-#    get_protein_groups(passing_psms_paths::Vector{String}, passing_pg_paths::Vector{String},
-#                      protein_groups_folder::String, temp_folder::String,
-#                      precursors::LibraryPrecursors; min_peptides=2,
-#                      protein_q_val_threshold::Float32=0.01f0) -> String
-#
-#Create and score protein groups from passing PSMs.
-#
-#Returns path to sorted protein group scores.
-#"""
+"""
+    get_protein_groups(passing_psms_paths::Vector{String}, passing_pg_paths::Vector{String},
+                      protein_groups_folder::String, temp_folder::String,
+                      precursors::LibraryPrecursors; min_peptides=2,
+                      protein_q_val_threshold::Float32=0.01f0)
+
+Create and score protein groups from passing PSMs.
+
+# Arguments
+- `passing_psms_paths`: Paths to PSM files that passed FDR threshold
+- `passing_pg_paths`: Output paths for protein group files
+- `protein_groups_folder`: Folder to store protein group results
+- `temp_folder`: Temporary folder for intermediate files
+- `precursors`: Library precursor information
+- `min_peptides`: Minimum peptides required for a protein group (default: 2)
+- `protein_q_val_threshold`: Q-value threshold for protein groups (default: 0.01)
+
+# Returns
+- `protein_inference_dict`: Dictionary mapping peptides to protein groups
+
+# Process
+1. Counts all possible peptides for each protein in library
+2. Performs protein inference to handle shared peptides
+3. Calculates protein group scores and features
+4. Performs probit regression analysis if sufficient data
+5. Generates QC plots with decision boundaries
+"""
 function get_protein_groups(
     passing_psms_paths::Vector{String},
     passing_pg_paths::Vector{String},
@@ -668,6 +682,26 @@ function get_protein_groups(
     protein_q_val_threshold::Float32 = 0.01f0
 )
 
+    """
+        getProteinGroupsDict(protein_inference_dict, psm_precursor_idx, psm_score, 
+                           psm_is_target, psm_entrapment_id, precursors; min_peptides=2)
+    
+    Create protein groups from PSMs and calculate group scores.
+    
+    # Arguments
+    - `protein_inference_dict`: Maps peptides to inferred protein groups
+    - `psm_precursor_idx`: Precursor indices from PSMs
+    - `psm_score`: PSM probability scores
+    - `psm_is_target`: Boolean array indicating targets
+    - `psm_entrapment_id`: Entrapment group IDs
+    - `precursors`: Library precursor information
+    - `min_peptides`: Minimum peptides required per group
+    
+    # Returns
+    - `pg_score`: Protein group scores for each PSM
+    - `inferred_protein_group_names`: Protein names for each PSM
+    - `protein_groups`: Dictionary of protein groups with scores and peptide sets
+    """
     function getProteinGroupsDict(
         protein_inference_dict::Dictionary{NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}},
         psm_precursor_idx::AbstractVector{UInt32},
@@ -760,6 +794,25 @@ function get_protein_groups(
         return pg_score, inferred_protein_group_names, protein_groups
     end
 
+    """
+        writeProteinGroups(acc_to_max_pg_score, protein_groups, 
+                          protein_to_possible_peptides, protein_groups_path)
+    
+    Write protein groups with features to Arrow file.
+    
+    # Arguments
+    - `acc_to_max_pg_score`: Maximum scores across runs for each protein
+    - `protein_groups`: Dictionary of protein groups with scores and peptides
+    - `protein_to_possible_peptides`: All possible peptides for each protein
+    - `protein_groups_path`: Output file path
+    
+    # Returns
+    - Number of protein groups written
+    
+    # Output columns
+    - Basic: protein_name, target, entrap_id, pg_score, global_pg_score
+    - Features: n_peptides, total_peptide_length, n_possible_peptides, peptide_coverage
+    """
     function writeProteinGroups(
                                     acc_to_max_pg_score::Dict{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
@@ -787,7 +840,6 @@ function get_protein_groups(
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
         
         # New feature columns
-        @info "Display values_array[1][:peptides] " [v[:peptides] for v in values_array][1]
         n_peptides = [length(unique(v[:peptides])) for v in values_array]  # Number of unique peptides
         total_peptide_length = [sum(length(pep) for pep in v[:peptides]) for v in values_array]  # Total length of all peptides
         
@@ -816,7 +868,6 @@ function get_protein_groups(
         end
         
         peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
-        @info "Describe peptide coverage " describe(peptide_coverage)
         # Create DataFrame
         df = DataFrame((
             protein_name = protein_name,
@@ -961,8 +1012,8 @@ function get_protein_groups(
         )
     end
 
-    # Perform Linear Discriminant Analysis on protein groups
-    @info "Performing Linear Discriminant Analysis on protein groups..."
+    # Perform Probit Regression Analysis on protein groups
+    @info "Performing Probit Regression Analysis on protein groups..."
     
     # Load all protein group tables into a single DataFrame
     all_protein_groups = DataFrame()
@@ -972,360 +1023,400 @@ function get_protein_groups(
         end
     end
     
-    # Only perform LDA if we have both targets and decoys
+    # Only perform analysis if we have both targets and decoys
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     
     if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
-        # First, let's analyze the features to understand their distributions
-        @info "Feature analysis before LDA:"
+        # Add derived features
+        add_feature_columns!(all_protein_groups)
         
-        # Add log-transformed n_possible_peptides
-        all_protein_groups[!, :log_n_possible_peptides] = log.(all_protein_groups.n_possible_peptides .+ 1)
+        # Get QC folder path
+        qc_folder = joinpath(dirname(temp_folder), "qc_plots")
+        !isdir(qc_folder) && mkdir(qc_folder)
         
-        # Add log binomial coefficient feature
-        # log(C(n_possible, n_observed)) = log(n_possible!) - log(n_observed!) - log((n_possible - n_observed)!)
-        # Using lgamma for numerical stability: log(n!) = lgamma(n+1)
-        all_protein_groups[!, :log_binom_coeff] = [
-            if n_obs <= n_poss && n_obs >= 0
-                lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
-            else
-                # Handle edge case where n_obs > n_poss (shouldn't happen but be safe)
-                0.0
-            end
-            for (n_poss, n_obs) in zip(all_protein_groups.n_possible_peptides, all_protein_groups.n_peptides)
-        ]
-        
-        # Analyze each potential feature
-        for feat in [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
-            feat_data = all_protein_groups[!, feat]
-            target_data = feat_data[all_protein_groups.target]
-            decoy_data = feat_data[.!all_protein_groups.target]
-            
-            # Calculate basic statistics
-            @info "  $feat statistics:"
-            @info "    Target mean: $(round(mean(target_data), digits=3)), std: $(round(std(target_data), digits=3))"
-            @info "    Decoy mean: $(round(mean(decoy_data), digits=3)), std: $(round(std(decoy_data), digits=3))"
-            
-            # Calculate effect size (Cohen's d)
-            pooled_std = sqrt(((length(target_data)-1)*var(target_data) + (length(decoy_data)-1)*var(decoy_data)) / (length(target_data) + length(decoy_data) - 2))
-            if pooled_std > 0
-                cohens_d = abs(mean(target_data) - mean(decoy_data)) / pooled_std
-                @info "    Cohen's d (effect size): $(round(cohens_d, digits=3))"
-            else
-                @info "    Cohen's d (effect size): NaN (no variance)"
-            end
-            
-            # Check correlation with pg_score
-            if feat != :pg_score
-                correlation = cor(all_protein_groups.pg_score, feat_data)
-                @info "    Correlation with pg_score: $(round(correlation, digits=3))"
-            end
-        end
-        
-        # Extract features for Probit Regression
-        feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
-        X = Matrix{Float64}(all_protein_groups[:, feature_names])
-        y = all_protein_groups.target
-        
-        # Check for multicollinearity
-        if length(feature_names) > 1
-            @info "  Feature correlations:"
-            cor_matrix = cor(X)
-            for i in 1:size(cor_matrix, 1)
-                for j in (i+1):size(cor_matrix, 2)
-                    @info "    $(feature_names[i]) vs $(feature_names[j]): $(round(cor_matrix[i,j], digits=3))"
-                end
-            end
-        end
-        
-        # Standardize features
-        X_mean = mean(X, dims=1)
-        X_std = std(X, dims=1)
-        X_std[X_std .== 0] .= 1.0  # Avoid division by zero
-        X_standardized = (X .- X_mean) ./ X_std
-        
-        # Prepare for Probit Regression
-        @info "Running Probit Regression instead of LDA..."
-        
-        # Add intercept column
-        X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
-        X_df = DataFrame(X_with_intercept, [:intercept; feature_names])
-        
-        # Initialize coefficients
-        β = zeros(Float64, size(X_with_intercept, 2))
-        
-        # Create data chunks for parallel processing
-        n_chunks = max(1, Threads.nthreads())
-        chunk_size = max(1, ceil(Int, length(y) / n_chunks))
-        data_chunks = Iterators.partition(1:length(y), chunk_size)
-        
-        # Fit probit model
-        @info "Fitting probit model..."
-        β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
-        
-        # Get predicted probabilities
-        prob_scores = zeros(Float64, length(y))
-        Pioneer.ModelPredictProbs!(prob_scores, X_df, β_fitted, data_chunks)
-        
-        # Calculate classification metrics
-        threshold = 0.5
-        predictions = prob_scores .> threshold
-        accuracy = mean(predictions .== y)
-        
-        # Separate target and decoy scores
-        target_idx = findall(y)
-        decoy_idx = findall(.!y)
-        
-        # Get target and decoy probability scores
-        target_scores = prob_scores[target_idx]
-        decoy_scores = prob_scores[decoy_idx]
-        
-        # Simple AUC calculation
-        auc = 0.0
-        for t_score in target_scores
-            auc += sum(t_score .> decoy_scores) / length(decoy_scores)
-        end
-        auc = auc / length(target_scores)
-        
-        # Print Probit Regression results
-        @info "Probit Regression Results:"
-        @info "  Number of targets: $n_targets"
-        @info "  Number of decoys: $n_decoys"
-        @info "  Classification accuracy: $(round(accuracy * 100, digits=2))%"
-        @info "  AUC: $(round(auc, digits=3))"
-        
-        @info "  Feature coefficients (standardized):"
-        @info "    Intercept: $(round(β_fitted[1], digits=3))"
-        for (i, fname) in enumerate(feature_names)
-            @info "    $fname: $(round(β_fitted[i+1], digits=3))"
-        end
-        
-        @info "  Probability score statistics:"
-        @info "    Target mean: $(round(mean(target_scores), digits=3))"
-        @info "    Target std: $(round(std(target_scores), digits=3))"
-        @info "    Decoy mean: $(round(mean(decoy_scores), digits=3))"
-        @info "    Decoy std: $(round(std(decoy_scores), digits=3))"
-        @info "    Separation: $(round(abs(mean(target_scores) - mean(decoy_scores)) / sqrt(0.5 * (var(target_scores) + var(decoy_scores))), digits=3))"
-        
-        # Calculate q-values based on Probit probability scores
-        # Use prob_scores directly (already a vector)
-        all_scores = prob_scores
-        all_labels = y
-        
-        # Sort by score in descending order (higher score = more likely to be target)
-        sort_idx = sortperm(all_scores, rev=true)
-        sorted_scores = all_scores[sort_idx]
-        sorted_labels = all_labels[sort_idx]
-        
-        # Calculate q-values
-        lda_qvalues = zeros(Float64, length(sorted_scores))
-        cumulative_targets = 0
-        cumulative_decoys = 0
-        
-        for i in 1:length(sorted_scores)
-            if sorted_labels[i]
-                cumulative_targets += 1
-            else
-                cumulative_decoys += 1
-            end
-            
-            # FDR = decoys / targets
-            if cumulative_targets == 0
-                lda_qvalues[i] = 1.0
-            else
-                lda_qvalues[i] = cumulative_decoys / cumulative_targets
-            end
-        end
-        
-        # Convert FDR to q-value (ensure monotonicity)
-        for i in (length(lda_qvalues)-1):-1:1
-            lda_qvalues[i] = min(lda_qvalues[i], lda_qvalues[i+1])
-        end
-        
-        # Map q-values back to original order
-        unsorted_qvalues = zeros(Float64, length(all_scores))
-        unsorted_qvalues[sort_idx] = lda_qvalues
-        
-        # Count targets passing 1% q-value threshold
-        targets_at_1pct = 0
-        for i in 1:length(all_scores)
-            if all_labels[i] && unsorted_qvalues[i] <= 0.01
-                targets_at_1pct += 1
-            end
-        end
-        
-        # Also report at different thresholds
-        targets_at_5pct = sum(all_labels .& (unsorted_qvalues .<= 0.05))
-        targets_at_10pct = sum(all_labels .& (unsorted_qvalues .<= 0.10))
-        
-        @info "  Q-value analysis (Probit-based):"
-        @info "    Targets at 1% FDR: $targets_at_1pct / $n_targets ($(round(targets_at_1pct/n_targets*100, digits=1))%)"
-        @info "    Targets at 5% FDR: $targets_at_5pct / $n_targets ($(round(targets_at_5pct/n_targets*100, digits=1))%)"
-        @info "    Targets at 10% FDR: $targets_at_10pct / $n_targets ($(round(targets_at_10pct/n_targets*100, digits=1))%)"
-        
-        # Find score threshold for 1% FDR
-        score_at_1pct = nothing
-        for i in 1:length(sorted_scores)
-            if lda_qvalues[i] <= 0.01
-                score_at_1pct = sorted_scores[i]
-            else
-                break
-            end
-        end
-        
-        if !isnothing(score_at_1pct)
-            @info "    Probit probability threshold at 1% FDR: $(round(score_at_1pct, digits=3))"
-        end
-        
-        # Now calculate q-values using just pg_score for comparison
-        @info "  Q-value analysis (pg_score only):"
-        
-        # Sort by pg_score in descending order
-        pg_scores = all_protein_groups.pg_score
-        pg_sort_idx = sortperm(pg_scores, rev=true)
-        sorted_pg_scores = pg_scores[pg_sort_idx]
-        sorted_pg_labels = y[pg_sort_idx]
-        
-        # Calculate q-values for pg_score
-        pg_qvalues = zeros(Float64, length(sorted_pg_scores))
-        cumulative_targets_pg = 0
-        cumulative_decoys_pg = 0
-        
-        for i in 1:length(sorted_pg_scores)
-            if sorted_pg_labels[i]
-                cumulative_targets_pg += 1
-            else
-                cumulative_decoys_pg += 1
-            end
-            
-            # FDR = decoys / targets
-            if cumulative_targets_pg == 0
-                pg_qvalues[i] = 1.0
-            else
-                pg_qvalues[i] = cumulative_decoys_pg / cumulative_targets_pg
-            end
-        end
-        
-        # Convert FDR to q-value (ensure monotonicity)
-        for i in (length(pg_qvalues)-1):-1:1
-            pg_qvalues[i] = min(pg_qvalues[i], pg_qvalues[i+1])
-        end
-        
-        # Map q-values back to original order
-        unsorted_pg_qvalues = zeros(Float64, length(pg_scores))
-        unsorted_pg_qvalues[pg_sort_idx] = pg_qvalues
-        
-        # Count targets passing thresholds with pg_score only
-        pg_targets_at_1pct = sum(y .& (unsorted_pg_qvalues .<= 0.01))
-        pg_targets_at_5pct = sum(y .& (unsorted_pg_qvalues .<= 0.05))
-        pg_targets_at_10pct = sum(y .& (unsorted_pg_qvalues .<= 0.10))
-        
-        @info "    Targets at 1% FDR: $pg_targets_at_1pct / $n_targets ($(round(pg_targets_at_1pct/n_targets*100, digits=1))%)"
-        @info "    Targets at 5% FDR: $pg_targets_at_5pct / $n_targets ($(round(pg_targets_at_5pct/n_targets*100, digits=1))%)"
-        @info "    Targets at 10% FDR: $pg_targets_at_10pct / $n_targets ($(round(pg_targets_at_10pct/n_targets*100, digits=1))%)"
-        
-        # Compare Probit vs pg_score performance
-        @info "  Performance comparison (Probit vs pg_score):"
-        improvement_1pct = targets_at_1pct - pg_targets_at_1pct
-        improvement_5pct = targets_at_5pct - pg_targets_at_5pct
-        improvement_10pct = targets_at_10pct - pg_targets_at_10pct
-        
-        @info "    Additional targets at 1% FDR with Probit: $improvement_1pct ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
-        @info "    Additional targets at 5% FDR with Probit: $improvement_5pct ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
-        @info "    Additional targets at 10% FDR with Probit: $improvement_10pct ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
-        
-        # Create scatter plot of pg_score vs peptide_coverage
-        @info "Creating scatter plot of pg_score vs peptide_coverage..."
-        
-        # Separate targets and decoys
-        target_mask = all_protein_groups.target
-        decoy_mask = .!all_protein_groups.target
-        
-        # Create the scatter plot
-        p = scatter(log2.(all_protein_groups[target_mask, :peptide_coverage]), 
-                   all_protein_groups[target_mask, :pg_score],
-                   label="Targets",
-                   color=:blue,
-                   alpha=0.1,
-                   markersize=3,
-                   xlabel="Peptide Coverage (log2)",
-                   ylabel="PG Score",
-                   title="Protein Group Score vs Peptide Coverage",
-                   legend=:topright,
-                   yscale=:log10,  # Log scale for pg_score due to wide range
-                   ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
-        
-        scatter!(p, log2.(all_protein_groups[decoy_mask, :peptide_coverage]),
-                all_protein_groups[decoy_mask, :pg_score],
-                label="Decoys",
-                color=:red,
-                alpha=0.1,
-                markersize=3)
-        
-        # Save the plot
-        plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_peptide_coverage.png"
-        savefig(p, plot_path)
-
-        # Create the scatter plot
-        p = scatter(log2.(all_protein_groups[target_mask, :n_possible_peptides]), 
-                all_protein_groups[target_mask, :pg_score],
-                label="Targets",
-                color=:blue,
-                alpha=0.1,
-                markersize=3,
-                xlabel="N Possible Peptides (log2)",
-                ylabel="PG Score",
-                title="Protein Group Score vs N Possible Peptides",
-                legend=:topright,
-                yscale=:log10,  # Log scale for pg_score due to wide range
-                ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
-     
-     scatter!(p, log2.(all_protein_groups[decoy_mask, :n_possible_peptides]),
-             all_protein_groups[decoy_mask, :pg_score],
-             label="Decoys",
-             color=:red,
-             alpha=0.1,
-             markersize=3)
-     
-     # Save the plot
-     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_n_possible_peptides.png"
-     savefig(p, plot_path)
-     
-     # Create scatter plot for log_binom_coeff
-     p = scatter(all_protein_groups[target_mask, :log_binom_coeff], 
-                all_protein_groups[target_mask, :pg_score],
-                label="Targets",
-                color=:blue,
-                alpha=0.1,
-                markersize=3,
-                xlabel="Log Binomial Coefficient",
-                ylabel="PG Score",
-                title="Protein Group Score vs Log Binomial Coefficient",
-                legend=:topright,
-                yscale=:log10,
-                ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
-     
-     scatter!(p, all_protein_groups[decoy_mask, :log_binom_coeff],
-             all_protein_groups[decoy_mask, :pg_score],
-             label="Decoys",
-             color=:red,
-             alpha=0.1,
-             markersize=3)
-     
-     # Save the plot
-     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_log_binom_coeff.png"
-     savefig(p, plot_path)
-        @info "Scatter plots saved to desktop"
-        
+        # Perform probit regression analysis
+        perform_probit_analysis(all_protein_groups, qc_folder)
     else
-        @info "Skipping LDA: insufficient data (targets: $n_targets, decoys: $n_decoys)"
+        @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
     end
 
     return protein_inference_dict
 end
 
-function add_protein_inferrence_col(
+"""
+    perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+
+Perform probit regression analysis on protein groups with comparison to baseline.
+
+# Arguments
+- `all_protein_groups::DataFrame`: Protein group data with features
+- `qc_folder::String`: Folder for QC plots
+
+# Process
+1. Fits probit model with multiple features
+2. Calculates performance metrics
+3. Compares to pg_score-only baseline
+4. Generates decision boundary plots
+"""
+function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+    n_targets = sum(all_protein_groups.target)
+    n_decoys = sum(.!all_protein_groups.target)
+    
+    # Define features to use
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
+    X = Matrix{Float64}(all_protein_groups[:, feature_names])
+    y = all_protein_groups.target
+    
+    # Fit probit model
+    β_fitted, X_mean, X_std = fit_probit_model(X, y)
+    
+    # Calculate probability scores
+    prob_scores = calculate_probit_scores(X, β_fitted, X_mean, X_std)
+    
+    # Calculate q-values for probit model
+    probit_qvalues = calculate_qvalues_from_scores(prob_scores, y)
+    
+    # Calculate q-values for pg_score only baseline
+    pg_qvalues = calculate_qvalues_from_scores(all_protein_groups.pg_score, y)
+    
+    # Count targets at different FDR thresholds
+    probit_targets_1pct = sum(y .& (probit_qvalues .<= 0.01))
+    probit_targets_5pct = sum(y .& (probit_qvalues .<= 0.05))
+    probit_targets_10pct = sum(y .& (probit_qvalues .<= 0.10))
+    
+    pg_targets_1pct = sum(y .& (pg_qvalues .<= 0.01))
+    pg_targets_5pct = sum(y .& (pg_qvalues .<= 0.05))
+    pg_targets_10pct = sum(y .& (pg_qvalues .<= 0.10))
+    
+    # Report results
+    @info "Probit Regression Results:"
+    @info "  Targets at 1% FDR: $probit_targets_1pct / $n_targets ($(round(probit_targets_1pct/n_targets*100, digits=1))%)"
+    @info "  Targets at 5% FDR: $probit_targets_5pct / $n_targets ($(round(probit_targets_5pct/n_targets*100, digits=1))%)"
+    @info "  Targets at 10% FDR: $probit_targets_10pct / $n_targets ($(round(probit_targets_10pct/n_targets*100, digits=1))%)"
+    
+    @info "Baseline (pg_score only):"
+    @info "  Targets at 1% FDR: $pg_targets_1pct / $n_targets ($(round(pg_targets_1pct/n_targets*100, digits=1))%)"
+    @info "  Targets at 5% FDR: $pg_targets_5pct / $n_targets ($(round(pg_targets_5pct/n_targets*100, digits=1))%)"
+    @info "  Targets at 10% FDR: $pg_targets_10pct / $n_targets ($(round(pg_targets_10pct/n_targets*100, digits=1))%)"
+    
+    # Calculate improvements
+    improvement_1pct = probit_targets_1pct - pg_targets_1pct
+    improvement_5pct = probit_targets_5pct - pg_targets_5pct
+    improvement_10pct = probit_targets_10pct - pg_targets_10pct
+    
+    @info "Improvement with Probit:"
+    if pg_targets_1pct > 0
+        @info "  At 1% FDR: +$improvement_1pct targets ($(round(improvement_1pct/pg_targets_1pct*100, digits=1))% improvement)"
+    else
+        @info "  At 1% FDR: +$improvement_1pct targets"
+    end
+    
+    if pg_targets_5pct > 0
+        @info "  At 5% FDR: +$improvement_5pct targets ($(round(improvement_5pct/pg_targets_5pct*100, digits=1))% improvement)"
+    else
+        @info "  At 5% FDR: +$improvement_5pct targets"
+    end
+    
+    if pg_targets_10pct > 0
+        @info "  At 10% FDR: +$improvement_10pct targets ($(round(improvement_10pct/pg_targets_10pct*100, digits=1))% improvement)"
+    else
+        @info "  At 10% FDR: +$improvement_10pct targets"
+    end
+    
+    # Create decision boundary plots
+    plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
+end
+
+"""
+    add_feature_columns!(df::DataFrame)
+
+Add derived feature columns for protein group analysis.
+
+# Arguments
+- `df::DataFrame`: Protein groups DataFrame to modify in-place
+
+# Added columns
+- `:log_n_possible_peptides` - Log-transformed peptide count
+- `:log_binom_coeff` - Log binomial coefficient for combinatorial modeling
+"""
+function add_feature_columns!(df::DataFrame)
+    # Add log-transformed n_possible_peptides
+    df[!, :log_n_possible_peptides] = log.(df.n_possible_peptides .+ 1)
+    
+    # Add log binomial coefficient feature
+    df[!, :log_binom_coeff] = [
+        if n_obs <= n_poss && n_obs >= 0
+            lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
+        else
+            0.0
+        end
+        for (n_poss, n_obs) in zip(df.n_possible_peptides, df.n_peptides)
+    ]
+    return nothing
+end
+
+"""
+    fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+
+Fit a probit regression model for protein group classification.
+
+# Arguments
+- `X::Matrix{Float64}`: Feature matrix
+- `y::Vector{Bool}`: Target labels (true for targets, false for decoys)
+
+# Returns
+- `β_fitted`: Fitted coefficients
+- `X_mean`: Feature means for standardization
+- `X_std`: Feature standard deviations for standardization
+"""
+function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+    # Standardize features
+    X_mean = mean(X, dims=1)
+    X_std = std(X, dims=1)
+    X_std[X_std .== 0] .= 1.0  # Avoid division by zero
+    X_standardized = (X .- X_mean) ./ X_std
+    
+    # Add intercept column
+    X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
+    X_df = DataFrame(X_with_intercept, [:intercept; Symbol.("feature_", 1:size(X, 2))])
+    
+    # Initialize coefficients
+    β = zeros(Float64, size(X_with_intercept, 2))
+    
+    # Create data chunks for parallel processing
+    n_chunks = max(1, Threads.nthreads())
+    chunk_size = max(1, ceil(Int, length(y) / n_chunks))
+    data_chunks = Iterators.partition(1:length(y), chunk_size)
+    
+    # Fit probit model
+    β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
+    
+    return β_fitted, vec(X_mean), vec(X_std)
+end
+
+"""
+    calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}, X_mean::Vector{Float64}, X_std::Vector{Float64})
+
+Calculate probit probability scores for new data.
+
+# Arguments
+- `X::Matrix{Float64}`: Feature matrix
+- `β::Vector{Float64}`: Fitted coefficients
+- `X_mean::Vector{Float64}`: Feature means from training
+- `X_std::Vector{Float64}`: Feature standard deviations from training
+
+# Returns
+- `Vector{Float64}`: Probability scores
+"""
+function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}, X_mean::Vector{Float64}, X_std::Vector{Float64})
+    # Standardize using training statistics
+    X_standardized = (X .- X_mean') ./ X_std'
+    
+    # Add intercept
+    X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
+    X_df = DataFrame(X_with_intercept, [:intercept; Symbol.("feature_", 1:size(X, 2))])
+    
+    # Create data chunks
+    n_chunks = max(1, Threads.nthreads())
+    chunk_size = max(1, ceil(Int, size(X, 1) / n_chunks))
+    data_chunks = Iterators.partition(1:size(X, 1), chunk_size)
+    
+    # Calculate probabilities
+    prob_scores = zeros(Float64, size(X, 1))
+    Pioneer.ModelPredictProbs!(prob_scores, X_df, β, data_chunks)
+    
+    return prob_scores
+end
+
+"""
+    calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
+
+Calculate q-values from scores and labels.
+
+# Arguments
+- `scores::Vector{<:Real}`: Scores (higher = more likely to be target)
+- `labels::Vector{Bool}`: True labels (true = target, false = decoy)
+
+# Returns
+- `Vector{Float64}`: Q-values for each score
+"""
+function calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
+    # Sort by score in descending order
+    sort_idx = sortperm(scores, rev=true)
+    sorted_labels = labels[sort_idx]
+    
+    # Calculate q-values
+    qvalues = zeros(Float64, length(scores))
+    cumulative_targets = 0
+    cumulative_decoys = 0
+    
+    for i in 1:length(sorted_labels)
+        if sorted_labels[i]
+            cumulative_targets += 1
+        else
+            cumulative_decoys += 1
+        end
+        
+        # FDR = decoys / targets
+        if cumulative_targets == 0
+            qvalues[i] = 1.0
+        else
+            qvalues[i] = cumulative_decoys / cumulative_targets
+        end
+    end
+    
+    # Convert FDR to q-value (ensure monotonicity)
+    for i in (length(qvalues)-1):-1:1
+        qvalues[i] = min(qvalues[i], qvalues[i+1])
+    end
+    
+    # Map q-values back to original order
+    unsorted_qvalues = zeros(Float64, length(scores))
+    unsorted_qvalues[sort_idx] = qvalues
+    
+    return unsorted_qvalues
+end
+
+"""
+    plot_probit_decision_boundary(all_protein_groups::DataFrame, β::Vector{Float64}, 
+                                  X_mean::Vector{Float64}, X_std::Vector{Float64},
+                                  feature_names::Vector{Symbol}, qc_folder::String)
+
+Create scatter plots showing the probit decision boundary.
+
+# Arguments
+- `all_protein_groups::DataFrame`: Protein group data
+- `β::Vector{Float64}`: Fitted probit coefficients
+- `X_mean::Vector{Float64}`: Feature means from training
+- `X_std::Vector{Float64}`: Feature standard deviations from training
+- `feature_names::Vector{Symbol}`: Names of features used
+- `qc_folder::String`: Output folder for plots
+"""
+function plot_probit_decision_boundary(all_protein_groups::DataFrame, β::Vector{Float64}, 
+                                     X_mean::Vector{Float64}, X_std::Vector{Float64},
+                                     feature_names::Vector{Symbol}, qc_folder::String)
+    
+    # Create output folder if it doesn't exist
+    protein_ml_folder = joinpath(qc_folder, "protein_ml_plots")
+    !isdir(protein_ml_folder) && mkdir(protein_ml_folder)
+    
+    # Calculate probit scores for all data
+    X = Matrix{Float64}(all_protein_groups[:, feature_names])
+    prob_scores = calculate_probit_scores(X, β, X_mean, X_std)
+    
+    # Separate targets and decoys
+    target_mask = all_protein_groups.target
+    decoy_mask = .!all_protein_groups.target
+    
+    # Plot pg_score vs peptide_coverage with decision boundary coloring
+    p = scatter(all_protein_groups[target_mask, :peptide_coverage], 
+               all_protein_groups[target_mask, :pg_score],
+               label="Targets",
+               color=:blue,
+               alpha=0.3,
+               markersize=3,
+               xlabel="Peptide Coverage",
+               ylabel="PG Score",
+               title="Protein Group Classification with Probit Decision Boundary",
+               legend=:bottomright,
+               yscale=:log10,
+               ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
+    
+    scatter!(p, all_protein_groups[decoy_mask, :peptide_coverage],
+            all_protein_groups[decoy_mask, :pg_score],
+            label="Decoys",
+            color=:red,
+            alpha=0.3,
+            markersize=3)
+    
+    # Add decision boundary contour
+    # Create a grid for the contour
+    x_range = range(minimum(all_protein_groups.peptide_coverage), 
+                    maximum(all_protein_groups.peptide_coverage), length=100)
+    y_range = range(log10(1), log10(maximum(all_protein_groups.pg_score) * 1.5), length=100)
+    
+    # For each point in the grid, calculate the probit score
+    z_grid = zeros(length(y_range), length(x_range))
+    for (i, x) in enumerate(x_range)
+        for (j, y_log) in enumerate(y_range)
+            y = 10^y_log
+            # Create feature vector for this point
+            # Assuming features are [pg_score, peptide_coverage, n_possible_peptides, log_binom_coeff]
+            # We need to estimate n_possible_peptides and log_binom_coeff for the grid point
+            # For visualization, we'll use median values
+            median_n_possible = median(all_protein_groups.n_possible_peptides)
+            n_observed = x * median_n_possible  # peptide_coverage * n_possible
+            log_binom = if n_observed <= median_n_possible && n_observed >= 0
+                lgamma(median_n_possible + 1) - lgamma(n_observed + 1) - lgamma(median_n_possible - n_observed + 1)
+            else
+                0.0
+            end
+            
+            X_point = reshape([y, x, median_n_possible, log_binom], 1, :)  # Create 1x4 matrix
+            prob_score = calculate_probit_scores(X_point, β, X_mean, X_std)[1]
+            z_grid[j, i] = prob_score
+        end
+    end
+    
+    # Add contour line at 0.5 probability
+    contour!(p, x_range, 10 .^ y_range, z_grid', 
+            levels=[0.5], 
+            color=:black, 
+            linewidth=2, 
+            linestyle=:dash,
+            label="Decision Boundary (p=0.5)")
+    
+    savefig(p, joinpath(protein_ml_folder, "pg_score_vs_peptide_coverage_with_boundary.png"))
+    
+    # Create a simpler 2D plot with just pg_score colored by probit probability
+    p2 = scatter(all_protein_groups[target_mask, :pg_score],
+                prob_scores[target_mask],
+                label="Targets",
+                color=:blue,
+                alpha=0.5,
+                markersize=4,
+                xlabel="PG Score",
+                ylabel="Probit Probability",
+                title="Probit Model Predictions",
+                legend=:bottomright,
+                xscale=:log10,
+                xlims=(1, maximum(all_protein_groups.pg_score) * 1.5),
+                ylims=(0, 1))
+    
+    scatter!(p2, all_protein_groups[decoy_mask, :pg_score],
+            prob_scores[decoy_mask],
+            label="Decoys",
+            color=:red,
+            alpha=0.5,
+            markersize=4)
+    
+    # Add horizontal line at p=0.5
+    hline!(p2, [0.5], color=:black, linestyle=:dash, linewidth=2, label="Decision Boundary")
+    
+    savefig(p2, joinpath(protein_ml_folder, "probit_probability_vs_pg_score.png"))
+    
+    @info "Protein ML plots saved to: $protein_ml_folder"
+end
+
+"""
+    add_protein_inference_col(passing_psms_paths, protein_inference_dict, 
+                             precursor_sequences, precursor_is_decoy, precursors_entrap_id)
+
+Add protein inference columns to passing PSM files.
+
+# Arguments
+- `passing_psms_paths`: Paths to PSM files
+- `protein_inference_dict`: Protein inference results
+- `precursor_sequences`: Peptide sequences for each precursor
+- `precursor_is_decoy`: Decoy status for each precursor
+- `precursors_entrap_id`: Entrapment group IDs
+
+# Added columns
+- `use_for_protein_quant`: Whether peptide should be used for quantification
+- `inferred_protein_group`: Inferred protein group name
+"""
+function add_protein_inference_col(
     passing_psms_paths::Vector{String},
     protein_inference_dict::Dictionary{@NamedTuple{peptide::String, decoy::Bool, entrap_id::UInt8}, @NamedTuple{protein_name::String, decoy::Bool, entrap_id::UInt8, retain::Bool}},
     precursor_sequences::AbstractVector{S},

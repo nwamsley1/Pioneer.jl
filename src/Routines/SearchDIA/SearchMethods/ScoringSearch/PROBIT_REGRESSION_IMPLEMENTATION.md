@@ -1,7 +1,7 @@
 # Probit Regression Implementation for Protein Group Scoring
 
 ## Overview
-This document describes the implementation of probit regression for protein group scoring in Pioneer.jl, replacing the previous Linear Discriminant Analysis (LDA) approach.
+This document describes the implementation of probit regression for protein group scoring in Pioneer.jl, replacing the previous Linear Discriminant Analysis (LDA) approach. The implementation has been refactored for better modularity and maintainability.
 
 ## Implementation Details
 
@@ -127,8 +127,33 @@ The implementation provides comprehensive logging including:
 ## Usage
 The probit regression is automatically used when `get_protein_groups` is called during the ScoringSearch phase of the SearchDIA pipeline. No additional configuration is required beyond the standard Pioneer.jl parameters.
 
+## Refactored Architecture
+
+The implementation has been modularized into several focused functions:
+
+### Core Functions
+1. **`add_feature_columns!(df)`** - Adds derived features (log_n_possible_peptides, log_binom_coeff)
+2. **`fit_probit_model(X, y)`** - Fits the probit regression model with standardization
+3. **`calculate_probit_scores(X, β, X_mean, X_std)`** - Calculates probability scores for new data
+4. **`calculate_qvalues_from_scores(scores, labels)`** - Converts scores to q-values with FDR control
+5. **`perform_probit_analysis(all_protein_groups, qc_folder)`** - Main analysis orchestrator
+6. **`plot_probit_decision_boundary(...)`** - Creates QC plots with decision boundaries
+
+### Key Improvements
+- **Modular Design**: Each function has a single responsibility
+- **Better Documentation**: All functions have comprehensive docstrings
+- **Cleaner Output**: Only essential statistics are logged (FDR results and improvements)
+- **Professional Plots**: Decision boundary plots saved to qc_plots/protein_ml_plots/
+- **No Hard-coded Paths**: Plots saved to appropriate QC folder structure
+
 ## Dependencies
 - Uses the existing `probitRegression.jl` implementation in `src/utils/ML/`
 - Requires SpecialFunctions.jl for error function calculations
 - Utilizes DataFrames.jl for data manipulation
 - Uses Plots.jl for visualization
+
+## Output
+- **Console**: Reports targets at 1%, 5%, and 10% FDR with improvement metrics
+- **Plots**: Two visualization types in `qc_plots/protein_ml_plots/`:
+  1. `pg_score_vs_peptide_coverage_with_boundary.png` - 2D scatter with decision boundary contour
+  2. `probit_probability_vs_pg_score.png` - Direct probability vs score comparison
