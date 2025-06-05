@@ -9,26 +9,19 @@ This document describes the implementation of probit regression for protein grou
 The implementation is in `/src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils.jl` within the `get_protein_groups` function (lines 1035-1224).
 
 ### Features Used
-The probit regression model uses five features:
-1. **pg_score** - The protein group score (sum of log(1-p) for constituent precursors)
-2. **precursor_coverage** - Number of matched precursors / number of possible precursors  
-3. **n_possible_precursors** - Total number of possible precursors for the protein
-4. **log_n_possible_precursors** - Log-transformed version of n_possible_precursors (removed from final model)
-5. **log_binom_coeff** - Log of binomial coefficient C(n_possible, n_observed), representing the combinatorial likelihood of observing n precursors from n possible
+The probit regression model uses four features:
+1. **pg_score** - The protein group score (sum of log(1-p) for constituent peptides)
+2. **peptide_coverage** - Number of matched peptides / number of possible peptides  
+3. **n_possible_peptides** - Total number of possible peptides for the protein
+4. **log_binom_coeff** - Log of binomial coefficient C(n_possible, n_observed), representing the combinatorial likelihood of observing n peptides from n possible
 
 ### Mathematical Intuition for log_binom_coeff
 
 The log binomial coefficient feature captures the combinatorial aspect of protein coverage:
 - **Formula**: `log(C(n,k)) = log(n!/(k!(n-k)!)) = lgamma(n+1) - lgamma(k+1) - lgamma(n-k+1)`
-- **Interpretation**: For a protein with 100 possible precursors where we observe 10, there are C(100,10) ways this could happen
+- **Interpretation**: For a protein with 100 possible peptides where we observe 10, there are C(100,10) ways this could happen
 - **Why log**: The raw binomial coefficient can be extremely large, so we work in log space for numerical stability
-- **Biological meaning**: Proteins with many possible precursors but few observations have many ways to achieve that coverage by chance
-
-### Key Change: Precursor-based Counting
-The implementation now counts **precursor IDs** instead of peptide sequences. This is important because:
-- A single peptide sequence can have multiple precursors (different charge states, modifications)
-- PSMs are identified at the precursor level, not peptide sequence level
-- This provides a more accurate representation of experimental coverage
+- **Biological meaning**: Proteins with many possible peptides but few observations have many ways to achieve that coverage by chance
 
 ### Key Implementation Steps
 
@@ -37,10 +30,10 @@ The implementation now counts **precursor IDs** instead of peptide sequences. Th
    # Add log binomial coefficient feature
    all_protein_groups[!, :log_binom_coeff] = [
        lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
-       for (n_poss, n_obs) in zip(all_protein_groups.n_possible_precursors, all_protein_groups.n_precursors)
+       for (n_poss, n_obs) in zip(all_protein_groups.n_possible_peptides, all_protein_groups.n_peptides)
    ]
    
-   feature_names = [:pg_score, :precursor_coverage, :n_possible_precursors, :log_binom_coeff]
+   feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
    X = Matrix{Float64}(all_protein_groups[:, feature_names])
    y = all_protein_groups.target
    
@@ -93,26 +86,26 @@ The implementation now counts **precursor IDs** instead of peptide sequences. Th
 The implementation properly handles protein groups containing multiple proteins separated by semicolons (lines 796-815):
 ```julia
 # Handle protein groups with multiple proteins separated by semicolons
-n_possible_precursors = zeros(Int64, length(keys_array))
+n_possible_peptides = zeros(Int64, length(keys_array))
 for (i, k) in enumerate(keys_array)
     # Split the protein group name by semicolons
     protein_names_in_group = split(k[:protein_name], ';')
     
-    # Union of all precursor sets from proteins in the group
-    all_possible_precursors = Set{UInt32}()
+    # Union of all peptide sets from proteins in the group
+    all_possible_peptides = Set{String}()
     for individual_protein in protein_names_in_group
         # Create key for each individual protein
         individual_key = (protein_name = String(individual_protein), 
                         target = k[:target], 
                         entrap_id = k[:entrap_id])
-        # Get the set of precursors for this protein and union with existing
-        if haskey(protein_to_possible_precursors, individual_key)
-            union!(all_possible_precursors, protein_to_possible_precursors[individual_key])
+        # Get the set of peptides for this protein and union with existing
+        if haskey(protein_to_possible_peptides, individual_key)
+            union!(all_possible_peptides, protein_to_possible_peptides[individual_key])
         end
     end
     
-    # Count unique precursors across all proteins in the group
-    n_possible_precursors[i] = max(length(all_possible_precursors), 1)
+    # Count unique peptides across all proteins in the group
+    n_possible_peptides[i] = max(length(all_possible_peptides), 1)
 end
 ```
 
