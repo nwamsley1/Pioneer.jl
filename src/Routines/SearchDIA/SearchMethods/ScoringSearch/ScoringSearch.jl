@@ -339,9 +339,12 @@ function summarize_results!(
         # Load and summarize protein groups before filtering
         @info "Loading protein groups for summary statistics..."
         protein_files = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        all_proteins = DataFrame()
-        for file_path in protein_files
-            append!(all_proteins, DataFrame(Arrow.Table(file_path)))
+        
+        # Optimized: Use single Arrow.Table call for multiple files
+        if isempty(protein_files)
+            all_proteins = DataFrame()
+        else
+            all_proteins = DataFrame(Arrow.Table(protein_files))
         end
         
         # Display summary statistics

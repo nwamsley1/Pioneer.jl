@@ -1,7 +1,7 @@
 #y = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\y.jld2")["y"]
 #X = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\X.jld2")["X"]
 #PSMs = load("C:\\Users\\n.t.wamsley\\Pioneer.jl-1\\..\\data\\RAW\\TEST_y4b3_nOf5\\Search\\RESULTS\\PSMs.jld2")["PSMs"]
-function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::Vector{Bool},data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
+function fillZandW!(Z::Vector{T}, W::Vector{T}, η::Vector{T}, y::AbstractVector{Bool},data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}) where {T<:AbstractFloat}
     tasks = map(data_chunks) do chunk
     #@inbounds @fastmath begin
     Threads.@spawn begin
@@ -119,7 +119,7 @@ function vecSum!(v::Vector{T}, data_chunks) where {T<:AbstractFloat}
     return sum(fetch.(tasks))
 end
 
-function ProbitRegression(β::Vector{T}, X::DataFrame, y::Vector{Bool},
+function ProbitRegression(β::Vector{T}, X::DataFrame, y::AbstractVector{Bool},
                             data_chunks::Base.Iterators.PartitionIterator{UnitRange{Int64}}; 
                             max_iter::Int = 30, z_score_bounds::Tuple{Float64, Float64} = (-8.0, 8.0)
                             ) where {T<:AbstractFloat}

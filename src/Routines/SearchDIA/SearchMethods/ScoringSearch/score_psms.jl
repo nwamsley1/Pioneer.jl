@@ -44,8 +44,8 @@ function sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer,
 
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
 
-    # Initialize an empty DataFrame to store the results
-    result_df = DataFrame()
+    # Optimized: Collect samples and vcat at the end
+    sampled_dfs = DataFrame[]
 
     for file_path in file_paths
         # Read the Arrow table
@@ -63,11 +63,12 @@ function sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer,
         # Sample the rows and convert to DataFrame
         sampled_df = DataFrame(arrow_table)[sampled_indices, :]
         
-        # Append to the result DataFrame
-        append!(result_df, sampled_df)
+        # Collect for later combination
+        push!(sampled_dfs, sampled_df)
     end
 
-    return result_df
+    # Combine all samples at once
+    return isempty(sampled_dfs) ? DataFrame() : vcat(sampled_dfs...)
 end
 
 """

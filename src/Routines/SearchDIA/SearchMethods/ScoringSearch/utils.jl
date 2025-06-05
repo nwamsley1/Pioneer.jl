@@ -78,33 +78,39 @@ function sort_and_filter_quant_tables(
     if isfile(merged_quant_path)
         rm(merged_quant_path)
     end
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
-    for fpath in second_pass_psms_paths
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+    
+    # Optimized: Process files in parallel
+    Threads.@threads for fpath in second_pass_psms_paths
+        try
+            psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
 
-        if seperateTraces(isotope_trace_type)
-            #Indicator variable of whether each psm is from the best trace 
-            psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
-            for i in range(1, size(psms_table, 1))
-               key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
-               if key ∈ best_traces
-                   psms_table[i,:best_trace]=true
-               end
+            if seperateTraces(isotope_trace_type)
+                # Optimized: Pre-allocate and vectorize
+                n_rows = size(psms_table, 1)
+                best_trace_mask = zeros(Bool, n_rows)
+                
+                @inbounds for i in 1:n_rows
+                    key = (precursor_idx = psms_table[i, :precursor_idx], 
+                          isotopes_captured = psms_table[i, :isotopes_captured])
+                    best_trace_mask[i] = key ∈ best_traces
+                end
+                psms_table[!, :best_trace] = best_trace_mask
+            else
+                transform!(
+                    groupby(psms_table, :precursor_idx),
+                    :prob => (p -> p .== maximum(p)) => :best_trace
+                )
             end
-        else
-            transform!(
-                groupby(psms_table, :precursor_idx),
-                :prob => (p -> p .== maximum(p)) => :best_trace
-            )
-        end
 
-        #Filter out unused traces 
-        filter!(x->x.best_trace,psms_table)
-        #Sort in descending order of probability
-        sort!(psms_table, prob_col, rev = true, alg=QuickSort)
-        #write back
-        writeArrow(fpath, psms_table)
+            #Filter out unused traces 
+            filter!(x->x.best_trace, psms_table)
+            #Sort in descending order of probability
+            sort!(psms_table, prob_col, rev = true, alg=QuickSort)
+            #write back
+            writeArrow(fpath, psms_table)
+        catch e
+            @error "Failed to process file $fpath" exception=e
+        end
     end
     return nothing
 end
@@ -1041,11 +1047,13 @@ function get_protein_groups(
     else
         @info "Using in-memory probit regression"
         # Load all protein group tables into a single DataFrame
-        all_protein_groups = DataFrame()
-        for pg_path in passing_pg_paths
-            if isfile(pg_path) && endswith(pg_path, ".arrow")
-                append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
-            end
+        # Optimized: Use single Arrow.Table call for multiple files
+        valid_pg_paths = filter(pg_path -> isfile(pg_path) && endswith(pg_path, ".arrow"), passing_pg_paths)
+        
+        if isempty(valid_pg_paths)
+            all_protein_groups = DataFrame()
+        else
+            all_protein_groups = DataFrame(Arrow.Table(valid_pg_paths))
         end
         
         # Only perform analysis if we have both targets and decoys
@@ -1094,7 +1102,9 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     @info "Sampling ratio: $(round(sampling_ratio * 100, digits=2))%"
     
     # Sample protein groups from each file
-    sampled_protein_groups = DataFrame()
+    # Optimized: Collect samples and vcat at the end
+    sampled_dfs = DataFrame[]
+    
     for pg_path in pg_paths
         if isfile(pg_path) && endswith(pg_path, ".arrow")
             table = Arrow.Table(pg_path)
@@ -1107,10 +1117,13 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
                 
                 # Load sampled rows
                 df = DataFrame(Tables.columntable(table))
-                append!(sampled_protein_groups, df[sample_indices, :])
+                push!(sampled_dfs, df[sample_indices, :])
             end
         end
     end
+    
+    # Combine all samples at once
+    sampled_protein_groups = isempty(sampled_dfs) ? DataFrame() : vcat(sampled_dfs...)
     
     @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
@@ -1333,20 +1346,20 @@ function add_feature_columns!(df::DataFrame)
 end
 
 """
-    fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+    fit_probit_model(X::Matrix{Float64}, y::AbstractVector{Bool})
 
 Fit a probit regression model for protein group classification.
 
 # Arguments
 - `X::Matrix{Float64}`: Feature matrix
-- `y::Vector{Bool}`: Target labels (true for targets, false for decoys)
+- `y::AbstractVector{Bool}`: Target labels (true for targets, false for decoys)
 
 # Returns
 - `β_fitted`: Fitted coefficients
 - `X_mean`: Feature means for standardization
 - `X_std`: Feature standard deviations for standardization
 """
-function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
+function fit_probit_model(X::Matrix{Float64}, y::AbstractVector{Bool})
     # Standardize features
     X_mean = mean(X, dims=1)
     X_std = std(X, dims=1)
@@ -1406,18 +1419,18 @@ function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}, X_mean
 end
 
 """
-    calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
+    calculate_qvalues_from_scores(scores::AbstractVector{<:Real}, labels::AbstractVector{Bool})
 
 Calculate q-values from scores and labels.
 
 # Arguments
-- `scores::Vector{<:Real}`: Scores (higher = more likely to be target)
-- `labels::Vector{Bool}`: True labels (true = target, false = decoy)
+- `scores::AbstractVector{<:Real}`: Scores (higher = more likely to be target)
+- `labels::AbstractVector{Bool}`: True labels (true = target, false = decoy)
 
 # Returns
 - `Vector{Float64}`: Q-values for each score
 """
-function calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
+function calculate_qvalues_from_scores(scores::AbstractVector{<:Real}, labels::AbstractVector{Bool})
     # Sort by score in descending order
     sort_idx = sortperm(scores, rev=true)
     sorted_labels = labels[sort_idx]
