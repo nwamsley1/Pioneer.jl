@@ -769,6 +769,10 @@ function get_protein_groups(
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                         @NamedTuple{pg_score::Float32,  peptides::Set{String}}
                                     },
+                                    protein_to_possible_peptides::Dict{
+                                        @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
+                                        Set{String}
+                                    },
                                     protein_groups_path::String)
         # Extract keys and values
         keys_array = keys(protein_groups)
@@ -783,9 +787,36 @@ function get_protein_groups(
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
         
         # New feature columns
-        n_peptides = [length(v[:peptides]) for v in values_array]  # Number of unique peptides
+        @info "Display values_array[1][:peptides] " [v[:peptides] for v in values_array][1]
+        n_peptides = [length(unique(v[:peptides])) for v in values_array]  # Number of unique peptides
         total_peptide_length = [sum(length(pep) for pep in v[:peptides]) for v in values_array]  # Total length of all peptides
-
+        
+        # Calculate possible peptides and peptide coverage
+        # Handle protein groups with multiple proteins separated by semicolons
+        n_possible_peptides = zeros(Int64, length(keys_array))
+        for (i, k) in enumerate(keys_array)
+            # Split the protein group name by semicolons
+            protein_names_in_group = split(k[:protein_name], ';')
+            
+            # Union of all peptide sets from proteins in the group
+            all_possible_peptides = Set{String}()
+            for individual_protein in protein_names_in_group
+                # Create key for each individual protein
+                individual_key = (protein_name = String(individual_protein), 
+                                target = k[:target], 
+                                entrap_id = k[:entrap_id])
+                # Get the set of peptides for this protein and union with existing
+                if haskey(protein_to_possible_peptides, individual_key)
+                    union!(all_possible_peptides, protein_to_possible_peptides[individual_key])
+                end
+            end
+            
+            # Count unique peptides across all proteins in the group
+            n_possible_peptides[i] = max(length(all_possible_peptides), 1)
+        end
+        
+        peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
+        @info "Describe peptide coverage " describe(peptide_coverage)
         # Create DataFrame
         df = DataFrame((
             protein_name = protein_name,
@@ -794,7 +825,9 @@ function get_protein_groups(
             pg_score = pg_score,
             global_pg_score = global_pg_score,
             n_peptides = n_peptides,
-            total_peptide_length = total_peptide_length
+            total_peptide_length = total_peptide_length,
+            n_possible_peptides = n_possible_peptides,
+            peptide_coverage = peptide_coverage
         ))
 
         sort!(df, :global_pg_score, rev = true)
@@ -804,6 +837,30 @@ function get_protein_groups(
     end
 
     pg_count = 0
+    
+    # First, count all possible peptides for each protein in the library
+    protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
+    
+    # Count all peptides in the library for each protein
+    all_accession_numbers = getAccessionNumbers(precursors)
+    all_sequences = getSequence(precursors)
+    all_decoys = getIsDecoy(precursors)
+    all_entrap_ids = getEntrapmentGroupId(precursors)
+    
+    for i in 1:length(all_accession_numbers)
+        protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
+        is_decoy = all_decoys[i]
+        entrap_id = all_entrap_ids[i]
+        
+        for protein_name in protein_names
+            key = (protein_name = String(protein_name), target = !is_decoy, entrap_id = entrap_id)
+            if !haskey(protein_to_possible_peptides, key)
+                protein_to_possible_peptides[key] = Set{String}()
+            end
+            push!(protein_to_possible_peptides[key], all_sequences[i])
+        end
+    end
+    
     #Concatenate psms 
     ##########
     #Protein inference
@@ -899,8 +956,338 @@ function get_protein_groups(
         pg_count += writeProteinGroups(
             acc_to_max_pg_score,
             protein_groups,
+            protein_to_possible_peptides,
             protein_groups_path
         )
+    end
+
+    # Perform Linear Discriminant Analysis on protein groups
+    @info "Performing Linear Discriminant Analysis on protein groups..."
+    
+    # Load all protein group tables into a single DataFrame
+    all_protein_groups = DataFrame()
+    for pg_path in passing_pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
+        end
+    end
+    
+    # Only perform LDA if we have both targets and decoys
+    n_targets = sum(all_protein_groups.target)
+    n_decoys = sum(.!all_protein_groups.target)
+    
+    if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
+        # First, let's analyze the features to understand their distributions
+        @info "Feature analysis before LDA:"
+        
+        # Add log-transformed n_possible_peptides
+        all_protein_groups[!, :log_n_possible_peptides] = log.(all_protein_groups.n_possible_peptides .+ 1)
+        
+        # Analyze each potential feature
+        for feat in [:pg_score, :peptide_coverage, :n_possible_peptides, :log_n_possible_peptides]
+            feat_data = all_protein_groups[!, feat]
+            target_data = feat_data[all_protein_groups.target]
+            decoy_data = feat_data[.!all_protein_groups.target]
+            
+            # Calculate basic statistics
+            @info "  $feat statistics:"
+            @info "    Target mean: $(round(mean(target_data), digits=3)), std: $(round(std(target_data), digits=3))"
+            @info "    Decoy mean: $(round(mean(decoy_data), digits=3)), std: $(round(std(decoy_data), digits=3))"
+            
+            # Calculate effect size (Cohen's d)
+            pooled_std = sqrt(((length(target_data)-1)*var(target_data) + (length(decoy_data)-1)*var(decoy_data)) / (length(target_data) + length(decoy_data) - 2))
+            if pooled_std > 0
+                cohens_d = abs(mean(target_data) - mean(decoy_data)) / pooled_std
+                @info "    Cohen's d (effect size): $(round(cohens_d, digits=3))"
+            else
+                @info "    Cohen's d (effect size): NaN (no variance)"
+            end
+            
+            # Check correlation with pg_score
+            if feat != :pg_score
+                correlation = cor(all_protein_groups.pg_score, feat_data)
+                @info "    Correlation with pg_score: $(round(correlation, digits=3))"
+            end
+        end
+        
+        # Extract features for LDA - using pg_score and log_n_possible_peptides (peptide_coverage commented out)
+        feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]  # :peptide_coverage removed
+        X = Matrix{Float64}(all_protein_groups[:, feature_names])
+        y = all_protein_groups.target
+        
+        # Check for multicollinearity
+        if length(feature_names) > 1
+            @info "  Feature correlations:"
+            cor_matrix = cor(X)
+            for i in 1:size(cor_matrix, 1)
+                for j in (i+1):size(cor_matrix, 2)
+                    @info "    $(feature_names[i]) vs $(feature_names[j]): $(round(cor_matrix[i,j], digits=3))"
+                end
+            end
+        end
+        
+        # Standardize features
+        X_mean = mean(X, dims=1)
+        X_std = std(X, dims=1)
+        X_std[X_std .== 0] .= 1.0  # Avoid division by zero
+        X_standardized = (X .- X_mean) ./ X_std
+        
+        # Calculate class means
+        target_idx = findall(y)
+        decoy_idx = findall(.!y)
+        
+        mean_target = vec(mean(X_standardized[target_idx, :], dims=1))
+        mean_decoy = vec(mean(X_standardized[decoy_idx, :], dims=1))
+        
+        # Calculate within-class scatter matrix (pooled covariance)
+        S_w = zeros(size(X, 2), size(X, 2))
+        
+        # Target class scatter
+        for i in target_idx
+            xi = X_standardized[i, :]
+            diff = xi - mean_target
+            S_w += diff * diff'
+        end
+        
+        # Decoy class scatter
+        for i in decoy_idx
+            xi = X_standardized[i, :]
+            diff = xi - mean_decoy
+            S_w += diff * diff'
+        end
+        
+        S_w = S_w / (length(target_idx) + length(decoy_idx) - 2)
+        
+        # Calculate LDA coefficients (Fisher's discriminant)
+        # w = S_w^(-1) * (mean_target - mean_decoy)
+        w = S_w \ (mean_target - mean_decoy)
+        w = w / norm(w)  # Normalize
+        
+        # Calculate discriminant scores
+        discriminant_scores = X_standardized * w
+        
+        # Calculate classification accuracy
+        threshold = 0.0  # Decision boundary at 0 for standardized data
+        predictions = discriminant_scores .> threshold
+        accuracy = mean(predictions .== y)
+        
+        # Calculate AUC-like metric (area under ROC curve approximation)
+        target_scores = discriminant_scores[target_idx]
+        decoy_scores = discriminant_scores[decoy_idx]
+        
+        # Simple AUC calculation
+        auc = 0.0
+        for t_score in target_scores
+            auc += sum(t_score .> decoy_scores) / length(decoy_scores)
+        end
+        auc = auc / length(target_scores)
+        
+        # Print LDA results
+        @info "LDA Results:"
+        @info "  Number of targets: $n_targets"
+        @info "  Number of decoys: $n_decoys"
+        @info "  Classification accuracy: $(round(accuracy * 100, digits=2))%"
+        @info "  AUC: $(round(auc, digits=3))"
+        
+        @info "  Feature coefficients (standardized):"
+        for (i, fname) in enumerate(feature_names)
+            @info "    $fname: $(round(w[i], digits=3))"
+        end
+        
+        @info "  Discriminant score statistics:"
+        @info "    Target mean: $(round(mean(target_scores), digits=3))"
+        @info "    Target std: $(round(std(target_scores), digits=3))"
+        @info "    Decoy mean: $(round(mean(decoy_scores), digits=3))"
+        @info "    Decoy std: $(round(std(decoy_scores), digits=3))"
+        @info "    Separation: $(round(abs(mean(target_scores) - mean(decoy_scores)) / sqrt(0.5 * (var(target_scores) + var(decoy_scores))), digits=3))"
+        
+        # Calculate q-values based on LDA scores
+        # Combine all scores and labels
+        all_scores = vcat(discriminant_scores...)
+        all_labels = vcat(y...)
+        
+        # Sort by score in descending order (higher score = more likely to be target)
+        sort_idx = sortperm(all_scores, rev=true)
+        sorted_scores = all_scores[sort_idx]
+        sorted_labels = all_labels[sort_idx]
+        
+        # Calculate q-values
+        lda_qvalues = zeros(Float64, length(sorted_scores))
+        cumulative_targets = 0
+        cumulative_decoys = 0
+        
+        for i in 1:length(sorted_scores)
+            if sorted_labels[i]
+                cumulative_targets += 1
+            else
+                cumulative_decoys += 1
+            end
+            
+            # FDR = decoys / targets
+            if cumulative_targets == 0
+                lda_qvalues[i] = 1.0
+            else
+                lda_qvalues[i] = cumulative_decoys / cumulative_targets
+            end
+        end
+        
+        # Convert FDR to q-value (ensure monotonicity)
+        for i in (length(lda_qvalues)-1):-1:1
+            lda_qvalues[i] = min(lda_qvalues[i], lda_qvalues[i+1])
+        end
+        
+        # Map q-values back to original order
+        unsorted_qvalues = zeros(Float64, length(all_scores))
+        unsorted_qvalues[sort_idx] = lda_qvalues
+        
+        # Count targets passing 1% q-value threshold
+        targets_at_1pct = 0
+        for i in 1:length(all_scores)
+            if all_labels[i] && unsorted_qvalues[i] <= 0.01
+                targets_at_1pct += 1
+            end
+        end
+        
+        # Also report at different thresholds
+        targets_at_5pct = sum(all_labels .& (unsorted_qvalues .<= 0.05))
+        targets_at_10pct = sum(all_labels .& (unsorted_qvalues .<= 0.10))
+        
+        @info "  Q-value analysis (LDA-based):"
+        @info "    Targets at 1% FDR: $targets_at_1pct / $n_targets ($(round(targets_at_1pct/n_targets*100, digits=1))%)"
+        @info "    Targets at 5% FDR: $targets_at_5pct / $n_targets ($(round(targets_at_5pct/n_targets*100, digits=1))%)"
+        @info "    Targets at 10% FDR: $targets_at_10pct / $n_targets ($(round(targets_at_10pct/n_targets*100, digits=1))%)"
+        
+        # Find score threshold for 1% FDR
+        score_at_1pct = nothing
+        for i in 1:length(sorted_scores)
+            if lda_qvalues[i] <= 0.01
+                score_at_1pct = sorted_scores[i]
+            else
+                break
+            end
+        end
+        
+        if !isnothing(score_at_1pct)
+            @info "    LDA score threshold at 1% FDR: $(round(score_at_1pct, digits=3))"
+        end
+        
+        # Now calculate q-values using just pg_score for comparison
+        @info "  Q-value analysis (pg_score only):"
+        
+        # Sort by pg_score in descending order
+        pg_scores = all_protein_groups.pg_score
+        pg_sort_idx = sortperm(pg_scores, rev=true)
+        sorted_pg_scores = pg_scores[pg_sort_idx]
+        sorted_pg_labels = y[pg_sort_idx]
+        
+        # Calculate q-values for pg_score
+        pg_qvalues = zeros(Float64, length(sorted_pg_scores))
+        cumulative_targets_pg = 0
+        cumulative_decoys_pg = 0
+        
+        for i in 1:length(sorted_pg_scores)
+            if sorted_pg_labels[i]
+                cumulative_targets_pg += 1
+            else
+                cumulative_decoys_pg += 1
+            end
+            
+            # FDR = decoys / targets
+            if cumulative_targets_pg == 0
+                pg_qvalues[i] = 1.0
+            else
+                pg_qvalues[i] = cumulative_decoys_pg / cumulative_targets_pg
+            end
+        end
+        
+        # Convert FDR to q-value (ensure monotonicity)
+        for i in (length(pg_qvalues)-1):-1:1
+            pg_qvalues[i] = min(pg_qvalues[i], pg_qvalues[i+1])
+        end
+        
+        # Map q-values back to original order
+        unsorted_pg_qvalues = zeros(Float64, length(pg_scores))
+        unsorted_pg_qvalues[pg_sort_idx] = pg_qvalues
+        
+        # Count targets passing thresholds with pg_score only
+        pg_targets_at_1pct = sum(y .& (unsorted_pg_qvalues .<= 0.01))
+        pg_targets_at_5pct = sum(y .& (unsorted_pg_qvalues .<= 0.05))
+        pg_targets_at_10pct = sum(y .& (unsorted_pg_qvalues .<= 0.10))
+        
+        @info "    Targets at 1% FDR: $pg_targets_at_1pct / $n_targets ($(round(pg_targets_at_1pct/n_targets*100, digits=1))%)"
+        @info "    Targets at 5% FDR: $pg_targets_at_5pct / $n_targets ($(round(pg_targets_at_5pct/n_targets*100, digits=1))%)"
+        @info "    Targets at 10% FDR: $pg_targets_at_10pct / $n_targets ($(round(pg_targets_at_10pct/n_targets*100, digits=1))%)"
+        
+        # Compare LDA vs pg_score performance
+        @info "  Performance comparison (LDA vs pg_score):"
+        improvement_1pct = targets_at_1pct - pg_targets_at_1pct
+        improvement_5pct = targets_at_5pct - pg_targets_at_5pct
+        improvement_10pct = targets_at_10pct - pg_targets_at_10pct
+        
+        @info "    Additional targets at 1% FDR with LDA: $improvement_1pct ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
+        @info "    Additional targets at 5% FDR with LDA: $improvement_5pct ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
+        @info "    Additional targets at 10% FDR with LDA: $improvement_10pct ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
+        
+        # Create scatter plot of pg_score vs peptide_coverage
+        @info "Creating scatter plot of pg_score vs peptide_coverage..."
+        
+        # Separate targets and decoys
+        target_mask = all_protein_groups.target
+        decoy_mask = .!all_protein_groups.target
+        
+        # Create the scatter plot
+        p = scatter(log2.(all_protein_groups[target_mask, :peptide_coverage]), 
+                   all_protein_groups[target_mask, :pg_score],
+                   label="Targets",
+                   color=:blue,
+                   alpha=0.1,
+                   markersize=3,
+                   xlabel="Peptide Coverage",
+                   ylabel="PG Score",
+                   title="Protein Group Score vs Peptide Coverage",
+                   legend=:topright,
+                   yscale=:log10,  # Log scale for pg_score due to wide range
+                   ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
+        
+        scatter!(p, log2.(all_protein_groups[decoy_mask, :peptide_coverage]),
+                all_protein_groups[decoy_mask, :pg_score],
+                label="Decoys",
+                color=:red,
+                alpha=0.1,
+                markersize=3)
+        
+        # Save the plot
+        plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_peptide_coverage.png"
+        savefig(p, plot_path)
+
+        # Create the scatter plot
+        p = scatter(log2.(all_protein_groups[target_mask, :n_possible_peptides]), 
+                all_protein_groups[target_mask, :pg_score],
+                label="Targets",
+                color=:blue,
+                alpha=0.1,
+                markersize=3,
+                xlabel="N Possible Peptides",
+                ylabel="PG Score",
+                title="Protein Group Score vs Peptide Coverage",
+                legend=:topright,
+                yscale=:log10,  # Log scale for pg_score due to wide range
+                ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
+     
+     scatter!(p, log2.(all_protein_groups[decoy_mask, :n_possible_peptides]),
+             all_protein_groups[decoy_mask, :pg_score],
+             label="Decoys",
+             color=:red,
+             alpha=0.1,
+             markersize=3)
+     
+     # Save the plot
+     plot_path = "/Users/nathanwamsley/Desktop/pg_score_vs_n_possible.png"
+     savefig(p, plot_path)
+        @info "Scatter plot saved to: $plot_path"
+        
+    else
+        @info "Skipping LDA: insufficient data (targets: $n_targets, decoys: $n_decoys)"
     end
 
     return protein_inference_dict
