@@ -263,7 +263,8 @@ function summarize_results!(
             passing_proteins_folder,
             temp_folder,
             getPrecursors(getSpecLib(search_context)),
-            min_peptides = params.min_peptides
+            min_peptides = params.min_peptides,
+            max_psms_in_memory = params.max_psms_in_memory
         )
 
         add_protein_inference_col(
@@ -344,17 +345,17 @@ function summarize_results!(
         end
         
         # Display summary statistics
-        @info "Protein group statistics before filtering:"
-        @info "Total protein groups: $(nrow(all_proteins))"
-        @info "Target protein groups: $(sum(all_proteins.target))"
-        @info "Decoy protein groups: $(sum(.!all_proteins.target))"
+        #@info "Protein group statistics before filtering:"
+        #@info "Total protein groups: $(nrow(all_proteins))"
+        #@info "Target protein groups: $(sum(all_proteins.target))"
+        #@info "Decoy protein groups: $(sum(.!all_proteins.target))"
         
         # Column-wise statistics
         for col in names(all_proteins)
             col_data = all_proteins[!, col]
             if eltype(col_data) <: Number && !all(ismissing.(col_data))
                 non_missing = skipmissing(col_data)
-                @info "Column '$col': min=$(minimum(non_missing)), max=$(maximum(non_missing)), mean=$(round(mean(non_missing), digits=4))"
+                #@info "Column '$col': min=$(minimum(non_missing)), max=$(maximum(non_missing)), mean=$(round(mean(non_missing), digits=4))"
             end
         end
         

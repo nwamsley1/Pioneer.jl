@@ -679,7 +679,8 @@ function get_protein_groups(
     temp_folder::String,
     precursors::LibraryPrecursors;
     min_peptides = 2,
-    protein_q_val_threshold::Float32 = 0.01f0
+    protein_q_val_threshold::Float32 = 0.01f0,
+    max_psms_in_memory::Int64 = 10000000  # Default value if not provided
 )
 
     """
@@ -1015,33 +1016,207 @@ function get_protein_groups(
     # Perform Probit Regression Analysis on protein groups
     @info "Performing Probit Regression Analysis on protein groups..."
     
-    # Load all protein group tables into a single DataFrame
-    all_protein_groups = DataFrame()
+    # First, count the total number of protein groups across all files
+    total_protein_groups = 0
     for pg_path in passing_pg_paths
         if isfile(pg_path) && endswith(pg_path, ".arrow")
-            append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
+            table = Arrow.Table(pg_path)
+            total_protein_groups += length(table[:protein_name])  # Get row count from any column
         end
     end
     
-    # Only perform analysis if we have both targets and decoys
-    n_targets = sum(all_protein_groups.target)
-    n_decoys = sum(.!all_protein_groups.target)
+    #@info "Total protein groups across all files: $total_protein_groups"
     
-    if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
-        # Add derived features
-        add_feature_columns!(all_protein_groups)
-        
-        # Get QC folder path
-        qc_folder = joinpath(dirname(temp_folder), "qc_plots")
-        !isdir(qc_folder) && mkdir(qc_folder)
-        
-        # Perform probit regression analysis
-        perform_probit_analysis(all_protein_groups, qc_folder)
+    # Set protein group limit to 5x the precursor limit
+    max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
+    #@info "Max protein groups in memory: $max_protein_groups_in_memory_limit (5x precursor limit of $max_psms_in_memory)"
+    
+    # Get QC folder path
+    qc_folder = joinpath(dirname(temp_folder), "qc_plots")
+    !isdir(qc_folder) && mkdir(qc_folder)
+    
+    if total_protein_groups > max_protein_groups_in_memory_limit
+        @info "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
+        perform_probit_analysis_oom(passing_pg_paths, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
     else
-        @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
+        @info "Using in-memory probit regression"
+        # Load all protein group tables into a single DataFrame
+        all_protein_groups = DataFrame()
+        for pg_path in passing_pg_paths
+            if isfile(pg_path) && endswith(pg_path, ".arrow")
+                append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
+            end
+        end
+        
+        # Only perform analysis if we have both targets and decoys
+        n_targets = sum(all_protein_groups.target)
+        n_decoys = sum(.!all_protein_groups.target)
+        
+        if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
+            # Add derived features
+            add_feature_columns!(all_protein_groups)
+            
+            # Perform probit regression analysis
+            perform_probit_analysis(all_protein_groups, qc_folder)
+        else
+            @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
+        end
+
     end
 
     return protein_inference_dict
+end
+
+"""
+    perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
+                               max_protein_groups_in_memory::Int, qc_folder::String)
+
+Perform out-of-memory probit regression analysis on protein groups.
+
+# Arguments
+- `pg_paths`: Vector of paths to protein group Arrow files
+- `total_protein_groups`: Total number of protein groups across all files
+- `max_protein_groups_in_memory`: Maximum number of protein groups to hold in memory
+- `qc_folder`: Folder for QC plots
+
+# Process
+1. Calculate sampling ratio for each file
+2. Sample protein groups from each file proportionally
+3. Fit probit model on sampled data
+4. Apply model to all protein groups file by file
+5. Calculate and report performance metrics
+"""
+function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
+                                    max_protein_groups_in_memory::Int, qc_folder::String)
+    
+    # Calculate sampling ratio
+    sampling_ratio = max_protein_groups_in_memory / total_protein_groups
+    @info "Sampling ratio: $(round(sampling_ratio * 100, digits=2))%"
+    
+    # Sample protein groups from each file
+    sampled_protein_groups = DataFrame()
+    for pg_path in pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            table = Arrow.Table(pg_path)
+            n_rows = length(table[:protein_name])  # Get row count from any column
+            n_sample = ceil(Int, n_rows * sampling_ratio)
+            
+            if n_sample > 0
+                # Sample indices
+                sample_indices = sort(sample(1:n_rows, n_sample, replace=false))
+                
+                # Load sampled rows
+                df = DataFrame(Tables.columntable(table))
+                append!(sampled_protein_groups, df[sample_indices, :])
+            end
+        end
+    end
+    
+    @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
+    
+    # Add derived features
+    add_feature_columns!(sampled_protein_groups)
+    
+    # Define features to use
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
+    X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
+    y = sampled_protein_groups.target
+    
+    # Fit probit model on sampled data
+    β_fitted, X_mean, X_std = fit_probit_model(X, y)
+    
+    @info "Fitted probit model coefficients: $β_fitted"
+    
+    # Now apply the model to all protein groups file by file
+    # and collect statistics
+    total_targets = 0
+    total_decoys = 0
+    targets_at_1pct = 0
+    targets_at_5pct = 0
+    targets_at_10pct = 0
+    
+    # Also track baseline (pg_score only) performance
+    pg_targets_at_1pct = 0
+    pg_targets_at_5pct = 0
+    pg_targets_at_10pct = 0
+    
+    # Process each file
+    for pg_path in pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            # Load file
+            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            
+            # Add derived features
+            add_feature_columns!(df)
+            
+            # Calculate probit scores
+            X_file = Matrix{Float64}(df[:, feature_names])
+            prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
+            
+            # Add scores to dataframe
+            df[!, :probit_score] = prob_scores
+            
+            # Calculate q-values for this file
+            probit_qvalues = calculate_qvalues_from_scores(prob_scores, df.target)
+            pg_qvalues = calculate_qvalues_from_scores(df.pg_score, df.target)
+            
+            # Count statistics
+            total_targets += sum(df.target)
+            total_decoys += sum(.!df.target)
+            
+            # Count targets at different FDR thresholds
+            targets_at_1pct += sum(df.target .& (probit_qvalues .<= 0.01))
+            targets_at_5pct += sum(df.target .& (probit_qvalues .<= 0.05))
+            targets_at_10pct += sum(df.target .& (probit_qvalues .<= 0.10))
+            
+            pg_targets_at_1pct += sum(df.target .& (pg_qvalues .<= 0.01))
+            pg_targets_at_5pct += sum(df.target .& (pg_qvalues .<= 0.05))
+            pg_targets_at_10pct += sum(df.target .& (pg_qvalues .<= 0.10))
+            
+            # Write back the file with probit scores
+            df[!, :probit_qval] = probit_qvalues
+            writeArrow(pg_path, df)
+        end
+    end
+    
+    # Report results
+    #@info "Out-of-Memory Probit Regression Results:"
+    #@info "  Total protein groups: $(total_targets + total_decoys) (targets: $total_targets, decoys: $total_decoys)"
+    #@info "  Training sample size: $(nrow(sampled_protein_groups))"
+    
+    @info "Probit Model Performance:"
+    @info "  Targets at 1% FDR: $targets_at_1pct / $total_targets ($(round(targets_at_1pct/total_targets*100, digits=1))%)"
+    @info "  Targets at 5% FDR: $targets_at_5pct / $total_targets ($(round(targets_at_5pct/total_targets*100, digits=1))%)"
+    @info "  Targets at 10% FDR: $targets_at_10pct / $total_targets ($(round(targets_at_10pct/total_targets*100, digits=1))%)"
+    
+    @info "Baseline (pg_score only):"
+    @info "  Targets at 1% FDR: $pg_targets_at_1pct / $total_targets ($(round(pg_targets_at_1pct/total_targets*100, digits=1))%)"
+    @info "  Targets at 5% FDR: $pg_targets_at_5pct / $total_targets ($(round(pg_targets_at_5pct/total_targets*100, digits=1))%)"
+    @info "  Targets at 10% FDR: $pg_targets_at_10pct / $total_targets ($(round(pg_targets_at_10pct/total_targets*100, digits=1))%)"
+    
+    # Calculate improvements
+    improvement_1pct = targets_at_1pct - pg_targets_at_1pct
+    improvement_5pct = targets_at_5pct - pg_targets_at_5pct
+    improvement_10pct = targets_at_10pct - pg_targets_at_10pct
+    
+    @info "Improvement with Probit:"
+    if pg_targets_at_1pct > 0
+        @info "  At 1% FDR: +$improvement_1pct targets ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
+    else
+        @info "  At 1% FDR: +$improvement_1pct targets"
+    end
+    
+    if pg_targets_at_5pct > 0
+        @info "  At 5% FDR: +$improvement_5pct targets ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
+    else
+        @info "  At 5% FDR: +$improvement_5pct targets"
+    end
+    
+    if pg_targets_at_10pct > 0
+        @info "  At 10% FDR: +$improvement_10pct targets ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
+    else
+        @info "  At 10% FDR: +$improvement_10pct targets"
+    end
 end
 
 """
@@ -1125,7 +1300,8 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     end
     
     # Create decision boundary plots
-    plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
+    # TODO: Fix plotting type error
+    # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
 end
 
 """
