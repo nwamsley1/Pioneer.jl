@@ -74,10 +74,8 @@ function sort_and_filter_quant_tables(
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 )
 
-    #Remove if present 
-    if isfile(merged_quant_path)
-        rm(merged_quant_path)
-    end
+    # Note: merged_quant_path is not created by this function, so no need to remove it
+    # This function only filters and sorts individual PSM files in place
     
     # Optimized: Process files in parallel
     Threads.@threads for fpath in second_pass_psms_paths
@@ -121,10 +119,8 @@ function sort_quant_tables(
     prob_col::Symbol,
 )
 
-    #Remove if present 
-    if isfile(merged_quant_path)
-        rm(merged_quant_path)
-    end
+    # Note: merged_quant_path is not created by this function, so no need to remove it
+    # This function only sorts individual PSM files in place
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
     for fpath in second_pass_psms_paths

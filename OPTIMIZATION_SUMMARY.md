@@ -228,8 +228,9 @@ end
 - `OPTIMIZATION_SUMMARY.md` (this file)
 
 ### Modified Files
-- `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils.jl`
-- `src/utils/ML/probitRegression.jl`
+- `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils.jl` (Arrow data compatibility + Windows file fix)
+- `src/Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch/utils.jl` (Memory optimization integration)
+- `src/utils/ML/probitRegression.jl` (Arrow data compatibility)
 
 ## Conclusion
 
