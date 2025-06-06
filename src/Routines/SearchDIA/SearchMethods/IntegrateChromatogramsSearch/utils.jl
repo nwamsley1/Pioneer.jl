@@ -211,7 +211,9 @@ function build_chromatograms(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{MS2ChromObject}(undef, 500000)  # Initial size
+    # Optimized: Use data-driven initial size instead of fixed 500k
+    estimated_capacity = estimate_chromatogram_capacity(scan_range, precursors_passing)
+    chromatograms = Vector{MS2ChromObject}(undef, estimated_capacity)
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -337,11 +339,11 @@ function build_chromatograms(
             )
 
             # Record chromatogram points with weights
+            # Optimized: Check if we need more space and resize efficiently
+            smart_chromatogram_resize!(chromatograms, rt_idx, rt_idx + prec_temp_size)
+            
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
-                end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
                     chromatograms[rt_idx] = MS2ChromObject(
@@ -368,11 +370,11 @@ function build_chromatograms(
 
         else
             # Record zero intensity points for non-matching precursors
+            # Optimized: Check if we need more space and resize efficiently
+            smart_chromatogram_resize!(chromatograms, rt_idx, rt_idx + prec_temp_size)
+            
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS2ChromObject}(undef, 500000))
-                end
 
                 chromatograms[rt_idx] = MS2ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
@@ -426,7 +428,9 @@ function build_chromatograms(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
+    # Optimized: Use data-driven initial size instead of fixed 500k
+    estimated_capacity = estimate_chromatogram_capacity(scan_range, precursors_passing)
+    chromatograms = Vector{MS1ChromObject}(undef, estimated_capacity)
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
     ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
@@ -563,11 +567,11 @@ function build_chromatograms(
                 params.reg_type,#NoNorm()
             )
             # Record chromatogram points with weights
+            # Optimized: Check if we need more space and resize efficiently
+            smart_chromatogram_resize!(chromatograms, rt_idx, rt_idx + prec_temp_size)
+            
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
-                end
 
                 if !iszero(getIdToCol(search_data)[precs_temp[j]])
                     chromatograms[rt_idx] = MS1ChromObject(
@@ -597,11 +601,11 @@ function build_chromatograms(
             end
 
         else
+            # Optimized: Check if we need more space and resize efficiently
+            smart_chromatogram_resize!(chromatograms, rt_idx, rt_idx + prec_temp_size)
+            
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    append!(chromatograms, Vector{MS1ChromObject}(undef, 500000))
-                end
                 chromatograms[rt_idx] = MS1ChromObject(
                     Float32(getRetentionTime(spectra, scan_idx)),
                     zero(Float32),

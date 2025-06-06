@@ -310,9 +310,10 @@ function process_scans!(
     weights = getTempWeights(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
-    ion_templates = Vector{Isotope{Float32}}(undef, 100000)
-    ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
-    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
+    # Optimized: Use smaller initial sizes that grow as needed
+    ion_templates = Vector{Isotope{Float32}}(undef, 10000)  # Reduced from 100k
+    ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 1000)]  # Reduced from 10k
+    ion_misses = [PrecursorMatch{Float32}() for _ in range(1, 1000)]   # Reduced from 10k
     precursors = getPrecursors(getSpecLib(search_context))
     pair_ids = getPairIdx(precursors)
     pair_id_dict = Dictionary{
@@ -376,6 +377,21 @@ function process_scans!(
         
         #Sort the precursor isotopes by m/z
         sort!(@view(ion_templates[1:ion_idx]), by = x->(getMZ(x)), alg=PartialQuickSort(1:ion_idx))
+        
+        # Optimized: Ensure ion_matches/misses arrays are large enough
+        # Estimate based on ion_idx (worst case: all ions match)
+        needed_capacity = ion_idx + 100  # Small buffer
+        if needed_capacity > length(ion_matches)
+            old_size = length(ion_matches)
+            new_size = max(needed_capacity, old_size * 2)
+            append!(ion_matches, [PrecursorMatch{Float32}() for _ in 1:(new_size - old_size)])
+        end
+        if needed_capacity > length(ion_misses)
+            old_size = length(ion_misses)
+            new_size = max(needed_capacity, old_size * 2)
+            append!(ion_misses, [PrecursorMatch{Float32}() for _ in 1:(new_size - old_size)])
+        end
+        
         # Match peaks
         nmatches, nmisses = matchPeaks!(
             ion_matches,
