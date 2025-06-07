@@ -21,16 +21,27 @@ function load_test_problem(filepath::String)
     data = load(filepath)
     
     # Reconstruct the SparseArray
-    Hs = SparseArray(
-        data["Hs_rowval"],
-        data["Hs_colval"],
-        data["Hs_nzval"],
-        data["Hs_colptr"],
-        data["Hs_n_vals"],
-        data["Hs_n"],
-        data["Hs_m"],
-        data["Hs_x"]
-    )
+    # Need to include Pioneer structs
+    include("src/structs/SparseArray.jl")
+    
+    # Create an empty SparseArray and fill its fields
+    N = length(data["Hs_rowval"])
+    Hs = SparseArray(N)
+    Hs.n_vals = data["Hs_n_vals"]
+    Hs.m = data["Hs_m"]
+    Hs.n = data["Hs_n"]
+    Hs.rowval = data["Hs_rowval"]
+    Hs.colval = data["Hs_colval"]
+    Hs.nzval = data["Hs_nzval"]
+    Hs.colptr = data["Hs_colptr"]
+    Hs.x = data["Hs_x"]
+    # Load matched and isotope if available, otherwise use defaults
+    if haskey(data, "Hs_matched")
+        Hs.matched = data["Hs_matched"]
+    end
+    if haskey(data, "Hs_isotope")
+        Hs.isotope = data["Hs_isotope"]
+    end
     
     r = data["r_initial"]
     X₁ = data["X1_initial"]

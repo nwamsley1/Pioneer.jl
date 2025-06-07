@@ -26,16 +26,24 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     data = load(problem_file)
     
     # Reconstruct the SparseArray
-    Hs = Pioneer.SparseArray(
-        data["Hs_rowval"],
-        data["Hs_colval"],
-        data["Hs_nzval"],
-        data["Hs_colptr"],
-        data["Hs_n_vals"],
-        data["Hs_n"],
-        data["Hs_m"],
-        data["Hs_x"]
-    )
+    # Create an empty SparseArray and fill its fields
+    N = length(data["Hs_rowval"])
+    Hs = Pioneer.SparseArray(N)
+    Hs.n_vals = data["Hs_n_vals"]
+    Hs.m = data["Hs_m"]
+    Hs.n = data["Hs_n"]
+    Hs.rowval = data["Hs_rowval"]
+    Hs.colval = data["Hs_colval"]
+    Hs.nzval = data["Hs_nzval"]
+    Hs.colptr = data["Hs_colptr"]
+    Hs.x = data["Hs_x"]
+    # Load matched and isotope if available, otherwise use defaults
+    if haskey(data, "Hs_matched")
+        Hs.matched = data["Hs_matched"]
+    end
+    if haskey(data, "Hs_isotope")
+        Hs.isotope = data["Hs_isotope"]
+    end
     
     # Load other parameters
     r_original = data["r_initial"]

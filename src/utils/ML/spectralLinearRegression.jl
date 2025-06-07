@@ -568,7 +568,6 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         println("[HUBER DEBUG] Capturing slow-converging large problem: $(Hs.n) vars, $(Hs.m) constraints, $i iterations")
         
         # Save the problem data
-        using JLD2
         jldsave("/Users/nathanwamsley/Desktop/huber_test_problem.jld2";
             Hs_rowval = Hs.rowval,
             Hs_colval = Hs.colval,
@@ -578,6 +577,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             Hs_n = Hs.n,
             Hs_m = Hs.m,
             Hs_x = Hs.x,
+            Hs_matched = Hs.matched,
+            Hs_isotope = Hs.isotope,
             r_initial = r_initial_copy,
             X1_initial = X1_initial_copy,
             delta = δ,
