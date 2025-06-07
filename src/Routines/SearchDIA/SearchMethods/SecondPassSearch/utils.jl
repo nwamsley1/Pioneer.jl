@@ -497,7 +497,7 @@ function process_scans!(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
-            solveHuber!(
+            _, _, _ = solveHuber!(
                 Hs,
                 residuals,
                 weights,
