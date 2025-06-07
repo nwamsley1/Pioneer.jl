@@ -8,16 +8,19 @@ Run this after capturing a problem with SearchDIA.
 using JLD2
 using Statistics
 using Printf
-
+using Combinatorics
+using LoopVectorization
+import Base.Ordering
 # Add Pioneer source to load path
 push!(LOAD_PATH, dirname(@__DIR__))
 
 # Load required modules
 using Pioneer
+include(joinpath(dirname(@__DIR__), "Pioneer.jl", "src", "structs", "SparseArray.jl"))
+
+include(joinpath(dirname(@__DIR__), "Pioneer.jl", "src", "utils", "ML", "spectralLinearRegression.jl"))
 
 # Include the file that defines regularization types
-include(joinpath(dirname(@__DIR__), "src", "utils", "ML", "spectralLinearRegression.jl"))
-
 function test_huber_performance(problem_file::String="/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
     if !isfile(problem_file)
         println("ERROR: Test problem not found at $problem_file")
@@ -30,8 +33,10 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     
     # Reconstruct the SparseArray
     # Create an empty SparseArray and fill its fields
+    # Determine the integer type from the saved data
+    Ti = eltype(data["Hs_rowval"])
     N = length(data["Hs_rowval"])
-    Hs = Pioneer.SparseArray(N)
+    Hs = SparseArray(Ti(N))
     Hs.n_vals = data["Hs_n_vals"]
     Hs.m = data["Hs_m"]
     Hs.n = data["Hs_n"]

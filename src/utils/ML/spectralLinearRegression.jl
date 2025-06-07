@@ -102,7 +102,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             max_iter_bisection::Int64,
                             accuracy_newton::T,
                             accuracy_bisection::T,
-                            regulariation_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
+                            regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     X_init = X₁[col] #Estimate prior to optimiztion
     X0 = X₁[col] #Keeps track of previous etimate at each iteration
@@ -117,7 +117,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
         while (n < max_iter_newton)
 
             #First and second derivatives 
-            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regulariation_type)
+            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regularization_type)
             update_rule = (L1)/L2
             #Switch to bisection method
             if isnan(update_rule)
@@ -152,14 +152,14 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
             X0 = X₁[col]
             X₁[col] = zero(T)
             updateResiduals!(Hs, r, col, X₁[col], X0)
-            L1 = getL1(Hs, r, col, δ, λ, X₁[col], regulariation_type)
+            L1 = getL1(Hs, r, col, δ, λ, X₁[col], regularization_type)
             if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
                 _ = bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
                             min(max(max_x1, zero(Float32)), Float32(1e11)), #Maximum Plausible Value for X1
                             L1,  
                             max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
                             accuracy_bisection,
-                            regulariation_type)#accuracy)
+                            regularization_type)#accuracy)
             end
             return X₁[col] - X_init
         else #Convergence reached. Return difference between current estimate and initial guess. 
@@ -364,7 +364,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             max_iter_bisection::Int64,
                             accuracy_newton::T,
                             accuracy_bisection::T,
-                            regulariation_type::RegularizationType,
+                            regularization_type::RegularizationType,
                             rel_tol::T = T(0.01)) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     X_init = X₁[col]  # Initial estimate before optimization
@@ -377,7 +377,7 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
         # Newton-Raphson iterations
         while (n < max_iter_newton)
             # Compute first and second derivatives
-            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regulariation_type)
+            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regularization_type)
             update_rule = (L1)/L2
             
             # Check for numerical issues
@@ -485,7 +485,7 @@ function bisection!(Hs::SparseArray{Ti, T},
     return X₁[col] - X_init
 end
 
-function solveHuber!(Hs::SparseArray{Ti, T}, 
+function solveHuber!(Hs::Pioneer.SparseArray{Ti, T}, 
                         r::Vector{T}, 
                         X₁::Vector{T}, 
                         δ::T,
