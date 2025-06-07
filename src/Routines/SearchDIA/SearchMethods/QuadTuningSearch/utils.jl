@@ -590,9 +590,10 @@ function perform_quad_transmission_search(
             params.max_iter_outer,
             params.accuracy_newton,
             params.accuracy_bisection,
-            10.0,
+            Float32(10.0),
             params.max_diff,
-            NoNorm()
+            NoNorm();
+            debug_capture = false
         )
     end
 
