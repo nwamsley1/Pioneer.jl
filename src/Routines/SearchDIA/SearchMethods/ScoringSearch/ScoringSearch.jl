@@ -51,7 +51,7 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && global_params.isotope_settings.combine_traces
             CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
-            SeperateTraces()
+            SeparateTraces()
         end
         
         new{typeof(isotope_trace_type)}(

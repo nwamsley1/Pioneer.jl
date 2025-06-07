@@ -69,7 +69,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
                                global_params.isotope_settings.combine_traces
             CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
-            SeperateTraces()
+            SeparateTraces()
         end
 
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search

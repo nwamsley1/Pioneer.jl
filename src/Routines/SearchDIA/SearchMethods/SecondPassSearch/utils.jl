@@ -126,7 +126,9 @@ function process_scans!(
     cycle_idx = 0
 
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
-
+    total_iters = 0
+    exceeded_iters = 0
+    n_iters = 0
     for scan_idx in scan_range
         ((scan_idx < 1) || scan_idx > length(spectra)) && continue
         msn = getMsOrder(spectra, scan_idx)
@@ -212,9 +214,12 @@ function process_scans!(
 
         initialize_weights!(search_data, weights, precursor_weights)
         
-        # Solve deconvolution problem
+        # Solve deconvolution problem with profiling
         initResiduals!(residuals, Hs, weights)
-        solveHuber!(
+        
+        # Profile the Huber solver for optimization analysis
+        #huber_start_time = time_ns()
+        iterations = solveHuber!(
             Hs,
             residuals,
             weights,
@@ -229,7 +234,26 @@ function process_scans!(
             params.max_diff,
             params.reg_type,
         )
-
+        if total_iters > 999
+            exceeded_iters += 1
+        end
+        total_iters += iterations
+        n_iters += 1
+        #huber_time_ms = (time_ns() - huber_start_time) / 1e6
+        
+        # Log performance statistics every 100 scans for analysis
+        #=
+        if scan_idx % 100 == 0
+            tolerance = search_context.deconvolution_stop_tolerance[]
+            delta = getHuberDelta(search_context)
+            
+            # Calculate performance metrics
+            avg_time_per_iteration = iterations > 0 ? huber_time_ms / iterations : 0.0
+            avg_time_per_precursor = Hs.n > 0 ? huber_time_ms / Hs.n : 0.0
+            
+            #@info "Huber solver performance (optimized)" scan_idx=scan_idx iterations=iterations time_ms=huber_time_ms n_precursors=Hs.n tolerance=tolerance delta=delta avg_ms_per_iter=avg_time_per_iteration avg_ms_per_precursor=avg_time_per_precursor max_outer=params.max_iter_outer max_newton=params.max_iter_newton
+        end
+        =#
         # Update precursor weights
         update_precursor_weights!(search_data, weights, precursor_weights)
 
@@ -269,6 +293,7 @@ function process_scans!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
+    @info "exceeded_iters = " exceeded_iters "total_iters =" total_iters "n_iters= " n_iters "total_iters/n_itesr = " total_iters/n_iters
     return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 

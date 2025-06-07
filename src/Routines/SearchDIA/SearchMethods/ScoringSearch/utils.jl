@@ -82,7 +82,7 @@ function sort_and_filter_quant_tables(
         try
             psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
 
-            if seperateTraces(isotope_trace_type)
+            if separateTraces(isotope_trace_type)
                 # Optimized: Pre-allocate and vectorize
                 n_rows = size(psms_table, 1)
                 best_trace_mask = zeros(Bool, n_rows)

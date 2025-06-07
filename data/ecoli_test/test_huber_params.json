@@ -1,0 +1,158 @@
+{
+    "acquisition": {
+        "nce": 25,
+        "quad_transmission": {
+            "fit_from_data": false,
+            "smoothness": 5.0,
+            "overhang": 0.25
+        }
+    },
+    "global": {
+        "ms1_quant": false,
+        "huber_override": {
+            "override_huber_delta_fit": true,
+            "huber_delta": 1500.0
+        },
+        "match_between_runs": false,
+        "scoring": {
+            "q_value_threshold": 0.01
+        },
+        "ms1_scoring": true,
+        "isotope_settings": {
+            "combine_traces": false,
+            "err_bounds_first_pass": [
+                1,
+                0
+            ],
+            "min_fraction_transmitted": 0.25,
+            "partial_capture": false,
+            "err_bounds_quant_search": [
+                2,
+                0
+            ]
+        },
+        "normalization": {
+            "n_rt_bins": 100,
+            "spline_n_knots": 7
+        }
+    },
+    "output": {
+        "delete_temp": true,
+        "plots_per_page": 12,
+        "write_csv": true,
+        "write_decoys": false
+    },
+    "search_method_names": [
+        "ParameterTuning",
+        "NCETuning",
+        "QuadTuning",
+        "FirstPass",
+        "HuberTuning"
+    ],
+    "parameter_tuning": {
+        "fragment_settings": {
+            "min_spectral_contrast": 0.9,
+            "max_rank": 25,
+            "tol_ppm": 20.0,
+            "min_top_n": [
+                3,
+                3
+            ],
+            "min_count": 7,
+            "relative_improvement_threshold": 1.25,
+            "min_log2_ratio": 1.5,
+            "min_score": 22,
+            "n_isotopes": 1
+        },
+        "search_settings": {
+            "frag_err_quantile": 0.01,
+            "min_samples": 3500,
+            "sample_rate": 0.02,
+            "max_presearch_iters": 10
+        }
+    },
+    "quant_search": {
+        "chromatogram": {
+            "padding": 0,
+            "max_apex_offset": 2,
+            "smoothing_strength": 1.0e-6
+        },
+        "fragment_settings": {
+            "min_spectral_contrast": 0.0,
+            "max_rank": 255,
+            "min_y_count": 2,
+            "min_top_n": [
+                2,
+                3
+            ],
+            "min_count": 3,
+            "min_log2_ratio": -1.7,
+            "n_isotopes": 2
+        }
+    },
+    "proteinInference": {
+        "min_peptides": 2
+    },
+    "rt_alignment": {
+        "sigma_tolerance": 4,
+        "min_probability": 0.95,
+        "bandwidth": 0.25,
+        "n_bins": 200
+    },
+    "maxLFQ": {
+        "run_to_run_normalization": false
+    },
+    "optimization": {
+        "deconvolution": {
+            "bisection_iters": 100,
+            "newton_accuracy": 10,
+            "outer_iters": 1000,
+            "lambda": 0.0,
+            "reg_type": "none",
+            "newton_iters": 50,
+            "max_diff": 0.01,
+            "huber_delta": 300,
+            "huber_exp": 1.5,
+            "huber_iters": 15
+        },
+        "machine_learning": {
+            "interpolation_points": 10,
+            "max_psms_in_memory": 10000000,
+            "max_q_value_xgboost_rescore": 0.01,
+            "min_trace_prob": 0.75,
+            "max_q_value_xgboost_mbr_rescore": 0.2,
+            "spline_points": 500
+        }
+    },
+    "first_search": {
+        "irt_mapping": {
+            "max_prob_to_impute_irt": 0.75,
+            "fwhm_nstd": 4,
+            "irt_nstd": 4
+        },
+        "scoring_settings": {
+            "max_q_value_probit_rescore": 0.05,
+            "max_iterations": 20,
+            "max_local_fdr": 1.0,
+            "n_train_rounds": 2
+        },
+        "fragment_settings": {
+            "min_spectral_contrast": 0.5,
+            "max_rank": 25,
+            "min_top_n": [
+                2,
+                3
+            ],
+            "min_count": 4,
+            "relative_improvement_threshold": 1.25,
+            "min_log2_ratio": 0.0,
+            "min_score": 15,
+            "n_isotopes": 1
+        }
+    },
+    "paths": {
+        "ms_data": "./data/ecoli_test/raw",
+        "library": "./data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin",
+        "results": "./../data/ecoli_test/ecoli_test_results"
+    }
+}

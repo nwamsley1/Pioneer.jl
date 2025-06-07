@@ -1,3 +1,42 @@
+# Memory optimization utilities
+"""
+    estimate_chromatogram_capacity(scan_range::Vector{Int64}, 
+                                  precursors_passing::Set{UInt32},
+                                  avg_precursors_per_scan::Int = 50)
+
+Estimate optimal chromatogram array capacity based on data characteristics.
+"""
+function estimate_chromatogram_capacity(scan_range::Vector{Int64}, 
+                                       precursors_passing::Set{UInt32},
+                                       avg_precursors_per_scan::Int = 50)
+    n_scans = length(scan_range)
+    n_precursors = length(precursors_passing)
+    
+    effective_precursors_per_scan = min(avg_precursors_per_scan, n_precursors)
+    base_estimate = n_scans * effective_precursors_per_scan
+    safety_factor = 1.3  # 30% buffer
+    
+    return ceil(Int, base_estimate * safety_factor)
+end
+
+"""
+    smart_chromatogram_resize!(chromatograms::Vector{T}, current_idx::Int, 
+                              needed_capacity::Int) where T
+
+Efficiently resize chromatogram array using exponential growth strategy.
+"""
+function smart_chromatogram_resize!(chromatograms::Vector{T}, current_idx::Int, 
+                                   needed_capacity::Int) where T
+    current_capacity = length(chromatograms)
+    
+    if needed_capacity > current_capacity
+        growth_factor = 1.5
+        new_capacity = max(needed_capacity, ceil(Int, current_capacity * growth_factor))
+        additional_needed = new_capacity - current_capacity
+        append!(chromatograms, Vector{T}(undef, additional_needed))
+    end
+end
+
 """
     integrate_precursors(chromatograms::DataFrame, isotope_trace_type::IsotopeTraceType,
                         precursor_idx::AbstractVector{UInt32}, isotopes_captured::AbstractVector{Tuple{Int8, Int8}},
@@ -41,7 +80,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              test_print::Bool = false
                              )
     chromatogram_keys = [:precursor_idx]
-    if seperateTraces(isotope_trace_type)
+    if separateTraces(isotope_trace_type)
         chromatogram_keys = [:precursor_idx,:isotopes_captured]
     end
     grouped_chroms = groupby(chromatograms, chromatogram_keys)

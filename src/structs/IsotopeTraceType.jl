@@ -4,18 +4,18 @@ struct CombineTraces <: IsotopeTraceType
     min_ft::Float32
 end
 
-seperateTraces(itt::CombineTraces) = false
+separateTraces(itt::CombineTraces) = false
 
 function getPsmGroupbyCols(itt::CombineTraces)
     return [:precursor_idx]
 end
 
-struct SeperateTraces <: IsotopeTraceType
+struct SeparateTraces <: IsotopeTraceType
 end
  
-seperateTraces(itt::SeperateTraces) = true
+separateTraces(itt::SeparateTraces) = true
 
-function getPsmGroupbyCols(itt::SeperateTraces)
+function getPsmGroupbyCols(itt::SeparateTraces)
     return [:precursor_idx,:isotopes_captured]
 end
 

@@ -91,9 +91,9 @@ struct SecondPassSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: Fra
         # Determine isotope trace type based on global settings
         isotope_trace_type = if haskey(global_params.isotope_settings, :combine_traces) && 
                                global_params.isotope_settings.combine_traces
-            SeperateTraces() #CombineTraces(0.0f0)  # Default min_fraction_transmitted
+            SeparateTraces() #CombineTraces(0.0f0)  # Default min_fraction_transmitted
         else
-            SeperateTraces()
+            SeparateTraces()
         end
 
         isotope_bounds = global_params.isotope_settings.err_bounds_quant_search
@@ -153,7 +153,7 @@ Interface Implementation
 
 get_parameters(::SecondPassSearch, params::Any) = SecondPassSearchParameters(params)
 
-function init_search_results(::P, search_context::SearchContext) where {P<:SecondPassSearchParameters}
+function init_search_results(::SecondPassSearchParameters{P, I}, search_context::SearchContext) where {P<:PrecEstimation, I<:IsotopeTraceType}
     second_pass_psms = joinpath(getDataOutDir(search_context), "temp_data", "second_pass_psms")
     !isdir(second_pass_psms) && mkdir(second_pass_psms)
     return SecondPassSearchResults(
@@ -172,11 +172,11 @@ Process a single file for second pass search.
 """
 function process_file!(
     results::SecondPassSearchResults,
-    params::P, 
+    params::SecondPassSearchParameters{P, I}, 
     search_context::SearchContext,    
     ms_file_idx::Int64,
     spectra::MassSpecData
-) where {P<:SecondPassSearchParameters}
+) where {P<:PrecEstimation, I<:IsotopeTraceType}
 
     try
         setNceModel!(
@@ -189,6 +189,10 @@ function process_file!(
             bin_rt_size = 0.1)
 
         # Perform second pass search
+
+        psms = nothing
+        Profile.clear()
+        @profile begin
         psms = perform_second_pass_search(
             spectra,
             rt_index,
@@ -197,6 +201,8 @@ function process_file!(
             ms_file_idx,
             MS2CHROM()
         )
+        end
+        pprof()
         if params.ms1_scoring
             precursors_passing = unique(psms[!,:precursor_idx])
             precursors = getPrecursors(getSpecLib(search_context));
@@ -273,11 +279,11 @@ end
 
 function process_search_results!(
     results::SecondPassSearchResults,
-    params::P,
+    params::SecondPassSearchParameters{P, I},
     search_context::SearchContext, 
     ms_file_idx::Int64,
     spectra::MassSpecData
-) where {P<:SecondPassSearchParameters}
+) where {P<:PrecEstimation, I<:IsotopeTraceType}
 
     try
         # Get PSMs from results container
@@ -388,9 +394,9 @@ end
 
 function summarize_results!(
     results::SecondPassSearchResults,
-    params::P,
+    params::SecondPassSearchParameters{P, I},
     search_context::SearchContext
-) where {P<:SecondPassSearchParameters}
+) where {P<:PrecEstimation, I<:IsotopeTraceType}
 
     return nothing
 end
