@@ -30,7 +30,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     
     println("Loading test problem...")
     data = load(problem_file)
-    
+    #sparse(Hs.rowval[1:Hs.n_vals], Hs.colval[1:Hs.n_vals], Hs.nzval[1:Hs.n_vals])
     # Reconstruct the SparseArray
     # Create an empty SparseArray and fill its fields
     # Determine the integer type from the saved data
@@ -57,7 +57,9 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     r_original = data["r_initial"]
     X₁_original = data["X1_initial"]
     δ = data["delta"]
-    λ = data["lambda"]
+    println(" Loaded delta: $(δ)")
+    δ = Float32(1055)
+    λ = Float32(1)#data["lambda"]
     accuracy_newton = data["accuracy_newton"]
     accuracy_bisection = data["accuracy_bisection"]
     max_diff = data["max_diff"]
@@ -99,7 +101,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
             Hs, r, X₁, δ, λ, 
             100, 100, 1000,
             accuracy_newton, accuracy_bisection, 
-            1e-6, max_diff, reg_type;
+            1e-6, max_diff, L2Norm();
             debug_capture = false
         )
         t_elapsed = time() - t_start
@@ -120,7 +122,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     @printf("  Average time: %.3f ± %.3fs\n", mean(times), std(times))
     @printf("  Average iterations: %.1f ± %.1f\n", mean(iterations), std(iterations))
     @printf("  Time per iteration: %.3fms\n", 1000*mean(times)/mean(iterations))
-    
+    #=
     # Test with modified parameters
     println("\nTesting parameter sensitivity...")
     
@@ -153,6 +155,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     )
     t_elapsed = time() - t_start
     @printf("    Time: %.3fs, Iterations: %d\n", t_elapsed, iters)
+    =#
 end
 
 # Run the test
