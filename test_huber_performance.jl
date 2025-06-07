@@ -15,6 +15,9 @@ push!(LOAD_PATH, dirname(@__DIR__))
 # Load required modules
 using Pioneer
 
+# Include the file that defines regularization types
+include(joinpath(dirname(@__DIR__), "src", "utils", "ML", "spectralLinearRegression.jl"))
+
 function test_huber_performance(problem_file::String="/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
     if !isfile(problem_file)
         println("ERROR: Test problem not found at $problem_file")
@@ -56,11 +59,11 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     
     # Reconstruct regularization type
     reg_type = if data["regularization_type"] == "L1Norm"
-        Pioneer.L1Norm()
+        L1Norm()
     elseif data["regularization_type"] == "L2Norm"
-        Pioneer.L2Norm()
+        L2Norm()
     else
-        Pioneer.NoNorm()
+        NoNorm()
     end
     
     println("\nProblem info:")
@@ -87,7 +90,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
         
         # Time the solver (with debug capture disabled)
         t_start = time()
-        iters = Pioneer.solveHuber!(
+        iters = solveHuber!(
             Hs, r, X₁, δ, λ, 
             100, 100, 1000,
             accuracy_newton, accuracy_bisection, 
@@ -121,7 +124,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     r = copy(r_original)
     X₁ = copy(X₁_original)
     t_start = time()
-    iters = Pioneer.solveHuber!(
+    iters = solveHuber!(
         Hs, r, X₁, δ, λ, 
         100, 100, 1000,
         accuracy_newton, accuracy_bisection, 
@@ -136,7 +139,7 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     r = copy(r_original)
     X₁ = copy(X₁_original)
     t_start = time()
-    iters = Pioneer.solveHuber!(
+    iters = solveHuber!(
         Hs, r, X₁, δ, λ, 
         100, 100, 1000,
         accuracy_newton, accuracy_bisection, 
