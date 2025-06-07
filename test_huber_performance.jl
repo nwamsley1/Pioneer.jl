@@ -61,6 +61,12 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
     println("  Non-zeros: $(Hs.n_vals)")
     println("  Sparsity: $(round(100*Hs.n_vals/(Hs.n*Hs.m), digits=2))%")
     
+    # Check if this was a slow-converging problem
+    if haskey(data, "iterations")
+        println("  Original iterations: $(data["iterations"])")
+        println("  Original max_x: $(data["final_max_x"])")
+    end
+    
     # Run timing tests
     println("\nRunning performance tests...")
     times = Float64[]

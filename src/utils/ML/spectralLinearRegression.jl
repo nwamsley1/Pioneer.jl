@@ -505,38 +505,15 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     max_iter_outer = 1000
     dynamic_range = 1e4
     
-    # Capture large problems for testing
-    if Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
-        println("[HUBER DEBUG] Capturing large problem: $(Hs.n) vars, $(Hs.m) constraints")
-        
-        # Save the problem data
-        using JLD2
-        jldsave("/Users/nathanwamsley/Desktop/huber_test_problem.jld2";
-            Hs_rowval = Hs.rowval,
-            Hs_colval = Hs.colval,
-            Hs_nzval = Hs.nzval,
-            Hs_colptr = Hs.colptr,
-            Hs_n_vals = Hs.n_vals,
-            Hs_n = Hs.n,
-            Hs_m = Hs.m,
-            Hs_x = Hs.x,
-            r_initial = copy(r),
-            X1_initial = copy(X₁),
-            delta = δ,
-            lambda = λ,
-            accuracy_newton = accuracy_newton,
-            accuracy_bisection = accuracy_bisection,
-            max_diff = max_diff,
-            regularization_type = typeof(regularization_type).name.name
-        )
-        println("[HUBER DEBUG] Problem saved to /Users/nathanwamsley/Desktop/huber_test_problem.jld2")
-    end
-    
     # Initialize iteration counter and dynamic range tracking
     i = 0
     max_x = T(0)
     min_x = T(0)
     new_max_x = T(0)
+    
+    # Store initial state for potential debugging
+    r_initial_copy = Hs.n >= 1000 ? copy(r) : nothing
+    X1_initial_copy = Hs.n >= 1000 ? copy(X₁) : nothing
     while i < max_iter_outer
         _diff = T(0)
         
@@ -585,8 +562,37 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         i += 1
     end
     
-    # Debug output for slow convergence
-    if i > 500
+    # Capture large problems that converge slowly
+    if i > 500 && Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
+        println("[HUBER DEBUG] Capturing slow-converging large problem: $(Hs.n) vars, $(Hs.m) constraints, $i iterations")
+        
+        # Save the problem data
+        using JLD2
+        jldsave("/Users/nathanwamsley/Desktop/huber_test_problem.jld2";
+            Hs_rowval = Hs.rowval,
+            Hs_colval = Hs.colval,
+            Hs_nzval = Hs.nzval,
+            Hs_colptr = Hs.colptr,
+            Hs_n_vals = Hs.n_vals,
+            Hs_n = Hs.n,
+            Hs_m = Hs.m,
+            Hs_x = Hs.x,
+            r_initial = r_initial_copy,
+            X1_initial = X1_initial_copy,
+            delta = δ,
+            lambda = λ,
+            accuracy_newton = accuracy_newton,
+            accuracy_bisection = accuracy_bisection,
+            max_diff = max_diff,
+            regularization_type = typeof(regularization_type).name.name,
+            iterations = i,
+            final_max_x = max_x
+        )
+        println("[HUBER DEBUG] Problem saved to /Users/nathanwamsley/Desktop/huber_test_problem.jld2")
+        
+        # Raise an error to stop the search
+        error("[HUBER DEBUG] Stopping search after capturing slow-converging problem for analysis")
+    elseif i > 500
         println("[HUBER] Slow convergence: $i iters, $(Hs.n) vars")
     end
     
