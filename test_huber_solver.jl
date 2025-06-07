@@ -69,13 +69,15 @@ function benchmark_solver(Hs, r, X₁, δ, λ, accuracy_newton, accuracy_bisecti
     # Warmup run
     println("Warmup run...")
     solveHuber!(Hs, copy(r), copy(X₁), δ, λ, 100, 100, 1000, 
-                accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type)
+                accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type;
+                debug_capture = false)
     
     # Benchmark
     println("\nBenchmarking (5 samples)...")
     result = @benchmark solveHuber!(
         $Hs, r_bench, X_bench, $δ, $λ, 100, 100, 1000,
-        $accuracy_newton, $accuracy_bisection, 1e-6, $max_diff, $reg_type
+        $accuracy_newton, $accuracy_bisection, 1e-6, $max_diff, $reg_type;
+        debug_capture = false
     ) setup=(r_bench=copy($r_copy); X_bench=copy($X₁_copy)) samples=5 evals=1
     
     display(result)
@@ -95,7 +97,8 @@ function profile_solver(Hs, r, X₁, δ, λ, accuracy_newton, accuracy_bisection
             r_prof = copy(r)
             X_prof = copy(X₁)
             solveHuber!(Hs, r_prof, X_prof, δ, λ, 100, 100, 1000,
-                        accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type)
+                        accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type;
+                        debug_capture = false)
         end
     end
     
@@ -125,7 +128,8 @@ function test_convergence_behavior(Hs, r, X₁, δ, λ, accuracy_newton, accurac
         
         start_time = time()
         iters = solveHuber!(Hs, r_test, X_test, δ, λ, 100, 100, 1000,
-                           accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type)
+                           accuracy_newton, accuracy_bisection, 1e-6, max_diff, reg_type;
+                           debug_capture = false)
         elapsed = time() - start_time
         
         # Calculate some statistics

@@ -77,13 +77,14 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
         r = copy(r_original)
         X₁ = copy(X₁_original)
         
-        # Time the solver
+        # Time the solver (with debug capture disabled)
         t_start = time()
         iters = Pioneer.solveHuber!(
             Hs, r, X₁, δ, λ, 
             100, 100, 1000,
             accuracy_newton, accuracy_bisection, 
-            1e-6, max_diff, reg_type
+            1e-6, max_diff, reg_type;
+            debug_capture = false
         )
         t_elapsed = time() - t_start
         
@@ -116,7 +117,8 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
         Hs, r, X₁, δ, λ, 
         100, 100, 1000,
         accuracy_newton, accuracy_bisection, 
-        1e-6, max_diff/10, reg_type
+        1e-6, max_diff/10, reg_type;
+        debug_capture = false
     )
     t_elapsed = time() - t_start
     @printf("    Time: %.3fs, Iterations: %d\n", t_elapsed, iters)
@@ -130,7 +132,8 @@ function test_huber_performance(problem_file::String="/Users/nathanwamsley/Deskt
         Hs, r, X₁, δ, λ, 
         100, 100, 1000,
         accuracy_newton, accuracy_bisection, 
-        1e-6, max_diff*10, reg_type
+        1e-6, max_diff*10, reg_type;
+        debug_capture = false
     )
     t_elapsed = time() - t_start
     @printf("    Time: %.3fs, Iterations: %d\n", t_elapsed, iters)

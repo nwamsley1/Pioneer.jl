@@ -497,7 +497,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         accuracy_bisection::T,
                         tol::U,
                         max_diff::T,
-                        regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
+                        regularization_type::RegularizationType;
+                        debug_capture::Bool = true) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
     
     # Override solver parameters for performance
     max_iter_newton = 100
@@ -511,9 +512,9 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     min_x = T(0)
     new_max_x = T(0)
     
-    # Store initial state for potential debugging
-    r_initial_copy = Hs.n >= 1000 ? copy(r) : nothing
-    X1_initial_copy = Hs.n >= 1000 ? copy(X₁) : nothing
+    # Store initial state for potential debugging (only if debug mode is on)
+    r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
+    X1_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(X₁) : nothing
     while i < max_iter_outer
         _diff = T(0)
         
@@ -562,8 +563,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         i += 1
     end
     
-    # Capture large problems that converge slowly
-    if i > 500 && Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
+    # Capture large problems that converge slowly (only in debug mode)
+    if debug_capture && i > 500 && Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
         println("[HUBER DEBUG] Capturing slow-converging large problem: $(Hs.n) vars, $(Hs.m) constraints, $i iterations")
         
         # Save the problem data
