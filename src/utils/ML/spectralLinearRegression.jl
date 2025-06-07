@@ -503,17 +503,40 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     max_iter_newton = 100
     max_iter_bisection = 100 
     max_iter_outer = 1000
+    dynamic_range = 1e4
+    
+    # Capture large problems for testing
+    if Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
+        println("[HUBER DEBUG] Capturing large problem: $(Hs.n) vars, $(Hs.m) constraints")
+        
+        # Save the problem data
+        using JLD2
+        jldsave("/Users/nathanwamsley/Desktop/huber_test_problem.jld2";
+            Hs_rowval = Hs.rowval,
+            Hs_colval = Hs.colval,
+            Hs_nzval = Hs.nzval,
+            Hs_colptr = Hs.colptr,
+            Hs_n_vals = Hs.n_vals,
+            Hs_n = Hs.n,
+            Hs_m = Hs.m,
+            Hs_x = Hs.x,
+            r_initial = copy(r),
+            X1_initial = copy(X₁),
+            delta = δ,
+            lambda = λ,
+            accuracy_newton = accuracy_newton,
+            accuracy_bisection = accuracy_bisection,
+            max_diff = max_diff,
+            regularization_type = typeof(regularization_type).name.name
+        )
+        println("[HUBER DEBUG] Problem saved to /Users/nathanwamsley/Desktop/huber_test_problem.jld2")
+    end
     
     # Initialize iteration counter and dynamic range tracking
     i = 0
     max_x = T(0)
     min_x = T(0)
     new_max_x = T(0)
-    
-    # Tolerance bounds for adaptive convergence
-    min_rel_tol = T(1e-7)
-    max_rel_tol = T(0.01)
-    
     while i < max_iter_outer
         _diff = T(0)
         
@@ -523,9 +546,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                 newton_rel_tol = T(0.1)  # 10% relative tolerance for first iteration
             else
                 # Adaptive tolerance based on coefficient magnitude
-                rel_tol = T(10^(-2 - (log10(min(X₁[col], max_x)) - log10(min_x))))
-                rel_tol = clamp(rel_tol, min_rel_tol, max_rel_tol)
-                newton_rel_tol = rel_tol 
+                newton_rel_tol = T(10^(-2 - (log10(min(X₁[col], max_x)) - log10(min_x))))
             end
             
             # Update coefficient
@@ -558,7 +579,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         
         # Update dynamic range for next iteration
         max_x = max(new_max_x, T(1))
-        min_x = max_x / T(1e4)
+        min_x = max_x / T(dynamic_range)
         new_max_x = T(0)
         
         i += 1
@@ -567,6 +588,11 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     # Debug output for slow convergence
     if i > 500
         println("[HUBER] Slow convergence: $i iters, $(Hs.n) vars")
+    end
+    
+    # Additional debug output for large problems
+    if Hs.n >= 1000
+        println("[HUBER DEBUG] Completed: $(Hs.n) vars, $i iterations, final max_x=$max_x")
     end
     
     return i
