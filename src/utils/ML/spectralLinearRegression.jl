@@ -46,15 +46,13 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
     L1 = zero(Float32)
     L2 = zero(Float32)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
-        #Quake's Fast Inverse Square Root Algorighm
-        #Different magic for float64. 
+        # Quake's Fast Inverse Square Root Algorithm 
         R = RS
         int32 = reinterpret(UInt32, R)
-        int32 = 0x5f3759df - int32 >> 1 #Magic 
+        int32 = 0x5f3759df - int32 >> 1 
         R = reinterpret(Float32, int32)
         R *= 1.5f0 - RS * 0.5f0 * R^2
         HSVAL_R = hsval * R
@@ -74,13 +72,11 @@ function getL1(Hs::SparseArray{Ti, Float32},
                 xk::Float32,
                 regularization_type::RegularizationType) where {Ti<:Integer}
     L1 = zero(Float32)
-    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
-        #Quake's Fast Inverse Square Root Algorighm
-        #Different magic for float64. 
+        # Quake's Fast Inverse Square Root Algorithm 
         R = RS
         int32 = reinterpret(UInt32, R)
         int32 = 0x5f3759df - int32 >> 1 #Magic 
@@ -88,7 +84,7 @@ function getL1(Hs::SparseArray{Ti, Float32},
         R *= 1.5f0 - RS * 0.5f0 * R^2
         L1 += rval * hsval * R
     end
-    return Float32(L1) + getRegL1(λ, xk, regularization_type) #λ*Float32(2)*xk)
+    return Float32(L1) + getRegL1(λ, xk, regularization_type)
 end
 
 function newton_bisection!(Hs::SparseArray{Ti, T}, 
@@ -192,17 +188,16 @@ function bisection!(Hs::SparseArray{Ti, T},
                     regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     c = (a + b)/2
-    #Since first guess for X₁[col] will change to "c"
-    #Need to update the residuals accordingly. 
+    # Update residuals for new X₁[col] value 
     updateResiduals!(Hs, r, col, c, X₁[col])
     X0 = X₁[col]
     X₁[col] = c
     X_init, X0 = X₁[col],  X₁[col]
     while (n < max_iter)
 
-        #Evaluate first partial derivative
+        # Evaluate first partial derivative
         fc = getL1(Hs, r, col, δ, λ, X₁[col], regularization_type)
-        #Bisection Rule
+        # Bisection Rule
         if (sign(fc) != sign(fa))
             b, fb = c, fc
         else
@@ -211,12 +206,10 @@ function bisection!(Hs::SparseArray{Ti, T},
 
         c, X0 = (a + b)/2, X₁[col]
         X₁[col] = c
-        #Update residuals given new estimate, X₁[col], and prior estimate, X0
+        # Update residuals
         updateResiduals!(Hs, r, col, X₁[col], X0)
 
-        ########
-        #Stopping Criterion
-        ########
+        # Stopping Criterion
         abs(X₁[col] - X0) < accuracy_bisection ? break : nothing
         n += 1
     end
@@ -285,13 +278,10 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                 if i - last_break == 1
                     break
                 else
-                    println("hey! i$i")
                     last_break = i
                 end
             elseif typeof(regularization_type) != NoNorm
-                #regularization_type = NoNorm()
-                λ = λ/10 #regularization_type =  NoNorm()
-                println("λ $λ i $i")
+                λ = λ/10
             else
                 break
             end
@@ -330,14 +320,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         
         # Raise an error to stop the search
         error("[HUBER DEBUG] Stopping search after capturing slow-converging problem for analysis")
-    elseif i > 500
-        println("[HUBER] Slow convergence: $i iters, $(Hs.n) vars")
     end
     
-    # Additional debug output for large problems
-    #if Hs.n >= 1000
-    #    println("[HUBER DEBUG] Completed: $(Hs.n) vars, $i iterations, final max_x=$max_x")
-    #end
-    println("total iterations: $total_iters i $i n_bisect $n_bisect")
-    return i
+    # Return statistics: outer iterations, total newton iterations, number of bisection calls
+    return i, total_iters, n_bisect
 end
