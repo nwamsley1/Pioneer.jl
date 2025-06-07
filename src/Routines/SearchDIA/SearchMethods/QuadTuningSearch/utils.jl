@@ -579,7 +579,7 @@ function perform_quad_transmission_search(
         
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        _, _, _ = solveHuber!(
+        _, _, _, _, _ = solveHuber!(
             Hs,
             residuals,
             weights,

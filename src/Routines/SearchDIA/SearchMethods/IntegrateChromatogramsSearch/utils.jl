@@ -320,7 +320,7 @@ function build_chromatograms(
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
 
-            _, _, _ = solveHuber!(
+            _, _, _, _, _ = solveHuber!(
                 Hs,
                 residuals,
                 weights,

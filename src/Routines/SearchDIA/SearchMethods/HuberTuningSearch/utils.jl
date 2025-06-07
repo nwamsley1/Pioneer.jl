@@ -403,7 +403,7 @@ function process_delta_values!(
         
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        _, _, _ = solveHuber!(
+        _, _, _, _, _ = solveHuber!(
             Hs,
             residuals,
             weights,

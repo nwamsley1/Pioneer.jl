@@ -166,10 +166,10 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             accuracy_bisection,
                             regularization_type)
             end
-            return X₁[col] - X_init, n, _ranbisection_
+            return X₁[col] - X_init, n, _ranbisection_ ? 1 : 0
         else
             # Convergence reached
-            return X₁[col] - X_init, n, _ranbisection_
+            return X₁[col] - X_init, n, 0
         end
     end
 end
@@ -234,7 +234,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     # Override solver parameters for performance
     max_iter_newton = 25
     max_iter_bisection = 100 
-    max_iter_outer = 1000
+    max_iter_outer = max(1000, Hs.n*5)
     newton_rel_tol = T(0.01)  # Relative tolerance for Newton's method
     regularization_type = L2Norm()
     λ = Float32(1.0)
@@ -242,6 +242,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     i = 0
     total_iters = 0
     n_bisect = 0
+    newton_iters_per_col = Int[]  # Track Newton iterations per column
+    start_time = time()  # Track total time
     # Store initial state for potential debugging (only if debug mode is on)
     r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
     X1_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(X₁) : nothing
@@ -261,6 +263,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             δx = abs(δx)
             total_iters += iters_
             n_bisect += n_bisec
+            push!(newton_iters_per_col, iters_)
 
             # Track maximum relative change
             if !iszero(X₁[col])
@@ -274,7 +277,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         # Check convergence
         if _diff < max_diff
             
-            if λ <= 1e-4
+            if λ <= 1e-5
                 if i - last_break == 1
                     break
                 else
@@ -322,6 +325,9 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         error("[HUBER DEBUG] Stopping search after capturing slow-converging problem for analysis")
     end
     
-    # Return statistics: outer iterations, total newton iterations, number of bisection calls
-    return i, total_iters, n_bisect
+    # Calculate statistics
+    total_time = time() - start_time
+    
+    # Return statistics: outer iterations, total newton iterations, number of bisection calls, newton iter stats, total time
+    return i, total_iters, n_bisect, newton_iters_per_col, total_time
 end
