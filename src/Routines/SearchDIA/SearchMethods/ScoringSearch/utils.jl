@@ -392,10 +392,16 @@ function get_qvalue_spline(
     prepend!(bin_mean_prob, 0.0f0)
     bin_qval = bin_qval[isnan.(bin_mean_prob).==false]
     bin_mean_prob = bin_mean_prob[isnan.(bin_mean_prob).==false]
-    #return bin_qval, bin_mean_prob
-    return linear_interpolation(
-        Interpolations.deduplicate_knots!(bin_mean_prob, move_knots=true),
-        bin_qval, extrapolation_bc=Line())
+    
+    # Manual deduplication keeping the first occurrence
+    xs = copy(bin_mean_prob)
+    ys = copy(bin_qval)
+    # remove duplicates and keep the **first** occurrence
+    mask = [i == 1 || xs[i] != xs[i-1] for i in eachindex(xs)]
+    xs = xs[mask]
+    ys = ys[mask]
+    
+    return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
 
 """
