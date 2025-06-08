@@ -591,8 +591,7 @@ function perform_quad_transmission_search(
             params.accuracy_newton,
             params.accuracy_bisection,
             params.max_diff,
-            NoNorm();
-            debug_capture = false
+            NoNorm()
         )
     end
 

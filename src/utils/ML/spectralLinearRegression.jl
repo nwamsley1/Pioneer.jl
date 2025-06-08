@@ -229,8 +229,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         accuracy_newton::T,
                         accuracy_bisection::T,
                         relative_convergence_threshold::T,  # max_diff from config: max relative change in weights
-                        regularization_type::RegularizationType;
-                        debug_capture::Bool = true) where {Ti<:Integer,T<:AbstractFloat}
+                        regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     
     # Recommended values for solver parameters:
     # max_iter_newton = 25
@@ -242,9 +241,6 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     
     # Initialize iteration counter
     i = 0
-    # Store initial state for potential debugging (only if debug mode is on)
-    r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
-    X1_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(X₁) : nothing
     while i < max_iter_outer
         _diff = T(0)
         for col in range(1, Hs.n)
@@ -272,38 +268,6 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             break
         end  
         i += 1
-    end
-    
-    # Capture large problems that converge slowly (only in debug mode)
-    if debug_capture && i > 500 && Hs.n >= 1000 && !isfile("/Users/nathanwamsley/Desktop/huber_test_problem.jld2")
-        println("[HUBER DEBUG] Capturing slow-converging large problem: $(Hs.n) vars, $(Hs.m) constraints, $i iterations")
-        
-        # Save the problem data
-        jldsave("/Users/nathanwamsley/Desktop/huber_test_problem.jld2";
-            Hs_rowval = Hs.rowval,
-            Hs_colval = Hs.colval,
-            Hs_nzval = Hs.nzval,
-            Hs_colptr = Hs.colptr,
-            Hs_n_vals = Hs.n_vals,
-            Hs_n = Hs.n,
-            Hs_m = Hs.m,
-            Hs_x = Hs.x,
-            Hs_matched = Hs.matched,
-            Hs_isotope = Hs.isotope,
-            r_initial = r_initial_copy,
-            X1_initial = X1_initial_copy,
-            delta = δ,
-            lambda = λ,
-            accuracy_newton = accuracy_newton,
-            accuracy_bisection = accuracy_bisection,
-            max_diff = max_diff,
-            regularization_type = typeof(regularization_type).name.name,
-            iterations = i
-        )
-        println("[HUBER DEBUG] Problem saved to /Users/nathanwamsley/Desktop/huber_test_problem.jld2")
-        
-        # Raise an error to stop the search
-        error("[HUBER DEBUG] Stopping search after capturing slow-converging problem for analysis")
     end
     
     return nothing
