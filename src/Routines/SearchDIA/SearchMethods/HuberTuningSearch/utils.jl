@@ -414,7 +414,6 @@ function process_delta_values!(
             params.max_iter_outer,
             params.accuracy_newton,
             params.accuracy_bisection,
-            Float32(10.0),
             params.max_diff,
             NoNorm()
         )

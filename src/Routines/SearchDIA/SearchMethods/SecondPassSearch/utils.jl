@@ -264,9 +264,8 @@ function process_scans!(
             params.max_iter_outer,
             search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
             search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-            search_context.deconvolution_stop_tolerance[],
             params.max_diff,
-            AdaptiveL2Norm()
+            params.reg_type
         )
         
         # Accumulate statistics
@@ -525,7 +524,6 @@ function process_scans!(
                 1000,#params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
                 NoNorm()
             )

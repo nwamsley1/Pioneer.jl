@@ -2,7 +2,6 @@ abstract type RegularizationType end
 struct L1Norm <: RegularizationType end
 struct L2Norm <: RegularizationType end
 struct NoNorm <: RegularizationType end
-struct AdaptiveL2Norm <: RegularizationType end
 
 function getRegL1(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
     return zero(Float32)
@@ -16,9 +15,6 @@ function getRegL1(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
     return λ*Float32(2)*xk
 end
 
-function getRegL1(λ::T, xk::T, ::AdaptiveL2Norm) where T<:AbstractFloat
-    return λ*Float32(2)*xk
-end
 
 function getRegL2(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
     return zero(Float32)
@@ -32,9 +28,6 @@ function getRegL2(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
     return Float32(2)*λ
 end
 
-function getRegL2(λ::T, xk::T, ::AdaptiveL2Norm) where T<:AbstractFloat
-    return Float32(2)*λ
-end
 
 function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, X0) where {Ti<:Integer, T<:AbstractFloat}
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
@@ -235,21 +228,17 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         max_iter_outer::Int64,
                         accuracy_newton::T,
                         accuracy_bisection::T,
-                        tol::U,
-                        max_diff::T,
+                        relative_convergence_threshold::T,
                         regularization_type::RegularizationType;
-                        debug_capture::Bool = true) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
+                        debug_capture::Bool = true) where {Ti<:Integer,T<:AbstractFloat}
     
-    # Override solver parameters for performance
-    max_iter_newton = 25
-    max_iter_bisection = 100 
-    max_iter_outer = max(1000, Hs.n*5)
-    newton_rel_tol = T(0.01)  # Relative tolerance for Newton's method
+    # Recommended values for solver parameters:
+    # max_iter_newton = 25
+    # max_iter_bisection = 100
+    # max_iter_outer = max(1000, Hs.n*5)
     
-    # Initialize lambda based on regularization type
-    if isa(regularization_type, AdaptiveL2Norm)
-        λ = Float32(1.0)  # Start with 1.0 for adaptive
-    end
+    # Use user-provided convergence threshold as relative tolerance for Newton's method
+    newton_rel_tol = relative_convergence_threshold
     
     # Initialize iteration counter and dynamic range tracking
     i = 0
@@ -287,21 +276,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         end
         
         # Check convergence
-        if _diff < max_diff
-            if isa(regularization_type, NoNorm)
-                # For NoNorm, break immediately when converged
-                break
-            elseif isa(regularization_type, AdaptiveL2Norm)
-                # For AdaptiveL2Norm, reduce lambda and continue until λ <= 1e-6
-                if λ <= 1e-6
-                    break
-                else
-                    λ = λ / 10
-                end
-            else
-                # For fixed L1Norm or L2Norm, break immediately
-                break
-            end
+        if _diff < relative_convergence_threshold
+            break
         end  
         i += 1
     end

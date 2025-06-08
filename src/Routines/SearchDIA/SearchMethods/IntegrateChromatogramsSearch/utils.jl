@@ -331,9 +331,8 @@ function build_chromatograms(
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                Float32(search_context.deconvolution_stop_tolerance[]),
                 params.max_diff,
-                AdaptiveL2Norm()
+                params.reg_type
             )
 
             # Record chromatogram points with weights
@@ -558,9 +557,8 @@ function build_chromatograms(
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                Float32(search_context.deconvolution_stop_tolerance[]),
                 params.max_diff,
-                AdaptiveL2Norm()
+                params.reg_type
             )
             if scan_idx==6625#8241#Design Matrix 
                 N = Hs.n_vals
