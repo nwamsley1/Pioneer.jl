@@ -266,7 +266,7 @@ function process_scans!(
             search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
             search_context.deconvolution_stop_tolerance[],
             params.max_diff,
-            params.reg_type,
+            AdaptiveL2Norm()
         )
         
         # Accumulate statistics
@@ -527,7 +527,7 @@ function process_scans!(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                L2Norm()#params.reg_type,#NoNorm()
+                NoNorm()
             )
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size

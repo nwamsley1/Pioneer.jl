@@ -333,7 +333,7 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 Float32(search_context.deconvolution_stop_tolerance[]),
                 params.max_diff,
-                params.reg_type
+                AdaptiveL2Norm()
             )
 
             # Record chromatogram points with weights
@@ -547,7 +547,7 @@ function build_chromatograms(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
-            _, _, _ = solveHuber!(
+            _, _, _, _, _ = solveHuber!(
                 Hs,
                 residuals,
                 weights,
@@ -560,7 +560,7 @@ function build_chromatograms(
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
                 Float32(search_context.deconvolution_stop_tolerance[]),
                 params.max_diff,
-                params.reg_type,#NoNorm()
+                AdaptiveL2Norm()
             )
             if scan_idx==6625#8241#Design Matrix 
                 N = Hs.n_vals

@@ -2,6 +2,7 @@ abstract type RegularizationType end
 struct L1Norm <: RegularizationType end
 struct L2Norm <: RegularizationType end
 struct NoNorm <: RegularizationType end
+struct AdaptiveL2Norm <: RegularizationType end
 
 function getRegL1(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
     return zero(Float32)
@@ -15,6 +16,10 @@ function getRegL1(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
     return λ*Float32(2)*xk
 end
 
+function getRegL1(λ::T, xk::T, ::AdaptiveL2Norm) where T<:AbstractFloat
+    return λ*Float32(2)*xk
+end
+
 function getRegL2(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
     return zero(Float32)
 end
@@ -24,6 +29,10 @@ function getRegL2(λ::T, xk::T, ::L1Norm) where T<:AbstractFloat
 end
 
 function getRegL2(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
+    return Float32(2)*λ
+end
+
+function getRegL2(λ::T, xk::T, ::AdaptiveL2Norm) where T<:AbstractFloat
     return Float32(2)*λ
 end
 
@@ -236,8 +245,12 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     max_iter_bisection = 100 
     max_iter_outer = max(1000, Hs.n*5)
     newton_rel_tol = T(0.01)  # Relative tolerance for Newton's method
-    regularization_type = L2Norm()
-    λ = Float32(1.0)
+    
+    # Initialize lambda based on regularization type
+    if isa(regularization_type, AdaptiveL2Norm)
+        λ = Float32(1.0)  # Start with 1.0 for adaptive
+    end
+    
     # Initialize iteration counter and dynamic range tracking
     i = 0
     total_iters = 0
@@ -247,7 +260,6 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     # Store initial state for potential debugging (only if debug mode is on)
     r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
     X1_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(X₁) : nothing
-    last_break = 0
     while i < max_iter_outer
         _diff = T(0)
         for col in range(1, Hs.n)
@@ -276,28 +288,20 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         
         # Check convergence
         if _diff < max_diff
-            #newton_rel_tol = T(0.001)
-            
-            if λ <= 1e-6
-                if i - last_break == 1
+            if isa(regularization_type, NoNorm)
+                # For NoNorm, break immediately when converged
+                break
+            elseif isa(regularization_type, AdaptiveL2Norm)
+                # For AdaptiveL2Norm, reduce lambda and continue until λ <= 1e-6
+                if λ <= 1e-6
                     break
                 else
-                    last_break = i
+                    λ = λ / 10
                 end
-            else typeof(regularization_type) != NoNorm
-                λ = λ/100
+            else
+                # For fixed L1Norm or L2Norm, break immediately
+                break
             end
-            
-            #if typeof(regularization_type) != NoNorm
-            #    regularization_type != NoNorm()
-            #    #λ = λ/10
-            #else
-            #    if i - last_break == 1
-            #        break
-            #    else
-            #        last_break = i
-            #    end
-            #end
         end  
         i += 1
     end
@@ -326,8 +330,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             accuracy_bisection = accuracy_bisection,
             max_diff = max_diff,
             regularization_type = typeof(regularization_type).name.name,
-            iterations = i,
-            final_max_x = max_x
+            iterations = i
         )
         println("[HUBER DEBUG] Problem saved to /Users/nathanwamsley/Desktop/huber_test_problem.jld2")
         
