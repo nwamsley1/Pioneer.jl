@@ -131,5 +131,4 @@ function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Boo
 end
 
 
-# Export functions
-export get_qvalues!, get_local_FDR!
+# No need to export since this is included directly in the Pioneer module
