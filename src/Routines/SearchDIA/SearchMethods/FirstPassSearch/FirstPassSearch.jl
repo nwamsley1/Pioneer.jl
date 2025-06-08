@@ -223,12 +223,15 @@ function process_file!(
         function select_best_psms!(
             psms::DataFrame,
             precursor_mzs::AbstractVector,
-            params::FirstPassSearchParameters
+            params::FirstPassSearchParameters,
+            search_context::SearchContext
         )
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
             get_best_psms!(
                 psms,
                 precursor_mzs,
-                max_local_fdr=params.max_local_fdr
+                max_local_fdr=params.max_local_fdr,
+                fdr_scale_factor=fdr_scale_factor
             )
         end
 
@@ -237,12 +240,13 @@ function process_file!(
         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)
         
         # Score PSMs
-        score_psms!(psms, params)
+        score_psms!(psms, params, search_context)
         # Get best PSMs
         select_best_psms!(
             psms,
             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],
-            params
+            params,
+            search_context
         )
         return psms
     end
@@ -281,7 +285,8 @@ function process_file!(
     """
     function score_psms!(
         psms::DataFrame,
-        params::FirstPassSearchParameters
+        params::FirstPassSearchParameters,
+        search_context::SearchContext
     )
         column_names = [
             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
@@ -303,13 +308,15 @@ function process_file!(
         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,
             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))
         # Score PSMs
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         try
             score_main_search_psms!(
                 psms,
                 column_names,
                 n_train_rounds=params.n_train_rounds_probit,
                 max_iter_per_round=params.max_iter_probit,
-                max_q_value=Float64(params.max_q_value_probit_rescore)
+                max_q_value=Float64(params.max_q_value_probit_rescore),
+                fdr_scale_factor=fdr_scale_factor
             )
         catch
             column_names = [
@@ -321,7 +328,8 @@ function process_file!(
                 column_names,
                 n_train_rounds=params.n_train_rounds_probit,
                 max_iter_per_round=params.max_iter_probit,
-                max_q_value=Float64(params.max_q_value_probit_rescore)
+                max_q_value=Float64(params.max_q_value_probit_rescore),
+                fdr_scale_factor=fdr_scale_factor
             )
         end
         # Process scores

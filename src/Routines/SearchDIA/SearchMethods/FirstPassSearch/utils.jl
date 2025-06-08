@@ -107,7 +107,8 @@ end
     score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
                            n_train_rounds::Int64=2,
                            max_iter_per_round::Int64=50,
-                           max_q_value::Float64=0.01)
+                           max_q_value::Float64=0.01,
+                           fdr_scale_factor::Float32=1.0f0)
 
 Performs iterative probit regression scoring of PSMs.
 
@@ -117,6 +118,7 @@ Performs iterative probit regression scoring of PSMs.
 - `n_train_rounds`: Number of training iterations
 - `max_iter_per_round`: Maximum iterations per training round
 - `max_q_value`: Maximum q-value threshold for filtering
+- `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 
 # Process
 1. First round: Trains on all data
@@ -126,7 +128,8 @@ Performs iterative probit regression scoring of PSMs.
 function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
                              n_train_rounds::Int64 = 2,
                              max_iter_per_round::Int64 = 50,
-                             max_q_value::Float64 = 0.01
+                             max_q_value::Float64 = 0.01,
+                             fdr_scale_factor::Float32 = 1.0f0
 )
 
     β = zeros(Float64, length(column_names));
@@ -139,7 +142,7 @@ function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};
 
     for i in range(1, n_train_rounds)
         if i < 2 #Train on top scribe data during first round
-            get_qvalues!(psms[!,:scribe], psms[!,:target], psms[!,:q_value])
+            get_qvalues!(psms[!,:scribe], psms[!,:target], psms[!,:q_value]; fdr_scale_factor = fdr_scale_factor)
         end
 
         if i < n_train_rounds #Get Data to train on
@@ -193,15 +196,15 @@ end
 
 """
     get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                   max_q_val::Float32=0.01f0, max_psms::Int64=250000) where {T<:AbstractFloat}
+                   max_local_fdr::Float32=1.00f0, fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
 
 Processes PSMs to identify the best matches and calculate peak characteristics.
 
 # Arguments
 - `psms`: DataFrame containing peptide-spectrum matches
 - `prec_mz`: Vector of precursor m/z values
-- `max_q_val`: Maximum q-value threshold for filtering PSMs
-- `max_psms`: Maximum number of PSMs to retain
+- `max_local_fdr`: Maximum local FDR threshold for filtering PSMs
+- `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 
 # Modifies PSMs DataFrame to add:
 - `best_psm`: Boolean indicating highest scoring PSM for each precursor
@@ -213,7 +216,8 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
-                        max_local_fdr::Float32 = 1.00f0
+                        max_local_fdr::Float32 = 1.00f0,
+                        fdr_scale_factor::Float32 = 1.0f0
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
@@ -282,7 +286,7 @@ function get_best_psms!(psms::DataFrame,
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
     # Will use local FDR for final filter
-    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]; doSort=false);
+    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]; doSort=false, fdr_scale_factor=fdr_scale_factor);
 
     n = size(psms, 1)
     

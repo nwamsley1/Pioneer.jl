@@ -335,7 +335,7 @@ end
 
 """
     get_qvalue_spline(merged_psms_path::String, score_col::Symbol;
-                      min_pep_points_per_bin=1000) -> Interpolation
+                      min_pep_points_per_bin=1000, fdr_scale_factor=1.0f0) -> Interpolation
 
 Create q-value interpolation function from merged scores.
 
@@ -345,7 +345,8 @@ function get_qvalue_spline(
                             merged_psms_path::String,
                             score_col::Symbol,
                             use_unique::Bool;
-                            min_pep_points_per_bin = 1000
+                            min_pep_points_per_bin = 1000,
+                            fdr_scale_factor::Float32 = 1.0f0
 )
 
 
@@ -375,7 +376,8 @@ function get_qvalue_spline(
         mean_prob += psms_scores[!, score_col][i]
         if bin_size == min_pep_points_per_bin
             bin_idx += 1
-            qval = decoys/(targets) #not decoys/(targets + decoys)
+            # Apply FDR scale factor to correct for library target/decoy ratio
+            qval = (decoys * fdr_scale_factor) / max(targets, 1)
             if qval > min_q_val
                 bin_qval[bin_idx] = min_q_val
             else
@@ -386,16 +388,49 @@ function get_qvalue_spline(
             bin_size, mean_prob = zero(Int64), zero(Float32)
         end
     end
-    bin_qval[end] = targets/bin_size
+    # Apply FDR scale factor to final bin calculation
+    bin_qval[end] = (decoys * fdr_scale_factor) / max(targets, 1)
     bin_mean_prob[end] = mean_prob/bin_size
     prepend!(bin_qval, 1.0f0)
     prepend!(bin_mean_prob, 0.0f0)
     bin_qval = bin_qval[isnan.(bin_mean_prob).==false]
     bin_mean_prob = bin_mean_prob[isnan.(bin_mean_prob).==false]
-    #return bin_qval, bin_mean_prob
-    return linear_interpolation(
-        Interpolations.deduplicate_knots!(bin_mean_prob, move_knots=true),
-        bin_qval, extrapolation_bc=Line())
+    
+    # Sort and deduplicate knot vectors
+    # First, create paired array for sorting
+    paired = collect(zip(bin_mean_prob, bin_qval))
+    # Sort by probability (x-values)
+    sort!(paired, by = x -> x[1])
+    
+    # Manual deduplication keeping the first occurrence of each x value
+    xs = Float32[]
+    ys = Float32[]
+    prev_x = NaN32
+    for (x, y) in paired
+        if x != prev_x && !isnan(x)
+            push!(xs, x)
+            push!(ys, y)
+            prev_x = x
+        end
+    end
+    
+    # Ensure we have at least 2 points for interpolation
+    if length(xs) < 2
+        @warn "Insufficient unique points for q-value interpolation, using default"
+        xs = Float32[0.0, 1.0]
+        ys = Float32[1.0, 0.0]
+    end
+    
+    # Final check for sorted and unique
+    if length(xs) > 1
+        for i in 2:length(xs)
+            if xs[i] <= xs[i-1]
+                error("Failed to properly deduplicate knot vectors. Debug info: xs=$xs")
+            end
+        end
+    end
+    
+    return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
 
 """
