@@ -94,7 +94,7 @@ function sort_and_filter_quant_tables(
 
     #Remove if present 
     if isfile(merged_quant_path)
-        rm(merged_quant_path)
+        safeRm(merged_quant_path)
     end
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
@@ -160,7 +160,7 @@ function sort_quant_tables(
 
     #Remove if present 
     if isfile(merged_quant_path)
-        rm(merged_quant_path)
+        safeRm(merged_quant_path)
     end
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
@@ -271,7 +271,7 @@ function merge_sorted_psms_scores(
     if Sys.iswindows()
         writeArrow(output_path, DataFrame())
     else
-        rm(output_path, force=true)
+        safeRm(output_path, force=true)
     end
     
     merge_start = time()
@@ -304,7 +304,7 @@ function merge_sorted_psms_scores(
             end
             if iszero(n_writes)
                 if isfile(output_path)
-                    rm(output_path, force=true)
+                    safeRm(output_path, force=true)
                 end
                 open(output_path, "w") do io
                     Arrow.write(io, psms_batch; file=false)  # file=false creates stream format
@@ -1794,7 +1794,7 @@ function sort_protein_tables(
 
     #Remove if present 
     if isfile(merged_pgs_path)
-        rm(merged_pgs_path)
+        safeRm(merged_pgs_path)
     end
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
@@ -1927,7 +1927,7 @@ function merge_sorted_protein_groups(
             end
             if iszero(n_writes)
                 if isfile(output_path)
-                    rm(output_path)
+                    safeRm(output_path)
                 end
                 open(output_path, "w") do io
                     Arrow.write(io, pg_batch; file=false)  # file=false creates stream format

@@ -82,7 +82,8 @@ function importScripts()
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
-                        "writeArrow.jl",
+            "writeArrow.jl",
+            "safeFileOps.jl",
             "proteinInference.jl",
             "profile.jl"
         ]
