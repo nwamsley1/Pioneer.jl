@@ -63,9 +63,9 @@ function perform_second_pass_search(
     # Print summary statistics
     if total_solves > 0
         # Calculate percentiles
-        sort!(all_newton_iters_combined)
-        max_newton = maximum(all_newton_iters_combined)
-        p95_newton = all_newton_iters_combined[ceil(Int, 0.95 * length(all_newton_iters_combined))]
+        #sort!(all_newton_iters_combined)
+        #max_newton = maximum(all_newton_iters_combined)
+        #p95_newton = quantile(all_newton_iters_combined, 0.95)#[ceil(Int, 0.95 * length(all_newton_iters_combined))]
         
         println("\n=== Huber Solver Statistics (Second Pass) ===")
         println("Total solves: $total_solves")
@@ -73,8 +73,8 @@ function perform_second_pass_search(
         println("Average time per solve: $(round(total_time/total_solves * 1000, digits=2)) ms")
         println("Average outer iterations per solve: $(round(total_outer/total_solves, digits=2))")
         println("Average Newton iterations per solve: $(round(total_newton/total_solves, digits=2))")
-        println("Max Newton iterations in any column: $max_newton")
-        println("95th percentile Newton iterations: $p95_newton")
+        #println("Max Newton iterations in any column: $max_newton")
+        #println("95th percentile Newton iterations: $p95_newton")
         println("Number of times bisection was used: $total_bisection ($(round(100*total_bisection/total_solves, digits=1))%)")
         println("=========================================\n")
     end

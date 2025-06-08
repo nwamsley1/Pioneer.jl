@@ -242,7 +242,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     i = 0
     total_iters = 0
     n_bisect = 0
-    newton_iters_per_col = Int[]  # Track Newton iterations per column
+    newton_iters_per_col = 0  # Track Newton iterations per column
     start_time = time()  # Track total time
     # Store initial state for potential debugging (only if debug mode is on)
     r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
@@ -263,7 +263,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
             δx = abs(δx)
             total_iters += iters_
             n_bisect += n_bisec
-            push!(newton_iters_per_col, iters_)
+            newton_iters_per_col += iters_
 
             # Track maximum relative change
             if !iszero(X₁[col])
@@ -276,18 +276,28 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         
         # Check convergence
         if _diff < max_diff
+            #newton_rel_tol = T(0.001)
             
-            if λ <= 1e-5
+            if λ <= 1e-6
                 if i - last_break == 1
                     break
                 else
                     last_break = i
                 end
-            elseif typeof(regularization_type) != NoNorm
-                λ = λ/10
-            else
-                break
+            else typeof(regularization_type) != NoNorm
+                λ = λ/100
             end
+            
+            #if typeof(regularization_type) != NoNorm
+            #    regularization_type != NoNorm()
+            #    #λ = λ/10
+            #else
+            #    if i - last_break == 1
+            #        break
+            #    else
+            #        last_break = i
+            #    end
+            #end
         end  
         i += 1
     end
