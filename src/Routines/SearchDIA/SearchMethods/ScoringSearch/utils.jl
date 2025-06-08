@@ -17,16 +17,24 @@ function get_best_traces(
     second_pass_psms_paths::Vector{String},
     min_prob::Float32 = 0.75f0
 )
+    @info "[PERF] get_best_traces: Starting" n_files=length(second_pass_psms_paths)
+    start_time = time()
+    initial_memory = Base.gc_live_bytes() / 1024^2  # MB
+    
     psms_trace_scores = Dictionary{
             @NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
 
-    for file_path in second_pass_psms_paths
+    for (file_idx, file_path) in enumerate(second_pass_psms_paths)
         if splitext(file_path)[end] != ".arrow"
             continue
         end
+        file_start = time()
         row_score = zero(Float32)
         psms_table = Arrow.Table(file_path)
-        for i in range(1, length(psms_table[1]))
+        n_rows = length(psms_table[1])
+        @info "[PERF] get_best_traces: Reading file" file_idx=file_idx n_rows=n_rows elapsed=round(time()-file_start, digits=3)
+        
+        for i in range(1, n_rows)
             psms_key = (precursor_idx = psms_table[:precursor_idx][i],  isotopes_captured = psms_table[:isotopes_captured][i])
 
             row_score = psms_table[:prob][i]
@@ -54,6 +62,12 @@ function get_best_traces(
     end
     filter!(x->x.best_trace, psms_trace_df);
     traces_passing = Set([(precursor_idx = x.precursor_idx, isotopes_captured = x.isotopes_captured) for x in eachrow(psms_trace_df)]);
+    
+    elapsed = time() - start_time
+    final_memory = Base.gc_live_bytes() / 1024^2
+    memory_used = final_memory - initial_memory
+    @info "[PERF] get_best_traces: Completed" elapsed=round(elapsed, digits=3) memory_used_MB=round(memory_used, digits=1) n_traces=length(traces_passing)
+    
     return traces_passing
 end
 
@@ -73,6 +87,10 @@ function sort_and_filter_quant_tables(
     prob_col::Symbol,
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 )
+    @info "[PERF] sort_and_filter_quant_tables: Starting" n_files=length(second_pass_psms_paths)
+    start_time = time()
+    total_rows_processed = 0
+    total_rows_kept = 0
 
     #Remove if present 
     if isfile(merged_quant_path)
@@ -80,8 +98,16 @@ function sort_and_filter_quant_tables(
     end
     #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
     #Sort and filter each psm table 
-    for fpath in second_pass_psms_paths
+    for (file_idx, fpath) in enumerate(second_pass_psms_paths)
+        file_start = time()
+        
+        # Read file
+        read_start = time()
         psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
+        read_time = time() - read_start
+        initial_rows = size(psms_table, 1)
+        total_rows_processed += initial_rows
+        @info "[PERF] sort_and_filter: File read" file_idx=file_idx rows=initial_rows read_time=round(read_time, digits=3)
 
         if seperateTraces(isotope_trace_type)
             #Indicator variable of whether each psm is from the best trace 
@@ -99,13 +125,30 @@ function sort_and_filter_quant_tables(
             )
         end
 
-        #Filter out unused traces 
+        #Filter out unused traces
+        filter_start = time()
         filter!(x->x.best_trace,psms_table)
+        filter_time = time() - filter_start
+        filtered_rows = size(psms_table, 1)
+        total_rows_kept += filtered_rows
+        
         #Sort in descending order of probability
+        sort_start = time()
         sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
+        sort_time = time() - sort_start
+        
         #write back
+        write_start = time()
         writeArrow(fpath, psms_table)
+        write_time = time() - write_start
+        
+        file_elapsed = time() - file_start
+        @info "[PERF] sort_and_filter: File processed" file_idx=file_idx kept_rows=filtered_rows filter_time=round(filter_time, digits=3) sort_time=round(sort_time, digits=3) write_time=round(write_time, digits=3) total_time=round(file_elapsed, digits=3)
     end
+    
+    elapsed = time() - start_time
+    @info "[PERF] sort_and_filter_quant_tables: Completed" elapsed=round(elapsed, digits=3) total_rows=total_rows_processed kept_rows=total_rows_kept retention_rate=round(total_rows_kept/total_rows_processed, digits=3)
+    
     return nothing
 end
 
@@ -148,6 +191,9 @@ function merge_sorted_psms_scores(
                     prob_col::Symbol
                     ; N = 10000000
 )
+    @info "[PERF] merge_sorted_psms_scores: Starting" n_files=length(input_paths) batch_size=N
+    start_time = time()
+    initial_memory = Base.gc_live_bytes() / 1024^2
     
     function fillColumn!(
         peptide_batch_col::Vector{R},
@@ -190,7 +236,15 @@ function merge_sorted_psms_scores(
     end
     ##println("psms input_paths $input_paths")
     #input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
+    
+    # Load all tables
+    load_start = time()
     tables = [Arrow.Table(path) for path in input_paths]
+    table_sizes = [length(table[1]) for table in tables]
+    total_rows = sum(table_sizes)
+    load_time = time() - load_start
+    @info "[PERF] merge_sorted_psms: Tables loaded" load_time=round(load_time, digits=3) total_rows=total_rows table_sizes=table_sizes
+    
     table_idxs = ones(Int64, length(tables))
     psms_batch = DataFrame()
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, N)
@@ -213,11 +267,14 @@ function merge_sorted_psms_scores(
     end
     i = 1
     n_writes = 0
+    rows_written = 0
     if Sys.iswindows()
         writeArrow(output_path, DataFrame())
     else
         rm(output_path, force=true)
     end
+    
+    merge_start = time()
     while length(psms_heap)>0
         _, table_idx = pop!(psms_heap)
         table = tables[table_idx]
@@ -259,6 +316,19 @@ function merge_sorted_psms_scores(
                 )
             end
             n_writes += 1
+            rows_written += (i - 1)
+            write_elapsed = time() - merge_start
+            @info "[PERF] merge_sorted_psms: Batch written" batch=n_writes rows_in_batch=(i-1) total_rows_written=rows_written elapsed=round(write_elapsed, digits=3) rate=round(rows_written/write_elapsed, digits=1)
+            
+            # Check memory and GC
+            current_memory = Base.gc_live_bytes() / 1024^2
+            if current_memory > initial_memory * 1.5
+                gc_start = time()
+                GC.gc()
+                gc_time = time() - gc_start
+                @info "[PERF] merge_sorted_psms: GC triggered" gc_time=round(gc_time, digits=3) memory_before=round(current_memory, digits=1) memory_after=round(Base.gc_live_bytes()/1024^2, digits=1)
+            end
+            
             i = 1
         end
     end
@@ -282,7 +352,11 @@ function merge_sorted_psms_scores(
             psms_batch[range(1, max(1, i - 1)),:]
         )
     end
-    #println("output_path $output_path")
+    rows_written += max(1, i - 1)
+    elapsed = time() - start_time
+    final_memory = Base.gc_live_bytes() / 1024^2
+    @info "[PERF] merge_sorted_psms_scores: Completed" elapsed=round(elapsed, digits=3) n_writes=n_writes total_rows=rows_written rate=round(rows_written/elapsed, digits=1) memory_used_MB=round(final_memory-initial_memory, digits=1)
+    
     return nothing
 end
 
@@ -724,6 +798,9 @@ function get_protein_groups(
     protein_q_val_threshold::Float32 = 0.01f0,
     max_psms_in_memory::Int64 = 10000000  # Default value if not provided
 )
+    @info "[PERF] get_protein_groups: Starting" n_files=length(passing_psms_paths) min_peptides=min_peptides
+    start_time = time()
+    initial_memory = Base.gc_live_bytes() / 1024^2
 
     """
         getProteinGroupsDict(protein_inference_dict, psm_precursor_idx, psm_score, 
@@ -933,6 +1010,7 @@ function get_protein_groups(
     pg_count = 0
     
     # First, count all possible peptides for each protein in the library
+    peptide_count_start = time()
     protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
     
     # Count all peptides in the library for each protein
@@ -940,8 +1018,10 @@ function get_protein_groups(
     all_sequences = getSequence(precursors)
     all_decoys = getIsDecoy(precursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
+    n_precursors = length(all_accession_numbers)
+    @info "[PERF] get_protein_groups: Counting peptides" n_precursors=n_precursors
     
-    for i in 1:length(all_accession_numbers)
+    for i in 1:n_precursors
         protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
         is_decoy = all_decoys[i]
         entrap_id = all_entrap_ids[i]
@@ -955,13 +1035,20 @@ function get_protein_groups(
         end
     end
     
+    peptide_count_time = time() - peptide_count_start
+    @info "[PERF] get_protein_groups: Peptide counting completed" elapsed=round(peptide_count_time, digits=3) n_proteins=length(protein_to_possible_peptides)
+    
     #Concatenate psms 
     ##########
     #Protein inference
     ##########
     
     # Load all passing PSMs
+    psm_load_start = time()
     passing_psms = Arrow.Table(passing_psms_paths)
+    n_passing_psms = length(passing_psms[:precursor_idx])
+    psm_load_time = time() - psm_load_start
+    @info "[PERF] get_protein_groups: PSMs loaded" elapsed=round(psm_load_time, digits=3) n_psms=n_passing_psms
 
     # Build protein_peptide_rows using data from PSMs
     protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy, :entrap_id), Tuple{String, String, Bool, UInt8}}}()
@@ -989,10 +1076,13 @@ function get_protein_groups(
     peptides = [row.sequence for row in protein_peptide_rows]
     proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
     
+    inference_start = time()
     protein_inference_dict = infer_proteins(
         proteins,
         peptides
-        )
+    )
+    inference_time = time() - inference_start
+    @info "[PERF] get_protein_groups: Protein inference completed" elapsed=round(inference_time, digits=3) n_peptides=length(peptides)
     #Returns Dictionary{String, Tuple{String, Bool}}
     #Key is a peptide base sequence (no mods or charge state)
     #Value is 1) protein group name 2) Whether to exclude the peptide from protien quant and exclude
@@ -1002,14 +1092,21 @@ function get_protein_groups(
     run_to_protein_groups = Dict{UInt64,Dictionary}()
 
     # First pass to compute run_specific and global/max protein group scores
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)#readdir(passing_psms_folder, join=true)
+    first_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting first pass"
+    
+    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
         _, extention = splitext(file_path)
         if extention != ".arrow"
             continue
         end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         passing_pg_paths[ms_file_idx] = protein_groups_path
+        file_start = time()
         psms_table = Arrow.Table(file_path)
+        n_psms = length(psms_table[:precursor_idx])
+        
+        dict_start = time()
         pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
             protein_inference_dict,
             psms_table[:precursor_idx],
@@ -1019,11 +1116,20 @@ function get_protein_groups(
             precursors;
             min_peptides = min_peptides
         )
+        dict_time = time() - dict_start
+        
+        # Convert and write
+        write_start = time()
         psms_table = DataFrame(Tables.columntable(psms_table))
         psms_table[!,:pg_score] = pg_score
         psms_table[!,:inferred_protein_group] = inferred_protein_group_names
         writeArrow(file_path, psms_table)
+        write_time = time() - write_start
+        
         run_to_protein_groups[ms_file_idx] = protein_groups
+        
+        file_time = time() - file_start
+        @info "[PERF] get_protein_groups: First pass file" file_idx=ms_file_idx n_psms=n_psms n_groups=length(protein_groups) dict_time=round(dict_time, digits=3) write_time=round(write_time, digits=3) total_time=round(file_time, digits=3)
         
         # update the max pg_score per accession dictionary
         for (k, v) in pairs(protein_groups)
@@ -1031,8 +1137,14 @@ function get_protein_groups(
             acc_to_max_pg_score[k] = max(v.pg_score, old)
         end
     end
+    
+    first_pass_time = time() - first_pass_start
+    @info "[PERF] get_protein_groups: First pass completed" elapsed=round(first_pass_time, digits=3) n_unique_groups=length(acc_to_max_pg_score)
 
     # Second pass to fill in global protein group scores
+    second_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting second pass"
+    
     for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
         _, extention = splitext(file_path)
         if extention != ".arrow"
@@ -1047,13 +1159,21 @@ function get_protein_groups(
 
         writeArrow(file_path, psms_table)
 
-        pg_count += writeProteinGroups(
+        write_start = time()
+        n_written = writeProteinGroups(
             acc_to_max_pg_score,
             protein_groups,
             protein_to_possible_peptides,
             protein_groups_path
         )
+        write_time = time() - write_start
+        pg_count += n_written
+        
+        @info "[PERF] get_protein_groups: Second pass file" file_idx=ms_file_idx n_groups_written=n_written write_time=round(write_time, digits=3)
     end
+    
+    second_pass_time = time() - second_pass_start
+    @info "[PERF] get_protein_groups: Second pass completed" elapsed=round(second_pass_time, digits=3) total_groups_written=pg_count
 
     # Perform Probit Regression Analysis on protein groups
     @info "Performing Probit Regression Analysis on protein groups..."
@@ -1106,6 +1226,10 @@ function get_protein_groups(
 
     end
 
+    total_elapsed = time() - start_time
+    final_memory = Base.gc_live_bytes() / 1024^2
+    @info "[PERF] get_protein_groups: Completed" total_elapsed=round(total_elapsed, digits=3) memory_used_MB=round(final_memory-initial_memory, digits=1) total_protein_groups=pg_count
+    
     return protein_inference_dict
 end
 
@@ -1697,7 +1821,10 @@ function merge_sorted_protein_groups(
     output_path::String,
     sort_key::Symbol;
     N = 1000000 
-) #N -> batch size 
+) #N -> batch size
+    @info "[PERF] merge_sorted_protein_groups: Starting" input_dir=input_dir batch_size=N
+    start_time = time()
+    initial_memory = Base.gc_live_bytes() / 1024^2 
 
     function addRowToHeap!(
         precursor_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
@@ -1739,9 +1866,16 @@ function merge_sorted_protein_groups(
 
     #Get all .arrow files in the input 
     input_paths = [path for path in readdir(input_dir, join=true) if endswith(path, ".arrow")]
-    #println("input_paths protein ", input_paths)
+    @info "[PERF] merge_sorted_protein_groups: Found files" n_files=length(input_paths)
+    
     #Keep track of which tables have 
+    load_start = time()
     tables = [Arrow.Table(path) for path in input_paths]
+    table_sizes = [length(table[1]) for table in tables]
+    total_rows = sum(table_sizes)
+    load_time = time() - load_start
+    @info "[PERF] merge_sorted_protein_groups: Tables loaded" load_time=round(load_time, digits=3) total_rows=total_rows sizes=table_sizes
+    
     table_idxs = ones(Int64, length(tables))
 
     #pre-allocate section of merged table 
@@ -1761,6 +1895,9 @@ function merge_sorted_protein_groups(
     end
     i = 1
     n_writes = 0
+    rows_written = 0
+    merge_start = time()
+    
     while length(pg_heap) > 0
         _, table_idx = pop!(pg_heap)
         table = tables[table_idx]
@@ -1802,6 +1939,11 @@ function merge_sorted_protein_groups(
                 )
             end
             n_writes += 1
+            rows_written += (i - 1)
+            
+            elapsed = time() - merge_start
+            @info "[PERF] merge_sorted_protein_groups: Batch written" batch=n_writes rows_in_batch=(i-1) total_rows=rows_written elapsed=round(elapsed, digits=3) rate=round(rows_written/elapsed, digits=1)
+            
             i = 1
         end
     end
@@ -1825,6 +1967,12 @@ function merge_sorted_protein_groups(
             pg_batch[range(1, max(1, i - 1)),:]
         )
     end
+    
+    rows_written += max(1, i - 1)
+    elapsed = time() - start_time
+    final_memory = Base.gc_live_bytes() / 1024^2
+    @info "[PERF] merge_sorted_protein_groups: Completed" elapsed=round(elapsed, digits=3) n_writes=n_writes total_rows=rows_written memory_used_MB=round(final_memory-initial_memory, digits=1)
+    
     return nothing
 end
 
