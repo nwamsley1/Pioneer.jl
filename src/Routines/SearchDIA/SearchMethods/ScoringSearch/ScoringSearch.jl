@@ -202,7 +202,8 @@ function summarize_results!(
             results.merged_quant_path,
             :global_prob,
             true; # use unique precursors
-            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
+            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
         # Step 6: Merge PSM Scores by prob
         @info "Merging PSM scores for experiment-wide q-value estimation..."
@@ -232,7 +233,8 @@ function summarize_results!(
             results.merged_quant_path,
             :prec_prob,
             false; # use all precursors
-            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin
+            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
 
         # Step 6: Filter PSMs by global q-value

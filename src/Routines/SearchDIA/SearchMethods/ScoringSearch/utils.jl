@@ -335,7 +335,7 @@ end
 
 """
     get_qvalue_spline(merged_psms_path::String, score_col::Symbol;
-                      min_pep_points_per_bin=1000) -> Interpolation
+                      min_pep_points_per_bin=1000, fdr_scale_factor=1.0f0) -> Interpolation
 
 Create q-value interpolation function from merged scores.
 
@@ -345,7 +345,8 @@ function get_qvalue_spline(
                             merged_psms_path::String,
                             score_col::Symbol,
                             use_unique::Bool;
-                            min_pep_points_per_bin = 1000
+                            min_pep_points_per_bin = 1000,
+                            fdr_scale_factor::Float32 = 1.0f0
 )
 
 
@@ -375,7 +376,8 @@ function get_qvalue_spline(
         mean_prob += psms_scores[!, score_col][i]
         if bin_size == min_pep_points_per_bin
             bin_idx += 1
-            qval = decoys/(targets) #not decoys/(targets + decoys)
+            # Apply FDR scale factor to correct for library target/decoy ratio
+            qval = (decoys * fdr_scale_factor) / max(targets, 1)
             if qval > min_q_val
                 bin_qval[bin_idx] = min_q_val
             else
@@ -386,7 +388,8 @@ function get_qvalue_spline(
             bin_size, mean_prob = zero(Int64), zero(Float32)
         end
     end
-    bin_qval[end] = targets/bin_size
+    # Apply FDR scale factor to final bin calculation
+    bin_qval[end] = (decoys * fdr_scale_factor) / max(targets, 1)
     bin_mean_prob[end] = mean_prob/bin_size
     prepend!(bin_qval, 1.0f0)
     prepend!(bin_mean_prob, 0.0f0)

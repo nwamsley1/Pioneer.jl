@@ -115,7 +115,8 @@ function initSearchContext(
         buffer_size
     )
     
-    return SearchContext(
+    # Create SearchContext
+    search_context = SearchContext(
         spec_lib,
         temp_structures,
         ms_data_reference,
@@ -123,6 +124,29 @@ function initSearchContext(
         n_precursors,
         buffer_size
     )
+    
+    # Calculate target/decoy statistics from library
+    is_decoy_array = getIsDecoy(getPrecursors(spec_lib))
+    n_targets = 0
+    n_decoys = 0
+    
+    # Use loop to avoid allocation
+    for i in 1:length(is_decoy_array)
+        if is_decoy_array[i]
+            n_decoys += 1
+        else
+            n_targets += 1
+        end
+    end
+    
+    # Set library statistics
+    search_context.n_library_targets = n_targets
+    search_context.n_library_decoys = n_decoys
+    search_context.library_fdr_scale_factor = Float32(n_targets / max(n_decoys, 1))
+    
+    @info "Library contains $n_targets targets and $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=3)))"
+    
+    return search_context
 end
 
 function initSimpleSearchContexts(

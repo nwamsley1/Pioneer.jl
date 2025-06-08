@@ -200,6 +200,11 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     n_threads::Int64
     n_precursors::Int64
     buffer_size::Int64
+    
+    # Library target/decoy statistics for FDR calculation
+    n_library_targets::Int64
+    n_library_decoys::Int64
+    library_fdr_scale_factor::Float32
 
     # Constructor
     function SearchContext(
@@ -225,7 +230,8 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Float32}(),
             Dict{UInt32, Float32}(),
             Ref{Any}(),
-            n_threads, n_precursors, buffer_size
+            n_threads, n_precursors, buffer_size,
+            0, 0, 1.0f0  # Initialize library stats with defaults
         )
     end
 end
@@ -359,6 +365,9 @@ getPredIrt(s::SearchContext, prec_idx::UInt32) = s.irt_obs[prec_idx]
 getHuberDelta(s::SearchContext) = s.huber_delta[]
 setPredIrt!(s::SearchContext, prec_idx::Int64, irt::Float32) = s.irt_obs[prec_idx] = irt
 setPredIrt!(s::SearchContext, prec_idx::UInt32, irt::Float32) = s.irt_obs[prec_idx] = irt
+getLibraryTargetCount(s::SearchContext) = s.n_library_targets
+getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
+getLibraryFdrScaleFactor(s::SearchContext) = s.library_fdr_scale_factor
 """
    getQuadTransmissionModel(s::SearchContext, index::Integer)
 
