@@ -15,6 +15,7 @@ function getRegL1(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
     return λ*Float32(2)*xk
 end
 
+
 function getRegL2(λ::T, xk::T, ::NoNorm) where T<:AbstractFloat
     return zero(Float32)
 end
@@ -26,6 +27,7 @@ end
 function getRegL2(λ::T, xk::T, ::L2Norm) where T<:AbstractFloat
     return Float32(2)*λ
 end
+
 
 function updateResiduals!(Hs::SparseArray{Ti, T}, r::Vector{T}, col::Int64, X1, X0) where {Ti<:Integer, T<:AbstractFloat}
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
@@ -46,15 +48,13 @@ function getDerivatives!(Hs::SparseArray{Ti, T},
     L1 = zero(Float32)
     L2 = zero(Float32)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
-    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
-        #Quake's Fast Inverse Square Root Algorighm
-        #Different magic for float64. 
+        # Quake's Fast Inverse Square Root Algorithm 
         R = RS
         int32 = reinterpret(UInt32, R)
-        int32 = 0x5f3759df - int32 >> 1 #Magic 
+        int32 = 0x5f3759df - int32 >> 1 
         R = reinterpret(Float32, int32)
         R *= 1.5f0 - RS * 0.5f0 * R^2
         HSVAL_R = hsval * R
@@ -74,13 +74,11 @@ function getL1(Hs::SparseArray{Ti, Float32},
                 xk::Float32,
                 regularization_type::RegularizationType) where {Ti<:Integer}
     L1 = zero(Float32)
-    #@turbo for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
     @inbounds @fastmath for i in Hs.colptr[col]:(Hs.colptr[col + 1] - 1)
         rval = r[Hs.rowval[i]]
         hsval = Hs.nzval[i]
         RS = (1 + (rval/δ)^2)
-        #Quake's Fast Inverse Square Root Algorighm
-        #Different magic for float64. 
+        # Quake's Fast Inverse Square Root Algorithm 
         R = RS
         int32 = reinterpret(UInt32, R)
         int32 = 0x5f3759df - int32 >> 1 #Magic 
@@ -88,7 +86,7 @@ function getL1(Hs::SparseArray{Ti, Float32},
         R *= 1.5f0 - RS * 0.5f0 * R^2
         L1 += rval * hsval * R
     end
-    return Float32(L1) + getRegL1(λ, xk, regularization_type) #λ*Float32(2)*xk)
+    return Float32(L1) + getRegL1(λ, xk, regularization_type)
 end
 
 function newton_bisection!(Hs::SparseArray{Ti, T}, 
@@ -101,67 +99,78 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             max_iter_bisection::Int64,
                             accuracy_newton::T,
                             accuracy_bisection::T,
-                            regulariation_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
+                            regularization_type::RegularizationType,
+                            rel_tol::T = T(0.01)) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
-    X_init = X₁[col] #Estimate prior to optimiztion
-    X0 = X₁[col] #Keeps track of previous etimate at each iteration
-    #Maximum Estimates X₁[col] and L1. Used as uper bound if newton-raphson fails to converge
-    #And bisection method is neede. 
+    X_init = X₁[col]  # Initial estimate before optimization
+    X0 = X₁[col]      # Previous estimate at each iteration
+    _ranbisection_ = false  # Flag to indicate if bisection was used
+    # Track maximum estimates for bisection bounds if Newton fails
     max_l1, max_x1 = typemax(T), typemax(T)
 
-    #Newton-Raphson Method Iterations until convergence or maximum iterations. 
-    #If convergence fails in maximum iterations, switch to bisection method for guaranteed convergence
-    #@inbounds @fastmath begin
     @inbounds begin
+        # Newton-Raphson iterations
         while (n < max_iter_newton)
-
-            #First and second derivatives 
-            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regulariation_type)
+            # Compute first and second derivatives
+            L1, L2 = getDerivatives!(Hs, r, col, δ, λ, X₁[col], regularization_type)
             update_rule = (L1)/L2
-            #Switch to bisection method
+            
+            # Check for numerical issues
             if isnan(update_rule)
                 n = max_iter_newton
                 break
             end
 
-            #Useful as boundaries for bisection method if Newton's method fails to converge. 
-            #Want positive and negative L1 with smallest absolute values 
-            if (sign(L1) == 1) & (L1 < max_l1) #L1 > max_l1
+            # Track positive L1 with smallest absolute value for bisection bounds
+            if (sign(L1) == 1) & (L1 < max_l1)
                 max_x1, max_l1 = X₁[col], L1
             end
 
+            # Newton-Raphson update (constrained to be non-negative)
             X0 = X₁[col] 
-            #Newton-Raphson update. Contrain X₁[col] to be non-negative
             X₁[col] = max(X₁[col] - update_rule, zero(T))
             n += 1
 
-            #Update residuals given new estimate, X₁[col], and prior estimate, X0
+            # Update residuals
             updateResiduals!(Hs, r, col, X₁[col], X0)
 
-            ########
-            #Stopping Criterion for single variable Newton-Raphson
-            ########
-            abs(X₁[col] - X0) < accuracy_newton ? break : nothing
+            # Check convergence
+            abs_change = abs(X₁[col] - X0)
+            
+            if !iszero(X0)  # Can check relative change
+                rel_change = abs_change / abs(X0)
+                if rel_change < rel_tol
+                    break
+                end
+            else
+                # For zero weights, use absolute tolerance only
+                if abs_change < accuracy_newton
+                    break
+                end
+            end
         end
-        #If newtons method fails to converge, switch to bisection method
+        
+        # If Newton's method failed to converge, use bisection
         if n == max_iter_newton
-            #println("bisection")
-            #######
-            #Lower bound is always X₁[col] == 0
+            _ranbisection_ = true
+            # Reset to zero (lower bound)
             X0 = X₁[col]
             X₁[col] = zero(T)
             updateResiduals!(Hs, r, col, X₁[col], X0)
-            L1 = getL1(Hs, r, col, δ, λ, X₁[col], regulariation_type)
-            if sign(L1) != 1 #Otherwise the minimum is at X₁[col] < 0, so set X₁[col] == 0
+            L1 = getL1(Hs, r, col, δ, λ, X₁[col], regularization_type)
+            
+            # Only use bisection if minimum is at X₁[col] > 0
+            if sign(L1) != 1
                 _ = bisection!(Hs, r, X₁, col, δ, λ, zero(T), 
-                            min(max(max_x1, zero(Float32)), Float32(1e11)), #Maximum Plausible Value for X1
+                            min(max(max_x1, zero(Float32)), Float32(1e11)),
                             L1,  
-                            max_iter_bisection, #Should never reach this. Convergence in (max_x1)/2^n
+                            max_iter_bisection,
                             accuracy_bisection,
-                            regulariation_type)#accuracy)
+                            regularization_type)
             end
             return X₁[col] - X_init
-        else #Convergence reached. Return difference between current estimate and initial guess. 
+        else
+            # Convergence reached
             return X₁[col] - X_init
         end
     end
@@ -181,17 +190,16 @@ function bisection!(Hs::SparseArray{Ti, T},
                     regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
     n = 0
     c = (a + b)/2
-    #Since first guess for X₁[col] will change to "c"
-    #Need to update the residuals accordingly. 
+    # Update residuals for new X₁[col] value 
     updateResiduals!(Hs, r, col, c, X₁[col])
     X0 = X₁[col]
     X₁[col] = c
     X_init, X0 = X₁[col],  X₁[col]
     while (n < max_iter)
 
-        #Evaluate first partial derivative
+        # Evaluate first partial derivative
         fc = getL1(Hs, r, col, δ, λ, X₁[col], regularization_type)
-        #Bisection Rule
+        # Bisection Rule
         if (sign(fc) != sign(fa))
             b, fb = c, fc
         else
@@ -200,12 +208,10 @@ function bisection!(Hs::SparseArray{Ti, T},
 
         c, X0 = (a + b)/2, X₁[col]
         X₁[col] = c
-        #Update residuals given new estimate, X₁[col], and prior estimate, X0
+        # Update residuals
         updateResiduals!(Hs, r, col, X₁[col], X0)
 
-        ########
-        #Stopping Criterion
-        ########
+        # Stopping Criterion
         abs(X₁[col] - X0) < accuracy_bisection ? break : nothing
         n += 1
     end
@@ -222,41 +228,47 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         max_iter_outer::Int64,
                         accuracy_newton::T,
                         accuracy_bisection::T,
-                        tol::U,
-                        max_diff::T,
-                        regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat,U<:Real}
-    ΔX = Inf
-    #λ = Float64(0.1)
-    max_iter_newton = 50
-    max_iter_bisection = 100 
-    max_iter_outer = 1000
+                        relative_convergence_threshold::T,  # max_diff from config: max relative change in weights
+                        regularization_type::RegularizationType) where {Ti<:Integer,T<:AbstractFloat}
+    
+    # Recommended values for solver parameters:
+    # max_iter_newton = 25
+    # max_iter_bisection = 100
+    # max_iter_outer = max(1000, Hs.n*5)
+    
+    # Use user-provided convergence threshold as relative tolerance for Newton's method
+    newton_rel_tol = relative_convergence_threshold
+    
+    # Initialize iteration counter
     i = 0
-    while (i < max_iter_outer) & (ΔX > tol)
-        ΔX = 0.0
-        #Update each variable once 
-        _diff = 0.0
+    while i < max_iter_outer
+        _diff = T(0)
         for col in range(1, Hs.n)
-            #difference in X_1[col]
-            δx = newton_bisection!(Hs, r, X₁,col, δ, λ,
+            
+            # Update coefficient
+            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
                                         max_iter_newton, 
                                         max_iter_bisection,
                                         accuracy_newton,
                                         accuracy_bisection,
-                                        regularization_type)
-            δx = abs(δx)
-            if !iszero(X₁[col]) 
-                if δx/X₁[col] > max_diff
-                    _diff =  δx/X₁[col]
+                                        regularization_type,
+                                        newton_rel_tol))
+
+            # Track maximum relative change
+            if !iszero(X₁[col])
+                rel_change = δx / abs(X₁[col])
+                if rel_change > _diff
+                    _diff = rel_change
                 end
             end
-            
-            ΔX += δx
         end
-        if _diff < max_diff
+        
+        # Check convergence
+        if _diff < relative_convergence_threshold
             break
-        end
-       i += 1
+        end  
+        i += 1
     end
-    return i
+    
+    return nothing
 end
-

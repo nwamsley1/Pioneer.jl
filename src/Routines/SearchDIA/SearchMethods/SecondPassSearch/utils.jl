@@ -48,7 +48,9 @@ function perform_second_pass_search(
         end
     end
     
-    return vcat(fetch.(tasks)...)
+    # Collect results
+    results = fetch.(tasks)
+    return vcat([r for r in results]...)
 end
 
 function perform_second_pass_search(
@@ -118,6 +120,7 @@ function process_scans!(
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
     last_val = 0
+    
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -225,9 +228,8 @@ function process_scans!(
             params.max_iter_outer,
             search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
             search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-            search_context.deconvolution_stop_tolerance[],
             params.max_diff,
-            params.reg_type,
+            params.reg_type
         )
 
         # Update precursor weights
@@ -467,9 +469,8 @@ function process_scans!(
                 1000,#params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                L2Norm()#params.reg_type,#NoNorm()
+                NoNorm()
             )
             # Update precursor weights
             for i in 1:getIdToCol(search_data).size

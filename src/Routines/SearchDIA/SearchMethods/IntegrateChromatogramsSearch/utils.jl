@@ -331,7 +331,6 @@ function build_chromatograms(
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
                 params.reg_type
             )
@@ -558,9 +557,8 @@ function build_chromatograms(
                 params.max_iter_outer,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_newton,
                 search_context.deconvolution_stop_tolerance[],#params.accuracy_bisection,
-                search_context.deconvolution_stop_tolerance[],
                 params.max_diff,
-                params.reg_type,#NoNorm()
+                params.reg_type
             )
             if scan_idx==6625#8241#Design Matrix 
                 N = Hs.n_vals
