@@ -119,13 +119,17 @@ Most parameters should not be changed, but the following may need adjustement.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `deconvolution.lambda` | Float | Regularization parameter for deconvolution (deprecated, not in use) (default: 0.0) |
-| `deconvolution.huber_delta` | Float | Delta parameter for Huber loss (default: 300) |
-| `deconvolution.huber_exp` | Float | Exponent for Huber delta progression (default: 2) |
-| `deconvolution.huber_iters` | Int | Number of Huber iterations (default: 15) |
-| `deconvolution.newton_iters` | Int | Maximum Newton iterations (default: 100) |
-| `deconvolution.newton_accuracy` | Float | Convergence threshold for Newton method (default: 10) |
-| `deconvolution.max_diff` | Float | Maximum allowed difference in optimization (default: 0.01) |
+| `deconvolution.lambda` | Float | L2 regularization parameter for deconvolution (default: 0.0 for NoNorm regularization) |
+| `deconvolution.reg_type` | String | Regularization type: "none" (NoNorm), "l1" (L1Norm), or "l2" (L2Norm) (default: "none") |
+| `deconvolution.huber_delta` | Float | Delta parameter for Huber loss function (default: 300) |
+| `deconvolution.huber_exp` | Float | Exponent for Huber delta progression (default: 1.5) |
+| `deconvolution.huber_iters` | Int | Number of Huber outer iterations (default: 15) |
+| `deconvolution.newton_iters` | Int | Maximum Newton iterations per outer iteration (recommended: 25, default: 50) |
+| `deconvolution.bisection_iters` | Int | Maximum bisection iterations when Newton fails (recommended: 100, default: 100) |
+| `deconvolution.outer_iters` | Int | Maximum outer iterations for convergence (recommended: max(1000, n_variables*5), default: 1000) |
+| `deconvolution.newton_accuracy` | Float | Absolute convergence threshold for Newton method (default: 10) |
+| `deconvolution.bisection_accuracy` | Float | Absolute convergence threshold for bisection method (default: 10) |
+| `deconvolution.max_diff` | Float | Relative convergence threshold - maximum relative change in weights between iterations. Also used as relative tolerance for Newton's method (default: 0.01) |
 | `machine_learning.max_samples` | Int | Maximum number of samples for XGBoost training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
 | `machine_learning.max_q_value_xgboost_rescore` | Float | q-value threshold for semi-supervised learning with XGBoost (default: 0.01) |

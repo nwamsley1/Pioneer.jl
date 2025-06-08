@@ -107,6 +107,7 @@
             "bisection_iters": 100,
             "outer_iters": 1000,
             "newton_accuracy": 10,
+            "bisection_accuracy": 10,
             "max_diff": 0.01
         },
         "machine_learning": {

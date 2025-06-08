@@ -228,7 +228,7 @@ function solveHuber!(Hs::SparseArray{Ti, T},
                         max_iter_outer::Int64,
                         accuracy_newton::T,
                         accuracy_bisection::T,
-                        relative_convergence_threshold::T,
+                        relative_convergence_threshold::T,  # max_diff from config: max relative change in weights
                         regularization_type::RegularizationType;
                         debug_capture::Bool = true) where {Ti<:Integer,T<:AbstractFloat}
     
