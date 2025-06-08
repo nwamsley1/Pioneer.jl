@@ -396,13 +396,39 @@ function get_qvalue_spline(
     bin_qval = bin_qval[isnan.(bin_mean_prob).==false]
     bin_mean_prob = bin_mean_prob[isnan.(bin_mean_prob).==false]
     
-    # Manual deduplication keeping the first occurrence
-    xs = copy(bin_mean_prob)
-    ys = copy(bin_qval)
-    # remove duplicates and keep the **first** occurrence
-    mask = [i == 1 || xs[i] != xs[i-1] for i in eachindex(xs)]
-    xs = xs[mask]
-    ys = ys[mask]
+    # Sort and deduplicate knot vectors
+    # First, create paired array for sorting
+    paired = collect(zip(bin_mean_prob, bin_qval))
+    # Sort by probability (x-values)
+    sort!(paired, by = x -> x[1])
+    
+    # Manual deduplication keeping the first occurrence of each x value
+    xs = Float32[]
+    ys = Float32[]
+    prev_x = NaN32
+    for (x, y) in paired
+        if x != prev_x && !isnan(x)
+            push!(xs, x)
+            push!(ys, y)
+            prev_x = x
+        end
+    end
+    
+    # Ensure we have at least 2 points for interpolation
+    if length(xs) < 2
+        @warn "Insufficient unique points for q-value interpolation, using default"
+        xs = Float32[0.0, 1.0]
+        ys = Float32[1.0, 0.0]
+    end
+    
+    # Final check for sorted and unique
+    if length(xs) > 1
+        for i in 2:length(xs)
+            if xs[i] <= xs[i-1]
+                error("Failed to properly deduplicate knot vectors. Debug info: xs=$xs")
+            end
+        end
+    end
     
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
