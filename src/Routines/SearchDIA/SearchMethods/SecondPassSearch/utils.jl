@@ -48,38 +48,9 @@ function perform_second_pass_search(
         end
     end
     
-    # Collect results and aggregate statistics
+    # Collect results
     results = fetch.(tasks)
-    all_psms = vcat([r.psms for r in results]...)
-    
-    # Aggregate Huber statistics
-    total_outer = sum(r.huber_stats.total_outer_iters for r in results)
-    total_newton = sum(r.huber_stats.total_newton_iters for r in results)
-    total_bisection = sum(r.huber_stats.total_bisection_calls for r in results)
-    total_solves = sum(r.huber_stats.num_solves for r in results)
-    all_newton_iters_combined = vcat([r.huber_stats.all_newton_iters for r in results]...)
-    total_time = sum(r.huber_stats.total_time for r in results)
-    
-    # Print summary statistics
-    if total_solves > 0
-        # Calculate percentiles
-        #sort!(all_newton_iters_combined)
-        #max_newton = maximum(all_newton_iters_combined)
-        #p95_newton = quantile(all_newton_iters_combined, 0.95)#[ceil(Int, 0.95 * length(all_newton_iters_combined))]
-        
-        println("\n=== Huber Solver Statistics (Second Pass) ===")
-        println("Total solves: $total_solves")
-        println("Total time in Huber solver: $(round(total_time, digits=3)) seconds")
-        println("Average time per solve: $(round(total_time/total_solves * 1000, digits=2)) ms")
-        println("Average outer iterations per solve: $(round(total_outer/total_solves, digits=2))")
-        println("Average Newton iterations per solve: $(round(total_newton/total_solves, digits=2))")
-        #println("Max Newton iterations in any column: $max_newton")
-        #println("95th percentile Newton iterations: $p95_newton")
-        println("Number of times bisection was used: $total_bisection ($(round(100*total_bisection/total_solves, digits=1))%)")
-        println("=========================================\n")
-    end
-    
-    return all_psms
+    return vcat([r for r in results]...)
 end
 
 function perform_second_pass_search(
@@ -150,13 +121,6 @@ function process_scans!(
     residuals = getResiduals(search_data)
     last_val = 0
     
-    # Track Huber solver statistics
-    total_outer_iters = 0
-    total_newton_iters = 0
-    total_bisection_calls = 0
-    num_solves = 0
-    all_newton_iters = Int[]  # Collect all Newton iterations for percentile calc
-    total_huber_time = 0.0
 
     # RT bin tracking state
     irt_start, irt_stop = 1, 1
@@ -253,7 +217,7 @@ function process_scans!(
         
         # Solve deconvolution problem
         initResiduals!(residuals, Hs, weights)
-        outer_iters, newton_iters, bisection_count, newton_per_col, huber_time = solveHuber!(
+        solveHuber!(
             Hs,
             residuals,
             weights,
@@ -267,14 +231,6 @@ function process_scans!(
             params.max_diff,
             params.reg_type
         )
-        
-        # Accumulate statistics
-        total_outer_iters += outer_iters
-        total_newton_iters += newton_iters
-        total_bisection_calls += bisection_count
-        num_solves += 1
-        append!(all_newton_iters, newton_per_col)
-        total_huber_time += huber_time
 
         # Update precursor weights
         update_precursor_weights!(search_data, weights, precursor_weights)
@@ -315,18 +271,7 @@ function process_scans!(
         # Reset arrays
         reset_arrays!(search_data, Hs)
     end
-    # Return PSMs and Huber statistics
-    return (
-        psms = DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val])),
-        huber_stats = (
-            total_outer_iters = total_outer_iters,
-            total_newton_iters = total_newton_iters,
-            total_bisection_calls = total_bisection_calls,
-            num_solves = num_solves,
-            all_newton_iters = all_newton_iters,
-            total_time = total_huber_time
-        )
-    )
+    return DataFrame(@view(getComplexScoredPsms(search_data)[1:last_val]))
 end
 
 """
@@ -513,7 +458,7 @@ function process_scans!(
 
             # Solve deconvolution
             initResiduals!(residuals, Hs, weights)
-            _, _, _, _, _ = solveHuber!(
+            solveHuber!(
                 Hs,
                 residuals,
                 weights,

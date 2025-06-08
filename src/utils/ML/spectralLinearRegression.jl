@@ -168,10 +168,10 @@ function newton_bisection!(Hs::SparseArray{Ti, T},
                             accuracy_bisection,
                             regularization_type)
             end
-            return X₁[col] - X_init, n, _ranbisection_ ? 1 : 0
+            return X₁[col] - X_init
         else
             # Convergence reached
-            return X₁[col] - X_init, n, 0
+            return X₁[col] - X_init
         end
     end
 end
@@ -240,12 +240,8 @@ function solveHuber!(Hs::SparseArray{Ti, T},
     # Use user-provided convergence threshold as relative tolerance for Newton's method
     newton_rel_tol = relative_convergence_threshold
     
-    # Initialize iteration counter and dynamic range tracking
+    # Initialize iteration counter
     i = 0
-    total_iters = 0
-    n_bisect = 0
-    newton_iters_per_col = 0  # Track Newton iterations per column
-    start_time = time()  # Track total time
     # Store initial state for potential debugging (only if debug mode is on)
     r_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(r) : nothing
     X1_initial_copy = (debug_capture && Hs.n >= 1000) ? copy(X₁) : nothing
@@ -254,17 +250,13 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         for col in range(1, Hs.n)
             
             # Update coefficient
-            δx,iters_,n_bisec = newton_bisection!(Hs, r, X₁, col, δ, λ,
+            δx = abs(newton_bisection!(Hs, r, X₁, col, δ, λ,
                                         max_iter_newton, 
                                         max_iter_bisection,
                                         accuracy_newton,
                                         accuracy_bisection,
                                         regularization_type,
-                                        newton_rel_tol)
-            δx = abs(δx)
-            total_iters += iters_
-            n_bisect += n_bisec
-            newton_iters_per_col += iters_
+                                        newton_rel_tol))
 
             # Track maximum relative change
             if !iszero(X₁[col])
@@ -314,9 +306,5 @@ function solveHuber!(Hs::SparseArray{Ti, T},
         error("[HUBER DEBUG] Stopping search after capturing slow-converging problem for analysis")
     end
     
-    # Calculate statistics
-    total_time = time() - start_time
-    
-    # Return statistics: outer iterations, total newton iterations, number of bisection calls, newton iter stats, total time
-    return i, total_iters, n_bisect, newton_iters_per_col, total_time
+    return nothing
 end
