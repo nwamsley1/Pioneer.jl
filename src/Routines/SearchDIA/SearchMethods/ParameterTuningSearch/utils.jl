@@ -102,11 +102,14 @@ Modifies psms DataFrame in place by filtering to best matches.
 """
 function filter_and_score_psms!(
     psms::DataFrame,
-    params::P
+    params::P,
+    search_context::SearchContext
 ) where {P<:ParameterTuningSearchParameters}
     
     score_presearch!(psms)
-    get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value])
+    # Get FDR scale factor from search context
+    fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+    get_qvalues!(psms[!,:prob], psms[!,:target], psms[!,:q_value]; fdr_scale_factor = fdr_scale_factor)
     
     max_q_val, min_psms = getMaxQVal(params), getMinPsms(params)
     n_passing_psms = sum(psms[!,:q_value] .<= max_q_val)
@@ -169,7 +172,8 @@ end
 
 
 """
-    get_qvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}) where {T,U<:AbstractFloat}
+    get_qvalues!(probs::Vector{U}, labels::Vector{Bool}, qvals::Vector{T}; 
+                 doSort::Bool=true, fdr_scale_factor::Float32=1.0f0) where {T,U<:AbstractFloat}
     get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool})
 
 Calculates q-values (false discovery rate estimates) for PSMs.
@@ -178,15 +182,19 @@ Calculates q-values (false discovery rate estimates) for PSMs.
 - `probs`: Vector of probability scores
 - `labels`: Vector of target/decoy labels
 - `qvals`: Vector to store calculated q-values
+- `doSort`: Whether to sort by probability scores (default: true)
+- `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio (default: 1.0)
 
 # Process
 1. Sorts PSMs by probability score
 2. Calculates running ratio of decoys to targets
-3. Assigns q-values based on decoy/target ratio
+3. Applies FDR scale factor to correct for library imbalance
+4. Assigns q-values based on corrected decoy/target ratio
 
-Implements target-decoy approach for FDR estimation.
+Implements target-decoy approach for FDR estimation with library ratio correction.
 """
-function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}; doSort = true
+function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qvals::AbstractVector{T}; 
+                      doSort::Bool = true, fdr_scale_factor::Float32 = 1.0f0
 ) where {T,U<:AbstractFloat}
 
     if doSort
@@ -200,7 +208,8 @@ function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qv
     @inbounds @fastmath for i in order
             targets += labels[i]
             decoys += (1 - labels[i])
-            qvals[i] = decoys/(targets)
+            # Apply FDR scale factor to correct for library target/decoy ratio
+            qvals[i] = (decoys * fdr_scale_factor) / targets
     end
 
     fdr = Inf
@@ -217,7 +226,7 @@ get_qvalues!(PSMs::DataFrame, probs::Vector{Float64}, labels::Vector{Bool}) = ge
 
 
 function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fdrs::AbstractVector{T}; 
-    window_size::Int=1000, doSort=true) where {T,U<:AbstractFloat}
+    window_size::Int=1000, doSort=true, fdr_scale_factor::Float32=1.0f0) where {T,U<:AbstractFloat}
     @assert length(scores) == length(is_target)
     N = length(scores)
     if N == 0
@@ -247,16 +256,16 @@ function get_local_FDR!(scores::AbstractVector{U}, is_target::AbstractVector{Boo
     end
 
     # 3) For each rank i, compute local FDR from this point to the next X entries
-    fdrs[idxs[1]] = (decoy_prefix[window_size] + 1) / max(1, target_prefix[window_size])
+    fdrs[idxs[1]] = ((decoy_prefix[window_size] + 1) * fdr_scale_factor) / max(1, target_prefix[window_size])
 
     for rank in 2:(N-window_size)
         # Count decoys/targets in [L,R] using prefix sums
         decs_in_window   = decoy_prefix[rank + window_size]  - decoy_prefix[rank-1]
         targs_in_window  = target_prefix[rank + window_size] - target_prefix[rank-1]
 
-        # local FDR = (#decoys) / max(1, #targets)
+        # local FDR = (#decoys * scale_factor) / max(1, #targets)
         # adding a psuedocount to guarantee finite sample control of the FDR
-        fdrs[idxs[rank]] = (decs_in_window + 1) / max(1, targs_in_window)
+        fdrs[idxs[rank]] = ((decs_in_window + 1) * fdr_scale_factor) / max(1, targs_in_window)
     end
 
     return 

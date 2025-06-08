@@ -242,7 +242,7 @@ function process_file!(
             add_columns_and_concat!(psms, new_psms, spectra, 
                                 getPrecursors(getSpecLib(search_context)), params)
             try 
-                filter_and_score_psms!(psms, params) >= getMinPsms(params) && break
+                filter_and_score_psms!(psms, params, search_context) >= getMinPsms(params) && break
             catch e
                 throw(e)
             end
