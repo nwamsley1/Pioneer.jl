@@ -102,7 +102,7 @@ function sort_and_filter_quant_tables(
         #Filter out unused traces 
         filter!(x->x.best_trace,psms_table)
         #Sort in descending order of probability
-        sort!(psms_table, prob_col, rev = true, alg=QuickSort)
+        sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
         #write back
         writeArrow(fpath, psms_table)
     end
@@ -124,7 +124,7 @@ function sort_quant_tables(
     for fpath in second_pass_psms_paths
         psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
         #Sort in descending order of probability
-        sort!(psms_table, prob_col, rev = true, alg=QuickSort)
+        sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
         #write back
         writeArrow(fpath, psms_table)
     end
@@ -429,7 +429,14 @@ function get_qvalue_spline(
             end
         end
     end
-    
+    #=
+    xs = copy(bin_mean_prob)
+    ys = copy(bin_qval)
+    # remove duplicates and keep the **first** occurrence
+    mask = [i == 1 || xs[i] != xs[i-1] for i in eachindex(xs)]
+    xs   = xs[mask]
+    ys   = ys[mask]
+    =#
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
 
