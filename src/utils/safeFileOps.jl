@@ -63,6 +63,3 @@ function safeRm(fpath::String; force::Bool=false)
     end
     return nothing
 end
-
-# Export for use in other modules
-export safeRm
