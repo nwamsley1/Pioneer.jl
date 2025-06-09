@@ -62,6 +62,8 @@ struct ComplexScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     max_unmatched_residual::L 
     fitted_manhattan_distance::L 
     matched_ratio::L 
+    percent_theoretical_ignored::L
+    scribe::L
     #entropy_score::L
     weight::H
 
@@ -243,7 +245,7 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
         )&(
             (unscored_PSMs[i].y_count + unscored_PSMs[i].b_count + unscored_PSMs[i].isotope_count) >= min_frag_count
         )&(
-            (spectral_scores[i].spectral_contrast) >= min_spectral_contrast
+            (spectral_scores[i].fitted_spectral_contrast) >= min_spectral_contrast
         )&(
             spectral_scores[i].matched_ratio > min_log2_matched_ratio
         )&(
@@ -291,6 +293,8 @@ function Score!(scored_psms::Vector{ComplexScoredPSM{H, L}},
             spectral_scores[scores_idx].max_unmatched_residual,
             spectral_scores[scores_idx].fitted_manhattan_distance,
             spectral_scores[scores_idx].matched_ratio,
+            spectral_scores[scores_idx].percent_theoretical_ignored,
+            spectral_scores[scores_idx].scribe,
             #spectral_scores[scores_idx].entropy_score,
             weight[scores_idx],
 
