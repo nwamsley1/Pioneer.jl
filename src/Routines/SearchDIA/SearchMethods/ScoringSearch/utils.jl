@@ -1219,7 +1219,7 @@ function get_protein_groups(
             add_feature_columns!(all_protein_groups)
             
             # Perform probit regression analysis
-            perform_probit_analysis(all_protein_groups, qc_folder)
+            perform_probit_analysis(all_protein_groups, qc_folder, passing_pg_paths)
         else
             @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
         end
@@ -1229,6 +1229,11 @@ function get_protein_groups(
     total_elapsed = time() - start_time
     final_memory = Base.gc_live_bytes() / 1024^2
     @info "[PERF] get_protein_groups: Completed" total_elapsed=round(total_elapsed, digits=3) memory_used_MB=round(final_memory-initial_memory, digits=1) total_protein_groups=pg_count
+    
+    # Add info message about ML scoring
+    if total_protein_groups > 0
+        @info "ML-based protein scoring complete. The pg_score and pg_qval columns now contain ML-enhanced scores that will be used for FDR filtering."
+    end
     
     return protein_inference_dict
 end
@@ -1319,12 +1324,15 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             X_file = Matrix{Float64}(df[:, feature_names])
             prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
             
-            # Add scores to dataframe
-            df[!, :probit_score] = prob_scores
+            # Store original pg_score for comparison (optional, for reporting)
+            original_pg_scores = copy(df.pg_score)
+            
+            # Overwrite pg_score with ML-based probit scores
+            df[!, :pg_score] = Float32.(prob_scores)
             
             # Calculate q-values for this file
             probit_qvalues = calculate_qvalues_from_scores(prob_scores, df.target)
-            pg_qvalues = calculate_qvalues_from_scores(df.pg_score, df.target)
+            pg_qvalues = calculate_qvalues_from_scores(original_pg_scores, df.target)
             
             # Count statistics
             total_targets += sum(df.target)
@@ -1339,8 +1347,10 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             pg_targets_at_5pct += sum(df.target .& (pg_qvalues .<= 0.05))
             pg_targets_at_10pct += sum(df.target .& (pg_qvalues .<= 0.10))
             
-            # Write back the file with probit scores
-            df[!, :probit_qval] = probit_qvalues
+            # Overwrite pg_qval with ML-based q-values
+            df[!, :pg_qval] = Float32.(probit_qvalues)
+            
+            # Write back the file with updated scores
             writeArrow(pg_path, df)
         end
     end
@@ -1383,24 +1393,68 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     else
         @info "  At 10% FDR: +$improvement_10pct targets"
     end
+    
+    # Final pass to update global scores across all files
+    @info "Updating global protein group scores..."
+    
+    # Collect max scores across all files
+    max_scores_dict = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Float32}()
+    
+    # First pass: find max scores
+    for pg_path in pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            for row in eachrow(df)
+                key = (protein_name = row.protein_name, target = row.target, entrap_id = row.entrap_id)
+                current_max = get(max_scores_dict, key, 0.0f0)
+                max_scores_dict[key] = max(current_max, row.pg_score)
+            end
+        end
+    end
+    
+    # Second pass: update global scores and q-values
+    for pg_path in pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            
+            # Update global_pg_score with max values
+            for i in 1:nrow(df)
+                key = (protein_name = df[i, :protein_name], 
+                       target = df[i, :target], 
+                       entrap_id = df[i, :entrap_id])
+                df[i, :global_pg_score] = max_scores_dict[key]
+            end
+            
+            # Recalculate global q-values
+            global_qvalues = calculate_qvalues_from_scores(df.global_pg_score, df.target)
+            df[!, :global_pg_qval] = Float32.(global_qvalues)
+            
+            # Write back
+            writeArrow(pg_path, df)
+        end
+    end
 end
 
 """
-    perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+    perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String, 
+                           passing_pg_paths::Vector{String})
 
 Perform probit regression analysis on protein groups with comparison to baseline.
 
 # Arguments
 - `all_protein_groups::DataFrame`: Protein group data with features
 - `qc_folder::String`: Folder for QC plots
+- `passing_pg_paths::Vector{String}`: Paths to protein group files to update
 
 # Process
 1. Fits probit model with multiple features
 2. Calculates performance metrics
 3. Compares to pg_score-only baseline
-4. Generates decision boundary plots
+4. Overwrites pg_score with ML scores
+5. Writes updated scores back to files
 """
-function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String,
+                                passing_pg_paths::Vector{String})
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     
@@ -1468,6 +1522,69 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Create decision boundary plots
     # TODO: Fix plotting type error
     # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
+    
+    # Store original scores for comparison reporting above (already done)
+    # Now overwrite pg_score and pg_qval with ML-based values
+    all_protein_groups[!, :pg_score] = Float32.(prob_scores)
+    all_protein_groups[!, :pg_qval] = Float32.(probit_qvalues)
+    
+    # Write back updated scores to individual files
+    @info "Writing ML-based scores back to protein group files..."
+    
+    # First, recalculate global_pg_score with the new ML scores
+    # Group by protein to find max score across all runs
+    protein_groups = groupby(all_protein_groups, [:protein_name, :target, :entrap_id])
+    max_scores_dict = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Float32}()
+    
+    for group in protein_groups
+        key = (protein_name = group[1, :protein_name], target = group[1, :target], entrap_id = group[1, :entrap_id])
+        max_scores_dict[key] = maximum(group.pg_score)
+    end
+    
+    # Update global_pg_score with new max values
+    for i in 1:nrow(all_protein_groups)
+        key = (protein_name = all_protein_groups[i, :protein_name], 
+               target = all_protein_groups[i, :target], 
+               entrap_id = all_protein_groups[i, :entrap_id])
+        all_protein_groups[i, :global_pg_score] = max_scores_dict[key]
+    end
+    
+    # Also update global_pg_qval based on the new global scores
+    global_qvalues = calculate_qvalues_from_scores(all_protein_groups.global_pg_score, all_protein_groups.target)
+    all_protein_groups[!, :global_pg_qval] = Float32.(global_qvalues)
+    
+    # Now write back to individual files
+    # Group by ms_file_idx to write back to individual files
+    if "ms_file_idx" in names(all_protein_groups)
+        grouped = groupby(all_protein_groups, :ms_file_idx)
+        for (idx, pg_path) in enumerate(passing_pg_paths)
+            if haskey(grouped, (ms_file_idx = idx,))
+                file_groups = grouped[(ms_file_idx = idx,)]
+                writeArrow(pg_path, file_groups)
+            end
+        end
+    else
+        # If no ms_file_idx, we need to read each file to know which rows belong to it
+        # This is less efficient but handles the case where ms_file_idx is missing
+        @warn "ms_file_idx column missing - using fallback method to write files"
+        
+        # Split back to original files based on row counts
+        start_idx = 1
+        for pg_path in passing_pg_paths
+            # Read original file to get row count
+            orig_table = Arrow.Table(pg_path)
+            n_rows = length(orig_table[1])
+            
+            # Extract corresponding rows
+            end_idx = min(start_idx + n_rows - 1, nrow(all_protein_groups))
+            file_groups = all_protein_groups[start_idx:end_idx, :]
+            
+            # Write back
+            writeArrow(pg_path, file_groups)
+            
+            start_idx = end_idx + 1
+        end
+    end
 end
 
 """
