@@ -907,12 +907,12 @@ function writeProteinGroups(
     #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
     
     # New feature columns
-    n_peptides = [length(unique(v[:peptides])) for v in values_array]  # Number of unique peptides
-    total_peptide_length = [sum(length(pep) for pep in v[:peptides]) for v in values_array]  # Total length of all peptides
+    n_peptides = [UInt16(length(unique(v[:peptides]))) for v in values_array]  # Number of unique peptides
+    total_peptide_length = [UInt16(sum(length(pep) for pep in v[:peptides])) for v in values_array]  # Total length of all peptides
     
     # Calculate possible peptides and peptide coverage
     # Handle protein groups with multiple proteins separated by semicolons
-    n_possible_peptides = zeros(Int64, length(keys_array))
+    n_possible_peptides = zeros(UInt16, length(keys_array))
     for (i, k) in enumerate(keys_array)
         # Split the protein group name by semicolons
         protein_names_in_group = split(k[:protein_name], ';')
@@ -931,10 +931,10 @@ function writeProteinGroups(
         end
         
         # Count unique peptides across all proteins in the group
-        n_possible_peptides[i] = max(length(all_possible_peptides), 1)
+        n_possible_peptides[i] = UInt16(max(length(all_possible_peptides), 1))
     end
     
-    peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
+    peptide_coverage = Float32[n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
     # No global scores yet
     df = DataFrame((
         protein_name = protein_name,
