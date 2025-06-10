@@ -1000,6 +1000,356 @@ function get_protein_groups(
     end
 
     """
+        count_protein_peptides(precursors::LibraryPrecursors)
+
+    Count all possible peptides for each protein in the library.
+
+    # Arguments
+    - `precursors`: Library precursors
+
+    # Returns
+    - Dictionary mapping protein keys to sets of peptide sequences
+    """
+    function count_protein_peptides(precursors::LibraryPrecursors)
+        peptide_count_start = time()
+        protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
+        
+        # Count all peptides in the library for each protein
+        all_accession_numbers = getAccessionNumbers(precursors)
+        all_sequences = getSequence(precursors)
+        all_decoys = getIsDecoy(precursors)
+        all_entrap_ids = getEntrapmentGroupId(precursors)
+        n_precursors = length(all_accession_numbers)
+        @info "[PERF] count_protein_peptides: Starting" n_precursors=n_precursors
+        
+        for i in 1:n_precursors
+            protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
+            is_decoy = all_decoys[i]
+            entrap_id = all_entrap_ids[i]
+            
+            for protein_name in protein_names
+                key = (protein_name = String(protein_name), target = !is_decoy, entrap_id = entrap_id)
+                if !haskey(protein_to_possible_peptides, key)
+                    protein_to_possible_peptides[key] = Set{String}()
+                end
+                push!(protein_to_possible_peptides[key], all_sequences[i])
+            end
+        end
+        
+        peptide_count_time = time() - peptide_count_start
+        @info "[PERF] count_protein_peptides: Completed" elapsed=round(peptide_count_time, digits=3) n_proteins=length(protein_to_possible_peptides)
+        
+        return protein_to_possible_peptides
+    end
+
+    """
+        perform_protein_inference(passing_psms_paths::Vector{String},
+                                 passing_pg_paths::Vector{String},
+                                 protein_groups_folder::String,
+                                 precursors::LibraryPrecursors,
+                                 protein_to_possible_peptides::Dict;
+                                 min_peptides::Int64 = 2)
+
+    Perform protein inference and initial scoring (first and second pass).
+    
+    # Arguments
+    - `passing_psms_paths`: Paths to PSM files
+    - `passing_pg_paths`: Paths to protein group files (will be populated)
+    - `protein_groups_folder`: Folder to write protein groups
+    - `precursors`: Library precursors
+    - `protein_to_possible_peptides`: Dictionary of protein to peptide mappings
+    - `min_peptides`: Minimum peptides per protein group
+    
+    # Returns
+    - Total number of protein groups written
+    """
+    function perform_protein_inference(
+        passing_psms_paths::Vector{String},
+        passing_pg_paths::Vector{String},
+        protein_groups_folder::String,
+        precursors::LibraryPrecursors,
+        protein_to_possible_peptides::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}};
+        min_peptides::Int64 = 2
+    )
+        start_time = time()
+        
+        # Get sequences and other data from precursors
+        all_sequences = getSequence(precursors)
+        all_decoys = getIsDecoy(precursors)
+        all_entrap_ids = getEntrapmentGroupId(precursors)
+        
+        run_to_protein_groups = Dict{UInt64,Dictionary}()
+        pg_count = 0
+
+        # First pass to compute run_specific protein group scores
+        first_pass_start = time()
+        @info "[PERF] perform_protein_inference: Starting first pass"
+        total_psms_processed = 0
+        total_peptides_inferred = 0
+        total_protein_groups_created = 0
+        files_processed = 0
+        
+        for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+            _, extention = splitext(file_path)
+            if extention != ".arrow"
+                continue
+            end
+            protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
+            passing_pg_paths[ms_file_idx] = protein_groups_path
+            file_start = time()
+            psms_table = Arrow.Table(file_path)
+            n_psms = length(psms_table[:precursor_idx])
+            total_psms_processed += n_psms
+            files_processed += 1
+            
+            # Perform protein inference for this file
+            inference_start = time()
+            protein_peptide_rows = build_protein_peptide_rows_for_file(psms_table, precursors)
+            peptides = [row.sequence for row in protein_peptide_rows]
+            proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
+            total_peptides_inferred += length(peptides)
+            
+            protein_inference_dict = infer_proteins(proteins, peptides)
+            inference_time = time() - inference_start
+            
+            dict_start = time()
+            pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
+                protein_inference_dict,
+                psms_table[:precursor_idx],
+                psms_table[:prob],
+                psms_table[:target],
+                psms_table[:entrapment_group_id],
+                precursors;
+                min_peptides = min_peptides
+            )
+            dict_time = time() - dict_start
+            
+            # Convert and write PSMs with protein inference info
+            write_start = time()
+            psms_table = DataFrame(Tables.columntable(psms_table))
+            psms_table[!,:pg_score] = pg_score
+            psms_table[!,:inferred_protein_group] = inferred_protein_group_names
+            
+            # Add use_for_protein_quant column based on protein inference results
+            precursor_idx = psms_table[!,:precursor_idx]
+            use_for_protein_quant = zeros(Bool, length(precursor_idx))
+            for (i, pid) in enumerate(precursor_idx)
+                inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
+                use_for_protein_quant[i] = inferred_prot.retain
+            end
+            psms_table[!,:use_for_protein_quant] = use_for_protein_quant
+            
+            writeArrow(file_path, psms_table)
+            write_time = time() - write_start
+            
+            run_to_protein_groups[ms_file_idx] = protein_groups
+            total_protein_groups_created += length(protein_groups)
+            
+            file_time = time() - file_start
+        end
+        
+        first_pass_time = time() - first_pass_start
+        @info "[PERF] perform_protein_inference: First pass completed" elapsed=round(first_pass_time, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
+
+        # Second pass to write protein groups (without global scores)
+        second_pass_start = time()
+        @info "[PERF] perform_protein_inference: Starting second pass to write protein groups"
+        
+        for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+            _, extention = splitext(file_path)
+            if extention != ".arrow"
+                continue
+            end
+            protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
+            protein_groups = run_to_protein_groups[ms_file_idx]
+
+            write_start = time()
+            n_written = writeProteinGroups(
+                nothing,  # No global scores yet
+                protein_groups,
+                protein_to_possible_peptides,
+                protein_groups_path
+            )
+            write_time = time() - write_start
+            pg_count += n_written
+        end
+        
+        second_pass_time = time() - second_pass_start
+        @info "[PERF] perform_protein_inference: Second pass completed" elapsed=round(second_pass_time, digits=3) total_groups_written=pg_count
+        
+        total_elapsed = time() - start_time
+        @info "[PERF] perform_protein_inference: Completed" total_elapsed=round(total_elapsed, digits=3)
+        
+        return pg_count
+    end
+
+    """
+        perform_protein_probit_regression(passing_pg_paths::Vector{String},
+                                        max_psms_in_memory::Int64,
+                                        qc_folder::String)
+
+    Perform probit regression on protein groups.
+    
+    # Arguments
+    - `passing_pg_paths`: Paths to protein group files
+    - `max_psms_in_memory`: Memory limit for in-memory vs OOM processing
+    - `qc_folder`: Folder for QC plots
+    """
+    function perform_protein_probit_regression(
+        passing_pg_paths::Vector{String},
+        max_psms_in_memory::Int64,
+        qc_folder::String
+    )
+        # First, count the total number of protein groups across all files
+        total_protein_groups = 0
+        for pg_path in passing_pg_paths
+            if isfile(pg_path) && endswith(pg_path, ".arrow")
+                table = Arrow.Table(pg_path)
+                total_protein_groups += length(table[:protein_name])  # Get row count from any column
+            end
+        end
+        
+        # Set protein group limit to 5x the precursor limit
+        max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
+        
+        if total_protein_groups > max_protein_groups_in_memory_limit
+            @info "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
+            perform_probit_analysis_oom(passing_pg_paths, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
+        else
+            @info "Using in-memory probit regression"
+            # Load all protein group tables into a single DataFrame
+            all_protein_groups = DataFrame()
+            for pg_path in passing_pg_paths
+                if isfile(pg_path) && endswith(pg_path, ".arrow")
+                    append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
+                end
+            end
+            
+            # Only perform analysis if we have both targets and decoys
+            n_targets = sum(all_protein_groups.target)
+            n_decoys = sum(.!all_protein_groups.target)
+            
+            if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
+                # Add derived features
+                add_feature_columns!(all_protein_groups)
+                
+                # Perform probit regression analysis
+                @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
+                perform_probit_analysis(all_protein_groups, qc_folder)
+            else
+                @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
+            end
+        end
+    end
+
+    """
+        calculate_global_protein_scores(passing_pg_paths::Vector{String})
+
+    Calculate global protein scores from current pg_scores.
+    
+    # Arguments
+    - `passing_pg_paths`: Paths to protein group files
+    
+    # Returns
+    - Dictionary mapping protein keys to max pg_score across files
+    """
+    function calculate_global_protein_scores(passing_pg_paths::Vector{String})
+        third_pass_start = time()
+        @info "[PERF] calculate_global_protein_scores: Starting"
+        
+        # Build acc_to_max_pg_score from current pg_scores (either original or probit-overwritten)
+        acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
+        
+        for pg_path in passing_pg_paths
+            if isfile(pg_path) && endswith(pg_path, ".arrow")
+                table = Arrow.Table(pg_path)
+                n_rows = length(table[:protein_name])
+                
+                for i in 1:n_rows
+                    key = (protein_name = table[:protein_name][i], 
+                           target = table[:target][i], 
+                           entrap_id = table[:entrap_id][i])
+                    pg_score = table[:pg_score][i]  # Either original or probit score
+                    
+                    old = get(acc_to_max_pg_score, key, -Inf32)
+                    acc_to_max_pg_score[key] = max(pg_score, old)
+                end
+            end
+        end
+        
+        # Add global_pg_score to all protein group files
+        fourth_pass_start = time()
+        @info "[PERF] calculate_global_protein_scores: Adding global_pg_score to protein group files"
+        
+        for pg_path in passing_pg_paths
+            if isfile(pg_path) && endswith(pg_path, ".arrow")
+                df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+                
+                # Add global_pg_score column
+                global_pg_scores = Vector{Float32}(undef, nrow(df))
+                for i in 1:nrow(df)
+                    key = (protein_name = df[i, :protein_name],
+                           target = df[i, :target],
+                           entrap_id = df[i, :entrap_id])
+                    global_pg_scores[i] = get(acc_to_max_pg_score, key, df[i, :pg_score])
+                end
+                df[!, :global_pg_score] = global_pg_scores
+                
+                # Re-sort by global_pg_score
+                sort!(df, [:global_pg_score, :target], rev = [true, true])
+                
+                # Write back
+                writeArrow(pg_path, df)
+            end
+        end
+        
+        fourth_pass_time = time() - fourth_pass_start
+        @info "[PERF] calculate_global_protein_scores: Completed" elapsed=round(fourth_pass_time, digits=3) n_protein_groups=length(acc_to_max_pg_score)
+        
+        return acc_to_max_pg_score
+    end
+
+    """
+        add_global_scores_to_psms(passing_psms_paths::Vector{String},
+                                 acc_to_max_pg_score::Dict)
+
+    Add global_pg_score to PSM files.
+    
+    # Arguments
+    - `passing_psms_paths`: Paths to PSM files
+    - `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
+    """
+    function add_global_scores_to_psms(
+        passing_psms_paths::Vector{String},
+        acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}
+    )
+        fifth_pass_start = time()
+        @info "[PERF] add_global_scores_to_psms: Starting"
+        
+        for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+            if isfile(file_path) && endswith(file_path, ".arrow")
+                psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+                
+                # Add global_pg_score column by looking up each protein group
+                global_pg_scores = Vector{Float32}(undef, nrow(psms_table))
+                for i in 1:nrow(psms_table)
+                    key = (protein_name = psms_table[i, :inferred_protein_group],
+                           target = psms_table[i, :target],
+                           entrap_id = psms_table[i, :entrapment_group_id])
+                    global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
+                end
+                psms_table[!, :global_pg_score] = global_pg_scores
+                
+                # Write back
+                writeArrow(file_path, psms_table)
+            end
+        end
+        
+        fifth_pass_time = time() - fifth_pass_start
+        @info "[PERF] add_global_scores_to_psms: Completed" elapsed=round(fifth_pass_time, digits=3)
+    end
+
+    """
         build_protein_peptide_rows_for_file(psms_table, precursors)
     
     Build protein-peptide mappings from a single file's PSMs.
@@ -1040,275 +1390,29 @@ function get_protein_groups(
 
     pg_count = 0
     
-    # First, count all possible peptides for each protein in the library
-    peptide_count_start = time()
-    protein_to_possible_peptides = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}}()
+    # Count all possible peptides for each protein in the library
+    protein_to_possible_peptides = count_protein_peptides(precursors)
     
-    # Count all peptides in the library for each protein
-    all_accession_numbers = getAccessionNumbers(precursors)
-    all_sequences = getSequence(precursors)
-    all_decoys = getIsDecoy(precursors)
-    all_entrap_ids = getEntrapmentGroupId(precursors)
-    n_precursors = length(all_accession_numbers)
-    @info "[PERF] get_protein_groups: Counting peptides" n_precursors=n_precursors
-    
-    for i in 1:n_precursors
-        protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
-        is_decoy = all_decoys[i]
-        entrap_id = all_entrap_ids[i]
-        
-        for protein_name in protein_names
-            key = (protein_name = String(protein_name), target = !is_decoy, entrap_id = entrap_id)
-            if !haskey(protein_to_possible_peptides, key)
-                protein_to_possible_peptides[key] = Set{String}()
-            end
-            push!(protein_to_possible_peptides[key], all_sequences[i])
-        end
-    end
-    
-    peptide_count_time = time() - peptide_count_start
-    @info "[PERF] get_protein_groups: Peptide counting completed" elapsed=round(peptide_count_time, digits=3) n_proteins=length(protein_to_possible_peptides)
-    
-    # Per-file protein inference will be performed in the loop below
-
-    run_to_protein_groups = Dict{UInt64,Dictionary}()
-
-    # First pass to compute run_specific and global/max protein group scores
-    first_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting first pass"
-    total_psms_processed = 0
-    total_peptides_inferred = 0
-    total_protein_groups_created = 0
-    files_processed = 0
-    
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        _, extention = splitext(file_path)
-        if extention != ".arrow"
-            continue
-        end
-        protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
-        passing_pg_paths[ms_file_idx] = protein_groups_path
-        file_start = time()
-        psms_table = Arrow.Table(file_path)
-        n_psms = length(psms_table[:precursor_idx])
-        total_psms_processed += n_psms
-        files_processed += 1
-        
-        # Perform protein inference for this file
-        inference_start = time()
-        protein_peptide_rows = build_protein_peptide_rows_for_file(psms_table, precursors)
-        peptides = [row.sequence for row in protein_peptide_rows]
-        proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
-        total_peptides_inferred += length(peptides)
-        
-        protein_inference_dict = infer_proteins(proteins, peptides)
-        inference_time = time() - inference_start
-        # File protein inference completed
-        
-        dict_start = time()
-        pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
-            protein_inference_dict,
-            psms_table[:precursor_idx],
-            psms_table[:prob],
-            psms_table[:target],
-            psms_table[:entrapment_group_id],
-            precursors;
-            min_peptides = min_peptides
-        )
-        dict_time = time() - dict_start
-        
-        # Convert and write
-        write_start = time()
-        psms_table = DataFrame(Tables.columntable(psms_table))
-        psms_table[!,:pg_score] = pg_score
-        psms_table[!,:inferred_protein_group] = inferred_protein_group_names
-        
-        # Add use_for_protein_quant column based on protein inference results
-        precursor_idx = psms_table[!,:precursor_idx]
-        use_for_protein_quant = zeros(Bool, length(precursor_idx))
-        for (i, pid) in enumerate(precursor_idx)
-            inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
-            use_for_protein_quant[i] = inferred_prot.retain
-        end
-        psms_table[!,:use_for_protein_quant] = use_for_protein_quant
-        
-        writeArrow(file_path, psms_table)
-        write_time = time() - write_start
-        
-        run_to_protein_groups[ms_file_idx] = protein_groups
-        total_protein_groups_created += length(protein_groups)
-        
-        file_time = time() - file_start
-        # First pass file completed
-        
-        # Do not calculate global scores yet - wait until after probit analysis
-    end
-    
-    first_pass_time = time() - first_pass_start
-    @info "[PERF] get_protein_groups: First pass completed" elapsed=round(first_pass_time, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
-
-    # Second pass to write protein groups (without global scores)
-    second_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting second pass to write protein groups"
-    
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        _, extention = splitext(file_path)
-        if extention != ".arrow"
-            continue
-        end
-        protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
-        protein_groups = run_to_protein_groups[ms_file_idx]
-
-        # Don't add global_pg_score to PSMs yet - wait until after probit analysis
-
-        write_start = time()
-        n_written = writeProteinGroups(
-            nothing,  # No global scores yet
-            protein_groups,
-            protein_to_possible_peptides,
-            protein_groups_path
-        )
-        write_time = time() - write_start
-        pg_count += n_written
-        
-        # Second pass file completed
-    end
-    
-    second_pass_time = time() - second_pass_start
-    @info "[PERF] get_protein_groups: Second pass completed" elapsed=round(second_pass_time, digits=3) total_groups_written=pg_count
+    # Perform protein inference and initial scoring
+    pg_count = perform_protein_inference(
+        passing_psms_paths,
+        passing_pg_paths,
+        protein_groups_folder,
+        precursors,
+        protein_to_possible_peptides;
+        min_peptides = min_peptides
+    )
 
     # Perform Probit Regression Analysis on protein groups
-    @info "Performing Probit Regression Analysis on protein groups..."
-    
-    # First, count the total number of protein groups across all files
-    total_protein_groups = 0
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            table = Arrow.Table(pg_path)
-            total_protein_groups += length(table[:protein_name])  # Get row count from any column
-        end
-    end
-    
-    #@info "Total protein groups across all files: $total_protein_groups"
-    
-    # Set protein group limit to 5x the precursor limit
-    max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
-    #@info "Max protein groups in memory: $max_protein_groups_in_memory_limit (5x precursor limit of $max_psms_in_memory)"
-    
-    # Get QC folder path
     qc_folder = joinpath(dirname(temp_folder), "qc_plots")
     !isdir(qc_folder) && mkdir(qc_folder)
-    
-    if total_protein_groups > max_protein_groups_in_memory_limit
-        @info "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
-        perform_probit_analysis_oom(passing_pg_paths, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
-    else
-        @info "Using in-memory probit regression"
-        # Load all protein group tables into a single DataFrame
-        all_protein_groups = DataFrame()
-        for pg_path in passing_pg_paths
-            if isfile(pg_path) && endswith(pg_path, ".arrow")
-                append!(all_protein_groups, DataFrame(Tables.columntable(Arrow.Table(pg_path))))
-            end
-        end
-        
-        # Only perform analysis if we have both targets and decoys
-        n_targets = sum(all_protein_groups.target)
-        n_decoys = sum(.!all_protein_groups.target)
-        
-        if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
-            # Add derived features
-            add_feature_columns!(all_protein_groups)
-            
-            # Perform probit regression analysis
-            @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
-   
-            perform_probit_analysis(all_protein_groups, qc_folder)
-        else
-            @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
-        end
+    perform_protein_probit_regression(passing_pg_paths, max_psms_in_memory, qc_folder)
 
-    end
-
-    # Third pass: Calculate global_pg_score after probit analysis
-    # This works whether probit was performed or skipped
-    third_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting third pass to calculate global_pg_score"
+    # Calculate global protein scores
+    acc_to_max_pg_score = calculate_global_protein_scores(passing_pg_paths)
     
-    # Build acc_to_max_pg_score from current pg_scores (either original or probit-overwritten)
-    acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
-    
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            table = Arrow.Table(pg_path)
-            n_rows = length(table[:protein_name])
-            
-            for i in 1:n_rows
-                key = (protein_name = table[:protein_name][i], 
-                       target = table[:target][i], 
-                       entrap_id = table[:entrap_id][i])
-                pg_score = table[:pg_score][i]  # Either original or probit score
-                
-                old = get(acc_to_max_pg_score, key, -Inf32)
-                acc_to_max_pg_score[key] = max(pg_score, old)
-            end
-        end
-    end
-    
-    # Fourth pass: Add global_pg_score to all files
-    fourth_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting fourth pass to add global_pg_score to all files"
-    
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-            
-            # Add global_pg_score column
-            global_pg_scores = Vector{Float32}(undef, nrow(df))
-            for i in 1:nrow(df)
-                key = (protein_name = df[i, :protein_name],
-                       target = df[i, :target],
-                       entrap_id = df[i, :entrap_id])
-                global_pg_scores[i] = get(acc_to_max_pg_score, key, df[i, :pg_score])
-            end
-            df[!, :global_pg_score] = global_pg_scores
-            
-            # Re-sort by global_pg_score
-            sort!(df, [:global_pg_score, :target], rev = [true, true])
-            
-            # Write back
-            writeArrow(pg_path, df)
-        end
-    end
-    
-    fourth_pass_time = time() - fourth_pass_start
-    @info "[PERF] get_protein_groups: Fourth pass completed" elapsed=round(fourth_pass_time, digits=3)
-    
-    # Fifth pass: Add global_pg_score to PSM files
-    fifth_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting fifth pass to add global_pg_score to PSM files"
-    
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        if isfile(file_path) && endswith(file_path, ".arrow")
-            psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            
-            # Add global_pg_score column by looking up each protein group
-            global_pg_scores = Vector{Float32}(undef, nrow(psms_table))
-            for i in 1:nrow(psms_table)
-                key = (protein_name = psms_table[i, :inferred_protein_group],
-                       target = psms_table[i, :target],
-                       entrap_id = psms_table[i, :entrapment_group_id])
-                global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
-            end
-            psms_table[!, :global_pg_score] = global_pg_scores
-            
-            # Write back
-            writeArrow(file_path, psms_table)
-        end
-    end
-    
-    fifth_pass_time = time() - fifth_pass_start
-    @info "[PERF] get_protein_groups: Fifth pass completed" elapsed=round(fifth_pass_time, digits=3)
+    # Add global scores to PSM files
+    add_global_scores_to_psms(passing_psms_paths, acc_to_max_pg_score)
     
     total_elapsed = time() - start_time
     final_memory = Base.gc_live_bytes() / 1024^2

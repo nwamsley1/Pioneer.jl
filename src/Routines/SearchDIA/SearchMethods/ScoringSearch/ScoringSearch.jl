@@ -256,24 +256,47 @@ function summarize_results!(
             params.q_value_threshold,
         )
 
-        # Step 10: Score Protein Groups
-        @info "Scoring protein groups..."
-        # Create protein groups and calculate scores
-        # Note: protein inference is now done per-file inside get_protein_groups
-        get_protein_groups(
+        # Step 10: Count protein peptides
+        @info "Counting protein peptides..."
+        protein_to_possible_peptides = count_protein_peptides(
+            getPrecursors(getSpecLib(search_context))
+        )
+
+        # Step 11: Perform protein inference and initial scoring
+        @info "Performing protein inference and initial scoring..."
+        perform_protein_inference(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
-            temp_folder,
             getPrecursors(getSpecLib(search_context)),
-            min_peptides = params.min_peptides,
-            max_psms_in_memory = params.max_psms_in_memory
+            protein_to_possible_peptides,
+            min_peptides = params.min_peptides
         )
 
-        # Note: add_protein_inference_col is no longer needed as
-        # protein inference info is added per-file in get_protein_groups
+        # Step 12: Perform protein probit regression
+        @info "Performing protein probit regression..."
+        qc_folder = joinpath(dirname(temp_folder), "qc_plots")
+        !isdir(qc_folder) && mkdir(qc_folder)
+        perform_protein_probit_regression(
+            getPassingProteins(getMSData(search_context)),
+            params.max_psms_in_memory,
+            qc_folder
+        )
 
-        # Step 11: Merge PSM Scores by max_prob
+        # Step 13: Calculate global protein scores
+        @info "Calculating global protein scores..."
+        acc_to_max_pg_score = calculate_global_protein_scores(
+            getPassingProteins(getMSData(search_context))
+        )
+
+        # Step 14: Add global scores to PSMs
+        @info "Adding global protein scores to PSMs..."
+        add_global_scores_to_psms(
+            getPassingPsms(getMSData(search_context)),
+            acc_to_max_pg_score
+        )
+
+        # Step 15: Merge protein group scores by global_pg_score
         @info "Merging protein group scores for global q-value estimation..."
         # Merge protein groups by global pg_score (which contains probit scores after regression)
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
@@ -284,7 +307,7 @@ function summarize_results!(
             N = 1000000
         )
 
-        # Step 12: Create q-value interpolation
+        # Step 16: Create global q-value interpolation
         @info "Calculating global q-values for protein groups..."
         # Create protein group global q-value interpolation
         search_context.global_pg_score_to_qval[] = get_qvalue_spline(
@@ -308,7 +331,7 @@ function summarize_results!(
             end
         end
 
-        # Step 12: Create q-value interpolation
+        # Step 17: Sort protein groups by experiment-wide pg_score
         @info "Sorting protein group tables by experiment-wide pg_score..."
         sort_protein_tables(
             getPassingProteins(getMSData(search_context)),
@@ -316,7 +339,7 @@ function summarize_results!(
             :pg_score
         )
         
-        # Step 13: Merge PSM Scores by prob
+        # Step 18: Merge protein groups by experiment-wide pg_score
         @info "Merging protein group scores for experiment-wide q-value estimation..."
         merge_sorted_protein_groups(
             passing_proteins_folder,
@@ -325,7 +348,7 @@ function summarize_results!(
             N = 1000000
         )
 
-        # Step 14: Create q-value interpolation
+        # Step 19: Create experiment-wide q-value interpolation
         @info "Calculating experiment-wide q-values for protein groups..."
         # Create protein group run-specific q-value interpolation
         search_context.pg_score_to_qval[] = get_qvalue_spline(
