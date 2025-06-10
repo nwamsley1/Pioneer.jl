@@ -51,6 +51,23 @@ function addPrecursorToHeap!(
     )
 end
 
+# Handle AbstractVector with Union{Missing, String} elements
+function addPrecursorToHeap!(
+    precursor_heap::BinaryMinHeap{Tuple{Union{Missing, String}, UInt32, Int64}},
+    first_sort_key::AbstractVector{Union{Missing, String}},
+    second_sort_key::AbstractVector{UInt32},
+    table_idx::Int64,
+    row_idx::Int64)
+    push!(
+        precursor_heap,
+        (
+        first_sort_key[row_idx],
+        second_sort_key[row_idx],
+        table_idx
+        )
+    )
+end
+
 function mergeSortedArrowTables(
     input_dir::String, 
     output_path::String,
