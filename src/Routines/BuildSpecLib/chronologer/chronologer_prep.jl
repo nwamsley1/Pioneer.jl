@@ -254,6 +254,7 @@ function add_mods(
                     get_description(fasta_peptide),
                     get_proteome(fasta_peptide),
                     get_sequence(fasta_peptide),
+                    get_start_idx(fasta_peptide),
                     var_mod,
                     get_isotopic_mods(fasta_peptide),
                     get_charge(fasta_peptide),
@@ -304,6 +305,7 @@ function add_charge(
                     get_description(fasta_peptide),
                     get_proteome(fasta_peptide),
                     get_sequence(fasta_peptide),
+                    get_start_idx(fasta_peptide),
                     get_structural_mods(fasta_peptide),
                     get_isotopic_mods(fasta_peptide),
                     charge,
@@ -458,6 +460,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _sequence = Vector{String}(undef, prec_alloc_size)
     _structural_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
     _isotopic_mods = Vector{Union{String, Missing}}(undef, prec_alloc_size)
+    _start_idx = Vector{UInt32}(undef, prec_alloc_size)
     _precursor_charge = Vector{UInt8}(undef, prec_alloc_size)
     _collision_energy = Vector{Float32}(undef, prec_alloc_size )
     _decoy = Vector{Bool}(undef, prec_alloc_size)  
@@ -478,6 +481,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _upid[n] = get_proteome(peptide)
         _accession_number[n] = accession_id
         _sequence[n] = sequence
+        _start_idx[n] = get_start_idx(peptide)
         _structural_mods[n] = getModString(get_structural_mods(peptide))
         _isotopic_mods[n] = getModString(get_isotopic_mods(peptide))
         _precursor_charge[n] = get_charge(peptide)
@@ -493,6 +497,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         (upid = _upid[1:n],
          accession_number = _accession_number[1:n],
          sequence = _sequence[1:n],
+         start_idx = _start_idx[1:n],
          mods = _structural_mods[1:n],
          isotopic_mods = _isotopic_mods[1:n],
          precursor_charge = _precursor_charge[1:n],

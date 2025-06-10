@@ -13,7 +13,7 @@ struct LibraryPrecursorIon{T<:AbstractFloat} <: LibraryIon{T}
     sequence::String
     structural_mods::Union{Missing, String}
     isotopic_mods::Union{Missing, String}
-
+    start_idx::UInt32
     prec_charge::UInt8
     missed_cleavages::UInt8
     length::UInt8
@@ -28,7 +28,9 @@ getMissedCleavages(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.misse
 getVariableMods(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.variable_mods
 getLength(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.length
 getSulfurCount(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.sulfur_count
+getStartIdx(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.start_idx
 getCharge(p::LibraryPrecursorIon{T}) where {T<:AbstractFloat} = p.prec_charge
+
 
 abstract type LibraryFragmentIon{T<:AbstractFloat} <: LibraryIon{T} end
 
@@ -752,6 +754,8 @@ getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}
 getAccessionNumbers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:accession_numbers]
 getSequence(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:sequence]
 getSequence(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:sequence]
+getStartIdx(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:start_idx]
+getStartIdx(lp::LibraryPrecursors, idx::I) where {I<:Integer} = lp.data[:start_idx][idx]
 getStructuralMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
 getCharge(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}  = lp.data[:prec_charge]
 getCollisionEnergy(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:collision_energy]

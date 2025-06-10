@@ -203,6 +203,7 @@ function add_entrapment_sequences(
                         get_description(target_entry),
                         get_proteome(target_entry),
                         new_sequence,
+                        get_start_idx(target_entry),
                         missing, #structural_mods 
                         missing, #istopic_mods 
                         get_charge(target_entry),
@@ -429,6 +430,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                 get_description(target_entry),
                 get_proteome(target_entry),
                 decoy_sequence,
+                get_start_idx(target_entry),
                 adjusted_structural_mods,
                 adjusted_isotopic_mods,
                 get_charge(target_entry),
@@ -503,6 +505,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         description, 
                                                         proteome,
                                                         get_sequence(fasta_entry),
+                                                        get_start_idx(fasta_entry),
                                                         get_structural_mods(fasta_entry),
                                                         get_isotopic_mods(fasta_entry),
                                                         get_charge(fasta_entry),

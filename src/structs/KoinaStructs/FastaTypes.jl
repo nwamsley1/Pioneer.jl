@@ -6,6 +6,7 @@ struct FastaEntry
     description::String 
     proteome::String
     sequence::String
+    start_idx::UInt32
     structral_mods::Union{Missing,Vector{PeptideMod}}
     isotopic_mods::Union{Missing,Vector{PeptideMod}}
     charge::UInt8
@@ -20,6 +21,7 @@ get_id(entry::FastaEntry) = entry.id
 get_description(entry::FastaEntry) = entry.description
 get_proteome(entry::FastaEntry) = entry.proteome
 get_sequence(entry::FastaEntry) = entry.sequence
+get_start_idx(entry::FastaEntry) = entry.start_idx
 get_base_pep_id(entry::FastaEntry) = entry.base_pep_id
 get_base_prec_id(entry::FastaEntry) = entry.base_prec_id
 get_entrapment_group_id(entry::FastaEntry) = entry.entrapment_group_id

@@ -275,6 +275,7 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
+                precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
 
                 # Save processed precursor table
                 add_pair_indices!(precursors_table)
