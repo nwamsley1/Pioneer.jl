@@ -53,6 +53,7 @@
                 "Test protein 1", 
                 "test", 
                 "MAKRTGKRPEPT", 
+                UInt32(1),
                 missing, 
                 missing, 
                 UInt8(0), 
@@ -66,6 +67,7 @@
                 "Test protein 2", 
                 "test", 
                 "XBZMAKHUOPR", # Contains unusual AAs that should be filtered
+                UInt32(1),
                 missing, 
                 missing, 
                 UInt8(0), 
@@ -210,9 +212,9 @@
         
         # Test constructor from FastaEntry vector
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDE", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "test", "ANOTHER", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P3", "", "test", "PEPTLDE", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
+            FastaEntry("P1", "", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P2", "", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P3", "", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
         ]
         
         pss_from_entries = PeptideSequenceSet(entries)
@@ -249,8 +251,8 @@
     @testset "add_entrapment_sequences" begin
         # Create test entries
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDEK", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "", "test", "MAKEPROTEIN", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
+            FastaEntry("P1", "", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
         ]
         
         # Test with single entrapment sequence per target
@@ -282,8 +284,8 @@
     @testset "add_reverse_decoys" begin
         # Create test entries
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDEK", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "", "test", "MAKEPROTEIN", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
+            FastaEntry("P1", "", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
         ]
         
         # Test basic reversal
@@ -314,10 +316,10 @@
     @testset "combine_shared_peptides" begin
         # Create test entries with shared sequences
         entries = [
-            FastaEntry("P1", "desc1", "human", "PEPTIDE", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "desc2", "human", "PEPTIDE", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
-            FastaEntry("P3", "desc3", "mouse", "UNIQUE", missing, missing, UInt8(0), UInt32(3), UInt32(3), UInt8(0), false),
-            FastaEntry("P4", "desc4", "human", "PEPTLDE", missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
+            FastaEntry("P1", "desc1", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "desc2", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
+            FastaEntry("P3", "desc3", "mouse", "UNIQUE", UInt32(1), missing, missing, UInt8(0), UInt32(3), UInt32(3), UInt8(0), false),
+            FastaEntry("P4", "desc4", "human", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
         ]
         
         # Test combination
