@@ -1168,7 +1168,7 @@ function perform_protein_probit_regression(
             
             # Perform probit regression analysis
             @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
-            perform_probit_analysis(all_protein_groups, qc_folder)
+            perform_probit_analysis(all_protein_groups, qc_folder, passing_pg_paths)
         else
             @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
         end
@@ -1579,6 +1579,9 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             # Overwrite pg_score with probit scores
             df[!, :pg_score] = prob_scores
             
+            # Sort by pg_score and target in descending order
+            sort!(df, [:pg_score, :target], rev = [true, true])
+            
             # Count statistics
             total_targets += sum(df.target)
             total_decoys += sum(.!df.target)
@@ -1597,21 +1600,25 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
 end
 
 """
-    perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+    perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String, 
+                          pg_paths::Union{Vector{String}, Nothing} = nothing)
 
 Perform probit regression analysis on protein groups with comparison to baseline.
 
 # Arguments
 - `all_protein_groups::DataFrame`: Protein group data with features
 - `qc_folder::String`: Folder for QC plots
+- `pg_paths::Union{Vector{String}, Nothing}`: Paths to protein group files for re-processing
 
 # Process
 1. Fits probit model with multiple features
 2. Calculates performance metrics
 3. Compares to pg_score-only baseline
 4. Generates decision boundary plots
+5. Re-processes individual files with probit scores if pg_paths provided
 """
-function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String)
+function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String,
+                               pg_paths::Union{Vector{String}, Nothing} = nothing)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
     
@@ -1638,6 +1645,33 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Create decision boundary plots
     # TODO: Fix plotting type error
     # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
+    
+    # Re-process individual files if paths are provided
+    if pg_paths !== nothing
+        @info "Re-processing individual protein group files with probit scores"
+        for pg_path in pg_paths
+            if isfile(pg_path) && endswith(pg_path, ".arrow")
+                # Load file
+                df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+                
+                # Add derived features
+                add_feature_columns!(df)
+                
+                # Calculate probit scores
+                X_file = Matrix{Float64}(df[:, feature_names])
+                prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
+                
+                # Overwrite pg_score with probit scores
+                df[!, :pg_score] = prob_scores
+                
+                # Sort by pg_score and target in descending order
+                sort!(df, [:pg_score, :target], rev = [true, true])
+                
+                # Write back the file with probit scores
+                writeArrow(pg_path, df)
+            end
+        end
+    end
 end
 
 """
