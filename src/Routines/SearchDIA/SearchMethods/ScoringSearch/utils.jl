@@ -996,7 +996,7 @@ function get_protein_groups(
             peptide_coverage = peptide_coverage
         ))
 
-        sort!(df, :global_pg_score, rev = true)
+        sort!(df, [:global_pg_score,:target], rev = [true,true])
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
         return size(df, 1)
@@ -1240,6 +1240,66 @@ function get_protein_groups(
 
     end
 
+    # Third pass: Calculate global probit scores
+    third_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting third pass to calculate global probit scores"
+    
+    # Build dictionary of max probit scores across files
+    acc_to_max_probit_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
+    
+    for pg_path in passing_pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            table = Arrow.Table(pg_path)
+            
+            # Skip if probit_score column doesn't exist (e.g., if probit was skipped)
+            if !haskey(table, :probit_score)
+                continue
+            end
+            
+            n_rows = length(table[:protein_name])
+            for i in 1:n_rows
+                key = (protein_name = table[:protein_name][i], 
+                       target = table[:target][i], 
+                       entrap_id = table[:entrap_id][i])
+                probit_score = table[:probit_score][i]
+                
+                old = get(acc_to_max_probit_score, key, -Inf32)
+                acc_to_max_probit_score[key] = max(probit_score, old)
+            end
+        end
+    end
+    
+    # Fourth pass: Add global_probit_score to all files
+    fourth_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting fourth pass to write global probit scores"
+    
+    for pg_path in passing_pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            
+            # Skip if probit_score column doesn't exist
+            if !hasproperty(df, :probit_score)
+                continue
+            end
+            
+            # Add global_probit_score column
+            global_probit_scores = Vector{Float32}(undef, nrow(df))
+            for i in 1:nrow(df)
+                key = (protein_name = df[i, :protein_name],
+                       target = df[i, :target],
+                       entrap_id = df[i, :entrap_id])
+                global_probit_scores[i] = get(acc_to_max_probit_score, key, df[i, :probit_score])
+            end
+            df[!, :global_probit_score] = global_probit_scores
+            
+            # Write back
+            writeArrow(pg_path, df)
+        end
+    end
+    
+    fourth_pass_time = time() - fourth_pass_start
+    @info "[PERF] get_protein_groups: Fourth pass completed" elapsed=round(fourth_pass_time, digits=3)
+    
     total_elapsed = time() - start_time
     final_memory = Base.gc_live_bytes() / 1024^2
     @info "[PERF] get_protein_groups: Completed" total_elapsed=round(total_elapsed, digits=3) memory_used_MB=round(final_memory-initial_memory, digits=1) total_protein_groups=pg_count
@@ -1312,14 +1372,6 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     # and collect statistics
     total_targets = 0
     total_decoys = 0
-    targets_at_1pct = 0
-    targets_at_5pct = 0
-    targets_at_10pct = 0
-    
-    # Also track baseline (pg_score only) performance
-    pg_targets_at_1pct = 0
-    pg_targets_at_5pct = 0
-    pg_targets_at_10pct = 0
     
     # Process each file
     for pg_path in pg_paths
@@ -1337,67 +1389,21 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             # Add scores to dataframe
             df[!, :probit_score] = prob_scores
             
-            # Calculate q-values for this file
-            probit_qvalues = calculate_qvalues_from_scores(prob_scores, df.target)
-            pg_qvalues = calculate_qvalues_from_scores(df.pg_score, df.target)
-            
             # Count statistics
             total_targets += sum(df.target)
             total_decoys += sum(.!df.target)
             
-            # Count targets at different FDR thresholds
-            targets_at_1pct += sum(df.target .& (probit_qvalues .<= 0.01))
-            targets_at_5pct += sum(df.target .& (probit_qvalues .<= 0.05))
-            targets_at_10pct += sum(df.target .& (probit_qvalues .<= 0.10))
-            
-            pg_targets_at_1pct += sum(df.target .& (pg_qvalues .<= 0.01))
-            pg_targets_at_5pct += sum(df.target .& (pg_qvalues .<= 0.05))
-            pg_targets_at_10pct += sum(df.target .& (pg_qvalues .<= 0.10))
-            
             # Write back the file with probit scores
-            df[!, :probit_qval] = probit_qvalues
             writeArrow(pg_path, df)
         end
     end
     
     # Report results
-    #@info "Out-of-Memory Probit Regression Results:"
-    #@info "  Total protein groups: $(total_targets + total_decoys) (targets: $total_targets, decoys: $total_decoys)"
-    #@info "  Training sample size: $(nrow(sampled_protein_groups))"
-    
-    @info "Probit Model Performance:"
-    @info "  Targets at 1% FDR: $targets_at_1pct / $total_targets ($(round(targets_at_1pct/total_targets*100, digits=1))%)"
-    @info "  Targets at 5% FDR: $targets_at_5pct / $total_targets ($(round(targets_at_5pct/total_targets*100, digits=1))%)"
-    @info "  Targets at 10% FDR: $targets_at_10pct / $total_targets ($(round(targets_at_10pct/total_targets*100, digits=1))%)"
-    
-    @info "Baseline (pg_score only):"
-    @info "  Targets at 1% FDR: $pg_targets_at_1pct / $total_targets ($(round(pg_targets_at_1pct/total_targets*100, digits=1))%)"
-    @info "  Targets at 5% FDR: $pg_targets_at_5pct / $total_targets ($(round(pg_targets_at_5pct/total_targets*100, digits=1))%)"
-    @info "  Targets at 10% FDR: $pg_targets_at_10pct / $total_targets ($(round(pg_targets_at_10pct/total_targets*100, digits=1))%)"
-    
-    # Calculate improvements
-    improvement_1pct = targets_at_1pct - pg_targets_at_1pct
-    improvement_5pct = targets_at_5pct - pg_targets_at_5pct
-    improvement_10pct = targets_at_10pct - pg_targets_at_10pct
-    
-    @info "Improvement with Probit:"
-    if pg_targets_at_1pct > 0
-        @info "  At 1% FDR: +$improvement_1pct targets ($(round(improvement_1pct/pg_targets_at_1pct*100, digits=1))% improvement)"
-    else
-        @info "  At 1% FDR: +$improvement_1pct targets"
-    end
-    
-    if pg_targets_at_5pct > 0
-        @info "  At 5% FDR: +$improvement_5pct targets ($(round(improvement_5pct/pg_targets_at_5pct*100, digits=1))% improvement)"
-    else
-        @info "  At 5% FDR: +$improvement_5pct targets"
-    end
-    
-    if pg_targets_at_10pct > 0
-        @info "  At 10% FDR: +$improvement_10pct targets ($(round(improvement_10pct/pg_targets_at_10pct*100, digits=1))% improvement)"
-    else
-        @info "  At 10% FDR: +$improvement_10pct targets"
-    end
+    @info "Out-of-Memory Probit Regression Results:"
+    @info "  Total protein groups: $(total_targets + total_decoys) (targets: $total_targets, decoys: $total_decoys)"
+    @info "  Training sample size: $(nrow(sampled_protein_groups))"
+    @info "  Model features: $(join(feature_names, ", "))"
+    @info "  Model coefficients: $(round.(β_fitted, digits=3))"
 end
 
 """
@@ -1430,55 +1436,14 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Calculate probability scores
     prob_scores = calculate_probit_scores(X, β_fitted, X_mean, X_std)
     
-    # Calculate q-values for probit model
-    probit_qvalues = calculate_qvalues_from_scores(prob_scores, y)
+    # Add probit scores to the dataframe
+    all_protein_groups[!, :probit_score] = prob_scores
     
-    # Calculate q-values for pg_score only baseline
-    pg_qvalues = calculate_qvalues_from_scores(all_protein_groups.pg_score, y)
-    
-    # Count targets at different FDR thresholds
-    probit_targets_1pct = sum(y .& (probit_qvalues .<= 0.01))
-    probit_targets_5pct = sum(y .& (probit_qvalues .<= 0.05))
-    probit_targets_10pct = sum(y .& (probit_qvalues .<= 0.10))
-    
-    pg_targets_1pct = sum(y .& (pg_qvalues .<= 0.01))
-    pg_targets_5pct = sum(y .& (pg_qvalues .<= 0.05))
-    pg_targets_10pct = sum(y .& (pg_qvalues .<= 0.10))
-    
-    # Report results
-    @info "Probit Regression Results:"
-    @info "  Targets at 1% FDR: $probit_targets_1pct / $n_targets ($(round(probit_targets_1pct/n_targets*100, digits=1))%)"
-    @info "  Targets at 5% FDR: $probit_targets_5pct / $n_targets ($(round(probit_targets_5pct/n_targets*100, digits=1))%)"
-    @info "  Targets at 10% FDR: $probit_targets_10pct / $n_targets ($(round(probit_targets_10pct/n_targets*100, digits=1))%)"
-    
-    @info "Baseline (pg_score only):"
-    @info "  Targets at 1% FDR: $pg_targets_1pct / $n_targets ($(round(pg_targets_1pct/n_targets*100, digits=1))%)"
-    @info "  Targets at 5% FDR: $pg_targets_5pct / $n_targets ($(round(pg_targets_5pct/n_targets*100, digits=1))%)"
-    @info "  Targets at 10% FDR: $pg_targets_10pct / $n_targets ($(round(pg_targets_10pct/n_targets*100, digits=1))%)"
-    
-    # Calculate improvements
-    improvement_1pct = probit_targets_1pct - pg_targets_1pct
-    improvement_5pct = probit_targets_5pct - pg_targets_5pct
-    improvement_10pct = probit_targets_10pct - pg_targets_10pct
-    
-    @info "Improvement with Probit:"
-    if pg_targets_1pct > 0
-        @info "  At 1% FDR: +$improvement_1pct targets ($(round(improvement_1pct/pg_targets_1pct*100, digits=1))% improvement)"
-    else
-        @info "  At 1% FDR: +$improvement_1pct targets"
-    end
-    
-    if pg_targets_5pct > 0
-        @info "  At 5% FDR: +$improvement_5pct targets ($(round(improvement_5pct/pg_targets_5pct*100, digits=1))% improvement)"
-    else
-        @info "  At 5% FDR: +$improvement_5pct targets"
-    end
-    
-    if pg_targets_10pct > 0
-        @info "  At 10% FDR: +$improvement_10pct targets ($(round(improvement_10pct/pg_targets_10pct*100, digits=1))% improvement)"
-    else
-        @info "  At 10% FDR: +$improvement_10pct targets"
-    end
+    # Report basic model statistics
+    @info "Probit Regression completed:"
+    @info "  Total protein groups: $(n_targets + n_decoys) (targets: $n_targets, decoys: $n_decoys)"
+    @info "  Model features: $(join(feature_names, ", "))"
+    @info "  Model coefficients: $(round.(β_fitted, digits=3))"
     
     # Create decision boundary plots
     # TODO: Fix plotting type error

@@ -275,21 +275,21 @@ function summarize_results!(
 
         # Step 11: Merge PSM Scores by max_prob
         @info "Merging protein group scores for global q-value estimation..."
-        # Merge protein groups by global prob
+        # Merge protein groups by global probit score (post-probit regression)
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         merge_sorted_protein_groups(
             passing_proteins_folder,
             sorted_pg_scores_path,
-            :global_pg_score,
+            :global_probit_score,
             N = 1000000
         )
 
         # Step 12: Create q-value interpolation
         @info "Calculating global q-values for protein groups..."
-        # Create protein group global q-value interpolation
+        # Create protein group global q-value interpolation using probit scores
         search_context.global_pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_scores_path,
-            :global_pg_score,
+            :global_probit_score,
             true; # use unique protein groups
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
@@ -309,27 +309,28 @@ function summarize_results!(
         end
 
         # Step 12: Create q-value interpolation
-        @info "Sorting protein group tables by experiment-wide pg_score..."
+        @info "Sorting protein group tables by experiment-wide probit_score..."
         sort_protein_tables(
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
-            :pg_score
+            :probit_score
         )
+        
         # Step 13: Merge PSM Scores by prob
         @info "Merging protein group scores for experiment-wide q-value estimation..."
         merge_sorted_protein_groups(
             passing_proteins_folder,
             sorted_pg_scores_path,
-            :pg_score,
+            :probit_score,
             N = 1000000
         )
 
         # Step 14: Create q-value interpolation
         @info "Calculating experiment-wide q-values for protein groups..."
-        # Create protein group run-specific q-value interpolation
+        # Create protein group run-specific q-value interpolation using probit scores
         search_context.pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_scores_path,
-            :pg_score,
+            :probit_score,
             false; # use all protein groups
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
@@ -357,13 +358,13 @@ function summarize_results!(
             end
         end
         
-        # Filter proteins by global q-value
+        # Filter proteins by global q-value using probit scores
         get_proteins_passing_qval(
             passing_proteins_folder,
             search_context.global_pg_score_to_qval[],
             search_context.pg_score_to_qval[],
-            :global_pg_score,
-            :pg_score,
+            :global_probit_score,
+            :probit_score,
             :global_pg_qval,
             :pg_qval,
             params.q_value_threshold,
