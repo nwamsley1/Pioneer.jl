@@ -767,7 +767,7 @@ Protein group analysis
                       precursors::LibraryPrecursors; min_peptides=2,
                       protein_q_val_threshold::Float32=0.01f0)
 
-Create and score protein groups from passing PSMs.
+Create and score protein groups from passing PSMs with per-file protein inference.
 
 # Arguments
 - `passing_psms_paths`: Paths to PSM files that passed FDR threshold
@@ -779,14 +779,20 @@ Create and score protein groups from passing PSMs.
 - `protein_q_val_threshold`: Q-value threshold for protein groups (default: 0.01)
 
 # Returns
-- `protein_inference_dict`: Dictionary mapping peptides to protein groups
+- Nothing (protein inference is performed per-file)
 
 # Process
 1. Counts all possible peptides for each protein in library
-2. Performs protein inference to handle shared peptides
-3. Calculates protein group scores and features
-4. Performs probit regression analysis if sufficient data
-5. Generates QC plots with decision boundaries
+2. For each file:
+   a. Performs protein inference for that file's peptides
+   b. Creates protein groups from inferred proteins
+   c. Calculates protein group scores and features
+3. Performs probit regression analysis if sufficient data
+4. Generates QC plots with decision boundaries
+
+# Note
+Protein inference is now performed independently for each file, which reduces
+memory usage but may result in different protein groupings across files.
 """
 function get_protein_groups(
     passing_psms_paths::Vector{String},
@@ -1007,6 +1013,45 @@ function get_protein_groups(
         return size(df, 1)
     end
 
+    """
+        build_protein_peptide_rows_for_file(psms_table, precursors)
+    
+    Build protein-peptide mappings from a single file's PSMs.
+    
+    # Arguments
+    - `psms_table`: Arrow table containing PSMs from one file
+    - `precursors`: Library precursor information
+    
+    # Returns
+    - `protein_peptide_rows`: Collection of unique peptide-protein mappings
+    """
+    function build_protein_peptide_rows_for_file(psms_table, precursors)
+        protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy, :entrap_id), Tuple{String, String, Bool, UInt8}}}()
+        
+        # Get data from PSMs
+        passing_precursor_idx = psms_table[:precursor_idx]
+        
+        # Get other data from precursors
+        accession_numbers = getAccessionNumbers(precursors)
+        decoys = getIsDecoy(precursors)
+        entrap_ids = getEntrapmentGroupId(precursors)
+        sequences = getSequence(precursors)
+        
+        for pid in passing_precursor_idx
+            push!(
+                protein_peptide_rows, 
+                (
+                    sequence = sequences[pid],
+                    protein_name = accession_numbers[pid],
+                    decoy = decoys[pid],
+                    entrap_id = entrap_ids[pid]
+                )
+            )
+        end
+        
+        return collect(protein_peptide_rows)
+    end
+
     pg_count = 0
     
     # First, count all possible peptides for each protein in the library
@@ -1038,55 +1083,7 @@ function get_protein_groups(
     peptide_count_time = time() - peptide_count_start
     @info "[PERF] get_protein_groups: Peptide counting completed" elapsed=round(peptide_count_time, digits=3) n_proteins=length(protein_to_possible_peptides)
     
-    #Concatenate psms 
-    ##########
-    #Protein inference
-    ##########
-    
-    # Load all passing PSMs
-    psm_load_start = time()
-    passing_psms = Arrow.Table(passing_psms_paths)
-    n_passing_psms = length(passing_psms[:precursor_idx])
-    psm_load_time = time() - psm_load_start
-    @info "[PERF] get_protein_groups: PSMs loaded" elapsed=round(psm_load_time, digits=3) n_psms=n_passing_psms
-
-    # Build protein_peptide_rows using data from PSMs
-    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy, :entrap_id), Tuple{String, String, Bool, UInt8}}}()
-    
-    # Get data from PSMs
-    passing_precursor_idx = passing_psms[:precursor_idx]
-
-    # Get other data from precursors
-    accession_numbers = getAccessionNumbers(precursors)
-    decoys = getIsDecoy(precursors)
-    entrap_ids = getEntrapmentGroupId(precursors)
-    sequences = getSequence(precursors)
-    for pid in passing_precursor_idx
-        push!(
-            protein_peptide_rows, 
-            (
-                sequence = sequences[pid],
-                protein_name = accession_numbers[pid],
-                decoy = decoys[pid],
-                entrap_id = entrap_ids[pid]
-            )
-        )
-    end
-    protein_peptide_rows = collect(protein_peptide_rows)
-    peptides = [row.sequence for row in protein_peptide_rows]
-    proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
-    
-    inference_start = time()
-    protein_inference_dict = infer_proteins(
-        proteins,
-        peptides
-    )
-    inference_time = time() - inference_start
-    @info "[PERF] get_protein_groups: Protein inference completed" elapsed=round(inference_time, digits=3) n_peptides=length(peptides)
-    #Returns Dictionary{String, Tuple{String, Bool}}
-    #Key is a peptide base sequence (no mods or charge state)
-    #Value is 1) protein group name 2) Whether to exclude the peptide from protien quant and exclude
-    #for purposes of protein scoring as well .
+    # Per-file protein inference will be performed in the loop below
 
     acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
     run_to_protein_groups = Dict{UInt64,Dictionary}()
@@ -1105,6 +1102,16 @@ function get_protein_groups(
         file_start = time()
         psms_table = Arrow.Table(file_path)
         n_psms = length(psms_table[:precursor_idx])
+        
+        # Perform protein inference for this file
+        inference_start = time()
+        protein_peptide_rows = build_protein_peptide_rows_for_file(psms_table, precursors)
+        peptides = [row.sequence for row in protein_peptide_rows]
+        proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
+        
+        protein_inference_dict = infer_proteins(proteins, peptides)
+        inference_time = time() - inference_start
+        @info "[PERF] get_protein_groups: File protein inference" file_idx=ms_file_idx n_peptides=length(peptides) elapsed=round(inference_time, digits=3)
         
         dict_start = time()
         pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
@@ -1230,7 +1237,8 @@ function get_protein_groups(
     final_memory = Base.gc_live_bytes() / 1024^2
     @info "[PERF] get_protein_groups: Completed" total_elapsed=round(total_elapsed, digits=3) memory_used_MB=round(final_memory-initial_memory, digits=1) total_protein_groups=pg_count
     
-    return protein_inference_dict
+    # Return nothing since protein inference is now per-file
+    return nothing
 end
 
 """

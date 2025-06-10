@@ -259,7 +259,8 @@ function summarize_results!(
         # Step 10: Score Protein Groups
         @info "Scoring protein groups..."
         # Create protein groups and calculate scores
-        protein_inference_dict = get_protein_groups(
+        # Note: protein inference is now done per-file inside get_protein_groups
+        get_protein_groups(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
@@ -269,13 +270,8 @@ function summarize_results!(
             max_psms_in_memory = params.max_psms_in_memory
         )
 
-        add_protein_inference_col(
-            getPassingPsms(getMSData(search_context)),
-            protein_inference_dict,
-            getSequence(getPrecursors(getSpecLib(search_context))),
-            getIsDecoy(getPrecursors(getSpecLib(search_context))),
-            getEntrapmentGroupId(getPrecursors(getSpecLib(search_context)))
-        )
+        # Note: add_protein_inference_col is no longer needed as
+        # protein inference info is added per-file in get_protein_groups
 
         # Step 11: Merge PSM Scores by max_prob
         @info "Merging protein group scores for global q-value estimation..."
