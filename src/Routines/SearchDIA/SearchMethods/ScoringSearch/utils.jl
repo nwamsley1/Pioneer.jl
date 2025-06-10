@@ -1131,7 +1131,7 @@ function get_protein_groups(
         precursor_idx = psms_table[!,:precursor_idx]
         use_for_protein_quant = zeros(Bool, length(precursor_idx))
         for (i, pid) in enumerate(precursor_idx)
-            inferred_prot = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
+            inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
             use_for_protein_quant[i] = inferred_prot.retain
         end
         psms_table[!,:use_for_protein_quant] = use_for_protein_quant
