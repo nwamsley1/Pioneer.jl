@@ -982,37 +982,18 @@ function get_protein_groups(
         end
         
         peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
-        
-        # Create DataFrame - conditionally include global_pg_score
-        if acc_to_max_pg_score === nothing
-            # No global scores yet
-            df = DataFrame((
-                protein_name = protein_name,
-                target = target,
-                entrap_id = entrap_id,
-                pg_score = pg_score,
-                n_peptides = n_peptides,
-                total_peptide_length = total_peptide_length,
-                n_possible_peptides = n_possible_peptides,
-                peptide_coverage = peptide_coverage
-            ))
-            sort!(df, [:pg_score,:target], rev = [true,true])
-        else
-            # Include global scores
-            global_pg_score = [get(acc_to_max_pg_score, k, 0.0f0) for k in keys_array]
-            df = DataFrame((
-                protein_name = protein_name,
-                target = target,
-                entrap_id = entrap_id,
-                pg_score = pg_score,
-                global_pg_score = global_pg_score,
-                n_peptides = n_peptides,
-                total_peptide_length = total_peptide_length,
-                n_possible_peptides = n_possible_peptides,
-                peptide_coverage = peptide_coverage
-            ))
-            sort!(df, [:global_pg_score,:target], rev = [true,true])
-        end
+        # No global scores yet
+        df = DataFrame((
+            protein_name = protein_name,
+            target = target,
+            entrap_id = entrap_id,
+            pg_score = pg_score,
+            n_peptides = n_peptides,
+            total_peptide_length = total_peptide_length,
+            n_possible_peptides = n_possible_peptides,
+            peptide_coverage = peptide_coverage
+        ))
+        sort!(df, [:pg_score,:target], rev = [true,true])
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
         return size(df, 1)
@@ -1302,6 +1283,32 @@ function get_protein_groups(
     
     fourth_pass_time = time() - fourth_pass_start
     @info "[PERF] get_protein_groups: Fourth pass completed" elapsed=round(fourth_pass_time, digits=3)
+    
+    # Fifth pass: Add global_pg_score to PSM files
+    fifth_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting fifth pass to add global_pg_score to PSM files"
+    
+    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
+        if isfile(file_path) && endswith(file_path, ".arrow")
+            psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
+            
+            # Add global_pg_score column by looking up each protein group
+            global_pg_scores = Vector{Float32}(undef, nrow(psms_table))
+            for i in 1:nrow(psms_table)
+                key = (protein_name = psms_table[i, :inferred_protein_group],
+                       target = psms_table[i, :target],
+                       entrap_id = psms_table[i, :entrapment_group_id])
+                global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
+            end
+            psms_table[!, :global_pg_score] = global_pg_scores
+            
+            # Write back
+            writeArrow(file_path, psms_table)
+        end
+    end
+    
+    fifth_pass_time = time() - fifth_pass_start
+    @info "[PERF] get_protein_groups: Fifth pass completed" elapsed=round(fifth_pass_time, digits=3)
     
     total_elapsed = time() - start_time
     final_memory = Base.gc_live_bytes() / 1024^2
