@@ -179,6 +179,10 @@ Most parameters should not be changed, but the following may need adjustement.
 | `max_var_mods` | Int | Maximum variable modifications per peptide (default: 1) |
 | `add_decoys` | Boolean | Generate decoy sequences (default: true) |
 | `entrapment_r` | Float | Ratio of entrapment sequences (default: 0) |
+| `fasta_header_regex_accession` | String | Regex with a capture group for the accession |
+| `fasta_header_regex_gene` | String | Regex with a capture group for the gene name |
+| `fasta_header_regex_protein` | String | Regex with a capture group for the protein name |
+| `fasta_header_regex_organism` | String | Regex with a capture group for the organism |
 
 ### NCE Parameters
 | Parameter | Type | Description |

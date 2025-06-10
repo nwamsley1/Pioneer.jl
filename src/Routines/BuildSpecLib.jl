@@ -156,7 +156,8 @@ function BuildSpecLib(params_path::String)
                                         mz_to_ev_interp,
                                         prec_mz_min,
                                         prec_mz_max,
-                                        chronologer_in_path)
+                                        chronologer_in_path,
+                                        joinpath(lib_dir, "proteins_table.arrow"))
                 nothing
             end
             timings["Chronologer Preparation"] = chrono_prep_timing
@@ -292,7 +293,7 @@ function BuildSpecLib(params_path::String)
 
         # Verify required files
         verify_timing = @timed begin
-            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow"]
+            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"]
             if !all(isfile.(joinpath.(lib_dir, required_files)))
                 error("Missing required files in $lib_dir. Try running with predict_fragments=true")
             end
