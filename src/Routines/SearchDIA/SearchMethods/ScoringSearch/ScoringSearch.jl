@@ -283,17 +283,53 @@ function summarize_results!(
             qc_folder
         )
 
+        # Step 18: Merge protein groups by experiment-wide pg_score
+        # Merge protein groups by global pg_score (which contains probit scores after regression)
+        sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
+        @info "Merging protein group scores for experiment-wide q-value estimation..."
+        merge_sorted_protein_groups(
+            passing_proteins_folder,
+            sorted_pg_scores_path,
+            :pg_score,
+            N = 1000000
+        )
+
+        # Step 19: Create experiment-wide q-value interpolation
+        @info "Calculating experiment-wide q-values for protein groups..."
+        # Create protein group run-specific q-value interpolation
+        search_context.pg_score_to_qval[] = get_qvalue_spline(
+            sorted_pg_scores_path,
+            :pg_score,
+            false; # use all protein groups
+            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+        )
+
         # Step 13: Calculate global protein scores
         @info "Calculating global protein scores..."
         acc_to_max_pg_score = calculate_global_protein_scores(
             getPassingProteins(getMSData(search_context))
         )
 
-        # Step 14: Update PSMs with probit-scored pg_score and global scores
-        @info "Updating PSMs with probit-scored protein group scores..."
-        update_psms_with_probit_scores(
-            psm_to_pg_path,
-            acc_to_max_pg_score
+        # Merge protein groups by run-specific prob
+        if isfile(sorted_pg_scores_path)
+
+            #rm(sorted_pg_scores_path)
+            if Sys.iswindows()
+                writeArrow(
+                    sorted_pg_scores_path,
+                    DataFrame()
+                )
+            else
+                rm(sorted_pg_scores_path)
+            end
+        end
+
+        # Step 17: Sort protein groups by experiment-wide pg_score
+        @info "Sorting protein group tables by experiment-wide pg_score..."
+        sort_protein_tables(
+            getPassingProteins(getMSData(search_context)),
+            passing_proteins_folder,
+            :global_pg_score
         )
 
         # Step 15: Merge protein group scores by global_pg_score
@@ -317,70 +353,13 @@ function summarize_results!(
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
-        # Merge protein groups by run-specific prob
-        if isfile(sorted_pg_scores_path)
-
-            #rm(sorted_pg_scores_path)
-            if Sys.iswindows()
-                writeArrow(
-                    sorted_pg_scores_path,
-                    DataFrame()
-                )
-            else
-                rm(sorted_pg_scores_path)
-            end
-        end
-
-        # Step 17: Sort protein groups by experiment-wide pg_score
-        @info "Sorting protein group tables by experiment-wide pg_score..."
-        sort_protein_tables(
-            getPassingProteins(getMSData(search_context)),
-            passing_proteins_folder,
-            :pg_score
-        )
-        
-        # Step 18: Merge protein groups by experiment-wide pg_score
-        @info "Merging protein group scores for experiment-wide q-value estimation..."
-        merge_sorted_protein_groups(
-            passing_proteins_folder,
-            sorted_pg_scores_path,
-            :pg_score,
-            N = 1000000
+        # Step 14: Update PSMs with probit-scored pg_score and global scores
+        @info "Updating PSMs with probit-scored protein group scores..."
+        update_psms_with_probit_scores(
+            psm_to_pg_path,
+            acc_to_max_pg_score
         )
 
-        # Step 19: Create experiment-wide q-value interpolation
-        @info "Calculating experiment-wide q-values for protein groups..."
-        # Create protein group run-specific q-value interpolation
-        search_context.pg_score_to_qval[] = get_qvalue_spline(
-            sorted_pg_scores_path,
-            :pg_score,
-            false; # use all protein groups
-            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-        )
-
-        # Load and summarize protein groups before filtering
-        @info "Loading protein groups for summary statistics..."
-        protein_files = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        all_proteins = DataFrame()
-        for file_path in protein_files
-            append!(all_proteins, DataFrame(Arrow.Table(file_path)))
-        end
-        
-        # Display summary statistics
-        #@info "Protein group statistics before filtering:"
-        #@info "Total protein groups: $(nrow(all_proteins))"
-        #@info "Target protein groups: $(sum(all_proteins.target))"
-        #@info "Decoy protein groups: $(sum(.!all_proteins.target))"
-        
-        # Column-wise statistics
-        for col in names(all_proteins)
-            col_data = all_proteins[!, col]
-            if eltype(col_data) <: Number && !all(ismissing.(col_data))
-                non_missing = skipmissing(col_data)
-                #@info "Column '$col': min=$(minimum(non_missing)), max=$(maximum(non_missing)), mean=$(round(mean(non_missing), digits=4))"
-            end
-        end
-        
         # Filter proteins by global q-value
         get_proteins_passing_qval(
             passing_proteins_folder,

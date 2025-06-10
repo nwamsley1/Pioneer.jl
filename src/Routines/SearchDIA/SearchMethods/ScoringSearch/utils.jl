@@ -935,6 +935,18 @@ function writeProteinGroups(
     end
     
     peptide_coverage = Float32[n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
+    
+    # Calculate derived features for probit regression
+    log_n_possible_peptides = log.(n_possible_peptides .+ 1)
+    log_binom_coeff = [
+        if n_obs <= n_poss && n_obs >= 0
+            lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
+        else
+            0.0
+        end
+        for (n_poss, n_obs) in zip(n_possible_peptides, n_peptides)
+    ]
+    
     # No global scores yet
     df = DataFrame((
         protein_name = protein_name,
@@ -944,7 +956,9 @@ function writeProteinGroups(
         n_peptides = n_peptides,
         total_peptide_length = total_peptide_length,
         n_possible_peptides = n_possible_peptides,
-        peptide_coverage = peptide_coverage
+        peptide_coverage = peptide_coverage,
+        log_n_possible_peptides = log_n_possible_peptides,
+        log_binom_coeff = log_binom_coeff
     ))
     sort!(df, [:pg_score,:target], rev = [true,true])
     # Convert DataFrame to Arrow.Table
@@ -1163,9 +1177,6 @@ function perform_protein_probit_regression(
         n_decoys = sum(.!all_protein_groups.target)
         
         if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
-            # Add derived features
-            add_feature_columns!(all_protein_groups)
-            
             # Perform probit regression analysis
             @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
             perform_probit_analysis(all_protein_groups, qc_folder, passing_pg_paths)
@@ -1545,9 +1556,6 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     
     @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
-    # Add derived features
-    add_feature_columns!(sampled_protein_groups)
-    
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
     X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
@@ -1569,15 +1577,12 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             # Load file
             df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
             
-            # Add derived features
-            add_feature_columns!(df)
-            
             # Calculate probit scores
             X_file = Matrix{Float64}(df[:, feature_names])
             prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
             
             # Overwrite pg_score with probit scores
-            df[!, :pg_score] = prob_scores
+            df[!, :pg_score] = Float32.(prob_scores)
             
             # Sort by pg_score and target in descending order
             sort!(df, [:pg_score, :target], rev = [true, true])
@@ -1629,13 +1634,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     
     # Fit probit model
     β_fitted, X_mean, X_std = fit_probit_model(X, y)
-    
-    # Calculate probability scores
-    prob_scores = calculate_probit_scores(X, β_fitted, X_mean, X_std)
-    
-    # Overwrite pg_score with probit scores
-    all_protein_groups[!, :pg_score] = prob_scores
-    
+
     # Report basic model statistics
     @info "Probit Regression completed:"
     @info "  Total protein groups: $(n_targets + n_decoys) (targets: $n_targets, decoys: $n_decoys)"
@@ -1654,15 +1653,12 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
                 # Load file
                 df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
                 
-                # Add derived features
-                add_feature_columns!(df)
-                
                 # Calculate probit scores
                 X_file = Matrix{Float64}(df[:, feature_names])
                 prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
                 
                 # Overwrite pg_score with probit scores
-                df[!, :pg_score] = prob_scores
+                df[!, :pg_score] = Float32.(prob_scores)
                 
                 # Sort by pg_score and target in descending order
                 sort!(df, [:pg_score, :target], rev = [true, true])
@@ -1674,33 +1670,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     end
 end
 
-"""
-    add_feature_columns!(df::DataFrame)
-
-Add derived feature columns for protein group analysis.
-
-# Arguments
-- `df::DataFrame`: Protein groups DataFrame to modify in-place
-
-# Added columns
-- `:log_n_possible_peptides` - Log-transformed peptide count
-- `:log_binom_coeff` - Log binomial coefficient for combinatorial modeling
-"""
-function add_feature_columns!(df::DataFrame)
-    # Add log-transformed n_possible_peptides
-    df[!, :log_n_possible_peptides] = log.(df.n_possible_peptides .+ 1)
-    
-    # Add log binomial coefficient feature
-    df[!, :log_binom_coeff] = [
-        if n_obs <= n_poss && n_obs >= 0
-            lgamma(n_poss + 1) - lgamma(n_obs + 1) - lgamma(n_poss - n_obs + 1)
-        else
-            0.0
-        end
-        for (n_poss, n_obs) in zip(df.n_possible_peptides, df.n_peptides)
-    ]
-    return nothing
-end
 
 """
     fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
