@@ -66,7 +66,8 @@ function prepare_chronologer_input(
     mz_to_ev_interp::Union{Missing, InterpolationTypeAlias},
     prec_mz_min::Float32,
     prec_mz_max::Float32,
-    chronologer_out_path::String)
+    chronologer_out_path::String,
+    proteins_out_path::String)
 
     # Parse parameters into structured format
     _params = (
@@ -103,10 +104,13 @@ function prepare_chronologer_input(
 
     # Process FASTA files
     fasta_entries = Vector{FastaEntry}()
+    protein_entries = Vector{FastaEntry}()
     for (proteome_name, fasta) in zip(params["fasta_names"], params["fasta_paths"])
-        append!(fasta_entries, 
+        parsed = parse_fasta(fasta, proteome_name)
+        append!(protein_entries, parsed)
+        append!(fasta_entries,
             digest_fasta(
-                parse_fasta(fasta, proteome_name),
+                parsed,
                 proteome_name,
                 regex = Regex(_params.fasta_digest_params["cleavage_regex"]),
                 max_length = _params.fasta_digest_params["max_length"],
@@ -115,6 +119,29 @@ function prepare_chronologer_input(
             )
         )
     end
+
+    accession_rgx = haskey(params, "fasta_header_regex_accession") &&
+                    !isempty(params["fasta_header_regex_accession"])
+                    ? Regex(params["fasta_header_regex_accession"]) : nothing
+    gene_rgx = haskey(params, "fasta_header_regex_gene") &&
+               !isempty(params["fasta_header_regex_gene"])
+               ? Regex(params["fasta_header_regex_gene"]) : nothing
+    protein_rgx = haskey(params, "fasta_header_regex_protein") &&
+                  !isempty(params["fasta_header_regex_protein"])
+                  ? Regex(params["fasta_header_regex_protein"]) : nothing
+    organism_rgx = haskey(params, "fasta_header_regex_organism") &&
+                   !isempty(params["fasta_header_regex_organism"])
+                   ? Regex(params["fasta_header_regex_organism"]) : nothing
+
+    protein_df = FastaProteinTable.build_protein_df(
+        protein_entries;
+        accession_regex = accession_rgx,
+        gene_regex = gene_rgx,
+        protein_regex = protein_rgx,
+        organism_regex = organism_rgx,
+    )
+    Arrow.write(proteins_out_path, protein_df)
+    protein_idx_map = Dict{String,UInt32}(protein_df.accession[i] => UInt32(i) for i in 1:nrow(protein_df))
     # Combine shared peptides
     fasta_entries = combine_shared_peptides(fasta_entries)
     # Add entrapment sequences if specified
@@ -144,7 +171,8 @@ function prepare_chronologer_input(
         mod_to_mass_dict = mod_to_mass_dict,
         nce = _params.nce_params["nce"],
         default_charge = _params.nce_params["default_charge"],
-        dynamic_nce = _params.nce_params["dynamic_nce"]
+        dynamic_nce = _params.nce_params["dynamic_nce"],
+        protein_idx_map = protein_idx_map
     )
     # Calculate precursor m/z values
     fasta_df[!, :mz] = getMZs(
@@ -414,7 +442,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
                            mod_to_mass_dict::Dict{String, String} = Dict("Unimod:4" => "16.000"),
                            nce::Float64 = 30.0,
                            default_charge::Int = 3,
-                           dynamic_nce::Bool = true
+                           dynamic_nce::Bool = true,
+                           protein_idx_map::Dict{String,UInt32} = Dict{String,UInt32}()
                            )
 
   
@@ -468,6 +497,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
     _base_pep_id = Vector{UInt32}(undef, prec_alloc_size)
     _base_prec_id = Vector{UInt32}(undef, prec_alloc_size)
     _pair_id = Vector{UInt32}(undef, prec_alloc_size)
+    _protein_idx = Vector{UInt32}(undef, prec_alloc_size)
     for (n, peptide) in enumerate(fasta_peptides)
         sequence = get_sequence(peptide)
         #Get unique combinations of variable mods from 0-max_var_mods
@@ -490,6 +520,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         _entrapment_group_id[n] = entrapment_group_id
         _base_pep_id[n] = get_base_pep_id(peptide)
         _pair_id[n] = get_base_prec_id(peptide)
+        _protein_idx[n] = get(protein_idx_map, accession_id, UInt32(0))
     end
     n = length(fasta_peptides)
     
@@ -505,7 +536,8 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
          decoy = _decoy[1:n],
          entrapment_group_id = _entrapment_group_id[1:n],
          base_pep_id = _base_pep_id[1:n],
-         pair_id = _pair_id[1:n])
+         pair_id = _pair_id[1:n],
+         protein_idx = _protein_idx[1:n])
     )
 
     seq_df[!,:koina_sequence] = getKoinaSeqs(

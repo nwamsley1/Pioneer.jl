@@ -72,5 +72,9 @@
     "lib_name": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter",
     "new_lib_name": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter",
     "out_name": "Keap1Altimeter.tsv",
-    "predict_fragments": true
-}   
+    "predict_fragments": true,
+    "fasta_header_regex_accession": "^\\w+\\|(\\w+)\\|",
+    "fasta_header_regex_gene": " GN=(\\S+)",
+    "fasta_header_regex_protein": "^\\w+\\|\\w+\\|[^ ]+ (.*?) OS=",
+    "fasta_header_regex_organism": " OS=([^ ]+.*?) GN="
+}

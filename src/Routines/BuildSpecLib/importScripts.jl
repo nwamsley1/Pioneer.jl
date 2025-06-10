@@ -19,6 +19,7 @@ function importScripts()
     include(joinpath(root_path, "structs", "mods.jl"))
     include(joinpath(root_path, "fasta", "fasta_parser.jl"))
     include(joinpath(root_path, "fasta", "fasta_digest.jl"))
+    include(joinpath(root_path, "fasta", "fasta_protein_table.jl"))
     include(joinpath(root_path, "fasta", "fasta_utils.jl"))
     # Fragment handling
     include(joinpath(root_path, "fragments", "get_frag_bounds.jl"))
