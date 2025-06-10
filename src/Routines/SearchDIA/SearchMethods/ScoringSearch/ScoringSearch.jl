@@ -258,13 +258,13 @@ function summarize_results!(
 
         # Step 10: Count protein peptides
         @info "Counting protein peptides..."
-        protein_to_possible_peptides = count_protein_peptides(
+        protein_to_possible_peptides = Pioneer.count_protein_peptides(
             getPrecursors(getSpecLib(search_context))
         )
 
         # Step 11: Perform protein inference and initial scoring
         @info "Performing protein inference and initial scoring..."
-        perform_protein_inference(
+        pg_count, psm_to_pg_path, pg_to_psm_path = perform_protein_inference(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
@@ -289,10 +289,10 @@ function summarize_results!(
             getPassingProteins(getMSData(search_context))
         )
 
-        # Step 14: Add global scores to PSMs
-        @info "Adding global protein scores to PSMs..."
-        add_global_scores_to_psms(
-            getPassingPsms(getMSData(search_context)),
+        # Step 14: Update PSMs with probit-scored pg_score and global scores
+        @info "Updating PSMs with probit-scored protein group scores..."
+        update_psms_with_probit_scores(
+            psm_to_pg_path,
             acc_to_max_pg_score
         )
 
