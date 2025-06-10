@@ -1126,6 +1126,16 @@ function get_protein_groups(
         psms_table = DataFrame(Tables.columntable(psms_table))
         psms_table[!,:pg_score] = pg_score
         psms_table[!,:inferred_protein_group] = inferred_protein_group_names
+        
+        # Add use_for_protein_quant column based on protein inference results
+        precursor_idx = psms_table[!,:precursor_idx]
+        use_for_protein_quant = zeros(Bool, length(precursor_idx))
+        for (i, pid) in enumerate(precursor_idx)
+            inferred_prot = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
+            use_for_protein_quant[i] = inferred_prot.retain
+        end
+        psms_table[!,:use_for_protein_quant] = use_for_protein_quant
+        
         writeArrow(file_path, psms_table)
         write_time = time() - write_start
         
