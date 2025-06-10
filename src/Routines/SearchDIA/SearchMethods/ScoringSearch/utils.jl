@@ -1033,16 +1033,14 @@ function perform_protein_inference(
     all_decoys = getIsDecoy(precursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
     
-    run_to_protein_groups = Dict{UInt64,Dictionary}()
     pg_count = 0
     
     # Create bidirectional mappings between PSM and protein group files
     psm_to_pg_path = Dict{String, String}()
     pg_to_psm_path = Dict{String, String}()
 
-    # First pass to compute run_specific protein group scores
-    first_pass_start = time()
-    @info "[PERF] perform_protein_inference: Starting first pass"
+    # Single pass: compute protein groups and write immediately
+    @info "[PERF] perform_protein_inference: Starting combined inference and write pass"
     total_psms_processed = 0
     total_peptides_inferred = 0
     total_protein_groups_created = 0
@@ -1055,23 +1053,19 @@ function perform_protein_inference(
         end
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         passing_pg_paths[ms_file_idx] = protein_groups_path
-        file_start = time()
         psms_table = Arrow.Table(file_path)
         n_psms = length(psms_table[:precursor_idx])
         total_psms_processed += n_psms
         files_processed += 1
         
         # Perform protein inference for this file
-        inference_start = time()
         protein_peptide_rows = build_protein_peptide_rows_for_file(psms_table, precursors)
         peptides = [row.sequence for row in protein_peptide_rows]
         proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
         total_peptides_inferred += length(peptides)
         
         protein_inference_dict = infer_proteins(proteins, peptides)
-        inference_time = time() - inference_start
         
-        dict_start = time()
         pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
             protein_inference_dict,
             psms_table[:precursor_idx],
@@ -1081,10 +1075,8 @@ function perform_protein_inference(
             precursors;
             min_peptides = min_peptides
         )
-        dict_time = time() - dict_start
         
         # Convert and write PSMs with protein inference info
-        write_start = time()
         psms_table = DataFrame(Tables.columntable(psms_table))
         psms_table[!,:pg_score] = pg_score
         psms_table[!,:inferred_protein_group] = inferred_protein_group_names
@@ -1099,49 +1091,27 @@ function perform_protein_inference(
         psms_table[!,:use_for_protein_quant] = use_for_protein_quant
         
         writeArrow(file_path, psms_table)
-        write_time = time() - write_start
         
-        run_to_protein_groups[ms_file_idx] = protein_groups
-        total_protein_groups_created += length(protein_groups)
-        
-        file_time = time() - file_start
-    end
-    
-    first_pass_time = time() - first_pass_start
-    @info "[PERF] perform_protein_inference: First pass completed" elapsed=round(first_pass_time, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
-
-    # Second pass to write protein groups (without global scores)
-    second_pass_start = time()
-    @info "[PERF] perform_protein_inference: Starting second pass to write protein groups"
-    
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        _, extention = splitext(file_path)
-        if extention != ".arrow"
-            continue
-        end
-        protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
-        protein_groups = run_to_protein_groups[ms_file_idx]
-
-        write_start = time()
+        # Write protein groups immediately (without holding in memory)
         n_written = writeProteinGroups(
             nothing,  # No global scores yet
             protein_groups,
             protein_to_possible_peptides,
             protein_groups_path
         )
-        write_time = time() - write_start
         pg_count += n_written
+        total_protein_groups_created += length(protein_groups)
         
         # Store bidirectional mapping
         psm_to_pg_path[file_path] = protein_groups_path
         pg_to_psm_path[protein_groups_path] = file_path
+        
+        # Clear protein_groups from memory immediately
+        protein_groups = nothing
     end
     
-    second_pass_time = time() - second_pass_start
-    @info "[PERF] perform_protein_inference: Second pass completed" elapsed=round(second_pass_time, digits=3) total_groups_written=pg_count
-    
     total_elapsed = time() - start_time
-    @info "[PERF] perform_protein_inference: Completed" total_elapsed=round(total_elapsed, digits=3)
+    @info "[PERF] perform_protein_inference: Completed" total_elapsed=round(total_elapsed, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
     
     return pg_count, psm_to_pg_path, pg_to_psm_path
 end

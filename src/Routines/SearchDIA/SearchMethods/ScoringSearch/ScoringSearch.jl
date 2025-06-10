@@ -258,7 +258,7 @@ function summarize_results!(
 
         # Step 10: Count protein peptides
         @info "Counting protein peptides..."
-        protein_to_possible_peptides = Pioneer.count_protein_peptides(
+        protein_to_possible_peptides = count_protein_peptides(
             getPrecursors(getSpecLib(search_context))
         )
 
