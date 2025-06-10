@@ -145,7 +145,7 @@ function summarize_results!(
         mergeSortedArrowTables(
             passing_psms_folder,
             precursors_long_path,
-            (:inferred_protein_group, :precursor_idx),
+            (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx),
             N = 1000000
         )
 
