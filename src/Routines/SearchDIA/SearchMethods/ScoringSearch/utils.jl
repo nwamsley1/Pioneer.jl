@@ -929,10 +929,10 @@ function get_protein_groups(
     - Features: n_peptides, total_peptide_length, n_possible_peptides, peptide_coverage
     """
     function writeProteinGroups(
-                                    acc_to_max_pg_score::Dict{
+                                    acc_to_max_pg_score::Union{Nothing, Dict{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                         Float32
-                                    },
+                                    }},
                                     protein_groups::Dictionary{
                                         @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                         @NamedTuple{pg_score::Float32,  peptides::Set{String}}
@@ -951,7 +951,6 @@ function get_protein_groups(
         target = [k[:target] for k in keys_array]
         entrap_id = [k[:entrap_id] for k in keys_array]
         pg_score = [v[:pg_score] for v in values_array]
-        global_pg_score = [get(acc_to_max_pg_score, k, 0.0f0) for k in keys_array]
         #peptides = [join(v[:peptides], ";") for v in values_array]  # Convert Set to String
         
         # New feature columns
@@ -983,20 +982,37 @@ function get_protein_groups(
         end
         
         peptide_coverage = [n_pep / n_poss for (n_pep, n_poss) in zip(n_peptides, n_possible_peptides)]
-        # Create DataFrame
-        df = DataFrame((
-            protein_name = protein_name,
-            target = target,
-            entrap_id = entrap_id,
-            pg_score = pg_score,
-            global_pg_score = global_pg_score,
-            n_peptides = n_peptides,
-            total_peptide_length = total_peptide_length,
-            n_possible_peptides = n_possible_peptides,
-            peptide_coverage = peptide_coverage
-        ))
-
-        sort!(df, [:global_pg_score,:target], rev = [true,true])
+        
+        # Create DataFrame - conditionally include global_pg_score
+        if acc_to_max_pg_score === nothing
+            # No global scores yet
+            df = DataFrame((
+                protein_name = protein_name,
+                target = target,
+                entrap_id = entrap_id,
+                pg_score = pg_score,
+                n_peptides = n_peptides,
+                total_peptide_length = total_peptide_length,
+                n_possible_peptides = n_possible_peptides,
+                peptide_coverage = peptide_coverage
+            ))
+            sort!(df, [:pg_score,:target], rev = [true,true])
+        else
+            # Include global scores
+            global_pg_score = [get(acc_to_max_pg_score, k, 0.0f0) for k in keys_array]
+            df = DataFrame((
+                protein_name = protein_name,
+                target = target,
+                entrap_id = entrap_id,
+                pg_score = pg_score,
+                global_pg_score = global_pg_score,
+                n_peptides = n_peptides,
+                total_peptide_length = total_peptide_length,
+                n_possible_peptides = n_possible_peptides,
+                peptide_coverage = peptide_coverage
+            ))
+            sort!(df, [:global_pg_score,:target], rev = [true,true])
+        end
         # Convert DataFrame to Arrow.Table
         Arrow.write(protein_groups_path, df)
         return size(df, 1)
@@ -1074,7 +1090,6 @@ function get_protein_groups(
     
     # Per-file protein inference will be performed in the loop below
 
-    acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
     run_to_protein_groups = Dict{UInt64,Dictionary}()
 
     # First pass to compute run_specific and global/max protein group scores
@@ -1145,19 +1160,15 @@ function get_protein_groups(
         file_time = time() - file_start
         # First pass file completed
         
-        # update the max pg_score per accession dictionary
-        for (k, v) in pairs(protein_groups)
-            old = get(acc_to_max_pg_score, k, -Inf32)
-            acc_to_max_pg_score[k] = max(v.pg_score, old)
-        end
+        # Do not calculate global scores yet - wait until after probit analysis
     end
     
     first_pass_time = time() - first_pass_start
-    @info "[PERF] get_protein_groups: First pass completed" elapsed=round(first_pass_time, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created n_unique_groups=length(acc_to_max_pg_score) avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
+    @info "[PERF] get_protein_groups: First pass completed" elapsed=round(first_pass_time, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
 
-    # Second pass to fill in global protein group scores
+    # Second pass to write protein groups (without global scores)
     second_pass_start = time()
-    @info "[PERF] get_protein_groups: Starting second pass"
+    @info "[PERF] get_protein_groups: Starting second pass to write protein groups"
     
     for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
         _, extention = splitext(file_path)
@@ -1167,15 +1178,11 @@ function get_protein_groups(
         protein_groups_path = joinpath(protein_groups_folder, basename(file_path))
         protein_groups = run_to_protein_groups[ms_file_idx]
 
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        psms_table[!,:global_pg_score] = [ get(acc_to_max_pg_score, (protein_name = prot, target = tgt, entrap_id = entrap_id), 0.0f0)
-            for (prot, tgt, entrap_id) in zip(psms_table.inferred_protein_group, psms_table.target, psms_table.entrapment_group_id) ]
-
-        writeArrow(file_path, psms_table)
+        # Don't add global_pg_score to PSMs yet - wait until after probit analysis
 
         write_start = time()
         n_written = writeProteinGroups(
-            acc_to_max_pg_score,
+            nothing,  # No global scores yet
             protein_groups,
             protein_to_possible_peptides,
             protein_groups_path
@@ -1233,6 +1240,8 @@ function get_protein_groups(
             add_feature_columns!(all_protein_groups)
             
             # Perform probit regression analysis
+            @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
+   
             perform_probit_analysis(all_protein_groups, qc_folder)
         else
             @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
@@ -1240,53 +1249,59 @@ function get_protein_groups(
 
     end
 
-    # If probit analysis was performed, we need to recalculate global_pg_score
-    # because pg_score values have been overwritten with probit scores
-    if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
-        third_pass_start = time()
-        @info "[PERF] get_protein_groups: Recalculating global_pg_score after probit regression"
-        
-        # Reset acc_to_max_pg_score with new probit-based pg_scores
-        acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
-        
-        for pg_path in passing_pg_paths
-            if isfile(pg_path) && endswith(pg_path, ".arrow")
-                table = Arrow.Table(pg_path)
-                n_rows = length(table[:protein_name])
+    # Third pass: Calculate global_pg_score after probit analysis
+    # This works whether probit was performed or skipped
+    third_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting third pass to calculate global_pg_score"
+    
+    # Build acc_to_max_pg_score from current pg_scores (either original or probit-overwritten)
+    acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
+    
+    for pg_path in passing_pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            table = Arrow.Table(pg_path)
+            n_rows = length(table[:protein_name])
+            
+            for i in 1:n_rows
+                key = (protein_name = table[:protein_name][i], 
+                       target = table[:target][i], 
+                       entrap_id = table[:entrap_id][i])
+                pg_score = table[:pg_score][i]  # Either original or probit score
                 
-                for i in 1:n_rows
-                    key = (protein_name = table[:protein_name][i], 
-                           target = table[:target][i], 
-                           entrap_id = table[:entrap_id][i])
-                    pg_score = table[:pg_score][i]  # This is now the probit score
-                    
-                    old = get(acc_to_max_pg_score, key, -Inf32)
-                    acc_to_max_pg_score[key] = max(pg_score, old)
-                end
+                old = get(acc_to_max_pg_score, key, -Inf32)
+                acc_to_max_pg_score[key] = max(pg_score, old)
             end
         end
-        
-        # Update global_pg_score in all files
-        for pg_path in passing_pg_paths
-            if isfile(pg_path) && endswith(pg_path, ".arrow")
-                df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-                
-                # Update global_pg_score column
-                for i in 1:nrow(df)
-                    key = (protein_name = df[i, :protein_name],
-                           target = df[i, :target],
-                           entrap_id = df[i, :entrap_id])
-                    df[i, :global_pg_score] = get(acc_to_max_pg_score, key, df[i, :pg_score])
-                end
-                
-                # Write back
-                writeArrow(pg_path, df)
-            end
-        end
-        
-        third_pass_time = time() - third_pass_start
-        @info "[PERF] get_protein_groups: Global score recalculation completed" elapsed=round(third_pass_time, digits=3)
     end
+    
+    # Fourth pass: Add global_pg_score to all files
+    fourth_pass_start = time()
+    @info "[PERF] get_protein_groups: Starting fourth pass to add global_pg_score to all files"
+    
+    for pg_path in passing_pg_paths
+        if isfile(pg_path) && endswith(pg_path, ".arrow")
+            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            
+            # Add global_pg_score column
+            global_pg_scores = Vector{Float32}(undef, nrow(df))
+            for i in 1:nrow(df)
+                key = (protein_name = df[i, :protein_name],
+                       target = df[i, :target],
+                       entrap_id = df[i, :entrap_id])
+                global_pg_scores[i] = get(acc_to_max_pg_score, key, df[i, :pg_score])
+            end
+            df[!, :global_pg_score] = global_pg_scores
+            
+            # Re-sort by global_pg_score
+            sort!(df, [:global_pg_score, :target], rev = [true, true])
+            
+            # Write back
+            writeArrow(pg_path, df)
+        end
+    end
+    
+    fourth_pass_time = time() - fourth_pass_start
+    @info "[PERF] get_protein_groups: Fourth pass completed" elapsed=round(fourth_pass_time, digits=3)
     
     total_elapsed = time() - start_time
     final_memory = Base.gc_live_bytes() / 1024^2
