@@ -168,8 +168,6 @@ function summarize_results!(
             precursor_quant_col,
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
-            search_context.global_pg_score_to_qval[],
-            search_context.pg_score_to_qval[],#getPGQValueInterp(search_context),
             batch_size = params.batch_size,
             min_peptides = params.min_peptides
         )

@@ -304,23 +304,14 @@ end
 
 function LFQ(prot::DataFrame,
              protein_quant_path::String,
-                quant_col::Symbol,
-                file_id_to_parsed_name::Vector{String},
-                q_value_threshold::Float32,
-                global_score_to_qval::Interpolations.Extrapolation,
-                score_to_qval::Interpolations.Extrapolation;
-                batch_size = 100000,
-                min_peptides = 2)
+            quant_col::Symbol,
+            file_id_to_parsed_name::Vector{String},
+            q_value_threshold::Float32;
+            batch_size = 100000,
+            min_peptides = 2)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
-
-    #prot[!,:global_qval_pg] = global_score_to_qval.(coalesce.(subdf.global_pg_score, 0.0f0))
-    #prot[!,:run_specific_qval_pg] = score_to_qval.(coalesce.(subdf.pg_score, 0.0f0))
-    #Get rid of low scoring proteins 
-    filter!(x-> x.global_qval_pg <= q_value_threshold, prot);
-    filter!(x-> x.pg_qval <= q_value_threshold, prot);
-
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
         while batch_end_idx < size(prot, 1)
@@ -332,7 +323,14 @@ function LFQ(prot::DataFrame,
         subdf = prot[range(batch_start_idx, batch_end_idx),:]
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
-
+        #filter!(x-> x.global_qval_pg <= q_value_threshold, subdf);
+        #filter!(x-> x.pg_qval <= q_value_threshold, subdf);
+        #filter!(x-> x.use_for_protein_quant <= q_value_threshold, subdf);
+        subdf = subdf[(
+            subdf[!,:pg_qval].<=q_value_threshold
+        ).&(subdf[!,:global_qval_pg].<=q_value_threshold
+        ).&(subdf[!,:use_for_protein_quant])
+        ,:]
         #Exclude precursors with mods that impact quantitation
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
@@ -353,7 +351,7 @@ function LFQ(prot::DataFrame,
             :log2_abundance => zeros(Union{Missing, Float32}, nrows),
             :experiments => zeros(Union{Missing, UInt32}, nrows),
             :global_qval => zeros(Union{Missing, Float32}, nrows),
-            :run_specific_qval => zeros(Union{Missing, Float32}, nrows),
+            :qval => zeros(Union{Missing, Float32}, nrows),
         )
         for i in range(1, nrows)
             out[:target][i] = missing
@@ -364,12 +362,10 @@ function LFQ(prot::DataFrame,
             out[:experiments][i] = missing
             out[:log2_abundance][i] = missing
             out[:global_qval][i] = missing
-            out[:run_specific_qval][i] = missing
+            out[:qval][i] = missing
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            #filter!(x->x.use_for_protein_quant::Bool, data) #Maybe this is a bit slow. But works for now. 
-            data = data[data[!,:use_for_protein_quant],:]
             getProtAbundance(protein[:inferred_protein_group], 
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
@@ -380,7 +376,7 @@ function LFQ(prot::DataFrame,
                                 data[!,:use_for_protein_quant],
                                 data[!,quant_col],
                                 data[!,:global_qval_pg],
-                                data[!,:run_specific_qval_pg],
+                                data[!,:pg_qval],
                                 out[:target],
                                 out[:entrap_id],
                                 out[:species],
@@ -389,7 +385,7 @@ function LFQ(prot::DataFrame,
                                 out[:experiments],
                                 out[:log2_abundance],
                                 out[:global_qval],
-                                out[:run_specific_qval]
+                                out[:qval]
                             )
         end
         out = DataFrame(out)
@@ -418,7 +414,7 @@ function LFQ(prot::DataFrame,
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance]); 
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance]); 
                 file=false)  # file=false creates stream format
             end
         else
@@ -429,7 +425,7 @@ function LFQ(prot::DataFrame,
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance])
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance])
             )
         end
         n_writes += 1

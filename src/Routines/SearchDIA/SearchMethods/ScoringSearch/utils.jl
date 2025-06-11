@@ -832,7 +832,7 @@ function getProteinGroupsDict(
     end
     
     # Rest of the function remains the same...
-    pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
+    #pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
     inferred_protein_group_names = Vector{Union{Missing, String}}(undef, length(psm_precursor_idx))
     for i in range(1, length(psm_precursor_idx))
         precursor_idx = psm_precursor_idx[i]
@@ -843,7 +843,7 @@ function getProteinGroupsDict(
         
         # Skip if not in dictionary
         if !haskey(protein_inference_dict, peptide_key)
-            pg_score[i] = missing
+            #pg_score[i] = missing
             continue
         end
         
@@ -852,14 +852,14 @@ function getProteinGroupsDict(
 
         key = (protein_name = protein_name, target = psm_is_target[i], entrap_id = psm_entrapment_id[i])
         
-        if haskey(protein_groups, key)
-            pg_score[i] = protein_groups[key][:pg_score]
-        else
-            pg_score[i] = missing
-        end
+        #if haskey(protein_groups, key)
+        #    pg_score[i] = protein_groups[key][:pg_score]
+        #else
+        #    pg_score[i] = missing
+        #end
     end
     
-    return pg_score, inferred_protein_group_names, protein_groups
+    return inferred_protein_group_names, protein_groups#pg_score, inferred_protein_group_names, protein_groups
 end
 
 """
@@ -1028,9 +1028,7 @@ Perform protein inference and initial scoring (first and second pass).
 - `min_peptides`: Minimum peptides per protein group
 
 # Returns
-- `pg_count`: Total number of protein groups written
 - `psm_to_pg_path`: Dictionary mapping PSM file paths to protein group file paths
-- `pg_to_psm_path`: Dictionary mapping protein group file paths to PSM file paths
 """
 function perform_protein_inference(
     passing_psms_paths::Vector{String},
@@ -1047,11 +1045,8 @@ function perform_protein_inference(
     all_decoys = getIsDecoy(precursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
     
-    pg_count = 0
-    
     # Create bidirectional mappings between PSM and protein group files
     psm_to_pg_path = Dict{String, String}()
-    pg_to_psm_path = Dict{String, String}()
 
     # Single pass: compute protein groups and write immediately
     @info "[PERF] perform_protein_inference: Starting combined inference and write pass"
@@ -1080,7 +1075,16 @@ function perform_protein_inference(
         
         protein_inference_dict = infer_proteins(proteins, peptides)
         
-        pg_score, inferred_protein_group_names, protein_groups = getProteinGroupsDict(
+        #protein groups maps protein names to scores and peptide set 
+        #=
+        like so 
+        protein_groups = Dictionary{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
+        @NamedTuple{
+            pg_score::Float32, 
+            peptides::Set{String}}
+        }()
+        =#
+        inferred_protein_group_names, protein_groups = getProteinGroupsDict(
             protein_inference_dict,
             psms_table[:precursor_idx],
             psms_table[:prob],
@@ -1092,7 +1096,7 @@ function perform_protein_inference(
         
         # Convert and write PSMs with protein inference info
         psms_table = DataFrame(Tables.columntable(psms_table))
-        psms_table[!,:pg_score] = pg_score
+        #psms_table[!,:pg_score] = pg_score
         psms_table[!,:inferred_protein_group] = inferred_protein_group_names
         
         # Add use_for_protein_quant column based on protein inference results
@@ -1113,12 +1117,10 @@ function perform_protein_inference(
             protein_to_possible_peptides,
             protein_groups_path
         )
-        pg_count += n_written
         total_protein_groups_created += length(protein_groups)
         
         # Store bidirectional mapping
         psm_to_pg_path[file_path] = protein_groups_path
-        pg_to_psm_path[protein_groups_path] = file_path
         
         # Clear protein_groups from memory immediately
         protein_groups = nothing
@@ -1127,7 +1129,7 @@ function perform_protein_inference(
     total_elapsed = time() - start_time
     @info "[PERF] perform_protein_inference: Completed" total_elapsed=round(total_elapsed, digits=3) files_processed=files_processed total_psms=total_psms_processed total_peptides_inferred=total_peptides_inferred total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
     
-    return pg_count, psm_to_pg_path, pg_to_psm_path
+    return psm_to_pg_path
 end
 
 """
@@ -1351,13 +1353,13 @@ function update_psms_with_probit_scores(
         n_psms = nrow(psms_df)
         
         # Update pg_score column with probit scores
-        probit_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
+        probit_pg_scores = Vector{Float32}(undef, n_psms)
         global_pg_scores = Vector{Float32}(undef, n_psms)
         
         for i in 1:n_psms
             # Skip if missing inferred protein group
             if ismissing(psms_df[i, :inferred_protein_group])
-                probit_pg_scores[i] = missing
+                probit_pg_scores[i] = 0.0f0
                 global_pg_scores[i] = 0.0f0
                 continue
             end
@@ -1368,7 +1370,7 @@ function update_psms_with_probit_scores(
                    entrap_id = psms_df[i, :entrapment_group_id])
             
             # Get probit pg_score
-            probit_pg_scores[i] = get(pg_score_lookup, key, missing)
+            probit_pg_scores[i] = get(pg_score_lookup, key, 0.0f0)
             
             # Get global pg_score
             global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
@@ -1379,12 +1381,12 @@ function update_psms_with_probit_scores(
         psms_df[!, :global_pg_score] = global_pg_scores
         
         # Calculate q-values using interpolation functions
-        pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
+        pg_qvals = Vector{Float32}(undef, n_psms)
         global_pg_qvals = Vector{Float32}(undef, n_psms)
         
         for i in 1:n_psms
             if ismissing(probit_pg_scores[i])
-                pg_qvals[i] = missing
+                pg_qvals[i] = 1.0f0
                 global_pg_qvals[i] = 1.0f0
             else
                 pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])

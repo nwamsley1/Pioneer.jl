@@ -257,14 +257,18 @@ function summarize_results!(
         )
 
         # Step 10: Count protein peptides
+        # This is useful for counting some of the protein-group features
+        # for target-decoy discriminatin (e.g. the fraction of observed vs. possible peptides
+        #in the library for each protein group)
         @info "Counting protein peptides..."
         protein_to_possible_peptides = count_protein_peptides(
             getPrecursors(getSpecLib(search_context))
         )
 
         # Step 11: Perform protein inference and initial scoring
+        # Also links each psms table path to it's corresponding pg group table path. 
         @info "Performing protein inference and initial scoring..."
-        pg_count, psm_to_pg_path, pg_to_psm_path = perform_protein_inference(
+        psm_to_pg_path = perform_protein_inference(
             getPassingPsms(getMSData(search_context)),
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
