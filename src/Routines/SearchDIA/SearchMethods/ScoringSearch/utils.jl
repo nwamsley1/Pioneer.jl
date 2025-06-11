@@ -1313,7 +1313,9 @@ Update PSMs with probit-scored pg_score values after regression.
 """
 function update_psms_with_probit_scores(
     psm_to_pg_path::Dict{String, String},
-    acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}
+    acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32},
+    pg_score_to_qval::Interpolations.Extrapolation,
+    global_pg_score_to_qval::Interpolations.Extrapolation
 )
     start_time = time()
     @info "[PERF] update_psms_with_probit_scores: Starting"
@@ -1375,6 +1377,24 @@ function update_psms_with_probit_scores(
         # Update columns
         psms_df[!, :pg_score] = probit_pg_scores
         psms_df[!, :global_pg_score] = global_pg_scores
+        
+        # Calculate q-values using interpolation functions
+        pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
+        global_pg_qvals = Vector{Float32}(undef, n_psms)
+        
+        for i in 1:n_psms
+            if ismissing(probit_pg_scores[i])
+                pg_qvals[i] = missing
+                global_pg_qvals[i] = 1.0f0
+            else
+                pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
+                global_pg_qvals[i] = global_pg_score_to_qval(global_pg_scores[i])
+            end
+        end
+        
+        # Add q-value columns
+        psms_df[!, :pg_qval] = pg_qvals
+        psms_df[!, :global_qval_pg] = global_pg_qvals
         
         # Write back
         writeArrow(psm_path, psms_df)

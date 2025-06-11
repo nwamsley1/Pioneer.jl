@@ -315,8 +315,11 @@ function LFQ(prot::DataFrame,
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
 
-    prot[!,:global_qval_pg] = zeros(Float32, nrow(prot))
-    prot[!,:run_specific_qval_pg] = zeros(Float32, nrow(prot))
+    #prot[!,:global_qval_pg] = global_score_to_qval.(coalesce.(subdf.global_pg_score, 0.0f0))
+    #prot[!,:run_specific_qval_pg] = score_to_qval.(coalesce.(subdf.pg_score, 0.0f0))
+    #Get rid of low scoring proteins 
+    filter!(x-> x.global_qval_pg <= q_value_threshold, prot);
+    filter!(x-> x.pg_qval <= q_value_threshold, prot);
 
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
@@ -330,14 +333,8 @@ function LFQ(prot::DataFrame,
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
 
-        subdf.global_qval_pg = global_score_to_qval.(coalesce.(subdf.global_pg_score, 0.0f0))
-        subdf.run_specific_qval_pg = score_to_qval.(coalesce.(subdf.pg_score, 0.0f0))
-        #Get rid of low scoring proteins 
-        filter!(x-> x.global_qval_pg <= q_value_threshold, subdf);
-        filter!(x-> x.run_specific_qval_pg <= q_value_threshold, subdf);
-
         #Exclude precursors with mods that impact quantitation
-        filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
+        #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
             [:target, :entrapment_group_id, :species, :inferred_protein_group]

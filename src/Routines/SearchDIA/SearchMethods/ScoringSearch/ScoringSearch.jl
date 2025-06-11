@@ -353,13 +353,6 @@ function summarize_results!(
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
-        # Step 14: Update PSMs with probit-scored pg_score and global scores
-        @info "Updating PSMs with probit-scored protein group scores..."
-        update_psms_with_probit_scores(
-            psm_to_pg_path,
-            acc_to_max_pg_score
-        )
-
         # Filter proteins by global q-value
         get_proteins_passing_qval(
             passing_proteins_folder,
@@ -372,7 +365,14 @@ function summarize_results!(
             params.q_value_threshold,
         )
 
-
+        # Step 14: Update PSMs with probit-scored pg_score and global scores
+        @info "Updating PSMs with probit-scored protein group scores..."
+        update_psms_with_probit_scores(
+            psm_to_pg_path,
+            acc_to_max_pg_score,
+            search_context.pg_score_to_qval[],
+            search_context.global_pg_score_to_qval[]
+        )
 
         best_traces = nothing # Free memory
     catch e
