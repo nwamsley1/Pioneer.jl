@@ -777,7 +777,7 @@ function getProteinGroupsDict(
     psm_is_target::AbstractVector{Bool},
     psm_entrapment_id::AbstractVector{UInt8},
     precursors::LibraryPrecursors;
-    min_peptides::Int64 = 2)
+    min_peptides::Int64 = 1)
 
     #accession_numbers = getAccessionNumbers(precursors)
     precursor_sequence = getSequence(precursors)
@@ -787,6 +787,7 @@ function getProteinGroupsDict(
         peptides::Set{String}}
     }()
 
+    inferred_protein_group_names = Vector{Union{Missing, String}}(undef, length(psm_precursor_idx))
     for i in range(1, length(psm_precursor_idx))
         precursor_idx = psm_precursor_idx[i]
         sequence = precursor_sequence[precursor_idx]
@@ -796,9 +797,10 @@ function getProteinGroupsDict(
         
         # Check if this peptide exists in our protein inference dictionary
         if !haskey(protein_inference_dict, peptide_key)
+            throw("Peptide key not found error!")
             continue
         end
-        
+        inferred_protein_group_names[i] = protein_inference_dict[peptide_key][:protein_name]
         # Exclude peptide 
         if protein_inference_dict[peptide_key][:retain] == false
             continue
@@ -831,36 +833,9 @@ function getProteinGroupsDict(
         protein_groups[key] = (pg_score = pg_score, peptides = peptides)
     end
     
-    # Rest of the function remains the same...
-    #pg_score = Vector{Union{Missing, Float32}}(undef, length(psm_precursor_idx))
-    inferred_protein_group_names = Vector{Union{Missing, String}}(undef, length(psm_precursor_idx))
-    for i in range(1, length(psm_precursor_idx))
-        precursor_idx = psm_precursor_idx[i]
-        sequence = precursor_sequence[precursor_idx]
-        
-        # Create key for protein_inference_dict lookup
-        peptide_key = (peptide = sequence, decoy = !psm_is_target[i], entrap_id = psm_entrapment_id[i])
-        
-        # Skip if not in dictionary
-        if !haskey(protein_inference_dict, peptide_key)
-            #pg_score[i] = missing
-            continue
-        end
-        
-        protein_name = protein_inference_dict[peptide_key][:protein_name]
-        inferred_protein_group_names[i] = protein_name
-
-        key = (protein_name = protein_name, target = psm_is_target[i], entrap_id = psm_entrapment_id[i])
-        
-        #if haskey(protein_groups, key)
-        #    pg_score[i] = protein_groups[key][:pg_score]
-        #else
-        #    pg_score[i] = missing
-        #end
-    end
-    
     return inferred_protein_group_names, protein_groups#pg_score, inferred_protein_group_names, protein_groups
 end
+
 
 """
     writeProteinGroups(acc_to_max_pg_score, protein_groups, 
@@ -1036,7 +1011,7 @@ function perform_protein_inference(
     protein_groups_folder::String,
     precursors::LibraryPrecursors,
     protein_to_possible_peptides::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}};
-    min_peptides::Int64 = 2
+    min_peptides::Int64 = 1
 )
     start_time = time()
     
@@ -1074,7 +1049,16 @@ function perform_protein_inference(
         total_peptides_inferred += length(peptides)
         
         protein_inference_dict = infer_proteins(proteins, peptides)
-        
+        # Convert and write PSMs with protein inference info
+        psms_table = DataFrame(Tables.columntable(psms_table))
+        # Add use_for_protein_quant column based on protein inference results
+        precursor_idx = psms_table[!,:precursor_idx]
+        use_for_protein_quant = zeros(Bool, length(precursor_idx))
+        for (i, pid) in enumerate(precursor_idx)
+            inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
+            use_for_protein_quant[i] = inferred_prot.retain
+        end
+        psms_table[!,:use_for_protein_quant] = use_for_protein_quant
         #protein groups maps protein names to scores and peptide set 
         #=
         like so 
@@ -1086,28 +1070,14 @@ function perform_protein_inference(
         =#
         inferred_protein_group_names, protein_groups = getProteinGroupsDict(
             protein_inference_dict,
-            psms_table[:precursor_idx],
-            psms_table[:prob],
-            psms_table[:target],
-            psms_table[:entrapment_group_id],
+            psms_table[!,:precursor_idx],
+            psms_table[!,:prob],
+            psms_table[!,:target],
+            psms_table[!,:entrapment_group_id],
             precursors;
             min_peptides = min_peptides
         )
-        
-        # Convert and write PSMs with protein inference info
-        psms_table = DataFrame(Tables.columntable(psms_table))
-        #psms_table[!,:pg_score] = pg_score
-        psms_table[!,:inferred_protein_group] = inferred_protein_group_names
-        
-        # Add use_for_protein_quant column based on protein inference results
-        precursor_idx = psms_table[!,:precursor_idx]
-        use_for_protein_quant = zeros(Bool, length(precursor_idx))
-        for (i, pid) in enumerate(precursor_idx)
-            inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
-            use_for_protein_quant[i] = inferred_prot.retain
-        end
-        psms_table[!,:use_for_protein_quant] = use_for_protein_quant
-        
+        psms_table[!,:inferred_protein_group] = inferred_protein_group_names    
         writeArrow(file_path, psms_table)
         
         # Write protein groups immediately (without holding in memory)
@@ -1359,6 +1329,7 @@ function update_psms_with_probit_scores(
         for i in 1:n_psms
             # Skip if missing inferred protein group
             if ismissing(psms_df[i, :inferred_protein_group])
+                throw("Missing Inferred Protein Group!!!")
                 probit_pg_scores[i] = 0.0f0
                 global_pg_scores[i] = 0.0f0
                 continue
@@ -1370,8 +1341,13 @@ function update_psms_with_probit_scores(
                    entrap_id = psms_df[i, :entrapment_group_id])
             
             # Get probit pg_score
+            if !haskey(pg_score_lookup, key)
+                throw("Missing pg score lookup key!!!")
+            end
             probit_pg_scores[i] = get(pg_score_lookup, key, 0.0f0)
-            
+            if !haskey(acc_to_max_pg_score, key)
+                throw("Missing global pg score lookup key!!!")
+            end
             # Get global pg_score
             global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
         end

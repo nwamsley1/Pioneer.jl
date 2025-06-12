@@ -308,7 +308,7 @@ function LFQ(prot::DataFrame,
             file_id_to_parsed_name::Vector{String},
             q_value_threshold::Float32;
             batch_size = 100000,
-            min_peptides = 2)
+            min_peptides = 1)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
