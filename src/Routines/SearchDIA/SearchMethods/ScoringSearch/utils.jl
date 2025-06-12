@@ -1012,8 +1012,25 @@ function get_protein_groups(
             run_pseudocounts[ms_idx] = pseudocount_val
         end
 
+        # Map protein groups to the union of precursor indices from all proteins in the group
+        group_to_precursor_indices = Dict{NamedTuple{(:protein_name,:target,:entrap_id),Tuple{String,Bool,UInt8}}, Vector{UInt32}}()
+        for groups in values(run_to_protein_groups)
+            for (gkey, _) in pairs(groups)
+                if !haskey(group_to_precursor_indices, gkey)
+                    prec_set = Set{UInt32}()
+                    for prot in split(gkey.protein_name, ';')
+                        pkey = (protein_name = String(prot), target = gkey.target, entrap_id = gkey.entrap_id)
+                        if haskey(protein_to_precursor_indices, pkey)
+                            union!(prec_set, protein_to_precursor_indices[pkey])
+                        end
+                    end
+                    group_to_precursor_indices[gkey] = collect(prec_set)
+                end
+            end
+        end
+
         expected = Dict{NamedTuple{(:protein_name,:target,:entrap_id),Tuple{String,Bool,UInt8}}, NamedTuple{(:precursors,:abundance),Tuple{Vector{UInt32},Vector{Float64}}}}()
-        for (key, prec_list) in pairs(protein_to_precursor_indices)
+        for (key, prec_list) in pairs(group_to_precursor_indices)
             sum_vec = zeros(Float64, length(prec_list))
             total_score = 0.0
             for (ms_idx, fpath) in enumerate(passing_psms_paths)
