@@ -52,7 +52,8 @@ function importScripts()
             "FragBoundModel.jl",
             "RetentionTimeIndex.jl",
             "MassErrorModel.jl",                                                                  
-            "RetentionTimeConversionModel.jl"
+            "RetentionTimeConversionModel.jl",
+            "protein_inference_types.jl"
             ]
     )
 

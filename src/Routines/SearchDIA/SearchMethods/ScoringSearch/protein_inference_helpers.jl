@@ -105,13 +105,13 @@ Perform protein inference for peptides in a single file.
 """
 function perform_file_protein_inference(psms_table, precursors)::InferenceResult
     # Extract peptide-protein pairs
-    pairs = extract_peptide_protein_pairs(psms_table, precursors)
+    peptide_protein_pairs = extract_peptide_protein_pairs(psms_table, precursors)
     
     # Convert to format expected by infer_proteins
     proteins_vec = Vector{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
     peptides_vec = Vector{String}()
     
-    for (pep_key, prot_key) in pairs
+    for (pep_key, prot_key) in peptide_protein_pairs
         push!(proteins_vec, (
             protein_name = prot_key.name,
             decoy = !prot_key.is_target,
