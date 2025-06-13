@@ -32,7 +32,7 @@ function build_protein_peptide_catalog(precursors::LibraryPrecursors)
     @info "[PERF] Building protein-peptide catalog" n_precursors=length(all_accessions)
     start_time = time()
     
-    for i in 1:length(all_accessions)
+    for i in eachindex(all_accessions)
         # Handle proteins with shared peptides (semicolon-delimited)
         protein_names = split(all_accessions[i], ';')
         sequence = all_sequences[i]
