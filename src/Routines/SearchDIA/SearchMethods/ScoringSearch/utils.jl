@@ -787,7 +787,7 @@ function getProteinGroupsDict(
         peptides::Set{String}}
     }()
 
-    inferred_protein_group_names = Vector{Union{Missing, String}}(undef, length(psm_precursor_idx))
+    #inferred_protein_group_names = Vector{Union{Missing, String}}(undef, length(psm_precursor_idx))
     for i in range(1, length(psm_precursor_idx))
         precursor_idx = psm_precursor_idx[i]
         sequence = precursor_sequence[precursor_idx]
@@ -800,7 +800,7 @@ function getProteinGroupsDict(
             throw("Peptide key not found error!")
             continue
         end
-        inferred_protein_group_names[i] = protein_inference_dict[peptide_key][:protein_name]
+        #inferred_protein_group_names[i] = protein_inference_dict[peptide_key][:protein_name]
         # Exclude peptide 
         if protein_inference_dict[peptide_key][:retain] == false
             continue
@@ -833,7 +833,7 @@ function getProteinGroupsDict(
         protein_groups[key] = (pg_score = pg_score, peptides = peptides)
     end
     
-    return inferred_protein_group_names, protein_groups#pg_score, inferred_protein_group_names, protein_groups
+    return protein_groups#inferred_protein_group_names, protein_groups#pg_score, inferred_protein_group_names, protein_groups
 end
 
 
@@ -857,15 +857,11 @@ Write protein groups with features to Arrow file.
 - Features: n_peptides, total_peptide_length, n_possible_peptides, peptide_coverage
 """
 function writeProteinGroups(
-                                acc_to_max_pg_score::Union{Nothing, Dict{
-                                    @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
-                                    Float32
-                                }},
                                 protein_groups::Dictionary{
                                     @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                     @NamedTuple{pg_score::Float32,  peptides::Set{String}}
                                 },
-                                protein_to_possible_peptides::Dict{
+                                protein_accession_to_possible_peptides::Dict{
                                     @NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},
                                     Set{String}
                                 },
@@ -889,7 +885,9 @@ function writeProteinGroups(
     # Handle protein groups with multiple proteins separated by semicolons
     n_possible_peptides = zeros(UInt16, length(keys_array))
     for (i, k) in enumerate(keys_array)
-        # Split the protein group name by semicolons
+        # Split the protein group name by semicolons.
+        # Key distinction from protein group and accession number is_decoy
+        # a protein group can be a list of accession numbers concatenated with ';' delimeters
         protein_names_in_group = split(k[:protein_name], ';')
         
         # Union of all peptide sets from proteins in the group
@@ -900,8 +898,8 @@ function writeProteinGroups(
                             target = k[:target], 
                             entrap_id = k[:entrap_id])
             # Get the set of peptides for this protein and union with existing
-            if haskey(protein_to_possible_peptides, individual_key)
-                union!(all_possible_peptides, protein_to_possible_peptides[individual_key])
+            if haskey(protein_accession_to_possible_peptides, individual_key)
+                union!(all_possible_peptides, protein_accession_to_possible_peptides[individual_key])
             end
         end
         
@@ -938,7 +936,7 @@ function writeProteinGroups(
     sort!(df, [:pg_score,:target], rev = [true,true])
     # Convert DataFrame to Arrow.Table
     Arrow.write(protein_groups_path, df)
-    return size(df, 1)
+    return
 end
 
 """
@@ -1042,23 +1040,39 @@ function perform_protein_inference(
         total_psms_processed += n_psms
         files_processed += 1
         
-        # Perform protein inference for this file
+        # Prepare for protein inference. Could combine build_protein_peptide_rows_for_file and infer_proteins
+        #in one infer_proteins call w/ a wrapper function 
+        # Get list of protein/peptide pairs in the psms file. 
         protein_peptide_rows = build_protein_peptide_rows_for_file(psms_table, precursors)
         peptides = [row.sequence for row in protein_peptide_rows]
         proteins = [(protein_name = row.protein_name, decoy = row.decoy, entrap_id = row.entrap_id) for row in protein_peptide_rows]
         total_peptides_inferred += length(peptides)
-        
+        #=
+        returns: ::Dictionary{
+                NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}, 
+                NamedTuple{(:protein_name, :decoy, :entrap_id, :retain), Tuple{String, Bool, UInt8, Bool}}
+        }
+        Maps peptide names to their infered protein groups. The 'protein_name' of the protein group can be 
+        multiple accession numbers/proein names seperated by semi-colons and sorted alpha-numerically.  
+        'retain' refers to whether or not the peptide key should be used to score and quantify the protein group. 
+        =#
         protein_inference_dict = infer_proteins(proteins, peptides)
+
         # Convert and write PSMs with protein inference info
         psms_table = DataFrame(Tables.columntable(psms_table))
+
         # Add use_for_protein_quant column based on protein inference results
         precursor_idx = psms_table[!,:precursor_idx]
         use_for_protein_quant = zeros(Bool, length(precursor_idx))
+        inferred_protein_names = Vector{String}(undef, length(precursor_idx))
         for (i, pid) in enumerate(precursor_idx)
             inferred_prot = protein_inference_dict[(peptide = all_sequences[pid], decoy = all_decoys[pid], entrap_id = all_entrap_ids[pid])]
             use_for_protein_quant[i] = inferred_prot.retain
+            inferred_protein_names[i] = inferred_prot.protein_name
         end
         psms_table[!,:use_for_protein_quant] = use_for_protein_quant
+        psms_table[!,:inferred_protein_group] = inferred_protein_names
+        filter!(x->x.retain, protein_inference_dict)
         #protein groups maps protein names to scores and peptide set 
         #=
         like so 
@@ -1068,7 +1082,8 @@ function perform_protein_inference(
             peptides::Set{String}}
         }()
         =#
-        inferred_protein_group_names, protein_groups = getProteinGroupsDict(
+        #inferred_protein_group_names, 
+        pg_to_peptides_dict = getProteinGroupsDict(
             protein_inference_dict,
             psms_table[!,:precursor_idx],
             psms_table[!,:prob],
@@ -1077,13 +1092,11 @@ function perform_protein_inference(
             precursors;
             min_peptides = min_peptides
         )
-        psms_table[!,:inferred_protein_group] = inferred_protein_group_names    
         writeArrow(file_path, psms_table)
         
         # Write protein groups immediately (without holding in memory)
-        n_written = writeProteinGroups(
-            nothing,  # No global scores yet
-            protein_groups,
+        writeProteinGroups(
+            pg_to_peptides_dict,
             protein_to_possible_peptides,
             protein_groups_path
         )
@@ -1284,6 +1297,7 @@ Update PSMs with probit-scored pg_score values after regression.
    - Write back updated PSM file
 """
 function update_psms_with_probit_scores(
+    ptable::Any,
     psm_to_pg_path::Dict{String, String},
     acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
@@ -1342,6 +1356,9 @@ function update_psms_with_probit_scores(
             
             # Get probit pg_score
             if !haskey(pg_score_lookup, key)
+                println("key $key")
+                pid = psms_df[i,:precursor_idx]
+                println("getAccessionNumbers(ptable)[pid] ", getAccessionNumbers(ptable)[pid])
                 throw("Missing pg score lookup key!!!")
             end
             probit_pg_scores[i] = get(pg_score_lookup, key, 0.0f0)
