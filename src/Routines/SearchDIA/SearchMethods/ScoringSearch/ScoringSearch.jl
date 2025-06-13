@@ -6,6 +6,11 @@ This includes XGBoost model training, trace scoring, and protein group analysis.
 """
 struct ScoringSearch <: SearchMethod end
 
+# Export new types for use in other modules
+export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
+       ProteinGroupBuilder, InferenceResult, FileMapping,
+       add_peptide!, finalize, to_protein_key, to_namedtuple, to_peptide_key
+
 #==========================================================
 Type Definitions 
 ==========================================================#
