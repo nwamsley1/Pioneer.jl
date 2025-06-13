@@ -171,8 +171,8 @@ end
 Add a bidirectional file mapping.
 """
 function add_mapping!(mapping::FileMapping, psm_path::String, pg_path::String)
-    mapping.psm_to_pg[psm_path] = pg_path
-    mapping.pg_to_psm[pg_path] = psm_path
+    insert!(mapping.psm_to_pg, psm_path, pg_path)
+    insert!(mapping.pg_to_psm, pg_path, psm_path)
 end
 
 # Conversion utilities for backward compatibility
