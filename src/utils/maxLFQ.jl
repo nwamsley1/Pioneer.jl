@@ -186,7 +186,7 @@ function getProtAbundance(protein::String,
                             use_for_quant::AbstractVector{Bool},
                             abundance::AbstractVector{Union{T, Missing}},
                             global_qvals::AbstractVector{Float32},
-                            run_specific_qvals::AbstractVector{Float32},
+                            qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -195,7 +195,7 @@ function getProtAbundance(protein::String,
                             experiments_out::Vector{Union{Missing, UInt32}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
-                            run_specific_qval_out::Vector{Union{Missing, Float32}}) where {T <: Real}
+                            qval_out::Vector{Union{Missing, Float32}}) where {T <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -216,7 +216,7 @@ function getProtAbundance(protein::String,
                             unique_peptides::Vector{UInt32}, 
                             log2_abundances::Vector{T},
                             global_qvals::AbstractVector{Float32},
-                            run_specific_qvals::AbstractVector{Float32},
+                            qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
@@ -224,7 +224,7 @@ function getProtAbundance(protein::String,
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}}, 
                             global_qval_out::Vector{Union{Missing, Float32}}, 
-                            run_specific_qval_out::Vector{Union{Missing, Float32}}, 
+                            qval_out::Vector{Union{Missing, Float32}}, 
                             experiments_out::Vector{Union{Missing, I}}, 
                             S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
@@ -253,7 +253,7 @@ function getProtAbundance(protein::String,
         for i in range(0, N-1)
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
             global_qval_out[row_idx + i] = global_qvals[i + 1]
-            run_specific_qval_out[row_idx + i] = run_specific_qvals[i + 1]
+            qval_out[row_idx + i] = qvals[i + 1]
             experiments_out[row_idx + i] = unique_experiments[i + 1]
             protein_out[row_idx + i] = protein
             species_out[row_idx + i] = species
@@ -288,7 +288,7 @@ function getProtAbundance(protein::String,
                    unique_peptides, 
                    log2_abundances,
                    global_qvals,
-                   run_specific_qvals,
+                   qvals,
                    target_out,
                    entrap_id_out,
                    species_out,
@@ -296,7 +296,7 @@ function getProtAbundance(protein::String,
                    peptides_out, 
                    log2_abundance_out,
                    global_qval_out,
-                   run_specific_qval_out,
+                   qval_out,
                    experiments_out,
                    S)
 
@@ -312,6 +312,8 @@ function LFQ(prot::DataFrame,
 
     batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
     n_writes = 0
+    is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
+    @info "Is prot sorted? $is_prot_sorted"
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
         while batch_end_idx < size(prot, 1)
@@ -430,7 +432,8 @@ function LFQ(prot::DataFrame,
         end
         n_writes += 1
     end
-
+    test_pgs = DataFrame(Tables.columntable(Arrow.Table(protein_quant_path)))
+    @info "Size of protein groups long table after maxLFQ step " size(test_pgs)
     return nothing
 end
 

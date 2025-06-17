@@ -553,14 +553,13 @@ function get_psms_passing_qval(
         passing_psms[!,qval_col_global] = qval_interp_global.(passing_psms[!,prob_col_global])
         passing_psms[!,qval_col_experiment_wide] = qval_interp_experiment_wide.(passing_psms[!,prob_col_experiment_wide])
         #passing_psms[!,:pep] = pep_spline.(passing_psms[!,prob_col])
-
         cols = [
             :precursor_idx,
             :global_prob,
             :prec_prob,
             :prob,
             :global_qval,
-            :run_specific_qval,
+            :qval,
             :prec_mz,
             #:pep,
             :weight,
@@ -583,13 +582,16 @@ function get_psms_passing_qval(
         #    joinpath(passing_psms_folder, basename(file_path)),
         #    passing_psms
         #)
-        writeArrow(joinpath(passing_psms_folder, basename(file_path)),
-        passing_psms)
+
+        writeArrow(
+            joinpath(passing_psms_folder, basename(file_path)),
+            passing_psms
+            )
         passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
     end
     return
 end
-
+#=
 """
     get_psms_passing_qval(precursors::PlexedLibraryPrecursors, passing_psms_paths::Vector{String}, 
                          passing_psms_folder::String, second_pass_psms_paths::Vector{String}, 
@@ -692,7 +694,7 @@ function get_psms_passing_qval(
         # Find the minimum q-value for each peptide group
         min_qval_df = combine(
             groupby(df, [:ms_file_idx, :sequence, :structural_mods, :charge]),
-            :run_specific_qval => minimum => :min_qval
+            :qval => minimum => :min_qval
         )
         
         temp_df = select(min_qval_df, 
@@ -713,14 +715,14 @@ function get_psms_passing_qval(
     psms[!,:sequence] = [getSequence(precursors)[pid] for pid in psms[!,:precursor_idx]]
     psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in psms[!,:precursor_idx]]
     #psms = groupLevelQval(psms)
-    psms[!,:run_specific_qval] = qval_interp.(psms[!,:prob])
+    psms[!,:qval] = qval_interp.(psms[!,:prob])
     psms = minQval(psms)
     psms[!,:pep] = pep_spline.(psms[!,:prob])
     select!(psms,
     [
         :precursor_idx,
         :prob,
-        :run_specific_qval,
+        :qval,
         :min_qval,
         :prec_mz,
         #:pep,
@@ -746,7 +748,7 @@ function get_psms_passing_qval(
 
     return
 end
-
+=#
 #==========================================================
 Protein group analysis
 ==========================================================#
@@ -1214,6 +1216,9 @@ function update_psms_with_probit_scores(
         # Load protein groups to get probit-scored pg_score values
         pg_table = Arrow.Table(pg_path)
         
+        # Debug: Check what's in the protein group file
+        @info "Loading protein groups for lookup" file=basename(pg_path) n_rows=length(pg_table[:protein_name])
+        
         # Create lookup dictionary: (protein_name, target, entrap_id) -> probit pg_score
         pg_score_lookup = Dict{ProteinKey, Float32}()
         n_pg_rows = length(pg_table[:protein_name])
@@ -1228,7 +1233,9 @@ function update_psms_with_probit_scores(
         end
         
         # Add diagnostic logging for pg_score_lookup
-        @info "Built pg_score_lookup" file=basename(pg_path) n_entries=length(pg_score_lookup)
+        n_target_pgs = sum(key.is_target for key in keys(pg_score_lookup))
+        n_decoy_pgs = length(pg_score_lookup) - n_target_pgs
+        @info "Built pg_score_lookup" file=basename(pg_path) n_entries=length(pg_score_lookup) targets=n_target_pgs decoys=n_decoy_pgs
         if length(pg_score_lookup) > 0
             sample_key = first(keys(pg_score_lookup))
             @info "Sample pg_score_lookup key" key=sample_key types=(protein_name=typeof(sample_key.name), target=typeof(sample_key.is_target), entrap_id=typeof(sample_key.entrap_id))
@@ -1265,6 +1272,7 @@ function update_psms_with_probit_scores(
             if !haskey(pg_score_lookup, key)
                 # Enhanced diagnostic logging
                 @info "Missing key details" key=key types=(protein_name=typeof(key.name), target=typeof(key.is_target), entrap_id=typeof(key.entrap_id))
+                @info "PSM info" row=i inferred_protein_group=psms_df[i, :inferred_protein_group] target=psms_df[i, :target] use_for_protein_quant=psms_df[i, :use_for_protein_quant]
                 throw("Missing pg score lookup key!!!")
             end
 
@@ -1485,8 +1493,8 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     y = sampled_protein_groups.target
     
     # Fit probit model on sampled data
-    β_fitted, X_mean, X_std = fit_probit_model(X, y)
-    
+    #β_fitted, X_mean, X_std = fit_probit_model(X, y)
+    β_fitted = fit_probit_model(X, y)
     @info "Fitted probit model coefficients: $β_fitted"
     
     # Now apply the model to all protein groups file by file
@@ -1502,7 +1510,7 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
             
             # Calculate probit scores
             X_file = Matrix{Float64}(df[:, feature_names])
-            prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
+            prob_scores = calculate_probit_scores(X_file, β_fitted)#, X_mean, X_std)
             
             # Overwrite pg_score with probit scores
             df[!, :pg_score] = Float32.(prob_scores)
@@ -1546,18 +1554,19 @@ Perform probit regression analysis on protein groups with comparison to baseline
 5. Re-processes individual files with probit scores if pg_paths provided
 """
 function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String,
-                               pg_paths::Union{Vector{String}, Nothing} = nothing)
+                               pg_paths::Union{Vector{String}, Nothing} = nothing;
+                               show_improvement = true)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
-    
+    @info "In memory probit regression analysis" n_targets=n_targets n_decoys=n_decoys total_protein_groups=nrow(all_protein_groups)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]#, :log_binom_coeff]
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
     
     # Fit probit model
-    β_fitted, X_mean, X_std = fit_probit_model(X, y)
-
+    #β_fitted, X_mean, X_std = fit_probit_model(X, y)
+    β_fitted = fit_probit_model(X, y)
     # Report basic model statistics
     @info "Probit Regression completed:"
     @info "  Total protein groups: $(n_targets + n_decoys) (targets: $n_targets, decoys: $n_decoys)"
@@ -1575,21 +1584,44 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
             if isfile(pg_path) && endswith(pg_path, ".arrow")
                 # Load file
                 df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+                n_before = nrow(df)
+                n_target_before = sum(df.target)
+                n_decoy_before = n_before - n_target_before
                 
                 # Calculate probit scores
                 X_file = Matrix{Float64}(df[:, feature_names])
-                prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
-                
+                #prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
+                prob_scores = calculate_probit_scores(X_file, β_fitted)
                 # Overwrite pg_score with probit scores
+                df[!,:old_pg_score] = copy(df.pg_score)  # Keep old pg_score for reference
                 df[!, :pg_score] = Float32.(prob_scores)
                 
                 # Sort by pg_score and target in descending order
                 sort!(df, [:pg_score, :target], rev = [true, true])
                 
+                # Log what we're writing back
+                n_after = nrow(df)
+                n_target_after = sum(df.target)
+                n_decoy_after = n_after - n_target_after
+                @info "Probit reprocessing file" file=basename(pg_path) before=(total=n_before, targets=n_target_before, decoys=n_decoy_before) after=(total=n_after, targets=n_target_after, decoys=n_decoy_after)
+                
                 # Write back the file with probit scores
                 writeArrow(pg_path, df)
             end
         end
+    end
+    if show_improvement 
+        all_pgs = DataFrame(Tables.columntable(Arrow.Table(pg_paths)))
+        old_qvalues = zeros(Float32, size(all_pgs, 1))
+        get_qvalues!(all_pgs[!,:old_pg_score], all_pgs[!,:target], old_qvalues)
+        old_passing = sum((old_qvalues .<= 0.01f0) .& all_pgs.target)
+        @info "Old passing qvals " sum((old_qvalues .<= 0.01f0) .& all_pgs.target) # Count targets with qval < 0.01
+        new_qvalues = zeros(Float32, size(all_pgs, 1))
+        get_qvalues!(all_pgs[!,:pg_score], all_pgs[!,:target], new_qvalues)
+        new_passing = sum((new_qvalues .<= 0.01f0) .& all_pgs.target)
+        @info "New passing qvals " sum((new_qvalues .<= 0.01f0) .& all_pgs.target) # Count targets with qval < 0.01
+        percent_improv = 100.0*(new_passing - old_passing)/old_passing |> round 
+        @info "Probit regression improved passing targets by $(percent_improv)%"
     end
 end
 
@@ -1610,10 +1642,10 @@ Fit a probit regression model for protein group classification.
 """
 function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     # Standardize features
-    X_mean = mean(X, dims=1)
-    X_std = std(X, dims=1)
-    X_std[X_std .== 0] .= 1.0  # Avoid division by zero
-    X_standardized = (X .- X_mean) ./ X_std
+    #X_mean = mean(X, dims=1)
+    #X_std = std(X, dims=1)
+    #X_std[X_std .== 0] .= 1.0  # Avoid division by zero
+    X_standardized =X#(X .- X_mean) ./ X_std
     
     # Add intercept column
     X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
@@ -1630,7 +1662,7 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     # Fit probit model
     β_fitted = Pioneer.ProbitRegression(β, X_df, y, data_chunks, max_iter=30)
     
-    return β_fitted, vec(X_mean), vec(X_std)
+    return β_fitted#, vec(X_mean), vec(X_std)
 end
 
 """
@@ -1647,9 +1679,11 @@ Calculate probit probability scores for new data.
 # Returns
 - `Vector{Float64}`: Probability scores
 """
-function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}, X_mean::Vector{Float64}, X_std::Vector{Float64})
+function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}
+    #, X_mean::Vector{Float64}, X_std::Vector{Float64}
+    )
     # Standardize using training statistics
-    X_standardized = (X .- X_mean') ./ X_std'
+    X_standardized = X#(X .- X_mean') ./ X_std'
     
     # Add intercept
     X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
@@ -2090,11 +2124,13 @@ function get_proteins_passing_qval(
         passing_proteins[!,global_qval_col] = global_qval_interp.(passing_proteins[!,global_prob_col])
         passing_proteins[!,experiment_wide_qval_col] = experiment_wide_qval_interp.(passing_proteins[!,experiment_wide_prob_col])
 
-        # Sample the rows and convert to DataFrame
-        filter!(x->(x[global_qval_col]<=q_val_threshold)&(x[experiment_wide_qval_col]<=q_val_threshold), passing_proteins)
-        # Append to the result DataFrame
-        writeArrow(            joinpath(passing_proteins_folder, basename(file_path)),
-        passing_proteins)
+        # Add a column to mark which protein groups pass the q-value threshold
+        # Instead of filtering, we preserve all groups for lookups
+        passing_proteins[!, :passes_qval] = (passing_proteins[!,global_qval_col] .<= q_val_threshold) .& 
+                                             (passing_proteins[!,experiment_wide_qval_col] .<= q_val_threshold)
+        
+        # Write back with all protein groups preserved
+        writeArrow(joinpath(passing_proteins_folder, basename(file_path)), passing_proteins)
     end
     
     return

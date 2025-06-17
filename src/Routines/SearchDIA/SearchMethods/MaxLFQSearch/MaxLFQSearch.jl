@@ -142,6 +142,19 @@ function summarize_results!(
 
         @info "Merging quantification tables..."
         # Merge quantification tables
+        for psms_path in readdir(passing_psms_folder, join=true)
+            if endswith(psms_path, ".arrow")
+                @info "Processing file: $psms_path"
+                # Load and process each PSM file
+                passing_psms = DataFrame(Tables.columntable(Arrow.Table(psms_path)))
+                @info "Is sorted? before " issorted(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
+                sort!(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
+                @info "Is sorted? after " issorted(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
+             
+                writeArrow(psms_path, passing_psms)
+                
+            end
+        end
         mergeSortedArrowTables(
             passing_psms_folder,
             precursors_long_path,
@@ -149,6 +162,15 @@ function summarize_results!(
             N = 1000000
         )
 
+        is_table_sorted = issorted(
+            DataFrame(Arrow.Table(precursors_long_path)), 
+            [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], 
+            rev = [true, true, true, true])
+        @info "Is precursors_long sorted? $is_table_sorted"
+
+        long_psms = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
+        sort!(long_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
+        writeArrow(precursors_long_path, long_psms)
         @info "Writing precursor results..."
         # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(

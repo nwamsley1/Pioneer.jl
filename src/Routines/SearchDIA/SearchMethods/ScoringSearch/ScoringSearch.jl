@@ -257,7 +257,7 @@ function summarize_results!(
             :global_prob,
             :prec_prob,
             :global_qval,
-            :run_specific_qval,
+            :qval,
             params.q_value_threshold,
         )
 
@@ -374,6 +374,14 @@ function summarize_results!(
             params.q_value_threshold,
         )
 
+        @info "DEBUG"
+        test_pgs = Arrow.Table(readdir(passing_proteins_folder, join =true))
+        ew_count = (test_pgs[:target].==true).&(test_pgs[:pg_qval].<=params.q_value_threshold) |> sum #|> @info "DEBUG: Number of passing protein groups: "
+        global_count = (test_pgs[:target].==true).&(test_pgs[:global_pg_qval].<=params.q_value_threshold) |> sum #|> @info "DEBUG: Number of passing protein groups (global): "
+        ew_global_count = (test_pgs[:target].==true).&(test_pgs[:global_pg_qval].<=params.q_value_threshold).&(test_pgs[:pg_qval].<=params.q_value_threshold) |> sum #|> @info "DEBUG: Number of passing protein groups (global and pg): " 
+        @info "DEBUG: Number of passing protein groups: $ew_count"
+        @info "DEBUG: Number of passing protein groups (global): $global_count"
+        @info "DEBUG: Number of passing protein groups (global and pg): $ew_global_count"
         # Step 14: Update PSMs with probit-scored pg_score and global scores
         @info "Updating PSMs with probit-scored protein group scores..."
         update_psms_with_probit_scores(

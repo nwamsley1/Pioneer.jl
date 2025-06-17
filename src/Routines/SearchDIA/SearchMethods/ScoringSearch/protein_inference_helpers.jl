@@ -336,6 +336,11 @@ function process_single_file_protein_inference(psm_path::String, ms_file_idx::In
     psms_table = Arrow.Table(psm_path)
     @info "Processing file for protein inference" file=basename(psm_path) n_psms=length(psms_table[:precursor_idx])
     
+    # Count target vs decoy PSMs
+    n_target_psms = sum(psms_table[:target])
+    n_decoy_psms = length(psms_table[:target]) - n_target_psms
+    @info "PSM breakdown" targets=n_target_psms decoys=n_decoy_psms
+    
     # Perform inference
     inference = perform_file_protein_inference(psms_table, precursors)
     
@@ -343,8 +348,19 @@ function process_single_file_protein_inference(psm_path::String, ms_file_idx::In
     psms_df = DataFrame(Tables.columntable(psms_table))
     psms_df = update_psms_with_inference(psms_df, inference, precursors)
     
+    # Count PSMs marked for quantification
+    n_quant_psms = sum(psms_df.use_for_protein_quant)
+    n_target_quant = sum(psms_df.use_for_protein_quant .& psms_df.target)
+    n_decoy_quant = sum(psms_df.use_for_protein_quant .& .!psms_df.target)
+    @info "PSMs for quantification" total=n_quant_psms targets=n_target_quant decoys=n_decoy_quant
+    
     # Create protein groups
     group_builders = create_protein_groups_from_psms(psms_df, inference, precursors, min_peptides)
+    
+    # Count protein groups before min_peptides filter
+    n_target_groups_pre = sum(key.is_target for key in keys(group_builders))
+    n_decoy_groups_pre = length(group_builders) - n_target_groups_pre
+    @info "Protein groups before min_peptides filter" targets=n_target_groups_pre decoys=n_decoy_groups_pre min_peptides=min_peptides
     
     # Write updated PSMs
     writeArrow(psm_path, psms_df)
@@ -355,6 +371,11 @@ function process_single_file_protein_inference(psm_path::String, ms_file_idx::In
         features = calculate_protein_features(builder, catalog)
         insert!(protein_groups, key, finalize(builder, features))
     end
+    
+    # Count final protein groups
+    n_target_groups = sum(key.is_target for key in keys(protein_groups))
+    n_decoy_groups = length(protein_groups) - n_target_groups
+    @info "Final protein groups" targets=n_target_groups decoys=n_decoy_groups
     
     # Write protein groups
     pg_path = joinpath(protein_groups_folder, basename(psm_path))

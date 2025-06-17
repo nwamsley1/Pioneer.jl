@@ -136,7 +136,7 @@ function writePrecursorCSV(
                              :global_prob,
                              :run_specific_prob,
                              :global_qval,
-                             :run_specific_qval,
+                             :qval,
                              :peak_area,
                              :peak_area_normalized,
                              :points_integrated,
