@@ -1246,18 +1246,14 @@ function update_psms_with_probit_scores(
             # Skip if missing inferred protein group
             if ismissing(psms_df[i, :inferred_protein_group])
                 throw("Missing Inferred Protein Group!!!")
-                probit_pg_scores[i] = 0.0f0
-                global_pg_scores[i] = 0.0f0
                 continue
             end
 
+            #Peptide didn't match to a distinct protein group 
             if psms_df[i,:use_for_protein_quant] == false
                 continue
             end
             
-            if psms_df[i,:target] == false 
-                continue
-            end
             # Create key for lookup 
             key = ProteinKey(
                     psms_df[i, :inferred_protein_group],
@@ -1269,21 +1265,16 @@ function update_psms_with_probit_scores(
             if !haskey(pg_score_lookup, key)
                 # Enhanced diagnostic logging
                 @info "Missing key details" key=key types=(protein_name=typeof(key.name), target=typeof(key.is_target), entrap_id=typeof(key.entrap_id))
-                #@info "PSM details" row=i precursor_idx=psms_df[i,:precursor_idx] target = psms_df[i,:target], entrap_id = psms_df[i,:entrapment_group_id] protein_from_lib=getAccessionNumbers(ptable)[psms_df[i,:precursor_idx]]
-                #@info "Display psms_df[i,:] " display(psms_df[i,:])
-                # Show a few available keys for comparison
-                #available_keys = collect(Iterators.take(keys(pg_score_lookup), min(5, length(pg_score_lookup))))
-                #@info "Sample available keys" keys=available_keys
-                #continue
-                #throw("Missing pg score lookup key!!!")
-                continue
+                throw("Missing pg score lookup key!!!")
             end
-            probit_pg_scores[i] = get(pg_score_lookup, key, 0.0f0)
+
+            probit_pg_scores[i] = pg_score_lookup[key]
+
             if !haskey(acc_to_max_pg_score, key)
                 throw("Missing global pg score lookup key!!!")
             end
             # Get global pg_score
-            global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
+            global_pg_scores[i] = acc_to_max_pg_score[key]
         end
         
         # Update columns

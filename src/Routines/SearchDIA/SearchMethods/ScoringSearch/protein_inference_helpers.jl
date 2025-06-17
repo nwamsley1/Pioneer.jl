@@ -212,9 +212,9 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
     
     for i in 1:nrow(psms_df)
         # Skip if not used for quantification
-        #if psms_df[i, :use_for_protein_quant]
-        #    continue
-        #end
+        if psms_df[i, :use_for_protein_quant] == false
+            continue
+        end
         
         pid = psms_df[i, :precursor_idx]
         score = psms_df[i, :prob]
