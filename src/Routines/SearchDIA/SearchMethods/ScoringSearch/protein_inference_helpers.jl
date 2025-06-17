@@ -174,13 +174,10 @@ function update_psms_with_inference(psms_df::DataFrame, inference::InferenceResu
         
         if haskey(inference.peptide_to_protein, pep_key)
             protein_key = inference.peptide_to_protein[pep_key]
-            use_for_protein_quant[i] = get(inference.use_for_quant, pep_key, false)
+            use_for_protein_quant[i] = inference.use_for_quant[pep_key]
             inferred_protein_names[i] = protein_key.name
         else
-            # This shouldn't happen, but handle gracefully
-            use_for_protein_quant[i] = false
-            inferred_protein_names[i] = "UNKNOWN"
-            @warn "Peptide not found in inference results" peptide=pep_key
+            throw("Peptide not found in inference results: $pep_key")
         end
     end
     
@@ -215,9 +212,9 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
     
     for i in 1:nrow(psms_df)
         # Skip if not used for quantification
-        if !psms_df[i, :use_for_protein_quant]
-            continue
-        end
+        #if psms_df[i, :use_for_protein_quant]
+        #    continue
+        #end
         
         pid = psms_df[i, :precursor_idx]
         score = psms_df[i, :prob]
@@ -230,6 +227,7 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
         )
         
         if !haskey(inference.peptide_to_protein, pep_key)
+            throw("No peptide key!!!")
             continue
         end
         
@@ -348,15 +346,15 @@ function process_single_file_protein_inference(psm_path::String, ms_file_idx::In
     # Create protein groups
     group_builders = create_protein_groups_from_psms(psms_df, inference, precursors, min_peptides)
     
+    # Write updated PSMs
+    writeArrow(psm_path, psms_df)
+
     # Calculate features and finalize groups
     protein_groups = Dictionary{ProteinKey, ProteinGroup}()
     for (key, builder) in pairs(group_builders)
         features = calculate_protein_features(builder, catalog)
         insert!(protein_groups, key, finalize(builder, features))
     end
-    
-    # Write updated PSMs
-    writeArrow(psm_path, psms_df)
     
     # Write protein groups
     pg_path = joinpath(protein_groups_folder, basename(psm_path))
@@ -394,9 +392,9 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     log_binom_coeffs = Vector{Float32}(undef, n_groups)
     
     for (i, (key, group)) in enumerate(pairs(protein_groups))
-        protein_names[i] = group.key.name
-        targets[i] = group.key.is_target
-        entrap_ids[i] = group.key.entrap_id
+        protein_names[i] = key.name#group.key.name
+        targets[i] = key.is_target#group.key.is_target
+        entrap_ids[i] = key.entrap_id#group.key.entrap_id
         pg_scores[i] = group.score
         n_peptides[i] = group.features.n_peptides
         total_peptide_lengths[i] = group.features.total_peptide_length

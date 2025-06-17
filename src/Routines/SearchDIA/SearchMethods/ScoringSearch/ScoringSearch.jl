@@ -377,7 +377,7 @@ function summarize_results!(
         # Step 14: Update PSMs with probit-scored pg_score and global scores
         @info "Updating PSMs with probit-scored protein group scores..."
         update_psms_with_probit_scores(
-             getPrecursors(getSpecLib(search_context)),
+            getPrecursors(getSpecLib(search_context)),
             psm_to_pg_path,
             acc_to_max_pg_score,
             search_context.pg_score_to_qval[],

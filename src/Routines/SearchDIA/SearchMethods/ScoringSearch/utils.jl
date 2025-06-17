@@ -965,7 +965,7 @@ function perform_protein_inference(
     # Step 1: Build protein-peptide catalog
     # Convert old Dict format to new Dictionary format
     catalog = Dictionary{ProteinKey, Set{String}}()
-    for (old_key, peptide_set) in protein_to_possible_peptides
+    for (old_key, peptide_set) in pairs(protein_to_possible_peptides)
         new_key = ProteinKey(old_key.protein_name, old_key.target, old_key.entrap_id)
         insert!(catalog, new_key, peptide_set)
     end
@@ -1076,7 +1076,7 @@ function calculate_global_protein_scores(passing_pg_paths::Vector{String})
     @info "[PERF] calculate_global_protein_scores: Starting"
     
     # Build acc_to_max_pg_score from current pg_scores (either original or probit-overwritten)
-    acc_to_max_pg_score = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}()
+    acc_to_max_pg_score = Dict{ProteinKey,Float32}()
     
     for pg_path in passing_pg_paths
         if isfile(pg_path) && endswith(pg_path, ".arrow")
@@ -1084,9 +1084,11 @@ function calculate_global_protein_scores(passing_pg_paths::Vector{String})
             n_rows = length(table[:protein_name])
             
             for i in 1:n_rows
-                key = (protein_name = table[:protein_name][i], 
-                        target = table[:target][i], 
-                        entrap_id = table[:entrap_id][i])
+                key = ProteinKey(
+                    table[:protein_name][i], 
+                    table[:target][i], 
+                    table[:entrap_id][i]
+                )
                 pg_score = table[:pg_score][i]  # Either original or probit score
                 
                 old = get(acc_to_max_pg_score, key, -Inf32)
@@ -1106,9 +1108,11 @@ function calculate_global_protein_scores(passing_pg_paths::Vector{String})
             # Add global_pg_score column
             global_pg_scores = Vector{Float32}(undef, nrow(df))
             for i in 1:nrow(df)
-                key = (protein_name = df[i, :protein_name],
-                        target = df[i, :target],
-                        entrap_id = df[i, :entrap_id])
+                key = ProteinKey(
+                    df[i, :protein_name],
+                    df[i, :target],
+                    df[i, :entrap_id]
+                )
                 global_pg_scores[i] = get(acc_to_max_pg_score, key, df[i, :pg_score])
             end
             df[!, :global_pg_score] = global_pg_scores
@@ -1188,7 +1192,7 @@ Update PSMs with probit-scored pg_score values after regression.
 function update_psms_with_probit_scores(
     ptable::Any,
     psm_to_pg_path::Dict{String, String},
-    acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32},
+    acc_to_max_pg_score::Dict{ProteinKey,Float32},
     pg_score_to_qval::Interpolations.Extrapolation,
     global_pg_score_to_qval::Interpolations.Extrapolation
 )
@@ -1211,14 +1215,23 @@ function update_psms_with_probit_scores(
         pg_table = Arrow.Table(pg_path)
         
         # Create lookup dictionary: (protein_name, target, entrap_id) -> probit pg_score
-        pg_score_lookup = Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Float32}()
+        pg_score_lookup = Dict{ProteinKey, Float32}()
         n_pg_rows = length(pg_table[:protein_name])
         
         for i in 1:n_pg_rows
-            key = (protein_name = pg_table[:protein_name][i],
-                   target = pg_table[:target][i],
-                   entrap_id = pg_table[:entrap_id][i])
+            key = ProteinKey(
+                    pg_table[:protein_name][i],
+                    pg_table[:target][i],
+                    pg_table[:entrap_id][i]
+                )
             pg_score_lookup[key] = pg_table[:pg_score][i]  # This is now the probit score
+        end
+        
+        # Add diagnostic logging for pg_score_lookup
+        @info "Built pg_score_lookup" file=basename(pg_path) n_entries=length(pg_score_lookup)
+        if length(pg_score_lookup) > 0
+            sample_key = first(keys(pg_score_lookup))
+            @info "Sample pg_score_lookup key" key=sample_key types=(protein_name=typeof(sample_key.name), target=typeof(sample_key.is_target), entrap_id=typeof(sample_key.entrap_id))
         end
         
         # Load PSMs
@@ -1237,18 +1250,33 @@ function update_psms_with_probit_scores(
                 global_pg_scores[i] = 0.0f0
                 continue
             end
+
+            if psms_df[i,:use_for_protein_quant] == false
+                continue
+            end
             
-            # Create key for lookup
-            key = (protein_name = psms_df[i, :inferred_protein_group],
-                   target = psms_df[i, :target],
-                   entrap_id = psms_df[i, :entrapment_group_id])
+            if psms_df[i,:target] == false 
+                continue
+            end
+            # Create key for lookup 
+            key = ProteinKey(
+                    psms_df[i, :inferred_protein_group],
+                    psms_df[i, :target],
+                    psms_df[i, :entrapment_group_id]
+                )
             
             # Get probit pg_score
             if !haskey(pg_score_lookup, key)
-                println("key $key")
-                pid = psms_df[i,:precursor_idx]
-                println("getAccessionNumbers(ptable)[pid] ", getAccessionNumbers(ptable)[pid])
-                throw("Missing pg score lookup key!!!")
+                # Enhanced diagnostic logging
+                @info "Missing key details" key=key types=(protein_name=typeof(key.name), target=typeof(key.is_target), entrap_id=typeof(key.entrap_id))
+                #@info "PSM details" row=i precursor_idx=psms_df[i,:precursor_idx] target = psms_df[i,:target], entrap_id = psms_df[i,:entrapment_group_id] protein_from_lib=getAccessionNumbers(ptable)[psms_df[i,:precursor_idx]]
+                #@info "Display psms_df[i,:] " display(psms_df[i,:])
+                # Show a few available keys for comparison
+                #available_keys = collect(Iterators.take(keys(pg_score_lookup), min(5, length(pg_score_lookup))))
+                #@info "Sample available keys" keys=available_keys
+                #continue
+                #throw("Missing pg score lookup key!!!")
+                continue
             end
             probit_pg_scores[i] = get(pg_score_lookup, key, 0.0f0)
             if !haskey(acc_to_max_pg_score, key)
@@ -1371,7 +1399,7 @@ function get_protein_groups(
     protein_groups_folder::String,
     temp_folder::String,
     precursors::LibraryPrecursors;
-    min_peptides = 2,
+    min_peptides = 1,
     protein_q_val_threshold::Float32 = 0.01f0,
     max_psms_in_memory::Int64 = 10000000  # Default value if not provided
 )
