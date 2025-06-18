@@ -3,14 +3,21 @@
 ## Current Progress
 
 ### ✅ Completed
-- FileReferences.jl with basic types
-- SearchResultReferences.jl 
-- FileOperations.jl with streaming operations
-- Comprehensive unit tests
+- FileReferences.jl with abstract FileReference type hierarchy
+- SearchResultReferences.jl with type-safe result management
+- FileOperations.jl with streaming operations using abstract types
+- Algorithm wrappers (apply_protein_inference, update_psms_with_scores)
+- ScoringSearch interface functions (scoring_interface.jl)
+- Comprehensive unit tests for all components
 
-### 🔄 Needs Revision
-- Add abstract FileReference type hierarchy
-- Update operations to use abstract types
+### 🔄 In Progress
+- Phase 4: Update MaxLFQSearch to use references
+- Phase 5: Add reference storage to SearchContext
+
+### 📝 Notes
+- Streaming operations simplified for initial implementation
+- getProteinGroupsDict stubbed for testing (real implementation would import from utils)
+- All tests passing for completed phases
 
 ## Improved Architecture with Abstract Types
 

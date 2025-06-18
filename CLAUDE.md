@@ -312,3 +312,39 @@ diagnose_protein_scoring_issue(passing_psms_paths, passing_pg_paths, precursors)
 
 ## Memories
 - remember me as memory update
+
+## Current Development: SearchMethods Refactoring (2024-01)
+
+### Overview
+Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access.
+
+### Completed Work
+1. **Phase 1**: Created abstract FileReference type hierarchy
+   - FileReferences.jl: Abstract base type with PSMFileReference and ProteinGroupFileReference
+   - SearchResultReferences.jl: Type-safe result management
+   - FileOperations.jl: Updated to use abstract types
+
+2. **Phase 2**: Added algorithm wrappers
+   - apply_protein_inference: Wraps getProteinGroupsDict from utils
+   - update_psms_with_scores: Streaming PSM score updates
+
+3. **Phase 3**: Created ScoringSearch interface
+   - scoring_interface.jl: Reference-only functions for ScoringSearch
+   - All file access through FileOperations layer
+   - Comprehensive unit tests
+
+### Test Files Created
+- test/UnitTests/test_file_references.jl
+- test/UnitTests/test_result_references.jl  
+- test/UnitTests/test_scoring_interface.jl
+
+### Next Steps
+- Phase 4: Update MaxLFQSearch to use references
+- Phase 5: Add reference storage to SearchContext
+- Update actual ScoringSearch implementation to use interface
+
+### Important Notes
+- Streaming operations simplified for initial implementation
+- getProteinGroupsDict stubbed in FileOperations.jl for testing
+- Real implementation would import from src/utils/proteinInference.jl
+- All tests passing for completed phases
