@@ -10,38 +10,8 @@ using DataStructures: BinaryMinHeap, BinaryMaxHeap
 
 include("FileReferences.jl")
 
-# Note: In the real implementation, getProteinGroupsDict would be imported
-# from the main Pioneer module. For now, we'll define a stub version
-# that mimics its behavior for the refactoring work.
-
-# Stub implementation of getProteinGroupsDict for testing
-function getProteinGroupsDict(probs, protein_groups, precursor_idxs, targets, entrap_ids, precursors, min_peptides)
-    # Group precursors by protein group
-    protein_dict = Dict{Tuple{String,Bool,UInt8}, Set{UInt32}}()
-    
-    for i in 1:length(protein_groups)
-        # Skip if prob too low or missing protein group
-        if probs[i] < 0.5 || ismissing(protein_groups[i])
-            continue
-        end
-        
-        key = (protein_groups[i], targets[i], entrap_ids[i])
-        if !haskey(protein_dict, key)
-            protein_dict[key] = Set{UInt32}()
-        end
-        push!(protein_dict[key], precursor_idxs[i])
-    end
-    
-    # Filter by min peptides
-    filtered_dict = Dict{Tuple{String,Bool,UInt8}, Set{UInt32}}()
-    for (key, peptides) in protein_dict
-        if length(peptides) >= min_peptides
-            filtered_dict[key] = peptides
-        end
-    end
-    
-    return filtered_dict
-end
+# Note: The real getProteinGroupsDict implementation is in ScoringSearch/utils.jl
+# To avoid circular dependencies, we pass it as a function parameter to apply_protein_inference
 
 #==========================================================
 Streaming Operations
@@ -482,15 +452,17 @@ Algorithm Wrappers
 
 """
     apply_protein_inference(psm_ref::PSMFileReference, output_path::String, 
-                          precursors::Union{Nothing, DataFrame}, protein_db_map;
+                          precursors::Union{Nothing, DataFrame}, 
+                          protein_inference_fn::Function;
                           min_peptides=2, batch_size=1_000_000)
 
 Apply protein inference algorithm to PSMs, creating protein groups.
-Wraps the existing getProteinGroupsDict from utils/proteinInference.jl.
+Uses the provided protein_inference_fn function (typically getProteinGroupsDict from ScoringSearch/utils.jl).
 """
 function apply_protein_inference(psm_ref::PSMFileReference, 
                                output_path::String,
-                               precursors;
+                               precursors,
+                               protein_inference_fn::Function;
                                min_peptides::Int=2)
     validate_exists(psm_ref)
     
@@ -506,8 +478,8 @@ function apply_protein_inference(psm_ref::PSMFileReference,
     # This is because protein inference needs global view of peptide-protein relationships
     psms_df = DataFrame(Arrow.Table(file_path(psm_ref)))
     
-    # Call existing protein inference algorithm from utils/proteinInference.jl
-    protein_groups_dict = getProteinGroupsDict(
+    # Call provided protein inference function
+    protein_groups_dict = protein_inference_fn(
         psms_df.prob,
         psms_df.inferred_protein_group,
         psms_df.precursor_idx,
@@ -697,16 +669,18 @@ end
 
 """
     apply_maxlfq(psm_refs::Vector{PSMFileReference}, output_dir::String,
-                quant_col::Symbol, file_names::Vector{String};
+                quant_col::Symbol, file_names::Vector{String},
+                lfq_fn::Function;
                 q_value_threshold=0.01f0, batch_size=100_000, min_peptides=2)
 
 Apply MaxLFQ algorithm to PSM files.
-Wraps the existing LFQ function from utils/maxLFQ.jl.
+Uses the provided lfq_fn function (typically LFQ from utils/maxLFQ.jl).
 """
 function apply_maxlfq(psm_refs::Vector{PSMFileReference}, 
                      output_dir::String,
                      quant_col::Symbol,
-                     file_names::Vector{String};
+                     file_names::Vector{String},
+                     lfq_fn::Function;
                      q_value_threshold::Float32=0.01f0,
                      batch_size::Int=100_000,
                      min_peptides::Int=2)
@@ -729,10 +703,9 @@ function apply_maxlfq(psm_refs::Vector{PSMFileReference},
     # Call existing LFQ function
     protein_long_path = joinpath(output_dir, "protein_groups_long.arrow")
     
-    # Note: In real implementation, would import and call actual LFQ function
-    # For now, create a placeholder
-    # LFQ(merged_df, protein_long_path, quant_col, file_names,
-    #     q_value_threshold, batch_size=batch_size, min_peptides=min_peptides)
+    # Call provided LFQ function
+    lfq_fn(merged_df, protein_long_path, quant_col, file_names,
+           q_value_threshold, batch_size=batch_size, min_peptides=min_peptides)
     
     # Create output references
     return merged_psm_ref, ProteinGroupFileReference(protein_long_path)
