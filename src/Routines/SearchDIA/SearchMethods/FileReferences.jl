@@ -109,7 +109,8 @@ mutable struct ProteinGroupFileReference
         # Read schema from file
         tbl = Arrow.Table(file_path)
         schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        row_count = length(tbl)
+        # Get row count from first column
+        row_count = length(Tables.getcolumn(tbl, 1))
         
         new(file_path, schema, (), row_count, true)
     end
