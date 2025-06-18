@@ -11,10 +11,8 @@ This search:
 """
 struct MaxLFQSearch <: SearchMethod end
 
-# Import reference management modules
-include("../FileReferences.jl")
-include("../SearchResultReferences.jl")
-include("../FileOperations.jl")
+# Note: FileReferences, SearchResultReferences, and FileOperations are already
+# included by importScripts.jl - no need to include them here
 
 #==========================================================
 Type Definitions 
@@ -226,11 +224,11 @@ function summarize_results!(
         @info "Storing MaxLFQ results in SearchContext..."
         maxlfq_refs = MaxLFQSearchResultRefs(
             [p for p in scoring_refs.paired_files],  # Input paired files
-            protein_quant_ref=ProteinGroupFileReference(results.proteins_long_path, 1, "protein_quant"),
-            precursors_long_ref=PSMFileReference(results.precursors_long_path, 1, "precursors_long"),
-            precursors_wide_ref=PSMFileReference(results.precursors_wide_path, 1, "precursors_wide"),
-            proteins_long_ref=ProteinGroupFileReference(results.proteins_long_path, 1, "proteins_long"),
-            proteins_wide_ref=ProteinGroupFileReference(results.proteins_wide_path, 1, "proteins_wide")
+            protein_quant_ref=ProteinGroupFileReference(results.proteins_long_path),
+            precursors_long_ref=PSMFileReference(results.precursors_long_path),
+            precursors_wide_ref=PSMFileReference(results.precursors_wide_path),
+            proteins_long_ref=ProteinGroupFileReference(results.proteins_long_path),
+            proteins_wide_ref=ProteinGroupFileReference(results.proteins_wide_path)
         )
         store_results!(search_context, MaxLFQSearch, maxlfq_refs)
         @info "MaxLFQ results stored successfully"

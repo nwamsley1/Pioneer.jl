@@ -9,7 +9,7 @@ These types provide structured references to search method outputs:
 
 using Arrow, DataFrames
 
-include("FileReferences.jl")
+# FileReferences.jl is already included by importScripts.jl
 
 #==========================================================
 Search Result References

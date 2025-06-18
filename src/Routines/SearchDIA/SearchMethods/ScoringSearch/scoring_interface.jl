@@ -5,10 +5,7 @@ These functions provide a clean abstraction layer between ScoringSearch and file
 ensuring all file access goes through the reference system.
 """
 
-# Include necessary dependencies
-include("../FileReferences.jl")
-include("../SearchResultReferences.jl")
-include("../FileOperations.jl")
+# FileReferences.jl, SearchResultReferences.jl and FileOperations.jl are already included by importScripts.jl
 
 using DataFrames, Arrow
 

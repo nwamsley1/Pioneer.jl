@@ -8,7 +8,7 @@ maintaining data integrity through validation.
 using Arrow, DataFrames, Tables
 using DataStructures: BinaryMinHeap, BinaryMaxHeap
 
-include("FileReferences.jl")
+# FileReferences.jl is already included by importScripts.jl
 
 # Note: The real getProteinGroupsDict implementation is in ScoringSearch/utils.jl
 # To avoid circular dependencies, we pass it as a function parameter to apply_protein_inference

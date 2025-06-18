@@ -6,10 +6,8 @@ This includes XGBoost model training, trace scoring, and protein group analysis.
 """
 struct ScoringSearch <: SearchMethod end
 
-# Import reference management modules
-include("../FileReferences.jl")
-include("../SearchResultReferences.jl")
-include("../FileOperations.jl")
+# Note: FileReferences, SearchResultReferences, and FileOperations are already
+# included by importScripts.jl - no need to include them here
 
 # Export new types for use in other modules
 export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
@@ -320,7 +318,7 @@ function summarize_results!(
         
         # Create references for protein group files
         pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        pg_refs = [ProteinGroupFileReference(path, i, "protein_groups") for (i, path) in enumerate(pg_paths)]
+        pg_refs = [ProteinGroupFileReference(path) for path in pg_paths]
         
         # Use reference-based merge
         merged_pg_ref = merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
@@ -371,7 +369,7 @@ function summarize_results!(
         
         # Create references for protein group files (reuse from earlier or recreate)
         pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        pg_refs_global = [ProteinGroupFileReference(path, i, "protein_groups") for (i, path) in enumerate(pg_paths)]
+        pg_refs_global = [ProteinGroupFileReference(path) for path in pg_paths]
         
         # Use reference-based merge for global scores (sorted by global_pg_score)
         merged_global_pg_ref = stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
