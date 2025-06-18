@@ -10,6 +10,25 @@ These types provide lightweight references to files on disk with:
 using Arrow, DataFrames, Tables
 
 #==========================================================
+Abstract Types
+==========================================================#
+
+"""
+    FileReference
+
+Abstract base type for all file references.
+Provides common interface for file metadata and operations.
+"""
+abstract type FileReference end
+
+# Common interface that all FileReferences must implement
+file_path(ref::FileReference) = ref.file_path
+schema(ref::FileReference) = ref.schema
+sorted_by(ref::FileReference) = ref.sorted_by
+row_count(ref::FileReference) = ref.row_count
+exists(ref::FileReference) = ref.file_exists
+
+#==========================================================
 Schema Management
 ==========================================================#
 
@@ -59,12 +78,12 @@ File Reference Types
 ==========================================================#
 
 """
-    PSMFileReference
+    PSMFileReference <: FileReference
 
 Reference to a PSM (Peptide-Spectrum Match) Arrow file with metadata.
 Tracks schema, sort state, and basic statistics.
 """
-mutable struct PSMFileReference
+mutable struct PSMFileReference <: FileReference
     file_path::String
     schema::FileSchema            # Immutable schema
     sorted_by::Tuple{Vararg{Symbol}}  # Which keys it's sorted by
@@ -88,12 +107,12 @@ mutable struct PSMFileReference
 end
 
 """
-    ProteinGroupFileReference
+    ProteinGroupFileReference <: FileReference
 
 Reference to a protein group Arrow file with metadata.
 Tracks schema, sort state, and basic statistics.
 """
-mutable struct ProteinGroupFileReference  
+mutable struct ProteinGroupFileReference <: FileReference
     file_path::String
     schema::FileSchema
     sorted_by::Tuple{Vararg{Symbol}}
@@ -164,42 +183,30 @@ Sort State Management
 ==========================================================#
 
 """
-    mark_sorted!(ref::Union{PSMFileReference,ProteinGroupFileReference}, keys::Symbol...)
+    mark_sorted!(ref::FileReference, keys::Symbol...)
 
 Mark a file reference as sorted by the specified keys.
 """
-function mark_sorted!(ref::Union{PSMFileReference,ProteinGroupFileReference}, keys::Symbol...)
+function mark_sorted!(ref::FileReference, keys::Symbol...)
     ref.sorted_by = keys
     return ref
 end
 
 """
-    is_sorted_by(ref::Union{PSMFileReference,ProteinGroupFileReference}, keys::Symbol...) -> Bool
+    is_sorted_by(ref::FileReference, keys::Symbol...) -> Bool
 
 Check if a file is sorted by the specified keys in the exact order.
 """
-function is_sorted_by(ref::Union{PSMFileReference,ProteinGroupFileReference}, keys::Symbol...)
-    return ref.sorted_by == keys
+function is_sorted_by(ref::FileReference, keys::Symbol...)
+    return sorted_by(ref) == keys
 end
 
 """
-    ensure_sorted!(ref::PSMFileReference, keys::Symbol...)
+    ensure_sorted!(ref::FileReference, keys::Symbol...)
 
-Ensure a PSM file is sorted by the specified keys, sorting if necessary.
+Ensure a file is sorted by the specified keys, sorting if necessary.
 """
-function ensure_sorted!(ref::PSMFileReference, keys::Symbol...)
-    if !is_sorted_by(ref, keys...)
-        sort_file_by_keys!(ref, keys...)
-    end
-    return ref
-end
-
-"""
-    ensure_sorted!(ref::ProteinGroupFileReference, keys::Symbol...)
-
-Ensure a protein file is sorted by the specified keys, sorting if necessary.
-"""
-function ensure_sorted!(ref::ProteinGroupFileReference, keys::Symbol...)
+function ensure_sorted!(ref::FileReference, keys::Symbol...)
     if !is_sorted_by(ref, keys...)
         sort_file_by_keys!(ref, keys...)
     end
@@ -211,60 +218,35 @@ File Operations
 ==========================================================#
 
 """
-    validate_exists(ref::Union{PSMFileReference,ProteinGroupFileReference})
+    validate_exists(ref::FileReference)
 
 Validate that a referenced file exists and update the file_exists flag.
 """
-function validate_exists(ref::Union{PSMFileReference,ProteinGroupFileReference})
-    ref.file_exists = isfile(ref.file_path)
-    ref.file_exists || error("File does not exist: $(ref.file_path)")
+function validate_exists(ref::FileReference)
+    ref.file_exists = isfile(file_path(ref))
+    exists(ref) || error("File does not exist: $(file_path(ref))")
     return true
 end
 
 """
-    sort_file_by_keys!(ref::PSMFileReference, keys::Symbol...)
+    sort_file_by_keys!(ref::FileReference, keys::Symbol...)
 
-Sort a PSM file by the specified keys and update the reference.
+Sort a file by the specified keys and update the reference.
 """
-function sort_file_by_keys!(ref::PSMFileReference, keys::Symbol...)
+function sort_file_by_keys!(ref::FileReference, keys::Symbol...)
     validate_exists(ref)
     
     # Validate all sort keys exist in schema
     for key in keys
-        has_column(ref.schema, key) || error("Sort key '$key' not in schema")
+        has_column(schema(ref), key) || error("Sort key '$key' not in schema")
     end
     
     # Read into DataFrame (creates a copy), sort, and write back
-    df = DataFrame(Tables.columntable(Arrow.Table(ref.file_path)))
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
     sort!(df, collect(keys))
     
     # Write sorted data
-    Arrow.write(ref.file_path, df)
-    
-    # Update metadata
-    mark_sorted!(ref, keys...)
-    return ref
-end
-
-"""
-    sort_file_by_keys!(ref::ProteinGroupFileReference, keys::Symbol...)
-
-Sort a protein group file by the specified keys and update the reference.
-"""
-function sort_file_by_keys!(ref::ProteinGroupFileReference, keys::Symbol...)
-    validate_exists(ref)
-    
-    # Validate all sort keys exist in schema
-    for key in keys
-        has_column(ref.schema, key) || error("Sort key '$key' not in schema")
-    end
-    
-    # Read into DataFrame (creates a copy), sort, and write back
-    df = DataFrame(Tables.columntable(Arrow.Table(ref.file_path)))
-    sort!(df, collect(keys))
-    
-    # Write sorted data
-    Arrow.write(ref.file_path, df)
+    Arrow.write(file_path(ref), df)
     
     # Update metadata
     mark_sorted!(ref, keys...)
@@ -286,22 +268,49 @@ Create a protein group file reference, extracting metadata from the file.
 create_protein_reference(file_path::String) = ProteinGroupFileReference(file_path)
 
 """
-    describe_reference(ref::Union{PSMFileReference,ProteinGroupFileReference})
+    describe_reference(ref::FileReference)
 
 Print a human-readable description of a file reference.
 """
-function describe_reference(ref::Union{PSMFileReference,ProteinGroupFileReference})
-    println("File Reference:")
-    println("  Path: $(ref.file_path)")
-    println("  Exists: $(ref.file_exists)")
-    println("  Sorted by: $(isempty(ref.sorted_by) ? "none" : join(ref.sorted_by, ", "))")
-    println("  Row count: $(ref.row_count)")
-    println("  Columns: $(join(sort(collect(ref.schema.columns)), ", "))")
+function describe_reference(ref::FileReference)
+    println("File Reference ($(typeof(ref))):")
+    println("  Path: $(file_path(ref))")
+    println("  Exists: $(exists(ref))")
+    println("  Sorted by: $(isempty(sorted_by(ref)) ? "none" : join(sorted_by(ref), ", "))")
+    println("  Row count: $(row_count(ref))")
+    println("  Columns: $(join(sort(collect(schema(ref).columns)), ", "))")
+end
+
+#==========================================================
+Additional Helper Functions
+==========================================================#
+
+"""
+    validate_schema(ref::FileReference, required_cols::Set{Symbol})
+
+Validate that a file reference has all required columns.
+"""
+function validate_schema(ref::FileReference, required_cols::Set{Symbol})
+    validate_required_columns(schema(ref), required_cols)
+end
+
+"""
+    create_reference(file_path::String, ::Type{T}) where T <: FileReference
+
+Create a file reference of the specified type.
+"""
+function create_reference(file_path::String, ::Type{PSMFileReference})
+    return PSMFileReference(file_path)
+end
+
+function create_reference(file_path::String, ::Type{ProteinGroupFileReference})
+    return ProteinGroupFileReference(file_path)
 end
 
 # Export all public types and functions
-export FileSchema, PSMFileReference, ProteinGroupFileReference, PairedSearchFiles,
-       has_column, get_column_or_default, validate_required_columns,
+export FileReference, FileSchema, PSMFileReference, ProteinGroupFileReference, PairedSearchFiles,
+       file_path, schema, sorted_by, row_count, exists,
+       has_column, get_column_or_default, validate_required_columns, validate_schema,
        mark_sorted!, is_sorted_by, ensure_sorted!, validate_exists,
-       sort_file_by_keys!, create_psm_reference, create_protein_reference,
+       sort_file_by_keys!, create_psm_reference, create_protein_reference, create_reference,
        describe_reference
