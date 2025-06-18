@@ -281,9 +281,123 @@ function validate_scoring_results(result_refs::ScoringSearchResultRefs)
     end
 end
 
+#==========================================================
+PSM Processing with Best Traces
+==========================================================#
+
+"""
+    process_and_filter_psms(psm_refs::Vector{PSMFileReference}, 
+                          output_dir::String,
+                          isotope_tracetype,
+                          prob_col::Symbol,
+                          best_traces::Set) -> Vector{PSMFileReference}
+                          
+Filter and sort PSM files based on best traces.
+Creates new filtered files in output_dir.
+"""
+function process_and_filter_psms(psm_refs::Vector{PSMFileReference}, 
+                               output_dir::String,
+                               isotope_tracetype,
+                               prob_col::Symbol,
+                               best_traces::Set)
+    filtered_refs = PSMFileReference[]
+    
+    for (idx, ref) in enumerate(psm_refs)
+        # Generate output filename based on original
+        base_name = splitext(basename(file_path(ref)))[1]
+        output_path = joinpath(output_dir, "$(base_name)_filtered.arrow")
+        
+        # Filter based on best traces
+        filtered_ref = stream_filter(ref, output_path) do batch
+            # Keep only rows where the trace is in best_traces
+            mask = [(
+                precursor_idx = row.precursor_idx,
+                isotopes_captured = row.isotopes_captured
+            ) in best_traces for row in eachrow(batch)]
+            
+            return batch[mask, :]
+        end
+        
+        # Sort the filtered file by probability column
+        sort_file_by_keys!(filtered_ref, prob_col; reverse=true)
+        
+        push!(filtered_refs, filtered_ref)
+    end
+    
+    return filtered_refs
+end
+
+"""
+    merge_psm_files(psm_refs::Vector{PSMFileReference},
+                   output_path::String,
+                   sort_col::Symbol) -> PSMFileReference
+                   
+Merge multiple PSM files sorted by specified column.
+Ensures files are properly sorted before merging.
+"""
+function merge_psm_files(psm_refs::Vector{PSMFileReference},
+                       output_path::String,
+                       sort_col::Symbol)
+    # The merge_psm_scores function already handles sorting if needed
+    return merge_psm_scores(psm_refs, output_path, sort_col)
+end
+
+"""
+    filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
+                         output_dir::String,
+                         precursors,
+                         global_qval_interp,
+                         qval_interp,
+                         q_value_threshold::Float32) -> Vector{PSMFileReference}
+                         
+Filter PSMs by q-value threshold and add q-value columns.
+Creates new filtered files in output_dir.
+"""
+function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
+                             output_dir::String,
+                             precursors,
+                             global_qval_interp,
+                             qval_interp,
+                             q_value_threshold::Float32)
+    filtered_refs = PSMFileReference[]
+    
+    for (idx, ref) in enumerate(psm_refs)
+        # Generate output filename
+        base_name = splitext(basename(file_path(ref)))[1]
+        output_path = joinpath(output_dir, "$(base_name)_passing.arrow")
+        
+        # Transform: add q-values and filter
+        filtered_ref = stream_transform(ref, output_path) do batch
+            # Add q-value columns
+            n_rows = nrow(batch)
+            global_qvals = Vector{Float32}(undef, n_rows)
+            qvals = Vector{Float32}(undef, n_rows)
+            
+            for i in 1:n_rows
+                global_qvals[i] = global_qval_interp(batch.global_prob[i])
+                qvals[i] = qval_interp(batch.prec_prob[i])
+            end
+            
+            batch.global_qval = global_qvals
+            batch.qval = qvals
+            
+            # Filter by q-value threshold
+            mask = (batch.global_qval .<= q_value_threshold) .|
+                   (batch.qval .<= q_value_threshold)
+            
+            return batch[mask, :]
+        end
+        
+        push!(filtered_refs, filtered_ref)
+    end
+    
+    return filtered_refs
+end
+
 # Export all interface functions
 export process_psms_for_scoring, update_psms_with_protein_scores!,
        merge_protein_groups, filter_protein_groups_by_qvalue,
        calculate_global_protein_scores, add_global_scores_to_psms!,
        calculate_protein_qvalues, generate_scoring_summary,
-       validate_scoring_results
+       validate_scoring_results,
+       process_and_filter_psms, merge_psm_files, filter_psms_by_qvalue

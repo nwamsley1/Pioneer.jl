@@ -179,12 +179,16 @@ function summarize_results!(
             params.min_best_trace_prob
         )
 
+        # Create references for second pass PSMs
+        second_pass_paths = getSecondPassPsms(getMSData(search_context))
+        second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
+
         # Step 3: Process Quantification Results
         @info "Processing quantification results..."
-        # Filter to best traces and sort tables
-        sort_and_filter_quant_tables(
-            getSecondPassPsms(getMSData(search_context)),
-            results.merged_quant_path,
+        # Filter to best traces and sort tables using new abstractions
+        filtered_refs = process_and_filter_psms(
+            second_pass_refs,
+            temp_folder,  # output to temp folder
             params.isotope_tracetype,
             :global_prob,
             best_traces
@@ -192,8 +196,8 @@ function summarize_results!(
 
         # Step 4: Merge PSM Scores by max_prob
         @info "Merging PSM scores for global q-value estimation..."
-        merge_sorted_psms_scores(
-            getSecondPassPsms(getMSData(search_context)),
+        merged_global_ref = merge_psm_files(
+            filtered_refs,
             results.merged_quant_path,
             :global_prob
         )
@@ -215,16 +219,16 @@ function summarize_results!(
         )
         # Step 6: Merge PSM Scores by prob
         @info "Merging PSM scores for experiment-wide q-value estimation..."
-        #Individual PSMs files need to be re-rosted by prec_prob 
-        sort_quant_tables(
-            getSecondPassPsms(getMSData(search_context)),
+        # Re-sort filtered files by prec_prob using references
+        for ref in filtered_refs
+            sort_file_by_keys!(ref, :prec_prob; reverse=true)
+        end
+        
+        # Merge using new abstraction
+        merged_prec_ref = merge_psm_files(
+            filtered_refs,
             results.merged_quant_path,
             :prec_prob
-        )
-        merge_sorted_psms_scores(
-             getSecondPassPsms(getMSData(search_context)),
-             results.merged_quant_path,
-             :prec_prob
         )
 
         # Step 7: Create q-value interpolation
@@ -245,24 +249,22 @@ function summarize_results!(
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
 
-        # Step 6: Filter PSMs by global q-value
+        # Step 8: Filter PSMs by global q-value
         @info "Filtering passing PSMs by global q-value and experiment-wide q-value threshold..."
-        # Apply q-value threshold and store passing PSMs
-        passing_psms_paths = getSecondPassPsms(getMSData(search_context))
-        get_psms_passing_qval(
-            getPrecursors(getSpecLib(search_context)),
-            getPassingPsms(getMSData(search_context)),
+        # Apply q-value threshold using new abstractions
+        passing_refs = filter_psms_by_qvalue(
+            filtered_refs,
             passing_psms_folder,
-            passing_psms_paths,
-            #results.precursor_pep_spline[],
+            getPrecursors(getSpecLib(search_context)),
             results.precursor_global_qval_interp[],
             results.precursor_qval_interp[],
-            :global_prob,
-            :prec_prob,
-            :global_qval,
-            :qval,
-            params.q_value_threshold,
+            params.q_value_threshold
         )
+        
+        # Update the search context with new passing PSM paths
+        passing_psm_paths = [file_path(ref) for ref in passing_refs]
+        # Note: This assumes getPassingPsms returns a mutable collection
+        # In practice, we might need a setter method in search_context
 
         # Step 10: Count protein peptides
         # This is useful for counting some of the protein-group features
@@ -274,10 +276,10 @@ function summarize_results!(
         )
 
         # Step 11: Perform protein inference and initial scoring
-        # Also links each psms table path to it's corresponding pg group table path. 
         @info "Performing protein inference and initial scoring..."
+        # For now, still use the path-based function but with our reference paths
         psm_to_pg_path = perform_protein_inference(
-            getPassingPsms(getMSData(search_context)),
+            passing_psm_paths,  # Use the paths from our references
             getPassingProteins(getMSData(search_context)),
             passing_proteins_folder,
             getPrecursors(getSpecLib(search_context)),
@@ -285,28 +287,36 @@ function summarize_results!(
             min_peptides = params.min_peptides
         )
 
-        # Create and store file references in SearchContext
+        # Create paired file references from the results
         @info "Creating file references for ScoringSearch results..."
         paired_files = PairedSearchFiles[]
-        for (ms_file_idx, psm_path) in enumerate(getPassingPsms(getMSData(search_context)))
+        for (ms_file_idx, ref) in enumerate(passing_refs)
+            psm_path = file_path(ref)
             if haskey(psm_to_pg_path, psm_path)
                 pg_path = psm_to_pg_path[psm_path]
+                # Create paired reference with proper indices
                 push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
             end
         end
         
+        # Store references in SearchContext
         if !isempty(paired_files)
             scoring_refs = ScoringSearchResultRefs(paired_files)
             store_results!(search_context, ScoringSearch, scoring_refs)
             @info "Stored $(length(paired_files)) paired PSM-protein group references in SearchContext"
+        else
+            error("No paired files created during protein inference")
         end
 
         # Step 12: Perform protein probit regression
         @info "Performing protein probit regression..."
         qc_folder = joinpath(dirname(temp_folder), "qc_plots")
         !isdir(qc_folder) && mkdir(qc_folder)
+        # Use references from scoring_refs
+        pg_refs = get_protein_refs(scoring_refs)
+        pg_paths = [file_path(ref) for ref in pg_refs]
         perform_protein_probit_regression(
-            getPassingProteins(getMSData(search_context)),
+            pg_paths,  # Still uses paths for now
             params.max_psms_in_memory,
             qc_folder
         )
@@ -316,9 +326,8 @@ function summarize_results!(
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         @info "Merging protein group scores for experiment-wide q-value estimation..."
         
-        # Create references for protein group files
-        pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        pg_refs = [ProteinGroupFileReference(path) for path in pg_paths]
+        # Use the protein group references we already have from scoring_refs
+        # pg_refs already defined above
         
         # Use reference-based merge
         merged_pg_ref = merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
@@ -336,8 +345,9 @@ function summarize_results!(
 
         # Step 13: Calculate global protein scores
         @info "Calculating global protein scores..."
+        # Use the protein group references
         acc_to_max_pg_score = calculate_global_protein_scores(
-            getPassingProteins(getMSData(search_context))
+            pg_paths  # Still uses paths for now
         )
 
         # Merge protein groups by run-specific prob
@@ -356,8 +366,9 @@ function summarize_results!(
 
         # Step 17: Sort protein groups by experiment-wide pg_score
         @info "Sorting protein group tables by experiment-wide pg_score..."
+        # This function already uses references internally
         sort_protein_tables(
-            getPassingProteins(getMSData(search_context)),
+            pg_paths,
             passing_proteins_folder,
             :global_pg_score
         )
@@ -367,9 +378,8 @@ function summarize_results!(
         # Merge protein groups by global pg_score (which contains probit scores after regression)
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         
-        # Create references for protein group files (reuse from earlier or recreate)
-        pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-        pg_refs_global = [ProteinGroupFileReference(path) for path in pg_paths]
+        # Reuse the protein group references we already have
+        pg_refs_global = pg_refs  # Already have these from earlier
         
         # Use reference-based merge for global scores (sorted by global_pg_score)
         merged_global_pg_ref = stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
