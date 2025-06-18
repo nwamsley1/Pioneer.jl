@@ -349,15 +349,21 @@ Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file r
 - test/UnitTests/test_result_references.jl  
 - test/UnitTests/test_scoring_interface.jl
 
-### In Progress
-- Phase 4.2: Update ScoringSearch to use new reference-based approach
-- Phase 4.4: Update MaxLFQSearch to use references from SearchContext
+### Completed Refactoring
+All phases of the SearchMethods refactoring have been completed:
+- ✅ Phase 1: Abstract FileReference type hierarchy
+- ✅ Phase 2: Algorithm wrappers for protein inference and PSM updates
+- ✅ Phase 3: ScoringSearch interface with reference-only operations
+- ✅ Phase 4.1: SearchContext method results storage
+- ✅ Phase 4.2: ScoringSearch updated to use references
+- ✅ Phase 4.3: Generic heap-based merge supporting N sort keys
+- ✅ Phase 4.4: MaxLFQSearch updated to use references from SearchContext
 
-### Next Steps
-1. Integrate reference creation in ScoringSearch after protein inference
-2. Store ScoringSearchResultRefs in SearchContext
-3. Update MaxLFQSearch to retrieve and use references
-4. Clean up scoring_reference_wrapper.jl (untracked file)
+### Key Achievements
+1. **Type-safe file references** prevent accidental misuse of files
+2. **Generic N-key merge** more flexible than fixed 2/4-key implementations
+3. **SearchContext storage** enables clean data flow between methods
+4. **Backward compatibility** maintained throughout refactoring
 
 ### Important Notes
 - The protein inference and MaxLFQ algorithms already exist and are NOT being reimplemented
