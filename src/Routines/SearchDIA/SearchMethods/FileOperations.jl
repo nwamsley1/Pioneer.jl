@@ -9,6 +9,10 @@ using Arrow, DataFrames, Tables
 using DataStructures: BinaryMinHeap, BinaryMaxHeap
 
 # FileReferences.jl is already included by importScripts.jl
+# But we need to ensure it's loaded first
+if !@isdefined(FileReference)
+    include(joinpath(@__DIR__, "FileReferences.jl"))
+end
 
 # Note: The real getProteinGroupsDict implementation is in ScoringSearch/utils.jl
 # To avoid circular dependencies, we pass it as a function parameter to apply_protein_inference
@@ -116,11 +120,11 @@ function _initialize_heap(tables::Vector{Arrow.Table}, sort_keys::NTuple{N, Symb
 end
 
 # Updated stream_sorted_merge to use generic helpers
-function stream_sorted_merge(refs::Vector{T}, 
+function stream_sorted_merge(refs::Vector{<:FileReference}, 
                            output_path::String,
                            sort_keys::Symbol...;
                            batch_size::Int=1_000_000,
-                           reverse::Bool=false) where T <: FileReference
+                           reverse::Bool=false)
     # Convert varargs to tuple
     sort_keys_tuple = sort_keys
     
@@ -132,7 +136,8 @@ function stream_sorted_merge(refs::Vector{T},
     for (i, ref) in enumerate(refs)
         validate_exists(ref)
         if !is_sorted_by(ref, sort_keys...)
-            error("File $i ($(file_path(ref))) is not sorted by $sort_keys")
+            @warn "File $i ($(file_path(ref))) is not sorted by $sort_keys. Sorting now..."
+            sort_file_by_keys!(ref, sort_keys...; reverse=reverse)
         end
     end
     
@@ -203,7 +208,7 @@ function stream_sorted_merge(refs::Vector{T},
     end
     
     # Create reference for output of same type as inputs
-    output_ref = create_reference(output_path, T)
+    output_ref = create_reference(output_path, typeof(first(refs)))
     mark_sorted!(output_ref, sort_keys...)
     
     return output_ref
@@ -216,10 +221,10 @@ end
 Filter a file without loading it entirely into memory.
 Returns a FileReference of the same type as the input.
 """
-function stream_filter(input_ref::T,
+function stream_filter(input_ref::FileReference,
                       output_path::String, 
                       filter_fn::Function;
-                      batch_size::Int=100_000) where T <: FileReference
+                      batch_size::Int=100_000)
     validate_exists(input_ref)
     
     # For now, load entire file and filter
@@ -231,7 +236,7 @@ function stream_filter(input_ref::T,
     Arrow.write(output_path, filtered_df)
     
     # Create reference for output of same type as input
-    output_ref = create_reference(output_path, T)
+    output_ref = create_reference(output_path, typeof(input_ref))
     # Filtering may break sort order
     mark_sorted!(output_ref)  # Empty tuple - not sorted
     
@@ -245,10 +250,10 @@ end
 Transform a file by applying a function to each batch.
 Returns a FileReference of the same type as the input.
 """
-function stream_transform(input_ref::T,
+function stream_transform(input_ref::FileReference,
                          output_path::String,
                          transform_fn::Function;
-                         batch_size::Int=100_000) where T <: FileReference
+                         batch_size::Int=100_000)
     validate_exists(input_ref)
     
     tbl = Arrow.Table(file_path(input_ref))
@@ -269,7 +274,7 @@ function stream_transform(input_ref::T,
     end
     
     # Create reference for output of same type as input
-    output_ref = create_reference(output_path, T)
+    output_ref = create_reference(output_path, typeof(input_ref))
     # Transformation may change sort order or schema
     
     return output_ref
@@ -711,9 +716,56 @@ function apply_maxlfq(psm_refs::Vector{PSMFileReference},
     return merged_psm_ref, ProteinGroupFileReference(protein_long_path)
 end
 
+#==========================================================
+File Sorting Operations
+==========================================================#
+
+"""
+    sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse=false)
+
+Sort a file in-place by the specified keys.
+Updates the reference's sorted_by metadata.
+
+# Arguments
+- `ref`: FileReference to sort
+- `sort_keys`: Column names to sort by
+- `reverse`: If true, sort in descending order (applies to all keys)
+
+# Returns
+- The updated FileReference
+"""
+function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse::Bool=false)
+    validate_exists(ref)
+    
+    # Validate that all sort keys exist in schema
+    for key in sort_keys
+        if !has_column(schema(ref), key)
+            error("Sort key $key not found in file schema")
+        end
+    end
+    
+    # Load file into memory (not memory-mapped)
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    
+    # Build sort order vector
+    rev_vec = reverse ? fill(true, length(sort_keys)) : fill(false, length(sort_keys))
+    
+    # Sort dataframe
+    sort!(df, collect(sort_keys), rev=rev_vec)
+    
+    # Write back to same file
+    Arrow.write(file_path(ref), df)
+    
+    # Update reference metadata
+    mark_sorted!(ref, sort_keys...)
+    
+    return ref
+end
+
 # Export all public functions
 export stream_sorted_merge, stream_filter, stream_transform,
        add_column_to_file!, update_column_in_file!,
        safe_join_files, estimate_batch_size, process_with_memory_limit,
        apply_protein_inference, update_psms_with_scores,
-       merge_psm_scores, merge_protein_groups_by_score, apply_maxlfq
+       merge_psm_scores, merge_protein_groups_by_score, apply_maxlfq,
+       sort_file_by_keys!

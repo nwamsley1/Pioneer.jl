@@ -1921,20 +1921,20 @@ function sort_protein_tables(
     merged_pgs_path::String,
     prob_col::Symbol,
 )
-
-    #Remove if present 
+    # Remove if present 
     if isfile(merged_pgs_path)
         safeRm(merged_pgs_path)
     end
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
+    
+    # Sort each protein table using reference-based approach
     for fpath in protein_groups_paths
-        pgs_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        #Sort in descending order of probability
-        sort!(pgs_table, prob_col, rev = true, alg=QuickSort)
-        #write back
-        writeArrow(fpath,  pgs_table)
+        # Create reference for the file
+        pg_ref = ProteinGroupFileReference(fpath)
+        
+        # Sort in descending order using the new function
+        sort_file_by_keys!(pg_ref, prob_col; reverse=true)
     end
+    
     return nothing
 end
 

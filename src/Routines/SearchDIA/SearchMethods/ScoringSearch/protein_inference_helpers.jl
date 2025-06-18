@@ -439,7 +439,8 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         log_binom_coeff = log_binom_coeffs
     )
     
-    sort!(df, [:pg_score, :target], rev = [true, true])
+    # Sort by pg_score only to match merge expectations
+    sort!(df, :pg_score, rev = true)
     
     # Write to Arrow
     Arrow.write(output_path, df)
