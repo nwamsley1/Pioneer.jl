@@ -11,6 +11,11 @@ This search:
 """
 struct MaxLFQSearch <: SearchMethod end
 
+# Import reference management modules
+include("../FileReferences.jl")
+include("../SearchResultReferences.jl")
+include("../FileOperations.jl")
+
 #==========================================================
 Type Definitions 
 ==========================================================#
@@ -125,6 +130,13 @@ function summarize_results!(
     search_context::SearchContext
 )
     try
+        # Retrieve ScoringSearch results from SearchContext
+        scoring_refs = get_results(search_context, ScoringSearch)
+        if isnothing(scoring_refs)
+            error("MaxLFQSearch requires ScoringSearch results, but none found in SearchContext")
+        end
+        @info "Retrieved $(num_files(scoring_refs)) paired PSM-protein group references from SearchContext"
+        
         # Get paths
         temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
         passing_psms_folder = joinpath(temp_folder, "passing_psms")
@@ -141,36 +153,26 @@ function summarize_results!(
         )
 
         @info "Merging quantification tables..."
-        # Merge quantification tables
-        for psms_path in readdir(passing_psms_folder, join=true)
-            if endswith(psms_path, ".arrow")
-                @info "Processing file: $psms_path"
-                # Load and process each PSM file
-                passing_psms = DataFrame(Tables.columntable(Arrow.Table(psms_path)))
-                @info "Is sorted? before " issorted(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
-                sort!(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
-                @info "Is sorted? after " issorted(passing_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
-             
-                writeArrow(psms_path, passing_psms)
-                
+        # Get PSM references from scoring results
+        psm_refs = get_psm_refs(scoring_refs)
+        
+        # Ensure all PSM files are sorted correctly for MaxLFQ
+        sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
+        for (i, psm_ref) in enumerate(psm_refs)
+            if !is_sorted_by(psm_ref, sort_keys...)
+                @info "Sorting PSM file $i for MaxLFQ..."
+                sort_file_by_keys!(psm_ref, sort_keys...)
             end
         end
-        mergeSortedArrowTables(
-            passing_psms_folder,
-            precursors_long_path,
-            (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx),
-            N = 1000000
-        )
+        
+        # Use reference-based merge with 4 sort keys (all descending)
+        @info "Merging $(length(psm_refs)) PSM files using reference-based approach..."
+        merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
+                                           batch_size=1000000, reverse=true)
 
-        is_table_sorted = issorted(
-            DataFrame(Arrow.Table(precursors_long_path)), 
-            [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], 
-            rev = [true, true, true, true])
-        @info "Is precursors_long sorted? $is_table_sorted"
-
-        long_psms = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
-        sort!(long_psms, [:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx], rev = [true, true, true, true])
-        writeArrow(precursors_long_path, long_psms)
+        # Verify the merged file is sorted (reference-based merge guarantees this)
+        @info "Merged PSM file created at: $(file_path(merged_psm_ref))"
+        @info "File contains $(row_count(merged_psm_ref)) rows and is sorted by: $(sorted_by(merged_psm_ref))"
         @info "Writing precursor results..."
         # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(
@@ -219,6 +221,19 @@ function summarize_results!(
             precursors,
             params
         )
+
+        # Store MaxLFQ results in SearchContext
+        @info "Storing MaxLFQ results in SearchContext..."
+        maxlfq_refs = MaxLFQSearchResultRefs(
+            [p for p in scoring_refs.paired_files],  # Input paired files
+            protein_quant_ref=ProteinGroupFileReference(results.proteins_long_path, 1, "protein_quant"),
+            precursors_long_ref=PSMFileReference(results.precursors_long_path, 1, "precursors_long"),
+            precursors_wide_ref=PSMFileReference(results.precursors_wide_path, 1, "precursors_wide"),
+            proteins_long_ref=ProteinGroupFileReference(results.proteins_long_path, 1, "proteins_long"),
+            proteins_wide_ref=ProteinGroupFileReference(results.proteins_wide_path, 1, "proteins_wide")
+        )
+        store_results!(search_context, MaxLFQSearch, maxlfq_refs)
+        @info "MaxLFQ results stored successfully"
 
         if params.delete_temp
             @info "Removing temporary data..."
