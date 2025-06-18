@@ -308,15 +308,16 @@ function process_and_filter_psms(psm_refs::Vector{PSMFileReference},
         output_path = joinpath(output_dir, "$(base_name)_filtered.arrow")
         
         # Filter based on best traces
-        filtered_ref = stream_filter(ref, output_path) do batch
-            # Keep only rows where the trace is in best_traces
-            mask = [(
+        filter_fn = function(row)
+            # Check if this row's trace is in best_traces
+            trace_key = (
                 precursor_idx = row.precursor_idx,
                 isotopes_captured = row.isotopes_captured
-            ) in best_traces for row in eachrow(batch)]
-            
-            return batch[mask, :]
+            )
+            return trace_key in best_traces
         end
+        
+        filtered_ref = stream_filter(ref, output_path, filter_fn)
         
         # Sort the filtered file by probability column
         sort_file_by_keys!(filtered_ref, prob_col; reverse=true)
@@ -367,7 +368,7 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
         output_path = joinpath(output_dir, "$(base_name)_passing.arrow")
         
         # Transform: add q-values and filter
-        filtered_ref = stream_transform(ref, output_path) do batch
+        transform_fn = function(batch)
             # Add q-value columns
             n_rows = nrow(batch)
             global_qvals = Vector{Float32}(undef, n_rows)
@@ -387,6 +388,8 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
             
             return batch[mask, :]
         end
+        
+        filtered_ref = stream_transform(ref, output_path, transform_fn)
         
         push!(filtered_refs, filtered_ref)
     end
