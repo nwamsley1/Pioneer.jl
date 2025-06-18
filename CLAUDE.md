@@ -261,6 +261,9 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 - **AlphaPeptDeep** - Supports QE, LUMOS, TIMSTOF, SCIEXTOF instruments
 
 ### Current Development Focus
+- Refactoring ScoringSearch and MaxLFQSearch for better encapsulation
+- See src/Routines/SearchDIA/SearchMethods/REFACTORING_PLAN_V2.md for detailed plan
+- Adding FileReference abstraction layer for type-safe file operations
 - Protein group ML scoring integration using XGBoost random forests
 - See PROTEIN_ML_SCORING_INTEGRATION.md for implementation details
 - Features top-N precursor scores with cross-validation consistency
