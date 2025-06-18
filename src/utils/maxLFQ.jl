@@ -321,13 +321,7 @@ function LFQ(prot::DataFrame,
     n_writes = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
     @info "Is prot sorted? $is_prot_sorted"
-    
-    # Debug tracking
-    total_protein_groups_processed = 0
-    total_protein_groups_written = 0
-    total_protein_groups_filtered_qval = 0
-    total_protein_groups_filtered_peptides = 0
-    total_protein_groups_empty_batch = 0
+
     while batch_start_idx <= size(prot, 1)
         last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
         while batch_end_idx < size(prot, 1)
@@ -340,30 +334,12 @@ function LFQ(prot::DataFrame,
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         
-        # Debug: Track PSMs before filtering
-        n_psms_before = nrow(subdf)
-        unique_proteins_before = unique(subdf.inferred_protein_group)
-        n_proteins_before = length(unique_proteins_before)
-        
-        #filter!(x-> x.global_qval_pg <= q_value_threshold, subdf);
-        #filter!(x-> x.pg_qval <= q_value_threshold, subdf);
-        #filter!(x-> x.use_for_protein_quant <= q_value_threshold, subdf);
         subdf = subdf[(
             subdf[!,:pg_qval].<=q_value_threshold
         ).&(subdf[!,:global_qval_pg].<=q_value_threshold
         ).&(subdf[!,:use_for_protein_quant])
         ,:]
         
-        # Debug: Track PSMs after filtering
-        n_psms_after = nrow(subdf)
-        unique_proteins_after = unique(subdf.inferred_protein_group)
-        n_proteins_after = length(unique_proteins_after)
-        proteins_lost_to_qval = setdiff(unique_proteins_before, unique_proteins_after)
-        total_protein_groups_filtered_qval += length(proteins_lost_to_qval)
-        
-        if length(proteins_lost_to_qval) > 0
-            @info "Batch $(n_writes+1): Lost $(length(proteins_lost_to_qval)) protein groups to q-value filtering" n_psms_before n_psms_after n_proteins_before n_proteins_after sample_lost=first(proteins_lost_to_qval, 3)
-        end
         #Exclude precursors with mods that impact quantitation
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
@@ -431,30 +407,10 @@ function LFQ(prot::DataFrame,
                 out[i,:file_name] = file_id_to_parsed_name[out[i,:experiments]]
             end
         end
-        
-        # Debug: Track filtering by peptide count
-        n_before_peptide_filter = nrow(out)
-        unique_proteins_before_pep = unique(skipmissing(out.protein))
-        filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>=min_peptides), out);
-        n_after_peptide_filter = nrow(out)
-        unique_proteins_after_pep = unique(skipmissing(out.protein))
-        proteins_lost_to_peptides = setdiff(unique_proteins_before_pep, unique_proteins_after_pep)
-        total_protein_groups_filtered_peptides += length(proteins_lost_to_peptides)
-        
-        if length(proteins_lost_to_peptides) > 0
-            @info "Batch $(n_writes+1): Lost $(length(proteins_lost_to_peptides)) protein groups to peptide filter" n_before=n_before_peptide_filter n_after=n_after_peptide_filter min_peptides sample_lost=first(proteins_lost_to_peptides, 3)
-        end
-        
+        filter!(x->(!ismissing(x.n_peptides)), out);#&(x.n_peptides>=min_peptides), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
-        if size(out, 1) == 0
-            total_protein_groups_empty_batch += ngroups
-            @info "Batch $(n_writes+1): Skipping empty batch after filtering" n_protein_groups_in_batch=ngroups
-            continue
-        end
         
         # Track protein groups written
-        unique_proteins_written = unique(skipmissing(out.protein))
-        total_protein_groups_written += length(unique_proteins_written)
         if iszero(n_writes)
             if isfile(protein_quant_path)
                 rm(protein_quant_path)
@@ -483,16 +439,12 @@ function LFQ(prot::DataFrame,
         n_writes += 1
     end
     
-    # Final summary
-    @info "LFQ Processing Summary" total_processed=total_protein_groups_processed total_written=total_protein_groups_written lost_to_qval=total_protein_groups_filtered_qval lost_to_peptides=total_protein_groups_filtered_peptides lost_to_empty_batch=total_protein_groups_empty_batch n_batches=n_writes
-    
     # Check if we processed all rows
     if batch_start_idx <= size(prot, 1)
         @warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
+        throw("Not all rows processed!  last_processed_idx=",batch_end_idx, "total_rows=",size(prot, 1), "unprocessed_rows=",size(prot, 1)-batch_end_idx)
     end
     
-    test_pgs = DataFrame(Tables.columntable(Arrow.Table(protein_quant_path)))
-    @info "Size of protein groups long table after maxLFQ step " size(test_pgs)
     return nothing
 end
 
