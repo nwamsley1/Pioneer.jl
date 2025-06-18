@@ -313,10 +313,10 @@ diagnose_protein_scoring_issue(passing_psms_paths, passing_pg_paths, precursors)
 ## Memories
 - remember me as memory update
 
-## Current Development: SearchMethods Refactoring (2024-01)
+## Current Development: SearchMethods Refactoring (2025-01)
 
 ### Overview
-Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access.
+Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access. See REFACTORING_PLAN_V2.md for detailed plan.
 
 ### Completed Work
 1. **Phase 1**: Created abstract FileReference type hierarchy
@@ -333,18 +333,35 @@ Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file r
    - All file access through FileOperations layer
    - Comprehensive unit tests
 
+4. **Phase 4.1**: Added method results storage to SearchContext
+   - Added method_results field as Dict{Type{<:SearchMethod}, Any}
+   - Added store_results!, get_results, has_results accessor functions
+   - Updated SearchContext constructor
+
+5. **Phase 4.3**: Implemented generic heap-based merge in FileOperations
+   - Generic heap-based merge supporting arbitrary number of sort keys
+   - Dynamic heap type construction based on column types
+   - Memory-efficient batch processing
+   - Specialized merge functions: merge_psm_scores, merge_protein_groups_by_score
+
 ### Test Files Created
 - test/UnitTests/test_file_references.jl
 - test/UnitTests/test_result_references.jl  
 - test/UnitTests/test_scoring_interface.jl
 
+### In Progress
+- Phase 4.2: Update ScoringSearch to use new reference-based approach
+- Phase 4.4: Update MaxLFQSearch to use references from SearchContext
+
 ### Next Steps
-- Phase 4: Update MaxLFQSearch to use references
-- Phase 5: Add reference storage to SearchContext
-- Update actual ScoringSearch implementation to use interface
+1. Integrate reference creation in ScoringSearch after protein inference
+2. Store ScoringSearchResultRefs in SearchContext
+3. Update MaxLFQSearch to retrieve and use references
+4. Clean up scoring_reference_wrapper.jl (untracked file)
 
 ### Important Notes
-- Streaming operations simplified for initial implementation
-- getProteinGroupsDict stubbed in FileOperations.jl for testing
-- Real implementation would import from src/utils/proteinInference.jl
+- The protein inference and MaxLFQ algorithms already exist and are NOT being reimplemented
+- We are only wrapping them with better abstractions and safety checks
+- All tests passing for completed phases
+- Maintains backward compatibility while adding type safety
 - All tests passing for completed phases

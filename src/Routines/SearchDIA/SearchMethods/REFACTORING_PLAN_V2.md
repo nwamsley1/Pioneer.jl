@@ -1,23 +1,26 @@
 # Updated SearchMethods Refactoring Plan
 
-## Current Progress
+## Current Progress (Updated 2025-01-18)
 
 ### ✅ Completed
-- FileReferences.jl with abstract FileReference type hierarchy
-- SearchResultReferences.jl with type-safe result management
-- FileOperations.jl with streaming operations using abstract types
-- Algorithm wrappers (apply_protein_inference, update_psms_with_scores)
-- ScoringSearch interface functions (scoring_interface.jl)
+- Phase 1: FileReferences.jl with abstract FileReference type hierarchy
+- Phase 2: Algorithm wrappers (apply_protein_inference, update_psms_with_scores)
+- Phase 3: ScoringSearch interface functions (scoring_interface.jl)
+- Phase 5 (implemented as 4.1): Added method_results storage to SearchContext
+- Phase 4.3: Generic heap-based merge in FileOperations with dynamic type construction
 - Comprehensive unit tests for all components
 
 ### 🔄 In Progress
-- Phase 4: Update MaxLFQSearch to use references
-- Phase 5: Add reference storage to SearchContext
+- Phase 4.2: Update ScoringSearch to use new reference-based approach
+- Phase 4.4: Update MaxLFQSearch to use references from SearchContext
 
 ### 📝 Notes
-- Streaming operations simplified for initial implementation
-- getProteinGroupsDict stubbed for testing (real implementation would import from utils)
-- All tests passing for completed phases
+- Phase 5 was implemented early as Phase 4.1 for better sequencing
+- All existing tests passing after SearchContext and FileOperations updates
+- **Generic heap-based merge confirmed**: Supports arbitrary number of sort keys via NTuple{N, Symbol}
+- More flexible than existing mergeSortedArrowTables which has fixed 2-key and 4-key implementations
+- scoring_reference_wrapper.jl exists as untracked file - needs integration or removal
+- getProteinGroupsDict stubbed for testing (real implementation imports from utils/proteinInference.jl)
 
 ## Improved Architecture with Abstract Types
 
@@ -232,6 +235,44 @@ end
 - The MaxLFQ algorithm already exists in `src/utils/maxLFQ.jl`
 - We are NOT reimplementing these algorithms
 - We are ONLY wrapping them with better abstractions and safety checks
+
+## Implementation Details for Remaining Phases
+
+### Phase 4.2: Update ScoringSearch (In Progress)
+1. **Add imports**:
+   - Include FileReferences.jl, SearchResultReferences.jl, FileOperations.jl
+   
+2. **Modify summarize_results!** (around line 275-285):
+   - After `perform_protein_inference` completes
+   - Create `ScoringSearchResultRefs` from passing_psms_paths and psm_to_pg_path
+   - Store in SearchContext: `store_results!(search_context, ScoringSearch, refs)`
+
+3. **Update protein group merging** (around line 299):
+   - Use `merge_protein_groups_by_score` from FileOperations
+   - Already supports the 4 sort keys needed (protein_name, target, entrapment_group_id, precursor_idx)
+
+### Phase 4.4: Update MaxLFQSearch (Pending)
+1. **Retrieve references**:
+   ```julia
+   scoring_refs = get_results(search_context, ScoringSearch)
+   if isnothing(scoring_refs)
+       error("ScoringSearch results not found")
+   end
+   ```
+
+2. **Use reference-based operations**:
+   - Extract paths from references for compatibility
+   - Use `ensure_sorted!` on references
+   - Track metadata through reference updates
+
+3. **Store results**:
+   - Create `MaxLFQSearchResultRefs` with outputs
+   - Store in SearchContext for downstream use
+
+### Clean Up Phase
+1. Review and integrate/remove scoring_reference_wrapper.jl
+2. Update documentation with examples
+3. Add integration tests for reference passing between methods
 
 ## Success Metrics
 

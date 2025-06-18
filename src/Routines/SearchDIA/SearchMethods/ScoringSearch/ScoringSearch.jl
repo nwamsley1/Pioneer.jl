@@ -6,6 +6,11 @@ This includes XGBoost model training, trace scoring, and protein group analysis.
 """
 struct ScoringSearch <: SearchMethod end
 
+# Import reference management modules
+include("../FileReferences.jl")
+include("../SearchResultReferences.jl")
+include("../FileOperations.jl")
+
 # Export new types for use in other modules
 export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
        ProteinGroupBuilder, InferenceResult, FileMapping,
@@ -282,6 +287,22 @@ function summarize_results!(
             min_peptides = params.min_peptides
         )
 
+        # Create and store file references in SearchContext
+        @info "Creating file references for ScoringSearch results..."
+        paired_files = PairedSearchFiles[]
+        for (ms_file_idx, psm_path) in enumerate(getPassingPsms(getMSData(search_context)))
+            if haskey(psm_to_pg_path, psm_path)
+                pg_path = psm_to_pg_path[psm_path]
+                push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
+            end
+        end
+        
+        if !isempty(paired_files)
+            scoring_refs = ScoringSearchResultRefs(paired_files)
+            store_results!(search_context, ScoringSearch, scoring_refs)
+            @info "Stored $(length(paired_files)) paired PSM-protein group references in SearchContext"
+        end
+
         # Step 12: Perform protein probit regression
         @info "Performing protein probit regression..."
         qc_folder = joinpath(dirname(temp_folder), "qc_plots")
@@ -296,12 +317,14 @@ function summarize_results!(
         # Merge protein groups by global pg_score (which contains probit scores after regression)
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         @info "Merging protein group scores for experiment-wide q-value estimation..."
-        merge_sorted_protein_groups(
-            passing_proteins_folder,
-            sorted_pg_scores_path,
-            :pg_score,
-            N = 1000000
-        )
+        
+        # Create references for protein group files
+        pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
+        pg_refs = [ProteinGroupFileReference(path, i, "protein_groups") for (i, path) in enumerate(pg_paths)]
+        
+        # Use reference-based merge
+        merged_pg_ref = merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
+        @info "Merged $(length(pg_refs)) protein group files using reference-based approach"
 
         # Step 19: Create experiment-wide q-value interpolation
         @info "Calculating experiment-wide q-values for protein groups..."
@@ -345,12 +368,15 @@ function summarize_results!(
         @info "Merging protein group scores for global q-value estimation..."
         # Merge protein groups by global pg_score (which contains probit scores after regression)
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-        merge_sorted_protein_groups(
-            passing_proteins_folder,
-            sorted_pg_scores_path,
-            :global_pg_score,
-            N = 1000000
-        )
+        
+        # Create references for protein group files (reuse from earlier or recreate)
+        pg_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
+        pg_refs_global = [ProteinGroupFileReference(path, i, "protein_groups") for (i, path) in enumerate(pg_paths)]
+        
+        # Use reference-based merge for global scores (sorted by global_pg_score)
+        merged_global_pg_ref = stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
+                                                  batch_size=1000000, reverse=true)
+        @info "Merged $(length(pg_refs_global)) protein group files by global score"
 
         # Step 16: Create global q-value interpolation
         @info "Calculating global q-values for protein groups..."
