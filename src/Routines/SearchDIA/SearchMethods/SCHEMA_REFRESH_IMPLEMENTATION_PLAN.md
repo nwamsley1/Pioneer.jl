@@ -10,6 +10,24 @@ Ensure all file operations that modify schema go through the FileOperations abst
 - Use `writeArrow` from utils/writeArrow.jl for Windows compatibility
 - **Use existing FileReferences from SearchContext rather than recreating them**
 
+## Implementation Status
+
+### ✅ Completed
+1. Added new FileOperations functions (write_arrow_file, transform_and_write!, add_column_and_sort!)
+2. Updated all Arrow.write calls to use writeArrow for Windows compatibility
+3. Created reference-based wrappers in scoring_interface.jl
+4. Updated ScoringSearch.jl to use existing references from SearchContext
+5. Implemented row_count() usage instead of loading tables
+6. Updated perform_protein_probit_regression to accept references
+
+### 🔄 In Progress
+- Updating remaining writeArrow calls in utils.jl to use FileOperations where appropriate
+
+### 📋 TODO
+- Update OOM version of perform_probit_analysis to use references
+- Add comprehensive tests for all FileOperations functions
+- Update MaxLFQSearch to follow same patterns
+
 ## Implementation Plan
 
 ### Phase 1: Add Missing FileOperations Functions

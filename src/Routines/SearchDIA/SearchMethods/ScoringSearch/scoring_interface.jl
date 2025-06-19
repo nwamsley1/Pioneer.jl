@@ -412,17 +412,19 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
     acc_to_max_pg_score = Dict{ProteinKey, Float32}()
     
     for ref in pg_refs
-        process_with_memory_limit(ref) do batch
-            for row in eachrow(batch)
-                key = ProteinKey(
-                    row.protein_name,
-                    row.target,
-                    row.entrap_id
-                )
-                old = get(acc_to_max_pg_score, key, -Inf32)
-                acc_to_max_pg_score[key] = max(row.pg_score, old)
+        process_with_memory_limit(ref, 
+            batch -> begin
+                for row in eachrow(batch)
+                    key = ProteinKey(
+                        row.protein_name,
+                        row.target,
+                        row.entrap_id
+                    )
+                    old = get(acc_to_max_pg_score, key, -Inf32)
+                    acc_to_max_pg_score[key] = max(row.pg_score, old)
+                end
             end
-        end
+        )
     end
     
     # Second pass: add global_pg_score column and sort
