@@ -357,20 +357,30 @@ function update_column_in_file!(ref::FileReference,
     # Create temporary output file
     temp_path = file_path(ref) * ".tmp"
     
-    # Stream through file, updating column
+    # For small files or if partitioner has issues, process entire file at once
     tbl = Arrow.Table(file_path(ref))
-    partitions = Tables.partitioner(tbl, batch_size)
     
-    first_write = true
-    for partition in partitions
-        df_batch = DataFrame(Tables.columntable(partition))
+    # Check if file is small enough to process at once
+    if row_count(ref) <= batch_size
+        # Process entire file at once
+        df_batch = DataFrame(Tables.columntable(tbl))
         df_batch[!, col_name] = update_fn(df_batch[!, col_name])
+        writeArrow(temp_path, df_batch)
+    else
+        # Stream through file for larger files
+        partitions = Tables.partitioner(tbl, batch_size)
         
-        if first_write
-            Arrow.write(temp_path, df_batch)
-            first_write = false
-        else
-            Arrow.append(temp_path, df_batch)
+        first_write = true
+        for partition in partitions
+            df_batch = DataFrame(Tables.columntable(partition))
+            df_batch[!, col_name] = update_fn(df_batch[!, col_name])
+            
+            if first_write
+                writeArrow(temp_path, df_batch)
+                first_write = false
+            else
+                Arrow.append(temp_path, df_batch)
+            end
         end
     end
     
