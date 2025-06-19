@@ -232,8 +232,8 @@ function stream_filter(input_ref::FileReference,
     df = DataFrame(Arrow.Table(file_path(input_ref)))
     filtered_df = filter(filter_fn, df)
     
-    # Write filtered data
-    Arrow.write(output_path, filtered_df)
+    # Write filtered data using writeArrow for Windows compatibility
+    writeArrow(output_path, filtered_df)
     
     # Create reference for output of same type as input
     output_ref = create_reference(output_path, typeof(input_ref))
@@ -263,8 +263,8 @@ function stream_transform(input_ref::FileReference,
     # Apply transformation
     transformed_df = transform_fn(df)
     
-    # Write the transformed data
-    Arrow.write(output_path, transformed_df)
+    # Write the transformed data using writeArrow for Windows compatibility
+    writeArrow(output_path, transformed_df)
     
     # Create reference for output of same type as input
     output_ref = create_reference(output_path, typeof(input_ref))
@@ -308,7 +308,7 @@ function add_column_to_file!(ref::FileReference,
         df_batch[!, col_name] = compute_fn(df_batch)
         
         if first_write
-            Arrow.write(temp_path, df_batch)
+            writeArrow(temp_path, df_batch)
             first_write = false
         else
             Arrow.append(temp_path, df_batch)
@@ -430,7 +430,7 @@ function safe_join_files(left_ref::FileReference,
         
         if nrow(joined_batch) > 0
             if first_write
-                Arrow.write(output_path, joined_batch)
+                writeArrow(output_path, joined_batch)
                 first_write = false
             else
                 Arrow.append(output_path, joined_batch)
@@ -520,8 +520,8 @@ function apply_protein_inference(psm_ref::PSMFileReference,
     # Sort by score (descending)
     sort!(protein_df, :pg_score, rev=true)
     
-    # Write to Arrow
-    Arrow.write(output_path, protein_df)
+    # Write to Arrow using writeArrow for Windows compatibility
+    writeArrow(output_path, protein_df)
     
     return ProteinGroupFileReference(output_path)
 end
@@ -746,11 +746,72 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse::B
     # Sort dataframe
     sort!(df, collect(sort_keys), rev=rev_vec)
     
-    # Write back to same file
-    Arrow.write(file_path(ref), df)
+    # Write back to same file using writeArrow for Windows compatibility
+    writeArrow(file_path(ref), df)
     
     # Update reference metadata
     mark_sorted!(ref, sort_keys...)
+    
+    return ref
+end
+
+#==========================================================
+General File Writing Operations
+==========================================================#
+
+"""
+    write_arrow_file(ref::FileReference, df::DataFrame) -> FileReference
+    
+Write a DataFrame to the file referenced by ref, updating all metadata.
+Uses writeArrow from utils/writeArrow.jl to handle Windows file locking issues.
+"""
+function write_arrow_file(ref::FileReference, df::DataFrame)
+    # Use writeArrow which handles Windows-specific issues
+    writeArrow(file_path(ref), df)
+    
+    # Update reference metadata
+    new_ref = create_reference(file_path(ref), typeof(ref))
+    ref.schema = schema(new_ref)
+    ref.row_count = row_count(new_ref)
+    ref.sorted_by = ()  # Reset sort state as we don't know if df is sorted
+    
+    return ref
+end
+
+"""
+    transform_and_write!(ref::FileReference, transform_fn::Function) -> FileReference
+    
+Load entire file, apply transformation, and write back.
+For operations that need full dataset access (like sorting).
+"""
+function transform_and_write!(ref::FileReference, transform_fn::Function)
+    validate_exists(ref)
+    
+    # Load entire file into memory
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    
+    # Apply transformation
+    transformed_df = transform_fn(df)
+    
+    # Write back using writeArrow for Windows compatibility
+    return write_arrow_file(ref, transformed_df)
+end
+
+"""
+    add_column_and_sort!(ref::FileReference, col_name::Symbol, 
+                        compute_fn::Function, sort_keys::Symbol...; 
+                        reverse::Bool=false) -> FileReference
+    
+Add a column and immediately sort by specified keys.
+"""
+function add_column_and_sort!(ref::FileReference, col_name::Symbol,
+                             compute_fn::Function, sort_keys::Symbol...;
+                             reverse::Bool=false)
+    # Add column
+    add_column_to_file!(ref, col_name, compute_fn)
+    
+    # Sort by keys
+    sort_file_by_keys!(ref, sort_keys...; reverse=reverse)
     
     return ref
 end
@@ -761,4 +822,5 @@ export stream_sorted_merge, stream_filter, stream_transform,
        safe_join_files, estimate_batch_size, process_with_memory_limit,
        apply_protein_inference, update_psms_with_scores,
        merge_psm_scores, merge_protein_groups_by_score, apply_maxlfq,
-       sort_file_by_keys!
+       sort_file_by_keys!, write_arrow_file, transform_and_write!,
+       add_column_and_sort!

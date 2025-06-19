@@ -1019,16 +1019,18 @@ Perform probit regression on protein groups.
 - `qc_folder`: Folder for QC plots
 """
 function perform_protein_probit_regression(
-    passing_pg_paths::Vector{String},
+    pg_refs::Vector{ProteinGroupFileReference},
     max_psms_in_memory::Int64,
     qc_folder::String
 )
+    # Extract paths for compatibility with existing code
+    passing_pg_paths = [file_path(ref) for ref in pg_refs]
+    
     # First, count the total number of protein groups across all files
     total_protein_groups = 0
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            table = Arrow.Table(pg_path)
-            total_protein_groups += length(table[:protein_name])  # Get row count from any column
+    for ref in pg_refs
+        if exists(ref)
+            total_protein_groups += row_count(ref)
         end
     end
     
@@ -1055,7 +1057,7 @@ function perform_protein_probit_regression(
         if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
             # Perform probit regression analysis
             @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
-            perform_probit_analysis(all_protein_groups, qc_folder, passing_pg_paths)
+            perform_probit_analysis(all_protein_groups, qc_folder, pg_refs)
         else
             @info "Skipping Probit analysis: insufficient data (targets: $n_targets, decoys: $n_decoys)"
         end
@@ -1077,57 +1079,13 @@ function calculate_global_protein_scores(passing_pg_paths::Vector{String})
     third_pass_start = time()
     @info "[PERF] calculate_global_protein_scores: Starting"
     
-    # Build acc_to_max_pg_score from current pg_scores (either original or probit-overwritten)
-    acc_to_max_pg_score = Dict{ProteinKey,Float32}()
+    # Create references for all protein group files
+    pg_refs = [ProteinGroupFileReference(path) for path in passing_pg_paths if isfile(path) && endswith(path, ".arrow")]
     
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            table = Arrow.Table(pg_path)
-            n_rows = length(table[:protein_name])
-            
-            for i in 1:n_rows
-                key = ProteinKey(
-                    table[:protein_name][i], 
-                    table[:target][i], 
-                    table[:entrap_id][i]
-                )
-                pg_score = table[:pg_score][i]  # Either original or probit score
-                
-                old = get(acc_to_max_pg_score, key, -Inf32)
-                acc_to_max_pg_score[key] = max(pg_score, old)
-            end
-        end
-    end
+    # Use the new reference-based implementation
+    acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
     
-    # Add global_pg_score to all protein group files
-    fourth_pass_start = time()
-    @info "[PERF] calculate_global_protein_scores: Adding global_pg_score to protein group files"
-    
-    for pg_path in passing_pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-            
-            # Add global_pg_score column
-            global_pg_scores = Vector{Float32}(undef, nrow(df))
-            for i in 1:nrow(df)
-                key = ProteinKey(
-                    df[i, :protein_name],
-                    df[i, :target],
-                    df[i, :entrap_id]
-                )
-                global_pg_scores[i] = get(acc_to_max_pg_score, key, df[i, :pg_score])
-            end
-            df[!, :global_pg_score] = global_pg_scores
-            
-            # Re-sort by global_pg_score
-            sort!(df, [:global_pg_score, :target], rev = [true, true])
-            
-            # Write back
-            writeArrow(pg_path, df)
-        end
-    end
-    
-    fourth_pass_time = time() - fourth_pass_start
+    fourth_pass_time = time() - third_pass_start
     @info "[PERF] calculate_global_protein_scores: Completed" elapsed=round(fourth_pass_time, digits=3) n_protein_groups=length(acc_to_max_pg_score)
     
     return acc_to_max_pg_score
@@ -1554,7 +1512,7 @@ Perform probit regression analysis on protein groups with comparison to baseline
 5. Re-processes individual files with probit scores if pg_paths provided
 """
 function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::String,
-                               pg_paths::Union{Vector{String}, Nothing} = nothing;
+                               pg_refs::Vector{ProteinGroupFileReference};
                                show_improvement = true)
     n_targets = sum(all_protein_groups.target)
     n_decoys = sum(.!all_protein_groups.target)
@@ -1577,41 +1535,16 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # TODO: Fix plotting type error
     # plot_probit_decision_boundary(all_protein_groups, β_fitted, X_mean, X_std, feature_names, qc_folder)
     
-    # Re-process individual files if paths are provided
-    if pg_paths !== nothing
+    # Re-process individual files if references are provided
+    if !isempty(pg_refs)
         @info "Re-processing individual protein group files with probit scores"
-        for pg_path in pg_paths
-            if isfile(pg_path) && endswith(pg_path, ".arrow")
-                # Load file
-                df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-                n_before = nrow(df)
-                n_target_before = sum(df.target)
-                n_decoy_before = n_before - n_target_before
-                
-                # Calculate probit scores
-                X_file = Matrix{Float64}(df[:, feature_names])
-                #prob_scores = calculate_probit_scores(X_file, β_fitted, X_mean, X_std)
-                prob_scores = calculate_probit_scores(X_file, β_fitted)
-                # Overwrite pg_score with probit scores
-                df[!,:old_pg_score] = copy(df.pg_score)  # Keep old pg_score for reference
-                df[!, :pg_score] = Float32.(prob_scores)
-                
-                # Sort by pg_score and target in descending order
-                sort!(df, [:pg_score, :target], rev = [true, true])
-                
-                # Log what we're writing back
-                n_after = nrow(df)
-                n_target_after = sum(df.target)
-                n_decoy_after = n_after - n_target_after
-                @info "Probit reprocessing file" file=basename(pg_path) before=(total=n_before, targets=n_target_before, decoys=n_decoy_before) after=(total=n_after, targets=n_target_after, decoys=n_decoy_after)
-                
-                # Write back the file with probit scores
-                writeArrow(pg_path, df)
-            end
-        end
+        # Use the new apply_probit_scores! function with references
+        apply_probit_scores!(pg_refs, β_fitted, feature_names)
     end
-    if show_improvement 
-        all_pgs = DataFrame(Tables.columntable(Arrow.Table(pg_paths)))
+    if show_improvement && !isempty(pg_refs)
+        # Merge all protein group files to calculate improvement
+        pg_paths = [file_path(ref) for ref in pg_refs]
+        all_pgs = vcat([DataFrame(Arrow.Table(path)) for path in pg_paths]...)
         old_qvalues = zeros(Float32, size(all_pgs, 1))
         get_qvalues!(all_pgs[!,:old_pg_score], all_pgs[!,:target], old_qvalues)
         old_passing = sum((old_qvalues .<= 0.01f0) .& all_pgs.target)

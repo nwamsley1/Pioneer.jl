@@ -314,9 +314,8 @@ function summarize_results!(
         !isdir(qc_folder) && mkdir(qc_folder)
         # Use references from scoring_refs
         pg_refs = get_protein_refs(scoring_refs)
-        pg_paths = [file_path(ref) for ref in pg_refs]
         perform_protein_probit_regression(
-            pg_paths,  # Still uses paths for now
+            pg_refs,  # Now uses references
             params.max_psms_in_memory,
             qc_folder
         )
@@ -345,33 +344,23 @@ function summarize_results!(
 
         # Step 13: Calculate global protein scores
         @info "Calculating global protein scores..."
-        # Use the protein group references
-        acc_to_max_pg_score = calculate_global_protein_scores(
-            pg_paths  # Still uses paths for now
-        )
+        # Use the protein group references directly
+        acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
 
         # Merge protein groups by run-specific prob
         if isfile(sorted_pg_scores_path)
 
-            #rm(sorted_pg_scores_path)
-            if Sys.iswindows()
-                writeArrow(
-                    sorted_pg_scores_path,
-                    DataFrame()
-                )
-            else
-                rm(sorted_pg_scores_path)
-            end
+            # Clear the file by writing an empty DataFrame
+            temp_ref = ProteinGroupFileReference(sorted_pg_scores_path)
+            write_arrow_file(temp_ref, DataFrame())
         end
 
         # Step 17: Sort protein groups by experiment-wide pg_score
         @info "Sorting protein group tables by experiment-wide pg_score..."
-        # This function already uses references internally
-        sort_protein_tables(
-            pg_paths,
-            passing_proteins_folder,
-            :global_pg_score
-        )
+        # Use references directly
+        for ref in pg_refs
+            sort_file_by_keys!(ref, :global_pg_score; reverse=true)
+        end
 
         # Step 15: Merge protein group scores by global_pg_score
         @info "Merging protein group scores for global q-value estimation..."

@@ -397,10 +397,90 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
     return filtered_refs
 end
 
+#==========================================================
+Reference-Based Wrappers for Direct File Operations
+==========================================================#
+
+"""
+    calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
+    
+Calculate global protein scores and add them to files via references.
+Returns the score dictionary for downstream use.
+"""
+function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
+    # First pass: collect max scores
+    acc_to_max_pg_score = Dict{ProteinKey, Float32}()
+    
+    for ref in pg_refs
+        process_with_memory_limit(ref) do batch
+            for row in eachrow(batch)
+                key = ProteinKey(
+                    row.protein_name,
+                    row.target,
+                    row.entrap_id
+                )
+                old = get(acc_to_max_pg_score, key, -Inf32)
+                acc_to_max_pg_score[key] = max(row.pg_score, old)
+            end
+        end
+    end
+    
+    # Second pass: add global_pg_score column and sort
+    for ref in pg_refs
+        add_column_and_sort!(ref, :global_pg_score, 
+            batch -> begin
+                scores = Vector{Float32}(undef, nrow(batch))
+                for i in 1:nrow(batch)
+                    key = ProteinKey(
+                        batch.protein_name[i],
+                        batch.target[i],
+                        batch.entrap_id[i]
+                    )
+                    scores[i] = get(acc_to_max_pg_score, key, batch.pg_score[i])
+                end
+                scores
+            end,
+            :global_pg_score, :target;  # sort keys
+            reverse=true
+        )
+    end
+    
+    return acc_to_max_pg_score
+end
+
+"""
+    apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference}, 
+                        β_fitted::Vector{Float64}, feature_names::Vector{Symbol})
+    
+Apply probit regression scores to protein group files.
+Note: This function is called from utils.jl and needs access to calculate_probit_scores.
+"""
+function apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
+                             β_fitted::Vector{Float64},
+                             feature_names::Vector{Symbol})
+    for ref in pg_refs
+        transform_and_write!(ref) do df
+            # Calculate probit scores (function from utils.jl)
+            X_file = Matrix{Float64}(df[:, feature_names])
+            prob_scores = calculate_probit_scores(X_file, β_fitted)
+            
+            # Update scores
+            df[!, :old_pg_score] = copy(df.pg_score)
+            df[!, :pg_score] = Float32.(prob_scores)
+            
+            # Sort by new scores
+            sort!(df, [:pg_score, :target], rev = [true, true])
+            
+            return df
+        end
+    end
+end
+
 # Export all interface functions
 export process_psms_for_scoring, update_psms_with_protein_scores!,
        merge_protein_groups, filter_protein_groups_by_qvalue,
        calculate_global_protein_scores, add_global_scores_to_psms!,
        calculate_protein_qvalues, generate_scoring_summary,
        validate_scoring_results,
-       process_and_filter_psms, merge_psm_files, filter_psms_by_qvalue
+       process_and_filter_psms, merge_psm_files, filter_psms_by_qvalue,
+       calculate_and_add_global_scores!, apply_probit_scores!

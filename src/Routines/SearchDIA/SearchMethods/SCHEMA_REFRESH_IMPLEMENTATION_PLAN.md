@@ -8,6 +8,7 @@ Ensure all file operations that modify schema go through the FileOperations abst
 - All file modifications must go through FileOperations.jl
 - FileReference objects automatically stay synchronized
 - Use `writeArrow` from utils/writeArrow.jl for Windows compatibility
+- **Use existing FileReferences from SearchContext rather than recreating them**
 
 ## Implementation Plan
 
@@ -162,35 +163,36 @@ end
 
 ### Phase 3: Update All Direct File Operations
 
-#### 3.1 Replace writeArrow in calculate_global_protein_scores
+#### 3.1 Use existing references from SearchContext
 ```julia
-# OLD (lines 1104-1128):
-for pg_path in passing_pg_paths
-    df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-    # ... add global_pg_score ...
-    sort!(df, [:global_pg_score, :target], rev = [true, true])
-    writeArrow(pg_path, df)
-end
+# In ScoringSearch.jl, references are already created:
+pg_refs = get_protein_refs(scoring_refs)  # Line 316
+
+# Update calculate_global_protein_scores call (line 349):
+# OLD:
+acc_to_max_pg_score = calculate_global_protein_scores(pg_paths)
 
 # NEW:
-pg_refs = [ProteinGroupFileReference(path) for path in passing_pg_paths]
-calculate_and_add_global_scores!(pg_refs)
+acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
 ```
 
-#### 3.2 Replace writeArrow in perform_probit_analysis
+#### 3.2 Update perform_probit_analysis to accept references
 ```julia
-# OLD (lines 1580-1612):
-for pg_path in pg_paths
-    df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
-    # ... calculate probit scores ...
-    df[!, :pg_score] = Float32.(prob_scores)
-    sort!(df, [:pg_score, :target], rev = [true, true])
-    writeArrow(pg_path, df)
+# Update function signature:
+function perform_probit_analysis(
+    all_protein_groups::DataFrame, 
+    qc_folder::String,
+    pg_refs::Vector{ProteinGroupFileReference};  # Changed from paths
+    show_improvement = true
+)
+    # ... existing logic ...
+    
+    # Use references directly
+    if !isempty(pg_refs)
+        @info "Re-processing individual protein group files with probit scores"
+        apply_probit_scores!(pg_refs, β_fitted, feature_names)
+    end
 end
-
-# NEW:
-pg_refs = [ProteinGroupFileReference(path) for path in pg_paths]
-apply_probit_scores!(pg_refs, β_fitted, feature_names)
 ```
 
 #### 3.3 Update other writeArrow calls
@@ -201,18 +203,23 @@ Similar pattern for all other writeArrow calls:
 
 ### Phase 4: Update ScoringSearch.jl Integration
 
-#### 4.1 Maintain references throughout pipeline
+#### 4.1 Use existing references throughout pipeline
 ```julia
-# After protein inference (Step 11)
-pg_refs = [ref.protein_ref for ref in scoring_refs.paired_files]
+# References are already created and stored in SearchContext (line 304-305)
+scoring_refs = ScoringSearchResultRefs(paired_files)
+store_results!(search_context, ScoringSearch, scoring_refs)
 
+# Extract protein group references (line 316)
+pg_refs = get_protein_refs(scoring_refs)
+
+# Update function calls to use references:
 # Step 12: Probit regression
-perform_protein_probit_regression_refs(pg_refs, ...)
+perform_protein_probit_regression(pg_refs, params.max_psms_in_memory, qc_folder)
 
-# Step 13: Global scores (using refs)
+# Step 13: Global scores
 acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
 
-# Step 17: Sort protein tables (already using refs)
+# Step 17: Sort protein tables
 for ref in pg_refs
     sort_file_by_keys!(ref, :global_pg_score; reverse=true)
 end
