@@ -1417,7 +1417,7 @@ Perform out-of-memory probit regression analysis on protein groups.
 4. Apply model to all protein groups file by file
 5. Calculate and report performance metrics
 """
-function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
+function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference}, total_protein_groups::Int, 
                                     max_protein_groups_in_memory::Int, qc_folder::String)
     
     # Calculate sampling ratio
@@ -1426,10 +1426,9 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
     
     # Sample protein groups from each file
     sampled_protein_groups = DataFrame()
-    for pg_path in pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
-            table = Arrow.Table(pg_path)
-            n_rows = length(table[:protein_name])  # Get row count from any column
+    for ref in pg_refs
+        if exists(ref)
+            n_rows = row_count(ref)
             n_sample = ceil(Int, n_rows * sampling_ratio)
             
             if n_sample > 0
@@ -1437,6 +1436,7 @@ function perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_gro
                 sample_indices = sort(sample(1:n_rows, n_sample, replace=false))
                 
                 # Load sampled rows
+                table = Arrow.Table(file_path(ref))
                 df = DataFrame(Tables.columntable(table))
                 append!(sampled_protein_groups, df[sample_indices, :])
             end

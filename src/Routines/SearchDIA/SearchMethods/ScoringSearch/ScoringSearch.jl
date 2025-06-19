@@ -386,15 +386,16 @@ function summarize_results!(
         )
 
         # Filter proteins by global q-value
-        get_proteins_passing_qval(
-            passing_proteins_folder,
+        # Use the protein group references we already have
+        get_proteins_passing_qval_refs(
+            pg_refs,
             search_context.global_pg_score_to_qval[],
             search_context.pg_score_to_qval[],
             :global_pg_score,
             :pg_score,
             :global_pg_qval,
             :pg_qval,
-            params.q_value_threshold,
+            params.q_value_threshold
         )
 
         @info "DEBUG"
@@ -407,9 +408,9 @@ function summarize_results!(
         @info "DEBUG: Number of passing protein groups (global and pg): $ew_global_count"
         # Step 14: Update PSMs with probit-scored pg_score and global scores
         @info "Updating PSMs with probit-scored protein group scores..."
-        update_psms_with_probit_scores(
-            getPrecursors(getSpecLib(search_context)),
-            psm_to_pg_path,
+        # Get the paired references from SearchContext
+        update_psms_with_probit_scores_refs(
+            scoring_refs.paired_files,
             acc_to_max_pg_score,
             search_context.pg_score_to_qval[],
             search_context.global_pg_score_to_qval[]
