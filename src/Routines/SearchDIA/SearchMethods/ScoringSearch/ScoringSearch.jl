@@ -348,12 +348,13 @@ function summarize_results!(
         acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
 
         # Merge protein groups by run-specific prob
-        if isfile(sorted_pg_scores_path)
+        #if isfile(sorted_pg_scores_path)
+        
 
             # Clear the file by writing an empty DataFrame
-            temp_ref = ProteinGroupFileReference(sorted_pg_scores_path)
-            write_arrow_file(temp_ref, DataFrame())
-        end
+        #    temp_ref = ProteinGroupFileReference(sorted_pg_scores_path)
+        #    write_arrow_file(temp_ref, DataFrame())
+        #end
 
         # Step 17: Sort protein groups by experiment-wide pg_score
         @info "Sorting protein group tables by experiment-wide pg_score..."

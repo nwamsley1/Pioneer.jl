@@ -579,12 +579,12 @@ function update_psms_with_probit_scores_refs(
     files_processed = 0
     
     for paired_ref in paired_refs
-        psm_ref = PSMFileReference(paired_ref.psm_path)
-        pg_ref = ProteinGroupFileReference(paired_ref.pg_path)
+        psm_ref = paired_ref.psm_ref
+        pg_ref = paired_ref.protein_ref
         
         # Verify both files exist
         if !exists(psm_ref) || !exists(pg_ref)
-            @warn "Missing file" psm_path=paired_ref.psm_path pg_path=paired_ref.pg_path
+            @warn "Missing file" psm_path=file_path(paired_ref.psm_ref) pg_path=file_path(paired_ref.protein_ref)
             continue
         end
         
