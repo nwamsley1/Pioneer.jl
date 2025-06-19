@@ -465,7 +465,10 @@ function sort_and_filter_quant_tables_refs(
         files_processed += 1
         
         # Apply transformation
-        df = transform_and_write!(ref) do psms_table
+        # Use a local variable to track rows kept for this file
+        local rows_kept_this_file = 0
+        
+        transform_and_write!(ref) do psms_table
             if seperateTraces(isotope_trace_type)
                 # Add indicator variable for best trace
                 psms_table[!,:best_trace] = zeros(Bool, nrow(psms_table))
@@ -485,13 +488,16 @@ function sort_and_filter_quant_tables_refs(
             
             # Filter out unused traces
             filter!(x->x.best_trace, psms_table)
-            total_rows_kept += nrow(psms_table)
+            rows_kept_this_file = nrow(psms_table)
             
             # Sort in descending order of probability
             sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
             
             return psms_table
         end
+        
+        # Update the total after transformation completes
+        total_rows_kept += rows_kept_this_file
         
         # Update reference sort state
         mark_sorted!(ref, prob_col, :target)

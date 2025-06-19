@@ -799,12 +799,12 @@ function write_arrow_file(ref::FileReference, df::DataFrame)
 end
 
 """
-    transform_and_write!(ref::FileReference, transform_fn::Function) -> FileReference
+    transform_and_write!(transform_fn::Function, ref::FileReference) -> FileReference
     
 Load entire file, apply transformation, and write back.
 For operations that need full dataset access (like sorting).
 """
-function transform_and_write!(ref::FileReference, transform_fn::Function)
+function transform_and_write!(transform_fn::Function, ref::FileReference)
     validate_exists(ref)
     
     # Load entire file into memory
