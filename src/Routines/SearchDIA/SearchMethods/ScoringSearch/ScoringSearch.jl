@@ -263,8 +263,10 @@ function summarize_results!(
         
         # Update the search context with new passing PSM paths
         passing_psm_paths = [file_path(ref) for ref in passing_refs]
-        # Note: This assumes getPassingPsms returns a mutable collection
-        # In practice, we might need a setter method in search_context
+        # Store the paths in the search context
+        for (idx, path) in enumerate(passing_psm_paths)
+            setPassingPsms!(getMSData(search_context), idx, path)
+        end
 
         # Step 10: Count protein peptides
         # This is useful for counting some of the protein-group features
@@ -294,6 +296,8 @@ function summarize_results!(
             psm_path = file_path(ref)
             if haskey(psm_to_pg_path, psm_path)
                 pg_path = psm_to_pg_path[psm_path]
+                # Store the protein group path in the search context
+                setPassingProteins!(getMSData(search_context), ms_file_idx, pg_path)
                 # Create paired reference with proper indices
                 push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
             end
