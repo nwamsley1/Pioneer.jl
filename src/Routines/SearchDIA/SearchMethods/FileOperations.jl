@@ -115,11 +115,52 @@ function _add_to_heap!(heap, table::Arrow.Table, table_idx::Int,
     push!(heap, (values..., table_idx))
 end
 
+# Add to heap with value transformation for mixed sort directions
+function _add_to_heap_with_transform!(heap, table::Arrow.Table, table_idx::Int,
+                                     row_idx::Int, sort_keys::NTuple{N, Symbol},
+                                     rev_vec::Vector{Bool}, use_min_heap::Bool) where N
+    # Build tuple of sort key values, transforming for reverse columns
+    values = ntuple(N) do i
+        val = Tables.getcolumn(table, sort_keys[i])[row_idx]
+        
+        # Transform value if needed for consistent heap ordering
+        if use_min_heap && rev_vec[i]
+            # For reverse columns in MinHeap, we need to negate numeric values
+            # For non-numeric types, this will need special handling
+            if val isa Number
+                -val
+            else
+                # For non-numeric types, we can't easily negate
+                # Fall back to original behavior or implement custom comparison
+                val
+            end
+        elseif !use_min_heap && !rev_vec[i]
+            # For non-reverse columns in MaxHeap, negate
+            if val isa Number
+                -val
+            else
+                val
+            end
+        else
+            val
+        end
+    end
+    
+    push!(heap, (values..., table_idx))
+end
+
 # Initialize heap with dynamic type based on sort keys
 function _initialize_heap(tables::Vector{Arrow.Table}, sort_keys::NTuple{N, Symbol}, 
-                         reverse::Bool) where N
+                         reverse::Union{Bool, Vector{Bool}}) where N
     if isempty(tables)
         error("No tables to merge")
+    end
+    
+    # Create reverse direction vector
+    rev_vec = if reverse isa Bool
+        fill(reverse, N)
+    else
+        reverse
     end
     
     # Determine types of sort columns
@@ -129,13 +170,15 @@ function _initialize_heap(tables::Vector{Arrow.Table}, sort_keys::NTuple{N, Symb
     # Create heap type: Tuple{col_types..., Int64}
     heap_tuple_type = Tuple{col_types..., Int64}
     
-    # Create appropriate heap
-    heap = reverse ? BinaryMaxHeap{heap_tuple_type}() : BinaryMinHeap{heap_tuple_type}()
+    # For mixed sort directions, we'll use MinHeap and transform values
+    # This is simpler than creating a custom comparator
+    use_min_heap = !all(rev_vec)  # Use MinHeap unless all columns are reverse
+    heap = use_min_heap ? BinaryMinHeap{heap_tuple_type}() : BinaryMaxHeap{heap_tuple_type}()
     
     # Add first row from each table
     for (i, table) in enumerate(tables)
         if length(Tables.getcolumn(table, 1)) > 0
-            _add_to_heap!(heap, table, i, 1, sort_keys)
+            _add_to_heap_with_transform!(heap, table, i, 1, sort_keys, rev_vec, use_min_heap)
         end
     end
     
@@ -147,13 +190,18 @@ function stream_sorted_merge(refs::Vector{<:FileReference},
                            output_path::String,
                            sort_keys::Symbol...;
                            batch_size::Int=1_000_000,
-                           reverse::Bool=false)
+                           reverse::Union{Bool, Vector{Bool}}=false)
     # Convert varargs to tuple
     sort_keys_tuple = sort_keys
     
     # Validate inputs
     isempty(refs) && error("No files to merge")
     isempty(sort_keys_tuple) && error("At least one sort key required")
+    
+    # Validate reverse vector length if it's a vector
+    if reverse isa Vector{Bool} && length(reverse) != length(sort_keys_tuple)
+        error("Length of reverse vector ($(length(reverse))) must match number of sort keys ($(length(sort_keys_tuple)))")
+    end
     
     # Validate all files exist and are sorted by same keys
     for (i, ref) in enumerate(refs)
@@ -185,6 +233,14 @@ function stream_sorted_merge(refs::Vector{<:FileReference},
     # Initialize heap
     heap = _initialize_heap(tables, sort_keys_tuple, reverse)
     
+    # Create reverse direction vector for use in main loop
+    rev_vec = if reverse isa Bool
+        fill(reverse, length(sort_keys_tuple))
+    else
+        reverse
+    end
+    use_min_heap = !all(rev_vec)
+    
     # Perform heap-based merge
     row_idx = 1
     n_writes = 0
@@ -207,7 +263,7 @@ function stream_sorted_merge(refs::Vector{<:FileReference},
         
         # Add next row from same table to heap if available
         if next_row_idx <= table_sizes[table_idx]
-            _add_to_heap!(heap, table, table_idx, next_row_idx, sort_keys_tuple)
+            _add_to_heap_with_transform!(heap, table, table_idx, next_row_idx, sort_keys_tuple, rev_vec, use_min_heap)
         end
         
         row_idx += 1

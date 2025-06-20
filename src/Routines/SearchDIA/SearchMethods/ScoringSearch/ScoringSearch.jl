@@ -230,8 +230,8 @@ function summarize_results!(
 
         # Step 4: Merge PSMs by global_prob for global q-values
         @info "Step 4: Merging PSM scores by global_prob..."
-        stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob;
-                           batch_size=10_000_000, reverse=true)
+        stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
+                           batch_size=10_000_000, reverse=[true, true])
 
         # Step 5: Calculate global precursor q-values
         @info "Step 5: Calculating global precursor q-values..."
@@ -239,9 +239,10 @@ function summarize_results!(
 
         # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
         @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
-        sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
-        stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob;
-                           batch_size=10_000_000, reverse=true)
+        sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true, true])
+        stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
+                           batch_size=10_000_000, reverse=[true, true])
+
         # Step 7: Calculate experiment-wide precursor q-values
         @info "Step 7: Calculating experiment-wide precursor q-values..."
         results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
