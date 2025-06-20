@@ -9,6 +9,11 @@ struct ScoringSearch <: SearchMethod end
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
 
+# Import pipeline operations to ensure proper method dispatch
+import ..FileOperations: TransformPipeline, add_column, rename_column, 
+                        select_columns, remove_columns, filter_rows, sort_by, apply_pipeline!
+import .scoring_interface: add_best_trace_indicator, get_quant_necessary_columns
+
 # Export new types for use in other modules
 export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
        ProteinGroupBuilder, InferenceResult, FileMapping,
