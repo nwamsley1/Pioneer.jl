@@ -292,7 +292,7 @@ function group_psms_by_protein(df::DataFrame)
             target = Bool[],
             entrapment_group_id = UInt8[],
             n_peptides = Int64[],
-            peptide_list = Vector{String}[],
+            peptide_list = String[],
             pg_score = Float32[]
         )
     end
@@ -324,7 +324,7 @@ function group_psms_by_protein(df::DataFrame)
         
         DataFrame(
             n_peptides = n_peptides,
-            peptide_list = [quant_peptides],
+            peptide_list = join(quant_peptides, ";"),
             pg_score = pg_score
         )
     end

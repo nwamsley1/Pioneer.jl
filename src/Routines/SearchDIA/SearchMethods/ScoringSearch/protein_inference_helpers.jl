@@ -409,6 +409,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     peptide_coverages = Vector{Float32}(undef, n_groups)
     log_n_possible_peptides = Vector{Float32}(undef, n_groups)
     log_binom_coeffs = Vector{Float32}(undef, n_groups)
+    peptide_lists = Vector{Vector{String}}(undef, n_groups)
     
     for (i, (key, group)) in enumerate(pairs(protein_groups))
         protein_names[i] = key.name#group.key.name
@@ -421,6 +422,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         peptide_coverages[i] = group.features.peptide_coverage
         log_n_possible_peptides[i] = group.features.log_n_possible_peptides
         log_binom_coeffs[i] = group.features.log_binom_coeff
+        peptide_lists[i] = collect(group.peptides)  # Convert Set{String} to Vector{String}
     end
     
     # Create DataFrame and sort
@@ -430,6 +432,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
         entrap_id = entrap_ids,
         pg_score = pg_scores,
         n_peptides = n_peptides,
+        peptide_list = peptide_lists,
         total_peptide_length = total_peptide_lengths,
         n_possible_peptides = n_possible_peptides,
         peptide_coverage = peptide_coverages,
