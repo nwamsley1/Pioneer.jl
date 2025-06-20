@@ -81,41 +81,6 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
 end
 
 """
-    deduplicate_peptides()
-
-Remove duplicate peptide-protein pairs to prepare for inference.
-Keeps the highest scoring PSM for each unique peptide.
-"""
-function deduplicate_peptides()
-    desc = "deduplicate_peptides"
-    
-    op = function(df)
-        # Group by peptide sequence and protein, keep best scoring
-        if nrow(df) == 0
-            return df
-        end
-        
-        # Create composite key for grouping
-        gdf = groupby(df, [:sequence, :accession_numbers, :entrap_id])
-        
-        # Keep row with highest probability for each group
-        deduped = combine(gdf) do sdf
-            if nrow(sdf) == 1
-                return sdf
-            else
-                # Find row with max probability
-                max_idx = argmax(sdf.prec_prob)
-                return sdf[max_idx:max_idx, :]
-            end
-        end
-        
-        return deduped
-    end
-    
-    return desc => op
-end
-
-"""
     validate_peptide_data()
 
 Ensure all required columns exist for protein inference.
@@ -436,7 +401,6 @@ function perform_protein_inference_pipeline(
     # Build pre-inference pipeline
     pre_inference_pipeline = TransformPipeline() |>
         add_peptide_metadata(precursors) |>
-        deduplicate_peptides() |>
         validate_peptide_data()
     
     # Process each file
@@ -459,8 +423,8 @@ function perform_protein_inference_pipeline(
         
         # Step 3: Update PSMs with inference results
         psm_update_pipeline = TransformPipeline() |>
-            add_inferred_protein_column(inference_result) |>
-            add_quantification_flag(inference_result)
+            add_inferred_protein_column(inference_result) |> #Protein group assigned to each peptide
+            add_quantification_flag(inference_result) #Whether or not the peptide should be used for protein quant and inference (non ambiguous)
         
         # Apply updates to the same PSM file (which now has necessary columns)
         apply_pipeline!(psm_ref, psm_update_pipeline)
@@ -502,7 +466,6 @@ end
 # Export functions
 export perform_protein_inference_pipeline,
        add_peptide_metadata,
-       deduplicate_peptides,
        validate_peptide_data,
        add_inferred_protein_column,
        add_quantification_flag,

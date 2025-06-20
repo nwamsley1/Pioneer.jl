@@ -75,279 +75,12 @@ function get_best_traces(
     return traces_passing
 end
 
-"""
-    sort_and_filter_quant_tables(second_pass_psms_paths::Vector{String},
-                                merged_quant_path::String,
-                                best_traces::Set{@NamedTuple})
 
-Filter PSM tables to retain only best traces and sort by probability.
-
-Modifies files in place to optimize storage.
-"""
-function sort_and_filter_quant_tables(
-    second_pass_psms_paths::Vector{String},
-    merged_quant_path::String,
-    isotope_trace_type::IsotopeTraceType,
-    prob_col::Symbol,
-    best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
-)
-    @info "[PERF] sort_and_filter_quant_tables: Starting" n_files=length(second_pass_psms_paths)
-    start_time = time()
-    total_rows_processed = 0
-    total_rows_kept = 0
-    files_processed = 0
-
-    #Remove if present 
-    if isfile(merged_quant_path)
-        safeRm(merged_quant_path)
-    end
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
-    for (file_idx, fpath) in enumerate(second_pass_psms_paths)
-        # Read file
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        initial_rows = size(psms_table, 1)
-        total_rows_processed += initial_rows
-        files_processed += 1
-
-        if seperateTraces(isotope_trace_type)
-            #Indicator variable of whether each psm is from the best trace 
-            psms_table[!,:best_trace] = zeros(Bool, size(psms_table, 1))
-            for i in range(1, size(psms_table, 1))
-               key = (precursor_idx = psms_table[i, :precursor_idx], isotopes_captured = psms_table[i, :isotopes_captured])
-               if key ∈ best_traces
-                   psms_table[i,:best_trace]=true
-               end
-            end
-        else
-            transform!(
-                groupby(psms_table, :precursor_idx),
-                :prob => (p -> p .== maximum(p)) => :best_trace
-            )
-        end
-
-        #Filter out unused traces
-        filter!(x->x.best_trace,psms_table)
-        filtered_rows = size(psms_table, 1)
-        total_rows_kept += filtered_rows
-        
-        #Sort in descending order of probability
-        sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
-        
-        #write back
-        writeArrow(fpath, psms_table)
-    end
-    
-    elapsed = time() - start_time
-    @info "[PERF] sort_and_filter_quant_tables: Completed" elapsed=round(elapsed, digits=3) files_processed=files_processed total_rows=total_rows_processed kept_rows=total_rows_kept retention_rate=round(total_rows_kept/max(total_rows_processed,1), digits=3) avg_rows_per_file=round(total_rows_processed/max(files_processed,1), digits=1)
-    
-    return nothing
-end
-
-function sort_quant_tables(
-    second_pass_psms_paths::Vector{String},
-    merged_quant_path::String,
-    prob_col::Symbol,
-)
-
-    #Remove if present 
-    if isfile(merged_quant_path)
-        safeRm(merged_quant_path)
-    end
-    #file_paths = [fpath for fpath in readdir(quant_psms_folder,join=true) if endswith(fpath,".arrow")]
-    #Sort and filter each psm table 
-    for fpath in second_pass_psms_paths
-        psms_table = DataFrame(Tables.columntable(Arrow.Table(fpath)))
-        #Sort in descending order of probability
-        sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
-        #write back
-        writeArrow(fpath, psms_table)
-    end
-    return nothing
-end
 
 
 #==========================================================
 PSM score merging and processing 
 ==========================================================#
-"""
-    merge_sorted_psms_scores(input_paths::Vector{String}, output_path::String; N=10000000)
-
-Merge sorted PSM scores from multiple files.
-
-Uses heap-based merging for memory efficiency with batched processing.
-"""
-function merge_sorted_psms_scores(
-                    input_paths::Vector{String}, 
-                    output_path::String,
-                    prob_col::Symbol
-                    ; N = 10000000
-)
-    @info "[PERF] merge_sorted_psms_scores: Starting" n_files=length(input_paths) batch_size=N
-    start_time = time()
-    initial_memory = Base.gc_live_bytes() / 1024^2
-    total_batches = 0
-    
-    function fillColumn!(
-        peptide_batch_col::Vector{R},
-        col::Symbol,
-        sorted_tuples::Vector{Tuple{Int64, Int64}},
-        tables::Vector{Arrow.Table},
-        n) where {R<:Real}
-        for i in range(1, max(min(length(peptide_batch_col), n - 1), 1))
-            table_idx, idx = sorted_tuples[i]
-            peptide_batch_col[i] = tables[table_idx][col][idx]::R
-        end
-    end
-
-    function addPrecursorToHeap!(
-        psms_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
-        sort_key::AbstractVector{Float32},
-        table_idx::Int64,
-        row_idx::Int64)
-        push!(
-            psms_heap,
-            (
-            sort_key[row_idx],
-            table_idx
-            )
-        )
-    end
-
-    function addPrecursorToHeap!(
-        psms_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
-        sort_key::AbstractVector{S},
-        table_idx::Int64,
-        row_idx::Int64) where {S<:AbstractString}
-        push!(
-            psms_heap,
-            (
-            sort_key[row_idx],
-            table_idx
-            )
-        )
-    end
-    ##println("psms input_paths $input_paths")
-    #input_paths = [path for path in readdir(input_dir,join=true) if endswith(path,".arrow")]
-    
-    # Load all tables
-    load_start = time()
-    tables = [Arrow.Table(path) for path in input_paths]
-    table_sizes = [length(table[1]) for table in tables]
-    total_rows = sum(table_sizes)
-    load_time = time() - load_start
-    # Tables loaded
-    
-    table_idxs = ones(Int64, length(tables))
-    psms_batch = DataFrame()
-    sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, N)
-    psms_heap = BinaryMaxHeap{Tuple{Float32, Int64}}()
-    psms_batch[!,prob_col] = zeros(Float32, N)
-    psms_batch[!,:target] = zeros(Bool, N)
-    psms_batch[!,:precursor_idx] = zeros(UInt32, N)
-
-    
-    #Load psms_heap
-    for (i, table) in enumerate(tables)
-        ##println("i $i")
-        ##println("size(table) ", size(DataFrame(table)))
-        addPrecursorToHeap!(
-            psms_heap,
-            table[prob_col],
-            i,
-            1
-        )
-    end
-    i = 1
-    n_writes = 0
-    rows_written = 0
-    if Sys.iswindows()
-        writeArrow(output_path, DataFrame())
-    else
-        safeRm(output_path, force=true)
-    end
-    
-    merge_start = time()
-    while length(psms_heap)>0
-        _, table_idx = pop!(psms_heap)
-        table = tables[table_idx]
-        idx = table_idxs[table_idx]
-        sorted_tuples[i] = (table_idx, idx)
-        table_idxs[table_idx] += 1
-        idx = table_idxs[table_idx]
-        if (idx > length(table[1]))
-            continue
-        end
-        addPrecursorToHeap!(
-            psms_heap,
-            table[prob_col],
-            table_idx,
-            idx
-        )
-        i += 1
-        if i > N
-            for col in [prob_col,:target,:precursor_idx]
-                fillColumn!(
-                    psms_batch[!,col],
-                    col,
-                    sorted_tuples,
-                    tables,
-                    i
-                )
-            end
-            if iszero(n_writes)
-                if isfile(output_path)
-                    safeRm(output_path, force=true)
-                end
-                open(output_path, "w") do io
-                    Arrow.write(io, psms_batch; file=false)  # file=false creates stream format
-                end
-            else
-                Arrow.append(
-                    output_path,
-                    psms_batch
-                )
-            end
-            n_writes += 1
-            rows_written += (i - 1)
-            total_batches += 1
-            
-            # Check memory and GC if needed
-            current_memory = Base.gc_live_bytes() / 1024^2
-            if current_memory > initial_memory * 1.5
-                GC.gc()
-            end
-            
-            i = 1
-        end
-    end
-    for col in [prob_col,:target,:precursor_idx]
-        fillColumn!(
-            psms_batch[!,col],
-            col,
-            sorted_tuples,
-            tables,
-            i
-        )
-    end
-    if n_writes > 0
-        Arrow.append(
-            output_path,
-            psms_batch[range(1, max(1, i - 1)),:]
-        )
-    else
-        writeArrow(
-            output_path,
-            psms_batch[range(1, max(1, i - 1)),:]
-        )
-    end
-    rows_written += max(1, i - 1)
-    elapsed = time() - start_time
-    final_memory = Base.gc_live_bytes() / 1024^2
-    @info "[PERF] merge_sorted_psms_scores: Completed" elapsed=round(elapsed, digits=3) n_files=length(input_paths) total_batches=total_batches total_rows=rows_written rows_per_sec=round(rows_written/elapsed, digits=1) memory_used_MB=round(final_memory-initial_memory, digits=1) avg_rows_per_file=round(total_rows/length(input_paths), digits=1)
-    
-    return nothing
-end
 
 
 """
@@ -502,253 +235,6 @@ function get_qvalue_spline(
     =#
     return linear_interpolation(xs, ys; extrapolation_bc = Line())
 end
-
-"""
-    get_psms_passing_qval(precursors::LibraryPrecursors, passing_psms_paths::Vector{String}, 
-                         passing_psms_folder::String, second_pass_psms_paths::Vector{String}, 
-                         pep_spline::UniformSpline, qval_interp::Interpolations.Extrapolation, 
-                         q_val_threshold::Float32)
-
-Filter PSMs that pass a given q-value threshold and calculate error probabilities.
-
-# Arguments
-- `precursors::LibraryPrecursors`: Library precursor information
-- `passing_psms_paths`: Vector to store paths of filtered PSM files
-- `passing_psms_folder`: Folder to store passing PSM files
-- `second_pass_psms_paths`: Paths to second pass PSM files
-- `pep_spline`: Spline for posterior error probability calculation
-- `qval_interp`: Interpolation function for q-value calculation
-- `q_val_threshold`: Q-value threshold for filtering
-
-# Process
-1. For each file:
-   - Calculates q-values and PEP for each PSM
-   - Filters PSMs below q-value threshold
-   - Selects relevant columns for output
-   - Saves filtered PSMs to new file
-   - Updates passing_psms_paths with new file locations
-
-# Selected Columns
-- precursor_idx, prob, qval, pep
-- weight, target, irt_obs
-- missed_cleavage, isotopes_captured
-- scan_idx, ms_file_idx
-"""
-function get_psms_passing_qval(
-                            precursors::LibraryPrecursors,
-                            passing_psms_paths::Vector{String},
-                            passing_psms_folder::String,
-                            second_pass_psms_paths::Vector{String}, 
-                            #pep_spline::UniformSpline,
-                            qval_interp_global::Interpolations.Extrapolation,
-                            qval_interp_experiment_wide::Interpolations.Extrapolation,
-                            prob_col_global::Symbol,
-                            prob_col_experiment_wide::Symbol,
-                            qval_col_global::Symbol,
-                            qval_col_experiment_wide::Symbol,
-                            q_val_threshold::Float32,)
-    for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
-        # Read the Arrow table
-        passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        passing_psms[!,qval_col_global] = qval_interp_global.(passing_psms[!,prob_col_global])
-        passing_psms[!,qval_col_experiment_wide] = qval_interp_experiment_wide.(passing_psms[!,prob_col_experiment_wide])
-        #passing_psms[!,:pep] = pep_spline.(passing_psms[!,prob_col])
-        cols = [
-            :precursor_idx,
-            :global_prob,
-            :prec_prob,
-            :prob,
-            :global_qval,
-            :qval,
-            :prec_mz,
-            #:pep,
-            :weight,
-            :target,
-            :rt,
-            :irt_obs,
-            :missed_cleavage,
-            :isotopes_captured,
-            :scan_idx,
-            :entrapment_group_id,
-            :ms_file_idx
-        ]
-        available_cols = intersect(cols, Symbol.(names(passing_psms)))
-
-        # Sample the rows and convert to DataFrame
-        select!(passing_psms,available_cols)
-        filter!(x->(x[qval_col_global]<=q_val_threshold)&(x[qval_col_experiment_wide]<=q_val_threshold), passing_psms)
-        # Append to the result DataFrame
-        #Arrow.write(
-        #    joinpath(passing_psms_folder, basename(file_path)),
-        #    passing_psms
-        #)
-
-        writeArrow(
-            joinpath(passing_psms_folder, basename(file_path)),
-            passing_psms
-            )
-        passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
-    end
-    return
-end
-#=
-"""
-    get_psms_passing_qval(precursors::PlexedLibraryPrecursors, passing_psms_paths::Vector{String}, 
-                         passing_psms_folder::String, second_pass_psms_paths::Vector{String}, 
-                         pep_spline::UniformSpline, qval_interp::Interpolations.Extrapolation, 
-                         q_val_threshold::Float32)
-
-Filter PSMs that pass a given group-level q-value threshold and calculate error probabilities for plexed library precursors.
-
-# Arguments
-- `precursors::PlexedLibraryPrecursors`: Plexed library precursor information
-- `passing_psms_paths`: Vector to store paths of filtered PSM files
-- `passing_psms_folder`: Folder to store passing PSM files
-- `second_pass_psms_paths`: Paths to second pass PSM files
-- `pep_spline`: Spline for posterior error probability calculation
-- `qval_interp`: Interpolation function for q-value calculation
-- `q_val_threshold`: Q-value threshold for filtering
-
-# Process
-1. Reads all PSMs from second pass files
-2. Adds sequence and structural modification information from precursors
-3. Calculates group-level q-values by:
-   - Grouping by ms_file_idx, sequence, and structural_mods
-   - Finding maximum probability for each group
-   - Computing FDR and q-values at the group level
-4. Calculates PSM-level q-values and PEP
-5. Filters PSMs below the group q-value threshold
-6. Saves filtered PSMs by file
-7. Updates passing_psms_paths with new file locations
-
-# Selected Columns
-- precursor_idx, prob, qval, group_qvalue
-- weight, target, irt_obs
-- missed_cleavage, isotopes_captured
-- scan_idx, ms_file_idx
-"""
-function get_psms_passing_qval(
-                            precursors::PlexedLibraryPrecursors,
-                            passing_psms_paths::Vector{String},
-                            passing_psms_folder::String,
-                            second_pass_psms_paths::Vector{String}, 
-                            pep_spline::UniformSpline,
-                            qval_interp::Interpolations.Extrapolation,
-                            q_val_threshold::Float32)
-
-    function groupLevelQval(df::DataFrame)
-        # Step 1: Group by the specified columns and get max probability for each group
-        grouped_df = combine(groupby(df, [:ms_file_idx, :sequence, :structural_mods, :charge]),
-                            :prob => maximum => :group_max_prob,
-                            :decoy => first => :group_decoy)
-        
-        # Step 2: Calculate FDR and q-values based on the max probability
-        # Sort by descending probability
-        sort!(grouped_df, :group_max_prob, rev=true)
-        
-        # Calculate FDR for each row
-        grouped_df.group_fdr = zeros(Float32, size(grouped_df, 1))
-        cumulative_decoys = 0
-        cumulative_targets = 0
-        
-        for i in 1:nrow(grouped_df)
-            if grouped_df.group_decoy[i]
-                cumulative_decoys += 1
-            else
-                cumulative_targets += 1
-            end
-            
-            # FDR = (decoys * scale_factor) / targets
-            if cumulative_targets == 0
-                grouped_df.group_fdr[i] = 1.0
-            else
-                grouped_df.group_fdr[i] = min(1.0, (cumulative_decoys) / cumulative_targets)
-            end
-        end
-        
-        # Step 3: Convert FDR to q-value (monotonically non-decreasing values)
-        grouped_df.group_qvalue = copy(grouped_df.group_fdr)
-        
-        # Ensure q-values are monotonically non-decreasing from bottom to top
-        for i in (nrow(grouped_df)-1):-1:1
-            grouped_df.group_qvalue[i] = min(grouped_df.group_qvalue[i], 
-                                              grouped_df.group_qvalue[i+1])
-        end
-        
-        # Step 4: Join the group-level information back to the original dataframe
-        # Create a temporary dataframe with just the keys and new columns
-        temp_df = select(grouped_df, 
-                         [:ms_file_idx, :sequence, :structural_mods, 
-                          :group_max_prob, :group_qvalue])
-        
-        # Join this information back to the original dataframe
-        result_df = leftjoin(df, temp_df, 
-                             on=[:ms_file_idx, :sequence, :structural_mods, :charge])
-        
-        return result_df
-    end
-
-    #If at least one plex passed 
-    function minQval(df::DataFrame)
-        # Group by sequence and structural_mods (across all plexes/files)
-        # Find the minimum q-value for each peptide group
-        min_qval_df = combine(
-            groupby(df, [:ms_file_idx, :sequence, :structural_mods, :charge]),
-            :qval => minimum => :min_qval
-        )
-        
-        temp_df = select(min_qval_df, 
-        [:ms_file_idx, :sequence, :structural_mods, 
-         :charge, :min_qval])
-
-        # Join this information back to the original dataframe
-        result_df = leftjoin(
-            df, 
-            temp_df, 
-            on = [:ms_file_idx, :sequence, :structural_mods, :charge]
-        )
-        
-        return result_df
-    end
-    psms = DataFrame(Tables.columntable(Arrow.Table(second_pass_psms_paths)))
-    psms[!,:decoy] = psms[!,:target].==false
-    psms[!,:sequence] = [getSequence(precursors)[pid] for pid in psms[!,:precursor_idx]]
-    psms[!,:structural_mods] = [getStructuralMods(precursors)[pid] for pid in psms[!,:precursor_idx]]
-    #psms = groupLevelQval(psms)
-    psms[!,:qval] = qval_interp.(psms[!,:prob])
-    psms = minQval(psms)
-    psms[!,:pep] = pep_spline.(psms[!,:prob])
-    select!(psms,
-    [
-        :precursor_idx,
-        :prob,
-        :qval,
-        :min_qval,
-        :prec_mz,
-        #:pep,
-        :weight,
-        :target,
-        :rt,
-        :irt_obs,
-        :missed_cleavage,
-        :isotopes_captured,
-        :scan_idx,
-        :ms_file_idx])
-    #filter!(x->x.group_qvalue<=q_val_threshold, psms)
-    filter!(x->x.min_qval<=q_val_threshold, psms)
-    psms_by_file = groupby(psms, :ms_file_idx)
-    for (ms_file_idx, file_path) in enumerate(second_pass_psms_paths)
-        file_psms = psms_by_file[(ms_file_idx = ms_file_idx,)]
-        Arrow.write(
-            joinpath(passing_psms_folder, basename(file_path)),
-            file_psms
-        )
-        passing_psms_paths[ms_file_idx] = joinpath(passing_psms_folder, basename(file_path))
-    end
-
-    return
-end
-=#
 #==========================================================
 Protein group analysis
 ==========================================================#
@@ -832,6 +318,126 @@ function getProteinGroupsDict(
     return protein_groups
 end
 
+
+"""
+    calculate_protein_features(builder::ProteinGroupBuilder, catalog::Dictionary{ProteinKey, Set{String}}) -> ProteinFeatures
+
+Calculate statistical features for a protein group.
+
+# Arguments
+- `builder`: ProteinGroupBuilder with observed peptides
+- `catalog`: Dictionary mapping protein keys to all possible peptides
+
+# Returns
+- `ProteinFeatures`: Statistical features for the protein group
+"""
+function calculate_protein_features(builder::ProteinGroupBuilder, catalog::Dictionary{ProteinKey, Set{String}})::ProteinFeatures
+    n_peptides = UInt16(length(builder.peptides))
+    
+    # Get possible peptides for this protein
+    possible_peptides = get(catalog, builder.key, Set{String}())
+    n_possible_peptides = UInt16(length(possible_peptides))
+    
+    # Calculate coverage
+    peptide_coverage = n_possible_peptides > 0 ? Float32(n_peptides) / Float32(n_possible_peptides) : 0.0f0
+    
+    # Calculate total peptide length
+    total_peptide_length = UInt16(sum(length(peptide) for peptide in builder.peptides))
+    
+    # Calculate log features for regression
+    log_n_possible_peptides = n_possible_peptides > 0 ? log(Float32(n_possible_peptides)) : 0.0f0
+    
+    # Calculate log binomial coefficient: log(n_possible choose n_peptides)
+    log_binom_coeff = if n_possible_peptides > 0 && n_peptides > 0 && n_peptides <= n_possible_peptides
+        # Use the more numerically stable logbinom function if available, otherwise approximate
+        try
+            # Simple approximation for log binomial coefficient
+            lgamma(n_possible_peptides + 1) - lgamma(n_peptides + 1) - lgamma(n_possible_peptides - n_peptides + 1)
+        catch
+            0.0f0
+        end
+    else
+        0.0f0
+    end
+    
+    return ProteinFeatures(
+        n_peptides,
+        n_possible_peptides,
+        peptide_coverage,
+        total_peptide_length,
+        log_n_possible_peptides,
+        Float32(log_binom_coeff)
+    )
+end
+
+"""
+    write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, ProteinGroup}, output_path::String)
+
+Write protein groups to Arrow file.
+
+# Arguments
+- `protein_groups`: Dictionary of protein groups
+- `output_path`: Path to output Arrow file
+"""
+function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, ProteinGroup}, output_path::String)
+    if isempty(protein_groups)
+        @warn "No protein groups to write to $output_path"
+        return
+    end
+    
+    # Extract data from protein groups
+    n_groups = length(protein_groups)
+    
+    # Initialize arrays
+    protein_names = Vector{String}(undef, n_groups)
+    targets = Vector{Bool}(undef, n_groups)
+    entrap_ids = Vector{UInt8}(undef, n_groups)
+    pg_scores = Vector{Float32}(undef, n_groups)
+    n_peptides = Vector{UInt16}(undef, n_groups)
+    n_possible_peptides = Vector{UInt16}(undef, n_groups)
+    peptide_coverages = Vector{Float32}(undef, n_groups)
+    total_peptide_lengths = Vector{UInt16}(undef, n_groups)
+    log_n_possible_peptides = Vector{Float32}(undef, n_groups)
+    log_binom_coeffs = Vector{Float32}(undef, n_groups)
+    
+    # Fill arrays
+    i = 1
+    for (key, group) in pairs(protein_groups)
+        protein_names[i] = key.name
+        targets[i] = key.is_target
+        entrap_ids[i] = key.entrap_id
+        pg_scores[i] = group.score
+        n_peptides[i] = group.features.n_peptides
+        n_possible_peptides[i] = group.features.n_possible_peptides
+        peptide_coverages[i] = group.features.peptide_coverage
+        total_peptide_lengths[i] = group.features.total_peptide_length
+        log_n_possible_peptides[i] = group.features.log_n_possible_peptides
+        log_binom_coeffs[i] = group.features.log_binom_coeff
+        i += 1
+    end
+    
+    # Create DataFrame
+    df = DataFrame(
+        protein_name = protein_names,
+        target = targets,
+        entrap_id = entrap_ids,
+        pg_score = pg_scores,
+        n_peptides = n_peptides,
+        n_possible_peptides = n_possible_peptides,
+        peptide_coverage = peptide_coverages,
+        total_peptide_length = total_peptide_lengths,
+        log_n_possible_peptides = log_n_possible_peptides,
+        log_binom_coeff = log_binom_coeffs
+    )
+    
+    # Sort by pg_score and target in descending order
+    sort!(df, [:pg_score, :target], rev = [true, true])
+    
+    # Write to Arrow file
+    writeArrow(output_path, df)
+    
+    @info "Wrote $(n_groups) protein groups to $output_path"
+end
 
 """
     writeProteinGroups(acc_to_max_pg_score, protein_groups, 
@@ -933,90 +539,6 @@ function count_protein_peptides(precursors::LibraryPrecursors)
     return protein_to_possible_peptides
 end
 
-"""
-    perform_protein_inference(passing_psms_paths::Vector{String},
-                                passing_pg_paths::Vector{String},
-                                protein_groups_folder::String,
-                                precursors::LibraryPrecursors,
-                                protein_to_possible_peptides::Dict;
-                                min_peptides::Int64 = 2)
-
-Perform protein inference and initial scoring (first and second pass).
-
-# Arguments
-- `passing_psms_paths`: Paths to PSM files
-- `passing_pg_paths`: Paths to protein group files (will be populated)
-- `protein_groups_folder`: Folder to write protein groups
-- `precursors`: Library precursors
-- `protein_to_possible_peptides`: Dictionary of protein to peptide mappings
-- `min_peptides`: Minimum peptides per protein group
-
-# Returns
-- `psm_to_pg_path`: Dictionary mapping PSM file paths to protein group file paths
-"""
-function perform_protein_inference(
-    passing_psms_paths::Vector{String},
-    passing_pg_paths::Vector{String},
-    protein_groups_folder::String,
-    precursors::LibraryPrecursors,
-    protein_to_possible_peptides::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}};
-    min_peptides::Int64 = 1
-)
-    @warn """perform_protein_inference is deprecated. Use perform_protein_inference_pipeline instead:
-    
-    pg_refs, mappings = perform_protein_inference_pipeline(
-        psm_refs,
-        output_folder,
-        precursors,
-        protein_catalog,
-        min_peptides = min_peptides
-    )
-    
-    The new pipeline interface provides better composability and testability.
-    """ maxlog=1
-    start_time = time()
-    
-    # Step 1: Build protein-peptide catalog
-    # Convert old Dict format to new Dictionary format
-    catalog = Dictionary{ProteinKey, Set{String}}()
-    for (old_key, peptide_set) in pairs(protein_to_possible_peptides)
-        new_key = ProteinKey(old_key.protein_name, old_key.target, old_key.entrap_id)
-        insert!(catalog, new_key, peptide_set)
-    end
-    
-    # Step 2: Process each file
-    file_mappings = FileMapping()
-    
-    @info "[PERF] perform_protein_inference: Starting combined inference and write pass"
-    total_psms_processed = 0
-    total_protein_groups_created = 0
-    files_processed = 0
-    
-    for (ms_file_idx, psm_path) in enumerate(passing_psms_paths)
-        n_groups = process_single_file_protein_inference(
-            psm_path, ms_file_idx, passing_pg_paths,
-            catalog, precursors, file_mappings, 
-            min_peptides, protein_groups_folder
-        )
-        
-        if n_groups > 0
-            files_processed += 1
-            total_protein_groups_created += n_groups
-            
-            # Get PSM count for logging
-            if endswith(psm_path, ".arrow")
-                psms_table = Arrow.Table(psm_path)
-                total_psms_processed += length(psms_table[:precursor_idx])
-            end
-        end
-    end
-    
-    total_elapsed = time() - start_time
-    @info "[PERF] perform_protein_inference: Completed" total_elapsed=round(total_elapsed, digits=3) files_processed=files_processed total_psms=total_psms_processed total_protein_groups=total_protein_groups_created avg_psms_per_file=round(total_psms_processed/max(files_processed,1), digits=1)
-    
-    # Convert FileMapping back to Dict for compatibility
-    return Dict(pairs(file_mappings.psm_to_pg))
-end
 
 """
     perform_protein_probit_regression(passing_pg_paths::Vector{String},
@@ -1051,7 +573,7 @@ function perform_protein_probit_regression(
     
     if total_protein_groups > max_protein_groups_in_memory_limit
         @info "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
-        perform_probit_analysis_oom(passing_pg_paths, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
+        perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
     else
         @info "Using in-memory probit regression"
         # Load all protein group tables into a single DataFrame
@@ -1076,339 +598,9 @@ function perform_protein_probit_regression(
     end
 end
 
-"""
-    calculate_global_protein_scores(passing_pg_paths::Vector{String})
 
-Calculate global protein scores from current pg_scores.
 
-# Arguments
-- `passing_pg_paths`: Paths to protein group files
 
-# Returns
-- Dictionary mapping protein keys to max pg_score across files
-"""
-function calculate_global_protein_scores(passing_pg_paths::Vector{String})
-    third_pass_start = time()
-    @info "[PERF] calculate_global_protein_scores: Starting"
-    
-    # Create references for all protein group files
-    pg_refs = [ProteinGroupFileReference(path) for path in passing_pg_paths if isfile(path) && endswith(path, ".arrow")]
-    
-    # Use the new reference-based implementation
-    acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
-    
-    fourth_pass_time = time() - third_pass_start
-    @info "[PERF] calculate_global_protein_scores: Completed" elapsed=round(fourth_pass_time, digits=3) n_protein_groups=length(acc_to_max_pg_score)
-    
-    return acc_to_max_pg_score
-end
-
-"""
-    add_global_scores_to_psms(passing_psms_paths::Vector{String},
-                                acc_to_max_pg_score::Dict)
-
-Add global_pg_score to PSM files.
-
-# Arguments
-- `passing_psms_paths`: Paths to PSM files
-- `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
-"""
-function add_global_scores_to_psms(
-    passing_psms_paths::Vector{String},
-    acc_to_max_pg_score::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8},Float32}
-)
-    fifth_pass_start = time()
-    @info "[PERF] add_global_scores_to_psms: Starting"
-    
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        if isfile(file_path) && endswith(file_path, ".arrow")
-            psms_table = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            
-            # Add global_pg_score column by looking up each protein group
-            global_pg_scores = Vector{Float32}(undef, nrow(psms_table))
-            for i in 1:nrow(psms_table)
-                key = (protein_name = psms_table[i, :inferred_protein_group],
-                        target = psms_table[i, :target],
-                        entrap_id = psms_table[i, :entrapment_group_id])
-                global_pg_scores[i] = get(acc_to_max_pg_score, key, 0.0f0)
-            end
-            psms_table[!, :global_pg_score] = global_pg_scores
-            
-            # Write back
-            writeArrow(file_path, psms_table)
-        end
-    end
-    
-    fifth_pass_time = time() - fifth_pass_start
-    @info "[PERF] add_global_scores_to_psms: Completed" elapsed=round(fifth_pass_time, digits=3)
-end
-
-"""
-    update_psms_with_probit_scores(psm_to_pg_path::Dict{String,String},
-                                  acc_to_max_pg_score::Dict)
-
-Update PSMs with probit-scored pg_score values after regression.
-
-# Arguments
-- `psm_to_pg_path`: Dictionary mapping PSM file paths to protein group file paths
-- `acc_to_max_pg_score`: Dictionary mapping protein keys to global scores
-
-# Process
-1. For each PSM file:
-   - Load corresponding protein group file (has probit-scored pg_score)
-   - Create lookup dictionary for probit scores
-   - Update PSM pg_score values with probit scores
-   - Add global_pg_score column
-   - Write back updated PSM file
-"""
-function update_psms_with_probit_scores(
-    ptable::Any,
-    psm_to_pg_path::Dict{String, String},
-    acc_to_max_pg_score::Dict{ProteinKey,Float32},
-    pg_score_to_qval::Interpolations.Extrapolation,
-    global_pg_score_to_qval::Interpolations.Extrapolation
-)
-    start_time = time()
-    @info "[PERF] update_psms_with_probit_scores: Starting"
-    
-    total_psms_updated = 0
-    files_processed = 0
-    
-    for (psm_path, pg_path) in psm_to_pg_path
-        # Verify both files exist
-        if !isfile(psm_path) || !isfile(pg_path)
-            @warn "Missing file" psm_path=psm_path pg_path=pg_path
-            continue
-        end
-        
-        file_start = time()
-        
-        # Load protein groups to get probit-scored pg_score values
-        pg_table = Arrow.Table(pg_path)
-        
-        # Debug: Check what's in the protein group file
-        @info "Loading protein groups for lookup" file=basename(pg_path) n_rows=length(pg_table[:protein_name])
-        
-        # Create lookup dictionary: (protein_name, target, entrap_id) -> probit pg_score
-        pg_score_lookup = Dict{ProteinKey, Float32}()
-        n_pg_rows = length(pg_table[:protein_name])
-        
-        for i in 1:n_pg_rows
-            key = ProteinKey(
-                    pg_table[:protein_name][i],
-                    pg_table[:target][i],
-                    pg_table[:entrap_id][i]
-                )
-            pg_score_lookup[key] = pg_table[:pg_score][i]  # This is now the probit score
-        end
-        
-        # Add diagnostic logging for pg_score_lookup
-        n_target_pgs = sum(key.is_target for key in keys(pg_score_lookup))
-        n_decoy_pgs = length(pg_score_lookup) - n_target_pgs
-        @info "Built pg_score_lookup" file=basename(pg_path) n_entries=length(pg_score_lookup) targets=n_target_pgs decoys=n_decoy_pgs
-        if length(pg_score_lookup) > 0
-            sample_key = first(keys(pg_score_lookup))
-            @info "Sample pg_score_lookup key" key=sample_key types=(protein_name=typeof(sample_key.name), target=typeof(sample_key.is_target), entrap_id=typeof(sample_key.entrap_id))
-        end
-        
-        # Load PSMs
-        psms_df = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
-        n_psms = nrow(psms_df)
-        
-        # Update pg_score column with probit scores
-        probit_pg_scores = Vector{Float32}(undef, n_psms)
-        global_pg_scores = Vector{Float32}(undef, n_psms)
-        
-        for i in 1:n_psms
-            # Skip if missing inferred protein group
-            if ismissing(psms_df[i, :inferred_protein_group])
-                throw("Missing Inferred Protein Group!!!")
-                continue
-            end
-
-            #Peptide didn't match to a distinct protein group 
-            if psms_df[i,:use_for_protein_quant] == false
-                continue
-            end
-            
-            # Create key for lookup 
-            key = ProteinKey(
-                    psms_df[i, :inferred_protein_group],
-                    psms_df[i, :target],
-                    psms_df[i, :entrapment_group_id]
-                )
-            
-            # Get probit pg_score
-            if !haskey(pg_score_lookup, key)
-                # Enhanced diagnostic logging
-                @info "Missing key details" key=key types=(protein_name=typeof(key.name), target=typeof(key.is_target), entrap_id=typeof(key.entrap_id))
-                @info "PSM info" row=i inferred_protein_group=psms_df[i, :inferred_protein_group] target=psms_df[i, :target] use_for_protein_quant=psms_df[i, :use_for_protein_quant]
-                throw("Missing pg score lookup key!!!")
-            end
-
-            probit_pg_scores[i] = pg_score_lookup[key]
-
-            if !haskey(acc_to_max_pg_score, key)
-                throw("Missing global pg score lookup key!!!")
-            end
-            # Get global pg_score
-            global_pg_scores[i] = acc_to_max_pg_score[key]
-        end
-        
-        # Update columns
-        psms_df[!, :pg_score] = probit_pg_scores
-        psms_df[!, :global_pg_score] = global_pg_scores
-        
-        # Calculate q-values using interpolation functions
-        pg_qvals = Vector{Float32}(undef, n_psms)
-        global_pg_qvals = Vector{Float32}(undef, n_psms)
-        
-        for i in 1:n_psms
-            if ismissing(probit_pg_scores[i])
-                pg_qvals[i] = 1.0f0
-                global_pg_qvals[i] = 1.0f0
-            else
-                pg_qvals[i] = pg_score_to_qval(probit_pg_scores[i])
-                global_pg_qvals[i] = global_pg_score_to_qval(global_pg_scores[i])
-            end
-        end
-        
-        # Add q-value columns
-        psms_df[!, :pg_qval] = pg_qvals
-        psms_df[!, :global_qval_pg] = global_pg_qvals
-        
-        # Write back
-        writeArrow(psm_path, psms_df)
-        
-        total_psms_updated += n_psms
-        files_processed += 1
-        
-        file_time = time() - file_start
-        @debug "Processed file" file=basename(psm_path) n_psms=n_psms elapsed=round(file_time, digits=3)
-    end
-    
-    elapsed = time() - start_time
-    @info "[PERF] update_psms_with_probit_scores: Completed" elapsed=round(elapsed, digits=3) files_processed=files_processed total_psms_updated=total_psms_updated avg_psms_per_file=round(total_psms_updated/max(files_processed,1), digits=1)
-end
-
-"""
-    build_protein_peptide_rows_for_file(psms_table, precursors)
-
-Build protein-peptide mappings from a single file's PSMs.
-
-# Arguments
-- `psms_table`: Arrow table containing PSMs from one file
-- `precursors`: Library precursor information
-
-# Returns
-- `protein_peptide_rows`: Collection of unique peptide-protein mappings
-"""
-function build_protein_peptide_rows_for_file(psms_table, precursors)
-    protein_peptide_rows = Set{NamedTuple{(:sequence, :protein_name, :decoy, :entrap_id), Tuple{String, String, Bool, UInt8}}}()
-    
-    # Get data from PSMs
-    passing_precursor_idx = psms_table[:precursor_idx]
-    
-    # Get other data from precursors
-    accession_numbers = getAccessionNumbers(precursors)
-    decoys = getIsDecoy(precursors)
-    entrap_ids = getEntrapmentGroupId(precursors)
-    sequences = getSequence(precursors)
-    
-    for pid in passing_precursor_idx
-        push!(
-            protein_peptide_rows, 
-            (
-                sequence = sequences[pid],
-                protein_name = accession_numbers[pid],
-                decoy = decoys[pid],
-                entrap_id = entrap_ids[pid]
-            )
-        )
-    end
-    
-    return collect(protein_peptide_rows)
-end
-"""
-    get_protein_groups(passing_psms_paths::Vector{String}, passing_pg_paths::Vector{String},
-                      protein_groups_folder::String, temp_folder::String,
-                      precursors::LibraryPrecursors; min_peptides=2,
-                      protein_q_val_threshold::Float32=0.01f0)
-
-Create and score protein groups from passing PSMs with per-file protein inference.
-
-# Arguments
-- `passing_psms_paths`: Paths to PSM files that passed FDR threshold
-- `passing_pg_paths`: Output paths for protein group files
-- `protein_groups_folder`: Folder to store protein group results
-- `temp_folder`: Temporary folder for intermediate files
-- `precursors`: Library precursor information
-- `min_peptides`: Minimum peptides required for a protein group (default: 2)
-- `protein_q_val_threshold`: Q-value threshold for protein groups (default: 0.01)
-
-# Returns
-- Nothing (protein inference is performed per-file)
-
-# Process
-1. Counts all possible peptides for each protein in library
-2. For each file:
-   a. Performs protein inference for that file's peptides
-   b. Creates protein groups from inferred proteins
-   c. Calculates protein group scores and features
-3. Performs probit regression analysis if sufficient data
-4. Generates QC plots with decision boundaries
-
-# Note
-Protein inference is now performed independently for each file, which reduces
-memory usage but may result in different protein groupings across files.
-"""
-function get_protein_groups(
-    passing_psms_paths::Vector{String},
-    passing_pg_paths::Vector{String},
-    protein_groups_folder::String,
-    temp_folder::String,
-    precursors::LibraryPrecursors;
-    min_peptides = 1,
-    protein_q_val_threshold::Float32 = 0.01f0,
-    max_psms_in_memory::Int64 = 10000000  # Default value if not provided
-)
-    @info "[PERF] get_protein_groups: Starting" n_files=length(passing_psms_paths) min_peptides=min_peptides
-    start_time = time()
-    initial_memory = Base.gc_live_bytes() / 1024^2
-
-    pg_count = 0
-    
-    # Count all possible peptides for each protein in the library
-    protein_to_possible_peptides = count_protein_peptides(precursors)
-    
-    # Perform protein inference and initial scoring
-    pg_count = perform_protein_inference(
-        passing_psms_paths,
-        passing_pg_paths,
-        protein_groups_folder,
-        precursors,
-        protein_to_possible_peptides;
-        min_peptides = min_peptides
-    )
-
-    # Perform Probit Regression Analysis on protein groups
-    qc_folder = joinpath(dirname(temp_folder), "qc_plots")
-    !isdir(qc_folder) && mkdir(qc_folder)
-    perform_protein_probit_regression(passing_pg_paths, max_psms_in_memory, qc_folder)
-
-    # Calculate global protein scores
-    acc_to_max_pg_score = calculate_global_protein_scores(passing_pg_paths)
-    
-    # Add global scores to PSM files
-    add_global_scores_to_psms(passing_psms_paths, acc_to_max_pg_score)
-    
-    total_elapsed = time() - start_time
-    final_memory = Base.gc_live_bytes() / 1024^2
-    @info "[PERF] get_protein_groups: Completed" total_elapsed=round(total_elapsed, digits=3) memory_used_MB=round(final_memory-initial_memory, digits=1) total_protein_groups=pg_count
-    
-    # Return nothing since protein inference is now per-file
-    return nothing
-end
 
 """
     perform_probit_analysis_oom(pg_paths::Vector{String}, total_protein_groups::Int, 
@@ -1473,10 +665,10 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     total_decoys = 0
     
     # Process each file
-    for pg_path in pg_paths
-        if isfile(pg_path) && endswith(pg_path, ".arrow")
+    for ref in pg_refs
+        if exists(ref)
             # Load file
-            df = DataFrame(Tables.columntable(Arrow.Table(pg_path)))
+            df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
             
             # Calculate probit scores
             X_file = Matrix{Float64}(df[:, feature_names])
@@ -1493,7 +685,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
             total_decoys += sum(.!df.target)
             
             # Write back the file with probit scores
-            writeArrow(pg_path, df)
+            writeArrow(file_path(ref), df)
         end
     end
     
@@ -1648,437 +840,8 @@ function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}
     return prob_scores
 end
 
-"""
-    calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
 
-Calculate q-values from scores and labels.
 
-# Arguments
-- `scores::Vector{<:Real}`: Scores (higher = more likely to be target)
-- `labels::Vector{Bool}`: True labels (true = target, false = decoy)
 
-# Returns
-- `Vector{Float64}`: Q-values for each score
-"""
-function calculate_qvalues_from_scores(scores::Vector{<:Real}, labels::Vector{Bool})
-    # Sort by score in descending order
-    sort_idx = sortperm(scores, rev=true)
-    sorted_labels = labels[sort_idx]
-    
-    # Calculate q-values
-    qvalues = zeros(Float64, length(scores))
-    cumulative_targets = 0
-    cumulative_decoys = 0
-    
-    for i in 1:length(sorted_labels)
-        if sorted_labels[i]
-            cumulative_targets += 1
-        else
-            cumulative_decoys += 1
-        end
-        
-        # FDR = decoys / targets
-        if cumulative_targets == 0
-            qvalues[i] = 1.0
-        else
-            qvalues[i] = cumulative_decoys / cumulative_targets
-        end
-    end
-    
-    # Convert FDR to q-value (ensure monotonicity)
-    for i in (length(qvalues)-1):-1:1
-        qvalues[i] = min(qvalues[i], qvalues[i+1])
-    end
-    
-    # Map q-values back to original order
-    unsorted_qvalues = zeros(Float64, length(scores))
-    unsorted_qvalues[sort_idx] = qvalues
-    
-    return unsorted_qvalues
-end
 
-"""
-    plot_probit_decision_boundary(all_protein_groups::DataFrame, β::Vector{Float64}, 
-                                  X_mean::Vector{Float64}, X_std::Vector{Float64},
-                                  feature_names::Vector{Symbol}, qc_folder::String)
 
-Create scatter plots showing the probit decision boundary.
-
-# Arguments
-- `all_protein_groups::DataFrame`: Protein group data
-- `β::Vector{Float64}`: Fitted probit coefficients
-- `X_mean::Vector{Float64}`: Feature means from training
-- `X_std::Vector{Float64}`: Feature standard deviations from training
-- `feature_names::Vector{Symbol}`: Names of features used
-- `qc_folder::String`: Output folder for plots
-"""
-function plot_probit_decision_boundary(all_protein_groups::DataFrame, β::Vector{Float64}, 
-                                     X_mean::Vector{Float64}, X_std::Vector{Float64},
-                                     feature_names::Vector{Symbol}, qc_folder::String)
-    
-    # Create output folder if it doesn't exist
-    protein_ml_folder = joinpath(qc_folder, "protein_ml_plots")
-    !isdir(protein_ml_folder) && mkdir(protein_ml_folder)
-    
-    # Calculate probit scores for all data
-    X = Matrix{Float64}(all_protein_groups[:, feature_names])
-    prob_scores = calculate_probit_scores(X, β, X_mean, X_std)
-    
-    # Separate targets and decoys
-    target_mask = all_protein_groups.target
-    decoy_mask = .!all_protein_groups.target
-    
-    # Plot pg_score vs peptide_coverage with decision boundary coloring
-    p = scatter(all_protein_groups[target_mask, :peptide_coverage], 
-               all_protein_groups[target_mask, :pg_score],
-               label="Targets",
-               color=:blue,
-               alpha=0.3,
-               markersize=3,
-               xlabel="Peptide Coverage",
-               ylabel="PG Score",
-               title="Protein Group Classification with Probit Decision Boundary",
-               legend=:bottomright,
-               yscale=:log10,
-               ylims=(1, maximum(all_protein_groups.pg_score) * 1.5))
-    
-    scatter!(p, all_protein_groups[decoy_mask, :peptide_coverage],
-            all_protein_groups[decoy_mask, :pg_score],
-            label="Decoys",
-            color=:red,
-            alpha=0.3,
-            markersize=3)
-    
-    # Add decision boundary contour
-    # Create a grid for the contour
-    x_range = range(minimum(all_protein_groups.peptide_coverage), 
-                    maximum(all_protein_groups.peptide_coverage), length=100)
-    y_range = range(log10(1), log10(maximum(all_protein_groups.pg_score) * 1.5), length=100)
-    
-    # For each point in the grid, calculate the probit score
-    z_grid = zeros(length(y_range), length(x_range))
-    for (i, x) in enumerate(x_range)
-        for (j, y_log) in enumerate(y_range)
-            y = 10^y_log
-            # Create feature vector for this point
-            # Assuming features are [pg_score, peptide_coverage, n_possible_peptides, log_binom_coeff]
-            # We need to estimate n_possible_peptides and log_binom_coeff for the grid point
-            # For visualization, we'll use median values
-            median_n_possible = median(all_protein_groups.n_possible_peptides)
-            n_observed = x * median_n_possible  # peptide_coverage * n_possible
-            log_binom = if n_observed <= median_n_possible && n_observed >= 0
-                lgamma(median_n_possible + 1) - lgamma(n_observed + 1) - lgamma(median_n_possible - n_observed + 1)
-            else
-                0.0
-            end
-            
-            X_point = reshape([y, x, median_n_possible, log_binom], 1, :)  # Create 1x4 matrix
-            prob_score = calculate_probit_scores(X_point, β, X_mean, X_std)[1]
-            z_grid[j, i] = prob_score
-        end
-    end
-    
-    # Add contour line at 0.5 probability
-    contour!(p, x_range, 10 .^ y_range, z_grid', 
-            levels=[0.5], 
-            color=:black, 
-            linewidth=2, 
-            linestyle=:dash,
-            label="Decision Boundary (p=0.5)")
-    
-    savefig(p, joinpath(protein_ml_folder, "pg_score_vs_peptide_coverage_with_boundary.png"))
-    
-    # Create a simpler 2D plot with just pg_score colored by probit probability
-    p2 = scatter(all_protein_groups[target_mask, :pg_score],
-                prob_scores[target_mask],
-                label="Targets",
-                color=:blue,
-                alpha=0.5,
-                markersize=4,
-                xlabel="PG Score",
-                ylabel="Probit Probability",
-                title="Probit Model Predictions",
-                legend=:bottomright,
-                xscale=:log10,
-                xlims=(1, maximum(all_protein_groups.pg_score) * 1.5),
-                ylims=(0, 1))
-    
-    scatter!(p2, all_protein_groups[decoy_mask, :pg_score],
-            prob_scores[decoy_mask],
-            label="Decoys",
-            color=:red,
-            alpha=0.5,
-            markersize=4)
-    
-    # Add horizontal line at p=0.5
-    hline!(p2, [0.5], color=:black, linestyle=:dash, linewidth=2, label="Decision Boundary")
-    
-    savefig(p2, joinpath(protein_ml_folder, "probit_probability_vs_pg_score.png"))
-    
-    @info "Protein ML plots saved to: $protein_ml_folder"
-end
-
-"""
-    add_protein_inference_col(passing_psms_paths, protein_inference_dict, 
-                             precursor_sequences, precursor_is_decoy, precursors_entrap_id)
-
-Add protein inference columns to passing PSM files.
-
-# Arguments
-- `passing_psms_paths`: Paths to PSM files
-- `protein_inference_dict`: Protein inference results
-- `precursor_sequences`: Peptide sequences for each precursor
-- `precursor_is_decoy`: Decoy status for each precursor
-- `precursors_entrap_id`: Entrapment group IDs
-
-# Added columns
-- `use_for_protein_quant`: Whether peptide should be used for quantification
-- `inferred_protein_group`: Inferred protein group name
-"""
-function add_protein_inference_col(
-    passing_psms_paths::Vector{String},
-    protein_inference_dict::Dictionary{@NamedTuple{peptide::String, decoy::Bool, entrap_id::UInt8}, @NamedTuple{protein_name::String, decoy::Bool, entrap_id::UInt8, retain::Bool}},
-    precursor_sequences::AbstractVector{S},
-    precursor_is_decoy::AbstractVector{Bool},
-    precursors_entrap_id::AbstractVector{UInt8}
-) where {S<:AbstractString}
-
-    for (ms_file_idx, file_path) in enumerate(passing_psms_paths)
-        passing_psms = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        precursor_idx = passing_psms[!,:precursor_idx]
-        inferred_protein_group = Vector{String}(undef, length(precursor_idx))
-        use_for_protein_quant = zeros(Bool, length(precursor_idx))
-        for (i, pid) in enumerate(precursor_idx)
-            #protein_group, decoy, entrap_id, use_for_inference = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
-            inferred_prot = protein_inference_dict[(peptide = precursor_sequences[pid], decoy = precursor_is_decoy[pid], entrap_id = precursors_entrap_id[pid])]
-            inferred_protein_group[i] = inferred_prot.protein_name::String
-            use_for_protein_quant[i] = inferred_prot.retain::Bool
-        end
-        passing_psms[!,:use_for_protein_quant] = use_for_protein_quant
-        passing_psms[!,:inferred_protein_group] = inferred_protein_group
-        writeArrow(
-            file_path,
-            passing_psms            
-        )
-    end
-end
-
-function sort_protein_tables(
-    protein_groups_paths::Vector{String},
-    merged_pgs_path::String,
-    prob_col::Symbol,
-)
-    # Remove if present 
-    if isfile(merged_pgs_path)
-        safeRm(merged_pgs_path)
-    end
-    
-    # Sort each protein table using reference-based approach
-    for fpath in protein_groups_paths
-        # Create reference for the file
-        pg_ref = ProteinGroupFileReference(fpath)
-        
-        # Sort in descending order using the new function
-        sort_file_by_keys!(pg_ref, prob_col; reverse=true)
-    end
-    
-    return nothing
-end
-
-"""
-    merge_sorted_protein_groups(input_dir::String, output_path::String,
-                              sort_key::Symbol; N=1000000)
-
-Merge sorted protein group scores from multiple files.
-
-Uses heap-based merging for memory efficiency.
-"""
-function merge_sorted_protein_groups(
-    input_dir::String, 
-    output_path::String,
-    sort_key::Symbol;
-    N = 1000000 
-) #N -> batch size
-    @info "[PERF] merge_sorted_protein_groups: Starting" input_dir=input_dir batch_size=N
-    start_time = time()
-    initial_memory = Base.gc_live_bytes() / 1024^2
-    total_batches = 0 
-
-    function addRowToHeap!(
-        precursor_heap::BinaryMaxHeap{Tuple{Float32, Int64}},
-        first_sort_key::AbstractVector{Float32},
-        table_idx::Int64,
-        row_idx::Int64)
-        push!(
-            precursor_heap,
-            (
-            first_sort_key[row_idx],
-            table_idx
-            )
-        )
-    end
-
-    function fillColumn!(
-        pg_batch_col::Vector{R},
-        col::Symbol,
-        sorted_tuples::Vector{Tuple{Int64, Int64}},
-        tables::Vector{Arrow.Table},
-        n) where {R<:Real}
-        for i in range(1, max(min(length(pg_batch_col), n - 1), 1))
-            table_idx, idx = sorted_tuples[i]
-            pg_batch_col[i] = tables[table_idx][col][idx]::R
-        end
-    end
-
-    function fillColumn!(
-        pg_batch_col::Vector{S},
-        col::Symbol,
-        sorted_tuples::Vector{Tuple{Int64, Int64}},
-        tables::Vector{Arrow.Table},
-        n) where {S<:AbstractString}
-        for i in range(1, max(min(length(pg_batch_col), n - 1), 1))
-            table_idx, idx = sorted_tuples[i]
-            pg_batch_col[i] = tables[table_idx][col][idx]::S
-        end
-    end
-
-    #Get all .arrow files in the input 
-    input_paths = [path for path in readdir(input_dir, join=true) if endswith(path, ".arrow")]
-    # Found files
-    
-    #Keep track of which tables have 
-    load_start = time()
-    tables = [Arrow.Table(path) for path in input_paths]
-    table_sizes = [length(table[1]) for table in tables]
-    total_rows = sum(table_sizes)
-    load_time = time() - load_start
-    # Tables loaded
-    
-    table_idxs = ones(Int64, length(tables))
-
-    #pre-allocate section of merged table 
-    pg_batch = getEmptyDF(first(tables), N) #See /src/utils/mergePsmTables.jl for definition
-    sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, N)
-    #Names of columns for merge table 
-    pg_batch_names = Symbol.(names(pg_batch))
-    #Keeps track of the talbe with the highest ranked row
-    pg_heap = BinaryMaxHeap{Tuple{Float32, Int64}}()
-    for (i, table) in enumerate(tables)
-        addRowToHeap!(
-            pg_heap,
-            table[sort_key],
-            i,
-            1
-        )
-    end
-    i = 1
-    n_writes = 0
-    rows_written = 0
-    merge_start = time()
-    
-    while length(pg_heap) > 0
-        _, table_idx = pop!(pg_heap)
-        table = tables[table_idx]
-        idx = table_idxs[table_idx]
-        sorted_tuples[i] = (table_idx, idx)
-        table_idxs[table_idx] += 1
-        idx = table_idxs[table_idx]
-        if (idx > length(table[1]))
-            continue
-        end
-        addRowToHeap!(
-            pg_heap,
-            table[sort_key],
-            table_idx,
-            idx
-        )
-        i += 1
-        if i > N
-            for col in pg_batch_names
-                fillColumn!(
-                    pg_batch[!,col],
-                    col,
-                    sorted_tuples,
-                    tables,
-                    i
-                )
-            end
-            if iszero(n_writes)
-                if isfile(output_path)
-                    safeRm(output_path)
-                end
-                open(output_path, "w") do io
-                    Arrow.write(io, pg_batch; file=false)  # file=false creates stream format
-                end
-            else
-                Arrow.append(
-                    output_path,
-                    pg_batch
-                )
-            end
-            n_writes += 1
-            rows_written += (i - 1)
-            total_batches += 1
-            
-            i = 1
-        end
-    end
-    for col in pg_batch_names
-        fillColumn!(
-            pg_batch[!,col],
-            col,
-            sorted_tuples,
-            tables,
-            i
-        )
-    end
-    if n_writes > 0
-        Arrow.append(
-            output_path,
-            pg_batch[range(1, max(1, i - 1)),:]
-        )
-    else
-        writeArrow(
-            output_path,
-            pg_batch[range(1, max(1, i - 1)),:]
-        )
-    end
-    
-    rows_written += max(1, i - 1)
-    elapsed = time() - start_time
-    final_memory = Base.gc_live_bytes() / 1024^2
-    @info "[PERF] merge_sorted_protein_groups: Completed" elapsed=round(elapsed, digits=3) n_files=length(input_paths) total_batches=total_batches total_rows=rows_written rows_per_sec=round(rows_written/elapsed, digits=1) memory_used_MB=round(final_memory-initial_memory, digits=1) avg_rows_per_file=round(total_rows/max(length(input_paths),1), digits=1)
-    
-    return nothing
-end
-
-function get_proteins_passing_qval(
-    passing_proteins_folder::String,
-    global_qval_interp::Interpolations.Extrapolation,
-    experiment_wide_qval_interp::Interpolations.Extrapolation,
-    global_prob_col::Symbol,
-    experiment_wide_prob_col::Symbol,
-    global_qval_col::Symbol,
-    experiment_wide_qval_col::Symbol,
-    q_val_threshold::Float32)
-
-    #Get all .arrow files in the input 
-    input_paths = [path for path in readdir(passing_proteins_folder, join=true) if endswith(path, ".arrow")]
-
-    for file_path in input_paths
-        # Read the Arrow table
-        passing_proteins = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-        passing_proteins[!,global_qval_col] = global_qval_interp.(passing_proteins[!,global_prob_col])
-        passing_proteins[!,experiment_wide_qval_col] = experiment_wide_qval_interp.(passing_proteins[!,experiment_wide_prob_col])
-
-        # Add a column to mark which protein groups pass the q-value threshold
-        # Instead of filtering, we preserve all groups for lookups
-        passing_proteins[!, :passes_qval] = (passing_proteins[!,global_qval_col] .<= q_val_threshold) .& 
-                                             (passing_proteins[!,experiment_wide_qval_col] .<= q_val_threshold)
-        
-        # Write back with all protein groups preserved
-        writeArrow(joinpath(passing_proteins_folder, basename(file_path)), passing_proteins)
-    end
-    
-    return
-end

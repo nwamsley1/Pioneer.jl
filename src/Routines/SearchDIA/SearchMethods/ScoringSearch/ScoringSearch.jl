@@ -200,13 +200,6 @@ function summarize_results!(
         )
         # Step 5: Create q-value interpolation
         @info "Calculating global precursor q-values..."
-        # Create PEP spline
-        #results.precursor_pep_spline[] = get_pep_spline(
-        #    results.merged_quant_path,
-        #    :global_prob,
-        #    min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
-        #    n_spline_bins = 5
-        #)
         results.precursor_global_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :global_prob,
@@ -230,13 +223,6 @@ function summarize_results!(
 
         # Step 7: Create q-value interpolation
         @info "Calculating experiment-wide precursor q-values..."
-        # Create PEP spline
-        #results.precursor_pep_spline[] = get_pep_spline(
-        #    results.merged_quant_path,
-        #    :prob,
-        #    min_pep_points_per_bin = params.precursor_prob_spline_points_per_bin,
-        #    n_spline_bins = 5
-        #)
         # Create q-value interpolation
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
@@ -341,15 +327,6 @@ function summarize_results!(
         @info "Calculating global protein scores..."
         # Use the protein group references directly
         acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
-
-        # Merge protein groups by run-specific prob
-        #if isfile(sorted_pg_scores_path)
-        
-
-            # Clear the file by writing an empty DataFrame
-        #    temp_ref = ProteinGroupFileReference(sorted_pg_scores_path)
-        #    write_arrow_file(temp_ref, DataFrame())
-        #end
 
         # Step 17: Sort protein groups by experiment-wide pg_score
         @info "Sorting protein group tables by experiment-wide pg_score..."
