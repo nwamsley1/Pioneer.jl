@@ -65,13 +65,13 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         end
         
         # Add entrapment group if needed
-        if !hasproperty(df, :entrapment_group_id)
+        if !hasproperty(df, :entrap_id)
             entrap_vec = Vector{UInt8}(undef, n_rows)
             for i in 1:n_rows
                 pid = df.precursor_idx[i]
                 entrap_vec[i] = all_entrap_ids[pid]
             end
-            df.entrapment_group_id = entrap_vec
+            df.entrap_id = entrap_vec
         end
         
         return df
@@ -96,7 +96,7 @@ function deduplicate_peptides()
         end
         
         # Create composite key for grouping
-        gdf = groupby(df, [:sequence, :accession_numbers, :entrapment_group_id])
+        gdf = groupby(df, [:sequence, :accession_numbers, :entrap_id])
         
         # Keep row with highest probability for each group
         deduped = combine(gdf) do sdf
@@ -125,7 +125,7 @@ function validate_peptide_data()
     
     op = function(df)
         required_cols = [:sequence, :accession_numbers, :is_decoy, 
-                        :entrapment_group_id, :precursor_idx]
+                        :entrap_id, :precursor_idx]
         
         missing_cols = setdiff(required_cols, Symbol.(names(df)))
         if !isempty(missing_cols)
@@ -168,7 +168,7 @@ function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecurso
     end
     
     # Extract unique peptide-protein pairs
-    unique_pairs = unique(df, [:sequence, :accession_numbers, :is_decoy, :entrapment_group_id])
+    unique_pairs = unique(df, [:sequence, :accession_numbers, :is_decoy, :entrap_id])
     
     # Convert to format expected by infer_proteins
     proteins_vec = Vector{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
@@ -178,7 +178,7 @@ function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecurso
         push!(proteins_vec, (
             protein_name = row.accession_numbers,
             decoy = row.is_decoy,
-            entrap_id = row.entrapment_group_id
+            entrap_id = row.entrap_id
         ))
         push!(peptides_vec, row.sequence)
     end
@@ -225,7 +225,7 @@ function add_inferred_protein_column(inference_result::InferenceResult)
             pep_key = PeptideKey(
                 df.sequence[i],
                 !df.is_decoy[i],
-                df.entrapment_group_id[i]
+                df.entrap_id[i]
             )
             
             if haskey(inference_result.peptide_to_protein, pep_key)
@@ -260,7 +260,7 @@ function add_quantification_flag(inference_result::InferenceResult)
             pep_key = PeptideKey(
                 df.sequence[i],
                 !df.is_decoy[i],
-                df.entrapment_group_id[i]
+                df.entrap_id[i]
             )
             
             if haskey(inference_result.use_for_quant, pep_key)
@@ -290,7 +290,7 @@ function group_psms_by_protein(df::DataFrame)
         return DataFrame(
             protein_name = String[],
             target = Bool[],
-            entrapment_group_id = UInt8[],
+            entrap_id = UInt8[],
             n_peptides = Int64[],
             peptide_list = String[],
             pg_score = Float32[]
@@ -298,7 +298,7 @@ function group_psms_by_protein(df::DataFrame)
     end
     
     # Group by protein
-    grouped = groupby(df, [:inferred_protein_group, :target, :entrapment_group_id])
+    grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
     # Aggregate to protein groups
     protein_groups = combine(grouped) do gdf
@@ -375,7 +375,7 @@ function add_protein_features(protein_catalog::Dict)
             key = (
                 protein_name = df.protein_name[i],
                 target = df.target[i],
-                entrap_id = df.entrapment_group_id[i]
+                entrap_id = df.entrap_id[i]
             )
             
             if haskey(protein_catalog, key)

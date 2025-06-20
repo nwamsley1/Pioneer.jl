@@ -429,7 +429,7 @@ function write_protein_groups_arrow(protein_groups::Dictionary{ProteinKey, Prote
     df = DataFrame(
         protein_name = protein_names,
         target = targets,
-        entrap_id = entrap_ids,
+        entrapment_group_id = entrap_ids,
         pg_score = pg_scores,
         n_peptides = n_peptides,
         peptide_list = peptide_lists,
