@@ -870,7 +870,7 @@ A composable pipeline of operations to apply to a DataFrame in a single pass.
 Operations are executed in order, with optional post-actions for metadata updates.
 """
 struct TransformPipeline
-    operations::Vector{Pair{String, Function}}  # description => operation
+    operations::Vector{<:Pair{String}}  # description => operation
     post_actions::Vector{Function}  # Actions to run after transform (e.g., mark_sorted!)
 end
 
@@ -891,14 +891,14 @@ end
 import Base: |>
 
 # Override |> for pipeline composition
-Base.:|>(pipeline::TransformPipeline, op::Pair{String, Function}) = 
+Base.|>(pipeline::TransformPipeline, op::Pair{String, <:Function}) = 
     TransformPipeline(
         vcat(pipeline.operations, op),
         pipeline.post_actions
     )
 
 # Handle PipelineOperation specially
-Base.:|>(pipeline::TransformPipeline, op::PipelineOperation) = 
+Base.|>(pipeline::TransformPipeline, op::PipelineOperation) = 
     TransformPipeline(
         vcat(pipeline.operations, op.operation),
         vcat(pipeline.post_actions, op.post_action)
