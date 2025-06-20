@@ -934,6 +934,131 @@ function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipel
     return refs
 end
 
+#==========================================================
+Pipeline Operation Builders
+==========================================================#
+
+"""
+    add_column(name::Symbol, compute_fn::Function)
+
+Add a new column by applying compute_fn to each row.
+"""
+function add_column(name::Symbol, compute_fn::Function)
+    desc = "add_column_$name"
+    op = function(df)
+        df[!, name] = [compute_fn(row) for row in eachrow(df)]
+        return df
+    end
+    return desc => op
+end
+
+"""
+    rename_column(old::Symbol, new::Symbol)
+
+Rename a column from old to new name.
+"""
+function rename_column(old::Symbol, new::Symbol)
+    desc = "rename_$(old)_to_$(new)"
+    op = function(df)
+        rename!(df, old => new)
+        return df
+    end
+    return desc => op
+end
+
+"""
+    select_columns(cols::Vector{Symbol})
+
+Keep only specified columns, ignoring any that don't exist.
+"""
+function select_columns(cols::Vector{Symbol})
+    desc = "select_columns"
+    op = function(df)
+        available = intersect(cols, Symbol.(names(df)))
+        select!(df, available)
+        return df
+    end
+    return desc => op
+end
+
+"""
+    remove_columns(cols::Symbol...)
+
+Remove specified columns from the DataFrame.
+"""
+function remove_columns(cols::Symbol...)
+    desc = "remove_columns_$(join(cols, '_'))"
+    op = function(df)
+        select!(df, Not(collect(cols)))
+        return df
+    end
+    return desc => op
+end
+
+"""
+    filter_rows(predicate::Function; desc::String="filter")
+
+Filter rows based on a predicate function.
+"""
+function filter_rows(predicate::Function; desc::String="filter")
+    op = function(df)
+        filter!(predicate, df)
+        return df
+    end
+    return desc => op
+end
+
+"""
+    sort_by(cols::Vector{Symbol}; rev::Vector{Bool}=fill(false, length(cols)))
+
+Sort DataFrame by specified columns. Includes post-action to update FileReference sort state.
+"""
+function sort_by(cols::Vector{Symbol}; rev::Vector{Bool}=fill(false, length(cols)))
+    desc = "sort_by_$(join(cols, '_'))"
+    op = function(df)
+        sort!(df, cols, rev=rev, alg=QuickSort)
+        return df
+    end
+    # Create post-action to mark the file as sorted
+    post_action = ref -> mark_sorted!(ref, cols...)
+    return PipelineOperation(desc => op, post_action)
+end
+
+#==========================================================
+Helper Functions for Pipeline API
+==========================================================#
+
+"""
+    load_dataframe(ref::FileReference) -> DataFrame
+
+Load entire Arrow file as DataFrame. Hides direct Arrow.Table access.
+"""
+function load_dataframe(ref::FileReference)
+    validate_exists(ref)
+    return DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+end
+
+"""
+    column_names(ref::FileReference) -> Vector{Symbol}
+
+Get column names without loading the full dataset.
+"""
+function column_names(ref::FileReference)
+    validate_exists(ref)
+    table = Arrow.Table(file_path(ref))
+    return Symbol.(Tables.columnnames(table))
+end
+
+"""
+    has_columns(ref::FileReference, cols::Symbol...) -> Bool
+
+Check if all specified columns exist in the file.
+"""
+function has_columns(ref::FileReference, cols::Symbol...)
+    available = column_names(ref)
+    return all(col ∈ available for col in cols)
+end
+
 # Export all public functions
 export stream_sorted_merge, stream_filter, stream_transform,
        add_column_to_file!, update_column_in_file!,
@@ -942,4 +1067,9 @@ export stream_sorted_merge, stream_filter, stream_transform,
        merge_psm_scores, merge_protein_groups_by_score, apply_maxlfq,
        TransformPipeline, PipelineOperation, apply_pipeline!,
        sort_file_by_keys!, write_arrow_file, transform_and_write!,
-       add_column_and_sort!
+       add_column_and_sort!,
+       # Pipeline operation builders
+       add_column, rename_column, select_columns, remove_columns,
+       filter_rows, sort_by,
+       # Helper functions
+       load_dataframe, column_names, has_columns
