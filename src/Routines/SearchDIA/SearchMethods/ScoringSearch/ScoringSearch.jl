@@ -281,7 +281,7 @@ function summarize_results!(
 
         # Step 13: Sort protein groups by global_pg_score
         @info "Step 13: Sorting protein groups by global_pg_score..."
-        sort_file_by_keys!(pg_refs, :global_pg_score; reverse=true)
+        sort_file_by_keys!(pg_refs, :global_pg_score, :target; reverse=[true, true])
 
         # Step 14: Merge protein groups for global q-values
         @info "Step 14: Merging protein groups for global q-value calculation..."

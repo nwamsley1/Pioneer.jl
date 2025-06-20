@@ -757,7 +757,8 @@ File Sorting Operations
 ==========================================================#
 
 """
-    sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse=false)
+    sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
+                      reverse::Union{Bool, Vector{Bool}}=false)
 
 Sort a file in-place by the specified keys.
 Updates the reference's sorted_by metadata.
@@ -765,12 +766,22 @@ Updates the reference's sorted_by metadata.
 # Arguments
 - `ref`: FileReference to sort
 - `sort_keys`: Column names to sort by
-- `reverse`: If true, sort in descending order (applies to all keys)
+- `reverse`: Either a single Bool (applies to all keys) or a Vector{Bool} (one per key)
 
 # Returns
 - The updated FileReference
+
+# Examples
+```julia
+# Sort by single key descending
+sort_file_by_keys!(ref, :score; reverse=true)
+
+# Sort by multiple keys with different directions
+sort_file_by_keys!(ref, :score, :target; reverse=[true, true])
+```
 """
-function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse::Bool=false)
+function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; 
+                           reverse::Union{Bool, Vector{Bool}}=false)
     validate_exists(ref)
     
     # Validate that all sort keys exist in schema
@@ -784,7 +795,15 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...; reverse::B
     df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
     
     # Build sort order vector
-    rev_vec = reverse ? fill(true, length(sort_keys)) : fill(false, length(sort_keys))
+    rev_vec = if reverse isa Bool
+        fill(reverse, length(sort_keys))
+    else
+        # Validate length matches
+        if length(reverse) != length(sort_keys)
+            error("Length of reverse vector ($(length(reverse))) must match number of sort keys ($(length(sort_keys)))")
+        end
+        reverse
+    end
     
     # Sort dataframe
     sort!(df, collect(sort_keys), rev=rev_vec)
@@ -1013,12 +1032,32 @@ end
 
 """
     sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
-                      reverse::Bool=false, parallel::Bool=true)
+                      reverse::Union{Bool, Vector{Bool}}=false, parallel::Bool=true)
 
 Sort multiple files by the specified keys, optionally in parallel.
+
+# Arguments
+- `refs`: Vector of FileReferences to sort
+- `keys`: Column names to sort by
+- `reverse`: Either a single Bool (applies to all keys) or a Vector{Bool} (one per key)
+- `parallel`: If true, sort files in parallel using threads
+
+# Examples
+```julia
+# Sort all files by score descending
+sort_file_by_keys!(refs, :score; reverse=true)
+
+# Sort all files by score descending, then target descending
+sort_file_by_keys!(refs, :score, :target; reverse=[true, true])
+```
 """
 function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
-                           reverse::Bool=false, parallel::Bool=true)
+                           reverse::Union{Bool, Vector{Bool}}=false, parallel::Bool=true)
+    # Validate reverse vector length if it's a vector
+    if reverse isa Vector{Bool} && length(reverse) != length(keys)
+        error("Length of reverse vector ($(length(reverse))) must match number of sort keys ($(length(keys)))")
+    end
+    
     if parallel && length(refs) > 1
         Threads.@threads for ref in refs
             if exists(ref)
