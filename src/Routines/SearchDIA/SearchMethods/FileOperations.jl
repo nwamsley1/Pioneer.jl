@@ -841,6 +841,57 @@ function transform_and_write!(transform_fn::Function, ref::FileReference)
 end
 
 """
+    transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
+    
+Load entire file, apply transformation, and write to a new location.
+Does not modify the original file.
+"""
+function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
+    validate_exists(ref)
+    
+    # Ensure output directory exists
+    output_dir = dirname(output_path)
+    !isdir(output_dir) && mkpath(output_dir)
+    
+    # Load entire file into memory
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    
+    # Apply transformation
+    transformed_df = transform_fn(df)
+    
+    # Write to output path
+    writeArrow(output_path, transformed_df)
+    
+    return nothing
+end
+
+"""
+    transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String) -> FileReference
+    
+Load entire file, apply transformation, and write to a new location.
+Does not modify the original file.
+"""
+function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
+    validate_exists(ref)
+    
+    # Ensure output directory exists
+    output_dir = dirname(output_path)
+    !isdir(output_dir) && mkpath(output_dir)
+    
+    # Load entire file into memory
+    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    
+    # Apply transformation
+    transformed_df = transform_fn(df)
+    
+    # Write to output path using writeArrow for Windows compatibility
+    writeArrow(output_path, transformed_df)
+    
+    # Create reference for output of same type as input
+    return create_reference(output_path, typeof(ref))
+end
+
+"""
     add_column_and_sort!(ref::FileReference, col_name::Symbol, 
                         compute_fn::Function, sort_keys::Symbol...; 
                         reverse::Bool=false) -> FileReference
