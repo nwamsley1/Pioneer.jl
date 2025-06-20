@@ -119,9 +119,17 @@ function test_accuracy(test_dir::String; n_files::Int=10, verbose::Bool=true)
     try
         # Test different sort key combinations commonly used in protein groups
         test_cases = [
+            # 2-key tests (backward compatibility)
             ((:pg_score, :target), [true, true], "pg_score_target_desc"),
             ((:global_pg_score, :target), [true, true], "global_pg_score_target_desc"),
-            ((:protein_name, :target), [false, false], "protein_name_target_asc")
+            ((:protein_name, :target), [false, false], "protein_name_target_asc"),
+            
+            # 3-key tests  
+            ((:pg_score, :target, :protein_name), [true, true, false], "3key_mixed"),
+            
+            # Test single boolean reverse (should broadcast)
+            ((:pg_score, :target), true, "2key_all_desc_single_bool"),
+            ((:protein_name, :target), false, "2key_all_asc_single_bool")
         ]
         
         for (sort_keys, reverse, test_name) in test_cases
@@ -161,7 +169,7 @@ function test_accuracy(test_dir::String; n_files::Int=10, verbose::Bool=true)
             typed_rows = 0
             try
                 @time typed_ref = stream_sorted_merge_typed(
-                    refs, typed_output, sort_keys[1], sort_keys[2];
+                    refs, typed_output, sort_keys...;
                     reverse=reverse, batch_size=100_000
                 )
                 typed_success = true
@@ -180,7 +188,7 @@ function test_accuracy(test_dir::String; n_files::Int=10, verbose::Bool=true)
             recursive_rows = 0
             try
                 @time recursive_ref = recursive_merge(
-                    refs, recursive_output, sort_keys[1], sort_keys[2];
+                    refs, recursive_output, sort_keys...;
                     reverse=reverse, group_size=3, batch_size=100_000
                 )
                 recursive_success = true
@@ -406,7 +414,7 @@ function benchmark_typed_implementation(refs, temp_dir, sort_keys, reverse, batc
     try
         elapsed = @simple_time begin
             stream_sorted_merge_typed(
-                refs, output_path, sort_keys[1], sort_keys[2];
+                refs, output_path, sort_keys...;
                 reverse=reverse, batch_size=batch_size
             )
         end
@@ -422,7 +430,7 @@ function benchmark_recursive_implementation(refs, temp_dir, sort_keys, reverse, 
     try
         elapsed = @simple_time begin
             recursive_merge(
-                refs, output_path, sort_keys[1], sort_keys[2];
+                refs, output_path, sort_keys...;
                 reverse=reverse, batch_size=batch_size, group_size=group_size
             )
         end
