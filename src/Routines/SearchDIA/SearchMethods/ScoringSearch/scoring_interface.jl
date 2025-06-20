@@ -317,6 +317,19 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
                              global_qval_interp,
                              qval_interp,
                              q_value_threshold::Float32)
+    @warn """filter_psms_by_qvalue is deprecated. Use the Pipeline API instead:
+    
+    qvalue_pipeline = TransformPipeline() |>
+        add_interpolated_column(:global_qval, :global_prob, global_qval_interp) |>
+        add_interpolated_column(:qval, :prec_prob, qval_interp) |>
+        filter_by_multiple_thresholds([
+            (:global_qval, q_value_threshold),
+            (:qval, q_value_threshold)
+        ])
+    
+    passing_refs = apply_pipeline_batch(psm_refs, qvalue_pipeline, output_dir)
+    """ maxlog=1
+    
     filtered_refs = PSMFileReference[]
     
     for (idx, ref) in enumerate(psm_refs)

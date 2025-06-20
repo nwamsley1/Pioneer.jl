@@ -891,14 +891,14 @@ end
 import Base: |>
 
 # Override |> for pipeline composition
-Base.|>(pipeline::TransformPipeline, op::Pair{String, <:Function}) = 
+|>(pipeline::TransformPipeline, op::Pair{String, F}) where {F<:Function} = 
     TransformPipeline(
         vcat(pipeline.operations, op),
         pipeline.post_actions
     )
 
 # Handle PipelineOperation specially
-Base.|>(pipeline::TransformPipeline, op::PipelineOperation) = 
+|>(pipeline::TransformPipeline, op::PipelineOperation) = 
     TransformPipeline(
         vcat(pipeline.operations, op.operation),
         vcat(pipeline.post_actions, op.post_action)
@@ -958,6 +958,39 @@ function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipel
         end
     end
     return refs
+end
+
+"""
+    transform_and_write!(ref::FileReference, output_path::String, pipeline::TransformPipeline)
+
+Apply a pipeline to a file and write the result to a new location.
+Does not modify the original file.
+
+Example:
+```julia
+transform_and_write!(input_ref, "output.arrow", my_pipeline)
+```
+"""
+function transform_and_write!(ref::FileReference, output_path::String, pipeline::TransformPipeline)
+    # Validate input
+    validate_exists(ref)
+    
+    # Ensure output directory exists
+    output_dir = dirname(output_path)
+    !isdir(output_dir) && mkpath(output_dir)
+    
+    # Create transform function that applies all operations
+    transform_fn = function(df)
+        for (desc, op) in pipeline.operations
+            df = op(df)
+        end
+        return df
+    end
+    
+    # Use existing transform_and_write! with output path
+    transform_and_write!(transform_fn, ref, output_path)
+    
+    return nothing
 end
 
 #==========================================================
@@ -1085,6 +1118,245 @@ function has_columns(ref::FileReference, cols::Symbol...)
     return all(col ∈ available for col in cols)
 end
 
+#==========================================================
+New Pipeline Operations for Q-value Filtering
+==========================================================#
+
+# Import Interpolations for type annotation
+using Interpolations
+
+"""
+    add_interpolated_column(new_col::Symbol, source_col::Symbol, 
+                           interpolator::Interpolations.Extrapolation)
+
+Add a new column by applying an interpolation function to an existing column.
+Commonly used for adding q-value columns based on probability scores.
+
+Example:
+```julia
+pipeline = TransformPipeline() |>
+    add_interpolated_column(:global_qval, :global_prob, global_qval_interp)
+```
+"""
+function add_interpolated_column(new_col::Symbol, source_col::Symbol, 
+                               interpolator::Interpolations.Extrapolation)
+    desc = "add_interpolated_column($new_col from $source_col)"
+    op = function(df)
+        # Apply interpolator to source column
+        df[!, new_col] = [Float32(interpolator(val)) for val in df[!, source_col]]
+        return df
+    end
+    return desc => op
+end
+
+"""
+    filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = :<=)
+
+Filter rows where column meets threshold condition.
+
+Supported comparisons: :<=, :<, :>=, :>, :==, :!=
+
+Example:
+```julia
+pipeline = TransformPipeline() |>
+    filter_by_threshold(:qval, 0.01)  # Keep rows where qval <= 0.01
+```
+"""
+function filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = :<=)
+    desc = "filter_by_threshold($col $comparison $threshold)"
+    
+    # Create comparison function
+    comp_fn = if comparison == :<=
+        (x) -> x <= threshold
+    elseif comparison == :<
+        (x) -> x < threshold
+    elseif comparison == :>=
+        (x) -> x >= threshold
+    elseif comparison == :>
+        (x) -> x > threshold
+    elseif comparison == :(==)
+        (x) -> x == threshold
+    elseif comparison == :(!=)
+        (x) -> x != threshold
+    else
+        error("Unsupported comparison: $comparison")
+    end
+    
+    op = function(df)
+        # Filter rows based on comparison
+        filter!(row -> comp_fn(row[col]), df)
+        return df
+    end
+    
+    return desc => op
+end
+
+"""
+    filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real}};
+                                 comparison::Symbol = :<=,
+                                 logic::Symbol = :and)
+
+Apply multiple threshold filters with specified logic (AND/OR).
+
+Example:
+```julia
+# AND logic (both conditions must be true)
+pipeline = TransformPipeline() |>
+    filter_by_multiple_thresholds([
+        (:global_qval, 0.01),
+        (:qval, 0.01)
+    ])
+
+# OR logic (at least one condition must be true)
+pipeline = TransformPipeline() |>
+    filter_by_multiple_thresholds([
+        (:score1, 0.95),
+        (:score2, 0.90)
+    ], logic = :or)
+```
+"""
+function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real}};
+                                     comparison::Symbol = :<=,
+                                     logic::Symbol = :and)
+    desc = "filter_by_multiple_thresholds($(length(conditions)) conditions, $logic)"
+    
+    # Create comparison function
+    comp_fn = if comparison == :<=
+        (x, t) -> x <= t
+    elseif comparison == :<
+        (x, t) -> x < t
+    elseif comparison == :>=
+        (x, t) -> x >= t
+    elseif comparison == :>
+        (x, t) -> x > t
+    elseif comparison == :(==)
+        (x, t) -> x == t
+    elseif comparison == :(!=)
+        (x, t) -> x != t
+    else
+        error("Unsupported comparison: $comparison")
+    end
+    
+    op = function(df)
+        if logic == :and
+            # AND logic - all conditions must be true
+            filter!(df) do row
+                all(comp_fn(row[col], threshold) for (col, threshold) in conditions)
+            end
+        elseif logic == :or
+            # OR logic - at least one condition must be true
+            filter!(df) do row
+                any(comp_fn(row[col], threshold) for (col, threshold) in conditions)
+            end
+        else
+            error("Unsupported logic: $logic. Use :and or :or")
+        end
+        return df
+    end
+    
+    return desc => op
+end
+
+"""
+    write_transformed(ref::FileReference, output_path::String) -> FileReference
+
+Write the current state of a FileReference to a new location, creating a new reference.
+Useful as the final step after applying transformations.
+
+Example:
+```julia
+# Apply transformations
+apply_pipeline!(ref, pipeline)
+
+# Write to new location
+new_ref = write_transformed(ref, "output/filtered_data.arrow")
+```
+"""
+function write_transformed(ref::FileReference, output_path::String)
+    # Validate input
+    validate_exists(ref)
+    
+    # Ensure output directory exists
+    output_dir = dirname(output_path)
+    !isdir(output_dir) && mkpath(output_dir)
+    
+    # Copy file to new location
+    cp(file_path(ref), output_path, force=true)
+    
+    # Create new reference of same type
+    new_ref = if ref isa PSMFileReference
+        PSMFileReference(output_path)
+    elseif ref isa ProteinGroupFileReference
+        ProteinGroupFileReference(output_path)
+    else
+        FileReference(output_path)  # Generic fallback
+    end
+    
+    # Copy metadata (sort state, schema)
+    if !isempty(sorted_by(ref))
+        mark_sorted!(new_ref, sorted_by(ref)...)
+    end
+    
+    return new_ref
+end
+
+"""
+    apply_pipeline_batch(refs::Vector{<:FileReference}, pipeline::TransformPipeline,
+                        output_folder::String; preserve_basename::Bool = true)
+
+Apply a pipeline to multiple files and write results to a new folder.
+Returns vector of new FileReferences.
+
+Example:
+```julia
+passing_refs = apply_pipeline_batch(
+    filtered_refs,
+    qvalue_pipeline,
+    "output/passing_psms"
+)
+```
+"""
+function apply_pipeline_batch(refs::Vector{<:FileReference}, 
+                            pipeline::TransformPipeline,
+                            output_folder::String;
+                            preserve_basename::Bool = true)
+    # Ensure output folder exists
+    !isdir(output_folder) && mkpath(output_folder)
+    
+    new_refs = similar(refs, 0)  # Empty vector of same type
+    
+    for ref in refs
+        if exists(ref)
+            # Determine output path
+            output_name = preserve_basename ? basename(file_path(ref)) : 
+                         "processed_$(length(new_refs) + 1).arrow"
+            output_path = joinpath(output_folder, output_name)
+            
+            # Apply pipeline and write to new location in one pass
+            # This avoids modifying the original file
+            transform_and_write!(ref, output_path, pipeline)
+            
+            # Create new reference
+            new_ref = if ref isa PSMFileReference
+                PSMFileReference(output_path)
+            elseif ref isa ProteinGroupFileReference
+                ProteinGroupFileReference(output_path)
+            else
+                FileReference(output_path)
+            end
+            
+            # Copy metadata if applicable
+            if !isempty(sorted_by(ref))
+                mark_sorted!(new_ref, sorted_by(ref)...)
+            end
+            
+            push!(new_refs, new_ref)
+        end
+    end
+    
+    return new_refs
+end
+
 # Export all public functions
 export stream_sorted_merge, stream_filter, stream_transform,
        add_column_to_file!, update_column_in_file!,
@@ -1097,5 +1369,8 @@ export stream_sorted_merge, stream_filter, stream_transform,
        # Pipeline operation builders
        add_column, rename_column, select_columns, remove_columns,
        filter_rows, sort_by,
+       # New q-value operations
+       add_interpolated_column, filter_by_threshold, 
+       filter_by_multiple_thresholds, write_transformed, apply_pipeline_batch,
        # Helper functions
        load_dataframe, column_names, has_columns

@@ -248,14 +248,21 @@ function summarize_results!(
 
         # Step 8: Filter PSMs by global q-value
         @info "Filtering passing PSMs by global q-value and experiment-wide q-value threshold..."
-        # Apply q-value threshold using new abstractions
-        passing_refs = filter_psms_by_qvalue(
+        
+        # Build q-value filtering pipeline - explicit and composable
+        qvalue_filter_pipeline = TransformPipeline() |>
+            add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
+            add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
+            filter_by_multiple_thresholds([
+                (:global_qval, params.q_value_threshold),
+                (:qval, params.q_value_threshold)
+            ])
+        
+        # Apply pipeline and write to new location
+        passing_refs = apply_pipeline_batch(
             filtered_refs,
-            passing_psms_folder,
-            getPrecursors(getSpecLib(search_context)),
-            results.precursor_global_qval_interp[],
-            results.precursor_qval_interp[],
-            params.q_value_threshold
+            qvalue_filter_pipeline,
+            passing_psms_folder
         )
         
         # Update the search context with new passing PSM paths
