@@ -132,7 +132,7 @@ function summarize_results!(
 )
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
     
-    # Set up output folders for different stages
+    # Set up output folders
     second_pass_folder = joinpath(temp_folder, "second_pass_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     passing_proteins_folder = joinpath(temp_folder, "passing_proteins")
@@ -143,7 +143,7 @@ function summarize_results!(
 
     try
         # Step 1: Train XGBoost Models
-        @info "Training XGBoost models..."
+        @info "Step 1: Training XGBoost models..."
         score_precursor_isotope_traces(
             second_pass_folder,
             getSecondPassPsms(getMSData(search_context)),
@@ -155,7 +155,7 @@ function summarize_results!(
         )
 
         # Step 2: Find Best Isotope Traces
-        @info "Finding best traces..."
+        @info "Step 2: Finding best isotope traces..."
         best_traces = get_best_traces(
             getSecondPassPsms(getMSData(search_context)),
             params.min_best_trace_prob
@@ -166,12 +166,9 @@ function summarize_results!(
         second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
 
         # Step 3: Process Quantification Results
-        @info "Processing quantification results..."
-        
-        # Define columns we need to keep for quantification
+        @info "Step 3: Processing quantification results..."
         necessary_cols = get_quant_necessary_columns()
         
-        # Build explicit pipeline - each operation is clear and testable
         quant_processing_pipeline = TransformPipeline() |>
             add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
             rename_column(:prob, :trace_prob) |>
@@ -180,26 +177,23 @@ function summarize_results!(
             remove_columns(:best_trace) |>
             sort_by([:global_prob, :target], rev=[true, true])
         
-        # Apply pipeline to all second pass files
-        @info "Applying quantification processing pipeline to $(length(second_pass_refs)) files"
+        @info "Applying pipeline to $(length(second_pass_refs)) files"
         for ref in second_pass_refs
-            if exists(ref)
-                apply_pipeline!(ref, quant_processing_pipeline)
-            end
+            exists(ref) && apply_pipeline!(ref, quant_processing_pipeline)
         end
         
-        # Use the processed references for downstream operations
         filtered_refs = second_pass_refs
 
-        # Step 4: Merge PSM Scores by max_prob
-        @info "Merging PSM scores for global q-value estimation..."
+        # Step 4: Merge PSMs by global_prob for global q-values
+        @info "Step 4: Merging PSM scores by global_prob..."
         merge_psm_files(
             filtered_refs,
             results.merged_quant_path,
             :global_prob
         )
-        # Step 5: Create q-value interpolation
-        @info "Calculating global precursor q-values..."
+
+        # Step 5: Calculate global precursor q-values
+        @info "Step 5: Calculating global precursor q-values..."
         results.precursor_global_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :global_prob,
@@ -207,23 +201,21 @@ function summarize_results!(
             min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
-        # Step 6: Merge PSM Scores by prob
-        @info "Merging PSM scores for experiment-wide q-value estimation..."
-        # Re-sort filtered files by prec_prob using references
+
+        # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
+        @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
         for ref in filtered_refs
             sort_file_by_keys!(ref, :prec_prob; reverse=true)
         end
         
-        # Merge using new abstraction
         merge_psm_files(
             filtered_refs,
             results.merged_quant_path,
             :prec_prob
         )
 
-        # Step 7: Create q-value interpolation
-        @info "Calculating experiment-wide precursor q-values..."
-        # Create q-value interpolation
+        # Step 7: Calculate experiment-wide precursor q-values
+        @info "Step 7: Calculating experiment-wide precursor q-values..."
         results.precursor_qval_interp[] = get_qvalue_spline(
             results.merged_quant_path,
             :prec_prob,
@@ -232,10 +224,8 @@ function summarize_results!(
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
         )
 
-        # Step 8: Filter PSMs by global q-value
-        @info "Filtering passing PSMs by global q-value and experiment-wide q-value threshold..."
-        
-        # Build q-value filtering pipeline - explicit and composable
+        # Step 8: Filter PSMs by q-value thresholds
+        @info "Step 8: Filtering PSMs by q-value thresholds..."
         qvalue_filter_pipeline = TransformPipeline() |>
             add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
             add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
@@ -244,113 +234,70 @@ function summarize_results!(
                 (:qval, params.q_value_threshold)
             ])
         
-        # Apply pipeline and write to new location
         passing_refs = apply_pipeline_batch(
             filtered_refs,
             qvalue_filter_pipeline,
             passing_psms_folder
         )
         
-        # Update the search context with new passing PSM paths
-        passing_psm_paths = [file_path(ref) for ref in passing_refs]
-        # Store the paths in the search context
-        for (idx, path) in enumerate(passing_psm_paths)
-            setPassingPsms!(getMSData(search_context), idx, path)
+        # Update search context with passing PSM paths
+        for (idx, ref) in enumerate(passing_refs)
+            setPassingPsms!(getMSData(search_context), idx, file_path(ref))
         end
 
-        # Step 10: Count protein peptides
-        # This is useful for counting some of the protein-group features
-        # for target-decoy discriminatin (e.g. the fraction of observed vs. possible peptides
-        #in the library for each protein group)
-        @info "Counting protein peptides..."
+        # Step 9: Count protein peptides
+        @info "Step 9: Counting protein peptides for feature calculation..."
         protein_to_possible_peptides = count_protein_peptides(
             getPrecursors(getSpecLib(search_context))
         )
 
-        # Step 11: Perform protein inference and initial scoring
-        @info "Performing protein inference and initial scoring..."
-        
-        # Use the new pipeline interface
+        # Step 10: Perform protein inference and initial scoring
+        @info "Step 10: Performing protein inference and initial scoring..."
         pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
-            passing_refs,  # Use references directly
+            passing_refs,
             passing_proteins_folder,
             getPrecursors(getSpecLib(search_context)),
             protein_to_possible_peptides,
             min_peptides = params.min_peptides
         )
         
-        # Create paired file references for PSM updates
         paired_files = [PairedSearchFiles(psm_path, pg_path, idx) 
-                        for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
+                       for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
         
-        if isempty(paired_files)
-            error("No protein groups created during protein inference")
-        end
+        isempty(paired_files) && error("No protein groups created during protein inference")
         
-        # Create internal scoring refs (not stored in SearchContext)
         scoring_refs = ScoringSearchResultRefs(paired_files)
 
-        # Step 12: Perform protein probit regression
-        @info "Performing protein probit regression..."
+        # Step 11: Perform protein probit regression
+        @info "Step 11: Performing protein probit regression..."
         qc_folder = joinpath(dirname(temp_folder), "qc_plots")
         !isdir(qc_folder) && mkdir(qc_folder)
-        # Use the pg_refs from protein inference directly
+        
         perform_protein_probit_regression(
-            pg_refs,  # Now uses references from pipeline
+            pg_refs,
             params.max_psms_in_memory,
             qc_folder
         )
 
-        # Step 18: Merge protein groups by experiment-wide pg_score
-        # Merge protein groups by global pg_score (which contains probit scores after regression)
-        sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-        @info "Merging protein group scores for experiment-wide q-value estimation..."
-        
-        # Use the protein group references we already have from scoring_refs
-        # pg_refs already defined above
-        
-        # Use reference-based merge
-        merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
-        @info "Merged $(length(pg_refs)) protein group files using reference-based approach"
-
-        # Step 19: Create experiment-wide q-value interpolation
-        @info "Calculating experiment-wide q-values for protein groups..."
-        # Create protein group run-specific q-value interpolation
-        search_context.pg_score_to_qval[] = get_qvalue_spline(
-            sorted_pg_scores_path,
-            :pg_score,
-            false; # use all protein groups
-            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-        )
-
-        # Step 13: Calculate global protein scores
-        @info "Calculating global protein scores..."
-        # Use the protein group references directly
+        # Step 12: Calculate global protein scores
+        @info "Step 12: Calculating global protein scores..."
         acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
 
-        # Step 17: Sort protein groups by experiment-wide pg_score
-        @info "Sorting protein group tables by experiment-wide pg_score..."
-        # Use references directly
+        # Step 13: Sort protein groups by global_pg_score
+        @info "Step 13: Sorting protein groups by global_pg_score..."
         for ref in pg_refs
             sort_file_by_keys!(ref, :global_pg_score; reverse=true)
         end
 
-        # Step 15: Merge protein group scores by global_pg_score
-        @info "Merging protein group scores for global q-value estimation..."
-        # Merge protein groups by global pg_score (which contains probit scores after regression)
+        # Step 14: Merge protein groups for global q-values
+        @info "Step 14: Merging protein groups for global q-value calculation..."
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
         
-        # Reuse the protein group references we already have
-        pg_refs_global = pg_refs  # Already have these from earlier
-        
-        # Use reference-based merge for global scores (sorted by global_pg_score)
-        stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
+        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :global_pg_score;
                            batch_size=1000000, reverse=true)
-        @info "Merged $(length(pg_refs_global)) protein group files by global score"
 
-        # Step 16: Create global q-value interpolation
-        @info "Calculating global q-values for protein groups..."
-        # Create protein group global q-value interpolation
+        # Step 15: Calculate global protein q-values
+        @info "Step 15: Calculating global protein q-values..."
         search_context.global_pg_score_to_qval[] = get_qvalue_spline(
             sorted_pg_scores_path,
             :global_pg_score,
@@ -358,26 +305,34 @@ function summarize_results!(
             min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
         )
 
-        # Filter proteins by global q-value
-        # Build protein q-value pipeline
+        # Step 16: Merge protein groups for experiment-wide q-values
+        @info "Step 16: Merging protein groups for experiment-wide q-value calculation..."
+        merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
+
+        # Step 17: Calculate experiment-wide protein q-values
+        @info "Step 17: Calculating experiment-wide protein q-values..."
+        search_context.pg_score_to_qval[] = get_qvalue_spline(
+            sorted_pg_scores_path,
+            :pg_score,
+            false; # use all protein groups
+            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+        )
+
+        # Step 18: Add q-values to protein groups
+        @info "Step 18: Adding q-values and passing flags to protein groups..."
         protein_qval_pipeline = TransformPipeline() |>
             add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
             add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-            add_column(:passes_qval, (df) -> begin
+            add_column(:passes_qval, df -> 
                 (df.global_pg_qval .<= params.q_value_threshold) .& 
-                (df.pg_qval .<= params.q_value_threshold)
-            end)
+                (df.pg_qval .<= params.q_value_threshold))
 
-        # Apply pipeline to all protein group files
-        @info "Adding q-values and passing flags to $(length(pg_refs)) protein group files"
         for ref in pg_refs
-            if exists(ref)
-                apply_pipeline!(ref, protein_qval_pipeline)
-            end
+            exists(ref) && apply_pipeline!(ref, protein_qval_pipeline)
         end
-        # Step 14: Update PSMs with probit-scored pg_score and global scores
-        @info "Updating PSMs with probit-scored protein group scores..."
-        # Get the paired references from SearchContext
+
+        # Step 19: Update PSMs with final protein scores
+        @info "Step 19: Updating PSMs with final protein scores..."
         update_psms_with_probit_scores_refs(
             scoring_refs.paired_files,
             acc_to_max_pg_score,
