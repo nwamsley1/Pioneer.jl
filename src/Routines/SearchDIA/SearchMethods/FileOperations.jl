@@ -836,11 +836,110 @@ function add_column_and_sort!(ref::FileReference, col_name::Symbol,
     return ref
 end
 
+#==========================================================
+Pipeline API for Composable File Operations
+==========================================================#
+
+"""
+    TransformPipeline
+
+A composable pipeline of operations to apply to a DataFrame in a single pass.
+Operations are executed in order, with optional post-actions for metadata updates.
+"""
+struct TransformPipeline
+    operations::Vector{Pair{String, Function}}  # description => operation
+    post_actions::Vector{Function}  # Actions to run after transform (e.g., mark_sorted!)
+end
+
+# Constructor for empty pipeline
+TransformPipeline() = TransformPipeline(Pair{String, Function}[], Function[])
+
+"""
+    PipelineOperation
+
+Wrapper for operations that need post-processing actions (e.g., updating sort state).
+"""
+struct PipelineOperation
+    operation::Pair{String, Function}
+    post_action::Function
+end
+
+# Override |> for pipeline composition
+Base.:|>(pipeline::TransformPipeline, op::Pair{String, Function}) = 
+    TransformPipeline(
+        vcat(pipeline.operations, op),
+        pipeline.post_actions
+    )
+
+# Handle PipelineOperation specially
+Base.:|>(pipeline::TransformPipeline, op::PipelineOperation) = 
+    TransformPipeline(
+        vcat(pipeline.operations, op.operation),
+        vcat(pipeline.post_actions, op.post_action)
+    )
+
+"""
+    apply_pipeline!(ref::FileReference, pipeline::TransformPipeline) -> FileReference
+
+Apply all operations in the pipeline to the file in a single pass.
+Automatically runs post-actions after transformation completes.
+"""
+function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
+    if isempty(pipeline.operations)
+        return ref
+    end
+    
+    # Log operations
+    @info "Applying pipeline to $(file_path(ref)):"
+    for (desc, _) in pipeline.operations
+        @info "  - $desc"
+    end
+    
+    # Apply all operations in single pass
+    transform_and_write!(ref) do df
+        for (desc, op) in pipeline.operations
+            df = op(df)
+        end
+        return df
+    end
+    
+    # Run post-actions (like mark_sorted!)
+    for action in pipeline.post_actions
+        action(ref)
+    end
+    
+    return ref
+end
+
+"""
+    apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipeline)
+
+Apply pipeline to multiple files, optionally in parallel.
+"""
+function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipeline; 
+                        parallel::Bool=true)
+    if parallel && length(refs) > 1
+        Threads.@threads for ref in refs
+            if exists(ref)
+                apply_pipeline!(ref, pipeline)
+            end
+        end
+    else
+        for ref in refs
+            if exists(ref)
+                apply_pipeline!(ref, pipeline)
+            end
+        end
+    end
+    return refs
+end
+
 # Export all public functions
 export stream_sorted_merge, stream_filter, stream_transform,
        add_column_to_file!, update_column_in_file!,
        safe_join_files, estimate_batch_size, process_with_memory_limit,
        apply_protein_inference, update_psms_with_scores,
        merge_psm_scores, merge_protein_groups_by_score, apply_maxlfq,
+       TransformPipeline, PipelineOperation, apply_pipeline!,
        sort_file_by_keys!, write_arrow_file, transform_and_write!,
        add_column_and_sort!
