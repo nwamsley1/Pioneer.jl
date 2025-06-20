@@ -122,6 +122,52 @@ function reset_results!(results::ScoringSearchResults)
     return nothing
 end
 
+#==========================================================
+Q-value Spline Wrapper Functions
+==========================================================#
+
+"""
+Create global precursor q-value spline (unique precursors only).
+"""
+function get_precursor_global_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    return get_qvalue_spline(
+        merged_path, :global_prob, true;
+        min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+    )
+end
+
+"""
+Create experiment-wide precursor q-value spline (all precursors).
+"""
+function get_precursor_qval_spline(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    return get_qvalue_spline(
+        merged_path, :prec_prob, false;
+        min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
+    )
+end
+
+"""
+Create global protein q-value spline (unique protein groups only).
+"""
+function get_protein_global_qval_spline(merged_path::String, params::ScoringSearchParameters)
+    return get_qvalue_spline(
+        merged_path, :global_pg_score, true;
+        min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+    )
+end
+
+"""
+Create experiment-wide protein q-value spline (all protein groups).
+"""
+function get_protein_qval_spline(merged_path::String, params::ScoringSearchParameters)
+    return get_qvalue_spline(
+        merged_path, :pg_score, false;
+        min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+    )
+end
+
 """
 Process all results to get final protein scores.
 """
@@ -184,41 +230,21 @@ function summarize_results!(
 
         # Step 4: Merge PSMs by global_prob for global q-values
         @info "Step 4: Merging PSM scores by global_prob..."
-        merge_psm_files(
-            filtered_refs,
-            results.merged_quant_path,
-            :global_prob
-        )
+        stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob;
+                           batch_size=10_000_000, reverse=true)
 
         # Step 5: Calculate global precursor q-values
         @info "Step 5: Calculating global precursor q-values..."
-        results.precursor_global_qval_interp[] = get_qvalue_spline(
-            results.merged_quant_path,
-            :global_prob,
-            true; # use unique precursors
-            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-        )
+        results.precursor_global_qval_interp[] = get_precursor_global_qval_spline(results.merged_quant_path, params, search_context)
 
         # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
         @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
-        sort_file_by_keys!(filtered_refs, :prec_prob; reverse=true)
-        
-        merge_psm_files(
-            filtered_refs,
-            results.merged_quant_path,
-            :prec_prob
-        )
-
+        sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
+        stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob;
+                           batch_size=10_000_000, reverse=true)
         # Step 7: Calculate experiment-wide precursor q-values
         @info "Step 7: Calculating experiment-wide precursor q-values..."
-        results.precursor_qval_interp[] = get_qvalue_spline(
-            results.merged_quant_path,
-            :prec_prob,
-            false; # use all precursors
-            min_pep_points_per_bin = params.precursor_q_value_interpolation_points_per_bin,
-            fdr_scale_factor = getLibraryFdrScaleFactor(search_context)
-        )
+        results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
 
         # Step 8: Filter PSMs by q-value thresholds
         @info "Step 8: Filtering PSMs by q-value thresholds..."
@@ -292,12 +318,7 @@ function summarize_results!(
 
         # Step 15: Calculate global protein q-values
         @info "Step 15: Calculating global protein q-values..."
-        search_context.global_pg_score_to_qval[] = get_qvalue_spline(
-            sorted_pg_scores_path,
-            :global_pg_score,
-            true; # use unique protein groups
-            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-        )
+        search_context.global_pg_score_to_qval[] = get_protein_global_qval_spline(sorted_pg_scores_path, params)
 
         # Step 16: Merge protein groups for experiment-wide q-values
         @info "Step 16: Merging protein groups for experiment-wide q-value calculation..."
@@ -305,12 +326,7 @@ function summarize_results!(
 
         # Step 17: Calculate experiment-wide protein q-values
         @info "Step 17: Calculating experiment-wide protein q-values..."
-        search_context.pg_score_to_qval[] = get_qvalue_spline(
-            sorted_pg_scores_path,
-            :pg_score,
-            false; # use all protein groups
-            min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
-        )
+        search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
 
         # Step 18: Add q-values to protein groups
         @info "Step 18: Adding q-values and passing flags to protein groups..."

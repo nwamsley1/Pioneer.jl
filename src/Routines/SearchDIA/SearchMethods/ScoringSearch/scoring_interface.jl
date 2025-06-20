@@ -38,24 +38,7 @@ Summary Functions
 
 
 
-#==========================================================
-PSM Processing with Best Traces
-==========================================================#
 
-"""
-    merge_psm_files(psm_refs::Vector{PSMFileReference},
-                   output_path::String,
-                   sort_col::Symbol) -> PSMFileReference
-                   
-Merge multiple PSM files sorted by specified column.
-Ensures files are properly sorted before merging.
-"""
-function merge_psm_files(psm_refs::Vector{PSMFileReference},
-                       output_path::String,
-                       sort_col::Symbol)
-    # The merge_psm_scores function already handles sorting if needed
-    return merge_psm_scores(psm_refs, output_path, sort_col)
-end
 
 
 #==========================================================
