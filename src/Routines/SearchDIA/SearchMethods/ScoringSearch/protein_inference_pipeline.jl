@@ -450,14 +450,11 @@ function perform_protein_inference_pipeline(
             continue
         end
         
-        # Step 1: Prepare PSMs
-        psm_df = load_dataframe(psm_ref)
-        prepared_df = psm_df
-        for (desc, op) in pre_inference_pipeline.operations
-            prepared_df = op(prepared_df)
-        end
+        # Step 1: Apply pre-inference pipeline to add necessary columns
+        apply_pipeline!(psm_ref, pre_inference_pipeline)
         
-        # Step 2: Run inference
+        # Step 2: Run inference on the prepared PSMs
+        prepared_df = load_dataframe(psm_ref)
         inference_result = apply_inference_to_dataframe(prepared_df, precursors)
         
         # Step 3: Update PSMs with inference results
@@ -465,7 +462,7 @@ function perform_protein_inference_pipeline(
             add_inferred_protein_column(inference_result) |>
             add_quantification_flag(inference_result)
         
-        # Apply updates to original PSM file
+        # Apply updates to the same PSM file (which now has necessary columns)
         apply_pipeline!(psm_ref, psm_update_pipeline)
         
         # Step 4: Create protein groups
