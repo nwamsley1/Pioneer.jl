@@ -1,5 +1,7 @@
 # Pipeline API Implementation Plan
 
+## Status: ✅ COMPLETED (2025-01)
+
 ## Overview
 
 This document outlines the implementation of a composable Pipeline API for FileReference operations. The goal is to replace monolithic functions like `sort_and_filter_quant_tables_refs` with clear, testable, and efficient pipeline operations.

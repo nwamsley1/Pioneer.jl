@@ -377,3 +377,8 @@ All phases of the SearchMethods refactoring have been completed:
 2. **Fixed column management**: Added `:best_trace` to necessary columns for filtering, then removed after use
 3. **Simplified MaxLFQSearch**: Removed dependency on ScoringSearch references, uses MSData directly
 4. **Bug fixes**: Fixed `sort_and_filter_quant_tables_refs` to return references instead of `nothing`
+5. **Pipeline API**: Implemented composable file operations for clearer, more testable transformations
+   - Replaced opaque `sort_and_filter_quant_tables_refs` with explicit pipeline operations
+   - Each operation (add_column, filter_rows, sort_by, etc.) is individually testable
+   - Single-pass execution maintains efficiency
+   - Automatic sort state tracking via Base.sort! override
