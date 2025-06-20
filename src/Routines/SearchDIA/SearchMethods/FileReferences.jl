@@ -213,6 +213,32 @@ function ensure_sorted!(ref::FileReference, keys::Symbol...)
     return ref
 end
 
+"""
+    Base.sort!(ref::FileReference, cols::Vector{Symbol}; kwargs...)
+
+Override Base.sort! to automatically track sort state for FileReferences.
+This ensures that any sorting operation updates the FileReference metadata.
+"""
+function Base.sort!(ref::FileReference, cols::Vector{Symbol}; 
+                   rev::Union{Bool, Vector{Bool}}=false, kwargs...)
+    # Note: This is a placeholder that delegates to sort_file_by_keys!
+    # The actual implementation is in FileOperations.jl
+    # We just ensure the interface is consistent with Base.sort!
+    
+    # Convert single bool to appropriate format for sort_file_by_keys!
+    reverse = if rev isa Bool
+        rev  # sort_file_by_keys! expects a single bool
+    else
+        # If mixed directions, we can't use sort_file_by_keys! directly
+        error("Mixed sort directions not yet supported. Use all ascending or all descending.")
+    end
+    
+    # Delegate to the existing function
+    sort_file_by_keys!(ref, cols...; reverse=reverse)
+    
+    return ref
+end
+
 #==========================================================
 File Operations
 ==========================================================#
