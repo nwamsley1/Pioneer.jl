@@ -760,6 +760,62 @@ function apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference},
     end
 end
 
+#==========================================================
+Scoring-Specific Pipeline Operations
+==========================================================#
+
+"""
+    add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
+
+Add best trace indicator based on isotope trace type.
+"""
+function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
+    desc = "add_best_trace_indicator"
+    op = function(df)  # df is passed by transform_and_write!
+        if seperateTraces(isotope_type)
+            # Efficient vectorized operation for separate traces
+            df[!,:best_trace] = [
+                (precursor_idx=row.precursor_idx, 
+                 isotopes_captured=row.isotopes_captured) ∈ best_traces
+                for row in eachrow(df)
+            ]
+        else
+            # Group-based operation for combined traces
+            transform!(groupby(df, :precursor_idx),
+                      :prob => (p -> p .== maximum(p)) => :best_trace)
+        end
+        return df
+    end
+    return desc => op
+end
+
+"""
+    get_quant_necessary_columns() -> Vector{Symbol}
+
+Get the standard columns needed for quantification analysis.
+"""
+function get_quant_necessary_columns()
+    return [
+        :precursor_idx,
+        :global_prob,
+        :prec_prob,
+        :trace_prob,
+        :global_qval,
+        :run_specific_qval,
+        :prec_mz,
+        #:pep,  # Commented out as in original
+        :weight,
+        :target,
+        :rt,
+        :irt_obs,
+        :missed_cleavage,
+        :isotopes_captured,
+        :scan_idx,
+        :entrapment_group_id,
+        :ms_file_idx
+    ]
+end
+
 # Export all interface functions
 export process_psms_for_scoring, update_psms_with_protein_scores!,
        merge_protein_groups, filter_protein_groups_by_qvalue,
@@ -767,4 +823,6 @@ export process_psms_for_scoring, update_psms_with_protein_scores!,
        calculate_protein_qvalues, generate_scoring_summary,
        validate_scoring_results,
        process_and_filter_psms, merge_psm_files, filter_psms_by_qvalue,
-       calculate_and_add_global_scores!, apply_probit_scores!
+       calculate_and_add_global_scores!, apply_probit_scores!,
+       # Pipeline operations
+       add_best_trace_indicator, get_quant_necessary_columns
