@@ -726,44 +726,6 @@ end
 #==========================================================
 Specialized Merge Functions
 ==========================================================#
-
-"""
-    merge_psm_scores(psm_refs::Vector{PSMFileReference}, output_path::String,
-                    prob_col::Symbol; batch_size=10_000_000)
-
-Merge PSM files sorted by probability score for FDR calculation.
-Follows the pattern of merge_sorted_psms_scores in ScoringSearch.
-"""
-function merge_psm_scores(psm_refs::Vector{PSMFileReference},
-                         output_path::String,
-                         prob_col::Symbol;
-                         batch_size::Int=10_000_000)
-    # Use reverse=true for descending sort by probability
-    merged_ref = stream_sorted_merge(psm_refs, output_path, prob_col, :target;
-                                   batch_size=batch_size, reverse=true)
-    
-    # Note: The original function only preserves specific columns
-    # If needed, we could add a transform step to select columns
-    
-    return merged_ref
-end
-
-"""
-    merge_protein_groups_by_score(pg_refs::Vector{ProteinGroupFileReference},
-                                 output_path::String; batch_size=1_000_000)
-
-Merge protein group files sorted by score.
-Follows the pattern of merge_sorted_protein_groups in ScoringSearch.
-"""
-function merge_protein_groups_by_score(pg_refs::Vector{ProteinGroupFileReference},
-                                     output_path::String;
-                                     batch_size::Int=1_000_000)
-    # Use reverse=true for descending sort by pg_score
-    merged_ref = stream_sorted_merge(pg_refs, output_path, :pg_score;
-                                   batch_size=batch_size, reverse=true)
-    return merged_ref
-end
-
 """
     apply_maxlfq(psm_refs::Vector{PSMFileReference}, output_dir::String,
                 quant_col::Symbol, file_names::Vector{String},

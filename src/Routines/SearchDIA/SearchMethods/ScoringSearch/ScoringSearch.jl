@@ -231,7 +231,7 @@ function summarize_results!(
         # Step 4: Merge PSMs by global_prob for global q-values
         @info "Step 4: Merging PSM scores by global_prob..."
         stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
-                           batch_size=10_000_000, reverse=[true, true])
+                           batch_size=10_000_000, reverse=[true,true])
 
         # Step 5: Calculate global precursor q-values
         @info "Step 5: Calculating global precursor q-values..."
@@ -239,9 +239,9 @@ function summarize_results!(
 
         # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
         @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
-        sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true, true])
+        sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
         stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
-                           batch_size=10_000_000, reverse=[true, true])
+                           batch_size=10_000_000, reverse=[true,true])
 
         # Step 7: Calculate experiment-wide precursor q-values
         @info "Step 7: Calculating experiment-wide precursor q-values..."
@@ -309,28 +309,30 @@ function summarize_results!(
         # Step 13: Sort protein groups by global_pg_score
         @info "Step 13: Sorting protein groups by global_pg_score..."
         sort_file_by_keys!(pg_refs, :global_pg_score, :target; reverse=[true, true])
-
         # Step 14: Merge protein groups for global q-values
         @info "Step 14: Merging protein groups for global q-value calculation..."
         sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
-        
-        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :global_pg_score;
-                           batch_size=1000000, reverse=true)
+        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :global_pg_score, :target;
+                           batch_size=1000000, reverse=[true,true])
 
         # Step 15: Calculate global protein q-values
         @info "Step 15: Calculating global protein q-values..."
         search_context.global_pg_score_to_qval[] = get_protein_global_qval_spline(sorted_pg_scores_path, params)
 
-        # Step 16: Merge protein groups for experiment-wide q-values
-        @info "Step 16: Merging protein groups for experiment-wide q-value calculation..."
-        merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
+        # Step 13: Sort protein groups by pg_score
+        @info "Step 16: Sorting protein groups by pg_score..."
+        sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
+        # Step 17: Merge protein groups for experiment-wide q-values
+        @info "Step 17: Merging protein groups for experiment-wide q-value calculation..."
+        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
+                           batch_size=1000000, reverse=[true,true])
 
-        # Step 17: Calculate experiment-wide protein q-values
-        @info "Step 17: Calculating experiment-wide protein q-values..."
+        # Step 18: Calculate experiment-wide protein q-values
+        @info "Step 18: Calculating experiment-wide protein q-values..."
         search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
 
-        # Step 18: Add q-values to protein groups
-        @info "Step 18: Adding q-values and passing flags to protein groups..."
+        # Step 19: Add q-values to protein groups
+        @info "Step 19: Adding q-values and passing flags to protein groups..."
         protein_qval_pipeline = TransformPipeline() |>
             add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
             add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
@@ -340,8 +342,8 @@ function summarize_results!(
 
         apply_pipeline!(pg_refs, protein_qval_pipeline)
 
-        # Step 19: Update PSMs with final protein scores
-        @info "Step 19: Updating PSMs with final protein scores..."
+        # Step 20: Update PSMs with final protein scores
+        @info "Step 20: Updating PSMs with final protein scores..."
         update_psms_with_probit_scores_refs(
             scoring_refs.paired_files,
             acc_to_max_pg_score,
