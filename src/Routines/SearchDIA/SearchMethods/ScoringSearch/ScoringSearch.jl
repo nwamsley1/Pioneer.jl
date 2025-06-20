@@ -293,33 +293,13 @@ function summarize_results!(
             min_peptides = params.min_peptides
         )
         
-        # Update MSData with protein group paths
-        for (psm_path, pg_path) in psm_to_pg_mapping
-            # Find the corresponding index
-            for (idx, ref) in enumerate(passing_refs)
-                if file_path(ref) == psm_path
-                    setPassingProteins!(getMSData(search_context), idx, pg_path)
-                    break
-                end
-            end
-        end
-
-        # Create paired file references for internal use only
-        @info "Creating file references for internal processing..."
-        paired_files = PairedSearchFiles[]
-        for (ms_file_idx, ref) in enumerate(passing_refs)
-            psm_path = file_path(ref)
-            if haskey(psm_to_pg_mapping, psm_path)
-                pg_path = psm_to_pg_mapping[psm_path]
-                # Create paired reference for internal use
-                push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
-            end
-        end
+        # Create paired file references for PSM updates
+        paired_files = [PairedSearchFiles(psm_path, pg_path, idx) 
+                        for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
         
         if isempty(paired_files)
             error("No protein groups created during protein inference")
         end
-        @info "Created $(length(paired_files)) paired references for internal processing"
         
         # Create internal scoring refs (not stored in SearchContext)
         scoring_refs = ScoringSearchResultRefs(paired_files)
