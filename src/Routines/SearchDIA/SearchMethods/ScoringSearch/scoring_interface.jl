@@ -286,28 +286,6 @@ PSM Processing with Best Traces
 ==========================================================#
 
 """
-    process_and_filter_psms(psm_refs::Vector{PSMFileReference}, 
-                          output_dir::String,
-                          isotope_tracetype,
-                          prob_col::Symbol,
-                          best_traces::Set) -> Vector{PSMFileReference}
-                          
-Filter and sort PSM files based on best traces.
-Creates new filtered files in output_dir.
-"""
-function process_and_filter_psms(psm_refs::Vector{PSMFileReference}, 
-                               output_dir::String,
-                               isotope_tracetype,
-                               prob_col::Symbol,
-                               best_traces::Set)
-    # Use the new reference-based function to filter and sort in-place
-    sort_and_filter_quant_tables_refs(psm_refs, isotope_tracetype, prob_col, best_traces)
-    
-    # Since files are modified in-place, just return the same references
-    return psm_refs
-end
-
-"""
     merge_psm_files(psm_refs::Vector{PSMFileReference},
                    output_path::String,
                    sort_col::Symbol) -> PSMFileReference
@@ -342,9 +320,9 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
     filtered_refs = PSMFileReference[]
     
     for (idx, ref) in enumerate(psm_refs)
-        # Generate output filename
-        base_name = splitext(basename(file_path(ref)))[1]
-        output_path = joinpath(output_dir, "$(base_name)_passing.arrow")
+        # Generate output filename - keep original basename
+        base_name = basename(file_path(ref))
+        output_path = joinpath(output_dir, base_name)
         
         # Transform: add q-values and filter
         transform_fn = function(batch)
@@ -361,8 +339,8 @@ function filter_psms_by_qvalue(psm_refs::Vector{PSMFileReference},
             batch.global_qval = global_qvals
             batch.qval = qvals
             
-            # Filter by q-value threshold
-            mask = (batch.global_qval .<= q_value_threshold) .|
+            # Filter by q-value threshold - use AND logic (both conditions must be met)
+            mask = (batch.global_qval .<= q_value_threshold) .&
                    (batch.qval .<= q_value_threshold)
             
             return batch[mask, :]
@@ -485,10 +463,39 @@ function sort_and_filter_quant_tables_refs(
                     :prob => (p -> p .== maximum(p)) => :best_trace
                 )
             end
+            rename!(psms_table, :prob => :trace_prob)
+                        # Select only necessary columns to prevent column proliferation
+            necessary_cols = [
+                :precursor_idx,
+                :global_prob,
+                :prec_prob,
+                :trace_prob,
+                :global_qval,
+                :run_specific_qval,
+                :prec_mz,
+                #:pep,
+                :weight,
+                :target,
+                :rt,
+                :irt_obs,
+                :missed_cleavage,
+                :isotopes_captured,
+                :scan_idx,
+                :entrapment_group_id,
+                :ms_file_idx,
+                :best_trace  # Temporarily keep for filtering
+            ]
+            
+            # Only keep columns that exist in the table
+            available_cols = intersect(necessary_cols, Symbol.(names(psms_table)))
+            select!(psms_table, available_cols)
             
             # Filter out unused traces
             filter!(x->x.best_trace, psms_table)
             rows_kept_this_file = nrow(psms_table)
+            
+            # Remove best_trace column after filtering
+            select!(psms_table, Not(:best_trace))
             
             # Sort in descending order of probability
             sort!(psms_table, [prob_col, :target], rev = [true, true], alg=QuickSort)
@@ -506,7 +513,7 @@ function sort_and_filter_quant_tables_refs(
     elapsed = time() - start_time
     @info "[PERF] sort_and_filter_quant_tables_refs: Completed" elapsed=round(elapsed, digits=3) files_processed=files_processed total_rows=total_rows_processed kept_rows=total_rows_kept retention_rate=round(total_rows_kept/max(total_rows_processed,1), digits=3)
     
-    return nothing
+    return psm_refs
 end
 
 """

@@ -1520,6 +1520,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]#, :log_binom_coeff]
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
+    @info "describe(all_protein_groups[!,:pg_score])" describe(all_protein_groups[!,:pg_score])
     y = all_protein_groups.target
     
     # Fit probit model
@@ -1583,6 +1584,7 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     # Add intercept column
     X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
     X_df = DataFrame(X_with_intercept, [:intercept; Symbol.("feature_", 1:size(X, 2))])
+    @info "Describe input" describe(X_df)
     
     # Initialize coefficients
     β = zeros(Float64, size(X_with_intercept, 2))

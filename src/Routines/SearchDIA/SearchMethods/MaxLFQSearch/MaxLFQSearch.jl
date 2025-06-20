@@ -128,13 +128,6 @@ function summarize_results!(
     search_context::SearchContext
 )
     try
-        # Retrieve ScoringSearch results from SearchContext
-        scoring_refs = get_results(search_context, ScoringSearch)
-        if isnothing(scoring_refs)
-            error("MaxLFQSearch requires ScoringSearch results, but none found in SearchContext")
-        end
-        @info "Retrieved $(num_files(scoring_refs)) paired PSM-protein group references from SearchContext"
-        
         # Get paths
         temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
         passing_psms_folder = joinpath(temp_folder, "passing_psms")
@@ -151,8 +144,9 @@ function summarize_results!(
         )
 
         @info "Merging quantification tables..."
-        # Get PSM references from scoring results
-        psm_refs = get_psm_refs(scoring_refs)
+        # Get PSM paths from MSData and create references
+        passing_psm_paths = getPassingPsms(getMSData(search_context))
+        psm_refs = [PSMFileReference(path) for path in passing_psm_paths]
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
@@ -220,18 +214,6 @@ function summarize_results!(
             params
         )
 
-        # Store MaxLFQ results in SearchContext
-        @info "Storing MaxLFQ results in SearchContext..."
-        maxlfq_refs = MaxLFQSearchResultRefs(
-            [p for p in scoring_refs.paired_files],  # Input paired files
-            protein_quant_ref=ProteinGroupFileReference(results.proteins_long_path),
-            precursors_long_ref=PSMFileReference(results.precursors_long_path),
-            precursors_wide_ref=PSMFileReference(results.precursors_wide_path),
-            proteins_long_ref=ProteinGroupFileReference(results.proteins_long_path),
-            proteins_wide_ref=ProteinGroupFileReference(results.proteins_wide_path)
-        )
-        store_results!(search_context, MaxLFQSearch, maxlfq_refs)
-        @info "MaxLFQ results stored successfully"
 
         if params.delete_temp
             @info "Removing temporary data..."

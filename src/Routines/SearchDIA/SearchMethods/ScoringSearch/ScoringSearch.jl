@@ -144,33 +144,15 @@ function summarize_results!(
     try
         # Step 1: Train XGBoost Models
         @info "Training XGBoost models..."
-        # Sample PSMs for training to avoid memory consumption issues
-        psms_count = get_psms_count(getSecondPassPsms(getMSData(search_context)))
-
-        if psms_count > params.max_psms_in_memory #Use out-of-memory algorithm
-            #Sample psms for xgboost training. Only the sampled psms are stored in-memory
-            best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, params.max_psms_in_memory)#params.max_n_samples)
-            models = score_precursor_isotope_traces_out_of_memory!(
-                best_psms,
-                getSecondPassPsms(getMSData(search_context)),
-                getPrecursors(getSpecLib(search_context)),
-                params.match_between_runs,
-                params.max_q_value_xgboost_rescore,
-                params.max_q_value_xgboost_mbr_rescore
-            )
-        else #In memory algorithm
-            best_psms = load_psms_for_xgboost(second_pass_folder)#params.max_n_samples)
-            models = score_precursor_isotope_traces_in_memory!(
-                best_psms,
-                getSecondPassPsms(getMSData(search_context)),
-                getPrecursors(getSpecLib(search_context)),
-                params.match_between_runs,
-                params.max_q_value_xgboost_rescore,
-                params.max_q_value_xgboost_mbr_rescore
-            )
-        end
-        best_psms = nothing
-        GC.gc()
+        score_precursor_isotope_traces(
+            second_pass_folder,
+            getSecondPassPsms(getMSData(search_context)),
+            getPrecursors(getSpecLib(search_context)),
+            params.match_between_runs,
+            params.max_q_value_xgboost_rescore,
+            params.max_q_value_xgboost_mbr_rescore,
+            params.max_psms_in_memory
+        )
 
         # Step 2: Find Best Isotope Traces
         @info "Finding best traces..."
@@ -186,17 +168,16 @@ function summarize_results!(
         # Step 3: Process Quantification Results
         @info "Processing quantification results..."
         # Filter to best traces and sort tables using new abstractions
-        filtered_refs = process_and_filter_psms(
-            second_pass_refs,
-            temp_folder,  # output to temp folder
+        filtered_refs = sort_and_filter_quant_tables_refs(
+            second_pass_refs, 
             params.isotope_tracetype,
             :global_prob,
-            best_traces
+            best_traces 
         )
 
         # Step 4: Merge PSM Scores by max_prob
         @info "Merging PSM scores for global q-value estimation..."
-        merged_global_ref = merge_psm_files(
+        merge_psm_files(
             filtered_refs,
             results.merged_quant_path,
             :global_prob
@@ -225,7 +206,7 @@ function summarize_results!(
         end
         
         # Merge using new abstraction
-        merged_prec_ref = merge_psm_files(
+        merge_psm_files(
             filtered_refs,
             results.merged_quant_path,
             :prec_prob
@@ -289,8 +270,8 @@ function summarize_results!(
             min_peptides = params.min_peptides
         )
 
-        # Create paired file references from the results
-        @info "Creating file references for ScoringSearch results..."
+        # Create paired file references for internal use only
+        @info "Creating file references for internal processing..."
         paired_files = PairedSearchFiles[]
         for (ms_file_idx, ref) in enumerate(passing_refs)
             psm_path = file_path(ref)
@@ -298,19 +279,18 @@ function summarize_results!(
                 pg_path = psm_to_pg_path[psm_path]
                 # Store the protein group path in the search context
                 setPassingProteins!(getMSData(search_context), ms_file_idx, pg_path)
-                # Create paired reference with proper indices
+                # Create paired reference for internal use
                 push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
             end
         end
         
-        # Store references in SearchContext
-        if !isempty(paired_files)
-            scoring_refs = ScoringSearchResultRefs(paired_files)
-            store_results!(search_context, ScoringSearch, scoring_refs)
-            @info "Stored $(length(paired_files)) paired PSM-protein group references in SearchContext"
-        else
-            error("No paired files created during protein inference")
+        if isempty(paired_files)
+            error("No protein groups created during protein inference")
         end
+        @info "Created $(length(paired_files)) paired references for internal processing"
+        
+        # Create internal scoring refs (not stored in SearchContext)
+        scoring_refs = ScoringSearchResultRefs(paired_files)
 
         # Step 12: Perform protein probit regression
         @info "Performing protein probit regression..."
@@ -333,7 +313,7 @@ function summarize_results!(
         # pg_refs already defined above
         
         # Use reference-based merge
-        merged_pg_ref = merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
+        merge_protein_groups_by_score(pg_refs, sorted_pg_scores_path, batch_size=1000000)
         @info "Merged $(length(pg_refs)) protein group files using reference-based approach"
 
         # Step 19: Create experiment-wide q-value interpolation
@@ -376,8 +356,8 @@ function summarize_results!(
         pg_refs_global = pg_refs  # Already have these from earlier
         
         # Use reference-based merge for global scores (sorted by global_pg_score)
-        merged_global_pg_ref = stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
-                                                  batch_size=1000000, reverse=true)
+        stream_sorted_merge(pg_refs_global, sorted_pg_scores_path, :global_pg_score;
+                           batch_size=1000000, reverse=true)
         @info "Merged $(length(pg_refs_global)) protein group files by global score"
 
         # Step 16: Create global q-value interpolation

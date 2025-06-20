@@ -117,11 +117,19 @@ function writePrecursorCSV(
 
     long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
-    rename!(precursors_long, [:new_best_scan => :apex_scan,
-                              :prec_prob => :run_specific_prob,
-                              :pg_score => :run_specific_pg_score,
-                              :isotopes_captured_traces => :isotopes_captured,
-                              :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted])
+    
+    # Build rename pairs dynamically to avoid conflicts
+    rename_pairs = Pair{Symbol,Symbol}[]
+    push!(rename_pairs, :new_best_scan => :apex_scan)
+    push!(rename_pairs, :prec_prob => :run_specific_prob)
+    push!(rename_pairs, :pg_score => :run_specific_pg_score)
+    push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
+    push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+    
+    # Apply all renames at once
+    if !isempty(rename_pairs)
+        rename!(precursors_long, rename_pairs)
+    end
     # order columns
     select!(precursors_long, [:file_name,
                              :species,

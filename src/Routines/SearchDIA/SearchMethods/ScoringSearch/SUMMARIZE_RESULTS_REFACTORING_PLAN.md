@@ -94,6 +94,7 @@ function merge_psm_files(psm_refs::Vector{PSMFileReference},
     # Ensure all files are sorted
     for ref in psm_refs
         if !is_sorted_by(ref, sort_col)
+            @warn "Not sorted by key ! $sort_col"
             sort_file_by_keys!(ref, sort_col; reverse=true)
         end
     end

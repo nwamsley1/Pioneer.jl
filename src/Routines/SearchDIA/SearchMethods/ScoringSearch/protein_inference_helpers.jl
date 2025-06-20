@@ -217,7 +217,7 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
         end
         
         pid = psms_df[i, :precursor_idx]
-        score = psms_df[i, :prob]
+        score = psms_df[i, :prec_prob]
         
         # Get protein assignment
         pep_key = PeptideKey(

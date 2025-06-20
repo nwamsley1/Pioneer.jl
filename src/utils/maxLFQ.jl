@@ -319,6 +319,7 @@ function LFQ(prot::DataFrame,
 
     batch_start_idx, batch_end_idx = 1,min(batch_size,size(prot, 1))  # Fixed: was batch_size+1
     n_writes = 0
+    total_protein_groups_processed = 0  # Initialize counter
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
     @info "Is prot sorted? $is_prot_sorted"
 
@@ -347,7 +348,6 @@ function LFQ(prot::DataFrame,
             [:target, :entrapment_group_id, :species, :inferred_protein_group]
         )
         ngroups = length(gpsms)
-        total_protein_groups_processed += ngroups
         nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
         #pre allocate the batch
