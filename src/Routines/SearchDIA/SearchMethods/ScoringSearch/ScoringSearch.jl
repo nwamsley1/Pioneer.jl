@@ -167,13 +167,29 @@ function summarize_results!(
 
         # Step 3: Process Quantification Results
         @info "Processing quantification results..."
-        # Filter to best traces and sort tables using new abstractions
-        filtered_refs = sort_and_filter_quant_tables_refs(
-            second_pass_refs, 
-            params.isotope_tracetype,
-            :global_prob,
-            best_traces 
-        )
+        
+        # Define columns we need to keep for quantification
+        necessary_cols = get_quant_necessary_columns()
+        
+        # Build explicit pipeline - each operation is clear and testable
+        quant_processing_pipeline = TransformPipeline() |>
+            add_best_trace_indicator(params.isotope_tracetype, best_traces) |>
+            rename_column(:prob, :trace_prob) |>
+            select_columns(vcat(necessary_cols, :best_trace)) |>
+            filter_rows(row -> row.best_trace; desc="keep_only_best_traces") |>
+            remove_columns(:best_trace) |>
+            sort_by([:global_prob, :target], rev=[true, true])
+        
+        # Apply pipeline to all second pass files
+        @info "Applying quantification processing pipeline to $(length(second_pass_refs)) files"
+        for ref in second_pass_refs
+            if exists(ref)
+                apply_pipeline!(ref, quant_processing_pipeline)
+            end
+        end
+        
+        # Use the processed references for downstream operations
+        filtered_refs = second_pass_refs
 
         # Step 4: Merge PSM Scores by max_prob
         @info "Merging PSM scores for global q-value estimation..."
