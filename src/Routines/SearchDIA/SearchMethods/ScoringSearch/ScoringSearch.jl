@@ -359,17 +359,22 @@ function summarize_results!(
         )
 
         # Filter proteins by global q-value
-        # Use the protein group references we already have
-        get_proteins_passing_qval_refs(
-            pg_refs,
-            search_context.global_pg_score_to_qval[],
-            search_context.pg_score_to_qval[],
-            :global_pg_score,
-            :pg_score,
-            :global_pg_qval,
-            :pg_qval,
-            params.q_value_threshold
-        )
+        # Build protein q-value pipeline
+        protein_qval_pipeline = TransformPipeline() |>
+            add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
+            add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
+            add_column(:passes_qval, (df) -> begin
+                (df.global_pg_qval .<= params.q_value_threshold) .& 
+                (df.pg_qval .<= params.q_value_threshold)
+            end)
+
+        # Apply pipeline to all protein group files
+        @info "Adding q-values and passing flags to $(length(pg_refs)) protein group files"
+        for ref in pg_refs
+            if exists(ref)
+                apply_pipeline!(ref, protein_qval_pipeline)
+            end
+        end
 
         @info "DEBUG"
         test_pgs = Arrow.Table(readdir(passing_proteins_folder, join =true))

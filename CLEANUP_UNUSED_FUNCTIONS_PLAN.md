@@ -75,3 +75,4 @@ These were already removed or never implemented:
 - Added missing `calculate_protein_features` and `write_protein_groups_arrow` functions to utils.jl
 - These functions were needed after removing protein_inference_helpers.jl
 - Functions integrate with the new type system (ProteinKey, ProteinGroup, etc.)
+- Replaced `get_proteins_passing_qval_refs` with pipeline operations in ScoringSearch.jl

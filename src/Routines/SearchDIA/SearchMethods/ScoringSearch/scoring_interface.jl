@@ -235,60 +235,6 @@ function update_psms_with_probit_scores_refs(
     @info "[PERF] update_psms_with_probit_scores_refs: Completed" elapsed=round(elapsed, digits=3) files_processed=files_processed total_psms_updated=total_psms_updated
 end
 
-"""
-    get_proteins_passing_qval_refs(pg_refs::Vector{ProteinGroupFileReference},
-                                   global_qval_interp::Interpolations.Extrapolation,
-                                   experiment_wide_qval_interp::Interpolations.Extrapolation,
-                                   global_prob_col::Symbol,
-                                   experiment_wide_prob_col::Symbol,
-                                   global_qval_col::Symbol,
-                                   experiment_wide_qval_col::Symbol,
-                                   q_val_threshold::Float32)
-
-Add q-values and passing status to protein group files using references.
-
-# Arguments
-- `pg_refs`: Protein group file references
-- `global_qval_interp`: Interpolation function for global q-values
-- `experiment_wide_qval_interp`: Interpolation function for experiment-wide q-values
-- `global_prob_col`: Column name for global probability scores
-- `experiment_wide_prob_col`: Column name for experiment-wide probability scores
-- `global_qval_col`: Column name for global q-values
-- `experiment_wide_qval_col`: Column name for experiment-wide q-values
-- `q_val_threshold`: Q-value threshold for filtering
-"""
-function get_proteins_passing_qval_refs(
-    pg_refs::Vector{ProteinGroupFileReference},
-    global_qval_interp::Interpolations.Extrapolation,
-    experiment_wide_qval_interp::Interpolations.Extrapolation,
-    global_prob_col::Symbol,
-    experiment_wide_prob_col::Symbol,
-    global_qval_col::Symbol,
-    experiment_wide_qval_col::Symbol,
-    q_val_threshold::Float32
-)
-    for ref in pg_refs
-        if !exists(ref)
-            continue
-        end
-        
-        # Transform the file to add q-values and passing status
-        transform_and_write!(ref) do passing_proteins
-            # Add q-value columns
-            passing_proteins[!,global_qval_col] = global_qval_interp.(passing_proteins[!,global_prob_col])
-            passing_proteins[!,experiment_wide_qval_col] = experiment_wide_qval_interp.(passing_proteins[!,experiment_wide_prob_col])
-            
-            # Add a column to mark which protein groups pass the q-value threshold
-            # Instead of filtering, we preserve all groups for lookups
-            passing_proteins[!, :passes_qval] = (passing_proteins[!,global_qval_col] .<= q_val_threshold) .& 
-                                                (passing_proteins[!,experiment_wide_qval_col] .<= q_val_threshold)
-            
-            return passing_proteins
-        end
-    end
-    
-    return nothing
-end
 
 """
     apply_probit_scores!(pg_refs::Vector{ProteinGroupFileReference}, 
@@ -378,6 +324,5 @@ end
 export merge_psm_files,
        calculate_and_add_global_scores!, apply_probit_scores!,
        update_psms_with_probit_scores_refs,
-       get_proteins_passing_qval_refs,
        # Pipeline operations
        add_best_trace_indicator, get_quant_necessary_columns
