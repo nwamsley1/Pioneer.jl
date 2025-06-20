@@ -887,6 +887,9 @@ struct PipelineOperation
     post_action::Function
 end
 
+# Import Base operator to extend it
+import Base: |>
+
 # Override |> for pipeline composition
 Base.:|>(pipeline::TransformPipeline, op::Pair{String, Function}) = 
     TransformPipeline(
