@@ -178,9 +178,7 @@ function summarize_results!(
             sort_by([:global_prob, :target], rev=[true, true])
         
         @info "Applying pipeline to $(length(second_pass_refs)) files"
-        for ref in second_pass_refs
-            exists(ref) && apply_pipeline!(ref, quant_processing_pipeline)
-        end
+        apply_pipeline!(second_pass_refs, quant_processing_pipeline)
         
         filtered_refs = second_pass_refs
 
@@ -204,9 +202,7 @@ function summarize_results!(
 
         # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
         @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
-        for ref in filtered_refs
-            sort_file_by_keys!(ref, :prec_prob; reverse=true)
-        end
+        sort_file_by_keys!(filtered_refs, :prec_prob; reverse=true)
         
         merge_psm_files(
             filtered_refs,
@@ -285,9 +281,7 @@ function summarize_results!(
 
         # Step 13: Sort protein groups by global_pg_score
         @info "Step 13: Sorting protein groups by global_pg_score..."
-        for ref in pg_refs
-            sort_file_by_keys!(ref, :global_pg_score; reverse=true)
-        end
+        sort_file_by_keys!(pg_refs, :global_pg_score; reverse=true)
 
         # Step 14: Merge protein groups for global q-values
         @info "Step 14: Merging protein groups for global q-value calculation..."
@@ -327,9 +321,7 @@ function summarize_results!(
                 (df.global_pg_qval .<= params.q_value_threshold) .& 
                 (df.pg_qval .<= params.q_value_threshold))
 
-        for ref in pg_refs
-            exists(ref) && apply_pipeline!(ref, protein_qval_pipeline)
-        end
+        apply_pipeline!(pg_refs, protein_qval_pipeline)
 
         # Step 19: Update PSMs with final protein scores
         @info "Step 19: Updating PSMs with final protein scores..."

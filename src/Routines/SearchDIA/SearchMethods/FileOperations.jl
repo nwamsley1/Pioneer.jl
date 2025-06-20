@@ -1012,6 +1012,30 @@ function apply_pipeline!(refs::Vector{<:FileReference}, pipeline::TransformPipel
 end
 
 """
+    sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
+                      reverse::Bool=false, parallel::Bool=true)
+
+Sort multiple files by the specified keys, optionally in parallel.
+"""
+function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
+                           reverse::Bool=false, parallel::Bool=true)
+    if parallel && length(refs) > 1
+        Threads.@threads for ref in refs
+            if exists(ref)
+                sort_file_by_keys!(ref, keys...; reverse=reverse)
+            end
+        end
+    else
+        for ref in refs
+            if exists(ref)
+                sort_file_by_keys!(ref, keys...; reverse=reverse)
+            end
+        end
+    end
+    return refs
+end
+
+"""
     transform_and_write!(ref::FileReference, output_path::String, pipeline::TransformPipeline)
 
 Apply a pipeline to a file and write the result to a new location.
