@@ -962,6 +962,18 @@ function perform_protein_inference(
     protein_to_possible_peptides::Dict{@NamedTuple{protein_name::String, target::Bool, entrap_id::UInt8}, Set{String}};
     min_peptides::Int64 = 1
 )
+    @warn """perform_protein_inference is deprecated. Use perform_protein_inference_pipeline instead:
+    
+    pg_refs, mappings = perform_protein_inference_pipeline(
+        psm_refs,
+        output_folder,
+        precursors,
+        protein_catalog,
+        min_peptides = min_peptides
+    )
+    
+    The new pipeline interface provides better composability and testability.
+    """ maxlog=1
     start_time = time()
     
     # Step 1: Build protein-peptide catalog

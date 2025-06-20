@@ -283,25 +283,34 @@ function summarize_results!(
 
         # Step 11: Perform protein inference and initial scoring
         @info "Performing protein inference and initial scoring..."
-        # For now, still use the path-based function but with our reference paths
-        psm_to_pg_path = perform_protein_inference(
-            passing_psm_paths,  # Use the paths from our references
-            getPassingProteins(getMSData(search_context)),
+        
+        # Use the new pipeline interface
+        pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
+            passing_refs,  # Use references directly
             passing_proteins_folder,
             getPrecursors(getSpecLib(search_context)),
             protein_to_possible_peptides,
             min_peptides = params.min_peptides
         )
+        
+        # Update MSData with protein group paths
+        for (psm_path, pg_path) in psm_to_pg_mapping
+            # Find the corresponding index
+            for (idx, ref) in enumerate(passing_refs)
+                if file_path(ref) == psm_path
+                    setPassingProteins!(getMSData(search_context), idx, pg_path)
+                    break
+                end
+            end
+        end
 
         # Create paired file references for internal use only
         @info "Creating file references for internal processing..."
         paired_files = PairedSearchFiles[]
         for (ms_file_idx, ref) in enumerate(passing_refs)
             psm_path = file_path(ref)
-            if haskey(psm_to_pg_path, psm_path)
-                pg_path = psm_to_pg_path[psm_path]
-                # Store the protein group path in the search context
-                setPassingProteins!(getMSData(search_context), ms_file_idx, pg_path)
+            if haskey(psm_to_pg_mapping, psm_path)
+                pg_path = psm_to_pg_mapping[psm_path]
                 # Create paired reference for internal use
                 push!(paired_files, PairedSearchFiles(psm_path, pg_path, ms_file_idx))
             end
@@ -319,10 +328,9 @@ function summarize_results!(
         @info "Performing protein probit regression..."
         qc_folder = joinpath(dirname(temp_folder), "qc_plots")
         !isdir(qc_folder) && mkdir(qc_folder)
-        # Use references from scoring_refs
-        pg_refs = get_protein_refs(scoring_refs)
+        # Use the pg_refs from protein inference directly
         perform_protein_probit_regression(
-            pg_refs,  # Now uses references
+            pg_refs,  # Now uses references from pipeline
             params.max_psms_in_memory,
             qc_folder
         )
