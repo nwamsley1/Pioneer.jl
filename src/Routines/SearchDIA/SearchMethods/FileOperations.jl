@@ -3,6 +3,29 @@ Memory-efficient file operations for Arrow files.
 
 Provides streaming operations that respect memory constraints while
 maintaining data integrity through validation.
+
+## Pipeline API
+
+The pipeline API allows composing multiple operations that execute in a single
+file pass. This is more efficient than multiple separate operations.
+
+Example:
+```julia
+pipeline = TransformPipeline() |>
+    add_column(:new_col, row -> row.x + row.y) |>
+    filter_rows(row -> row.new_col > 0) |>
+    sort_by([:new_col])
+
+apply_pipeline!(file_ref, pipeline)
+```
+
+Available operations:
+- `add_column(name, compute_fn)` - Add computed column
+- `rename_column(old, new)` - Rename column
+- `select_columns(cols)` - Keep only specified columns
+- `remove_columns(cols...)` - Remove specified columns
+- `filter_rows(predicate; desc)` - Filter rows by condition
+- `sort_by(cols; rev)` - Sort with automatic state tracking
 """
 
 using Arrow, DataFrames, Tables

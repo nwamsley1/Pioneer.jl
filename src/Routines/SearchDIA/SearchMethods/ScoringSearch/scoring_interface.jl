@@ -426,6 +426,22 @@ function sort_and_filter_quant_tables_refs(
     prob_col::Symbol,
     best_traces::Set{@NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}}
 )
+    @warn """
+    sort_and_filter_quant_tables_refs is deprecated!
+    
+    Use the Pipeline API directly for better clarity:
+    
+    pipeline = TransformPipeline() |>
+        add_best_trace_indicator(isotope_trace_type, best_traces) |>
+        rename_column(:prob, :trace_prob) |>
+        select_columns(necessary_cols) |>
+        filter_rows(row -> row.best_trace) |>
+        remove_columns(:best_trace) |>
+        sort_by([prob_col, :target], rev=[true, true])
+    
+    apply_pipeline!(psm_refs, pipeline)
+    """
+    
     @info "[PERF] sort_and_filter_quant_tables_refs: Starting" n_files=length(psm_refs)
     start_time = time()
     total_rows_processed = 0
