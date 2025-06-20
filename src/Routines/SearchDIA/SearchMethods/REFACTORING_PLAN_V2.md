@@ -1,24 +1,50 @@
-# Updated SearchMethods Refactoring Plan
+# SearchMethods Refactoring Plan V2
 
-## Current Progress (Updated 2025-01-18)
+## Final Status (Completed 2025-01)
 
-### ✅ Completed
-- Phase 1: FileReferences.jl with abstract FileReference type hierarchy
-- Phase 2: Algorithm wrappers (apply_protein_inference, update_psms_with_scores)
-- Phase 3: ScoringSearch interface functions (scoring_interface.jl)
-- Phase 5 (implemented as 4.1): Added method_results storage to SearchContext
-- Phase 4.3: Generic heap-based merge in FileOperations with dynamic type construction
-- Comprehensive unit tests for all components
+### ✅ All Phases Completed
 
-### 🎉 All Phases Completed!
+1. **Phase 1**: Abstract FileReference type hierarchy
+   - Created abstract `FileReference` base type
+   - Implemented `PSMFileReference` and `ProteinGroupFileReference`
+   - Added validation and schema checking
 
-### 📝 Notes
-- Phase 5 was implemented early as Phase 4.1 for better sequencing
-- All existing tests passing after SearchContext and FileOperations updates
-- **Generic heap-based merge confirmed**: Supports arbitrary number of sort keys via NTuple{N, Symbol}
-- More flexible than existing mergeSortedArrowTables which has fixed 2-key and 4-key implementations
-- scoring_reference_wrapper.jl exists as untracked file - needs integration or removal
-- getProteinGroupsDict stubbed for testing (real implementation imports from utils/proteinInference.jl)
+2. **Phase 2**: Algorithm wrappers
+   - `apply_protein_inference` - accepts function parameter to avoid naming conflicts
+   - `update_psms_with_scores` - streaming PSM updates
+   - Removed stub implementations that would conflict
+
+3. **Phase 3**: ScoringSearch interface
+   - Created reference-only functions in `scoring_interface.jl`
+   - All file operations through FileOperations layer
+   - Comprehensive unit tests
+
+4. **Phase 4**: Integration
+   - 4.1: SearchContext storage added then removed (unnecessary)
+   - 4.2: ScoringSearch uses references internally only
+   - 4.3: Generic N-key heap merge supporting arbitrary sort keys
+   - 4.4: MaxLFQSearch simplified to use MSData directly
+
+### 📝 Implementation Notes
+
+- **Simplified design**: Removed cross-method reference storage
+- **Function parameters**: Avoid naming conflicts with existing algorithms
+- **In-place operations**: Files modified directly for efficiency
+- **Generic merge**: Supports NTuple{N, Symbol} for any number of sort keys
+
+### 🐛 Bug Fixes During Implementation
+
+1. **Syntax errors**: Missing comma between function arguments
+2. **Column handling**: Added `:best_trace` to necessary columns, removed after filtering
+3. **Return values**: Fixed functions returning `nothing` when references expected
+4. **Constructor mismatches**: Fixed 3-argument to 1-argument constructor calls
+5. **Include duplications**: Removed duplicate include statements
+
+### 🚀 Recent Improvements
+
+1. **Unified PSM scoring**: `score_precursor_isotope_traces` chooses between in-memory/OOM
+2. **Cleaner MaxLFQ**: No dependency on ScoringSearch references
+3. **Better error handling**: Type-safe operations prevent common mistakes
 
 ## Improved Architecture with Abstract Types
 

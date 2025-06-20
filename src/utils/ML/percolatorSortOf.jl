@@ -104,7 +104,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
 
     transform!(
         groupby(psms, [:precursor_idx, :ms_file_idx]),
-        :prob => (p -> 1-exp(sum(log1p.(-p)))) => :prec_prob
+        :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob
     )
     
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))

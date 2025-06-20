@@ -354,20 +354,26 @@ All phases of the SearchMethods refactoring have been completed:
 - ✅ Phase 1: Abstract FileReference type hierarchy
 - ✅ Phase 2: Algorithm wrappers for protein inference and PSM updates
 - ✅ Phase 3: ScoringSearch interface with reference-only operations
-- ✅ Phase 4.1: SearchContext method results storage
+- ✅ Phase 4.1: SearchContext method results storage (later removed as unnecessary)
 - ✅ Phase 4.2: ScoringSearch updated to use references
 - ✅ Phase 4.3: Generic heap-based merge supporting N sort keys
-- ✅ Phase 4.4: MaxLFQSearch updated to use references from SearchContext
+- ✅ Phase 4.4: MaxLFQSearch simplified to use MSData directly
 
 ### Key Achievements
 1. **Type-safe file references** prevent accidental misuse of files
 2. **Generic N-key merge** more flexible than fixed 2/4-key implementations
-3. **SearchContext storage** enables clean data flow between methods
+3. **Simplified data flow** - removed unnecessary SearchContext storage
 4. **Backward compatibility** maintained throughout refactoring
 
 ### Important Notes
 - The protein inference and MaxLFQ algorithms already exist and are NOT being reimplemented
 - We are only wrapping them with better abstractions and safety checks
+- ScoringSearch uses file references internally but doesn't store them in SearchContext
+- MaxLFQ gets file paths directly from MSData, not from stored references
 - All tests passing for completed phases
-- Maintains backward compatibility while adding type safety
-- All tests passing for completed phases
+
+### Recent Improvements (2025-01)
+1. **Unified PSM scoring entry point**: `score_precursor_isotope_traces` function automatically chooses between in-memory and out-of-memory processing
+2. **Fixed column management**: Added `:best_trace` to necessary columns for filtering, then removed after use
+3. **Simplified MaxLFQSearch**: Removed dependency on ScoringSearch references, uses MSData directly
+4. **Bug fixes**: Fixed `sort_and_filter_quant_tables_refs` to return references instead of `nothing`

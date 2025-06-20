@@ -209,7 +209,6 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
     sequences = getSequence(precursors)
     is_decoys = getIsDecoy(precursors)
     entrap_ids = getEntrapmentGroupId(precursors)
-    
     for i in 1:nrow(psms_df)
         # Skip if not used for quantification
         if psms_df[i, :use_for_protein_quant] == false
@@ -218,7 +217,6 @@ function create_protein_groups_from_psms(psms_df::DataFrame, inference::Inferenc
         
         pid = psms_df[i, :precursor_idx]
         score = psms_df[i, :prec_prob]
-        
         # Get protein assignment
         pep_key = PeptideKey(
             sequences[pid],
