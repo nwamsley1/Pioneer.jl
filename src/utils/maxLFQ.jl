@@ -309,29 +309,14 @@ function getProtAbundance(protein::String,
 
 end
 
-# Add imports needed for FileReference support at the top of the file
-# Note: These will be included via the SearchMethods module when used
-
-function LFQ(prot::DataFrame,
-             protein_quant_path::String,
-            quant_col::Symbol,
-            file_id_to_parsed_name::Vector{String},
-            q_value_threshold::Float32;
-            batch_size = 100000,
-            min_peptides = 1)
-    # Original DataFrame-based implementation for backward compatibility
-    _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
-              q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
-end
-
-# New FileReference-based implementation (simplified)
+# FileReference-based implementation with TransformPipeline preprocessing
 function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
             quant_col::Symbol,
             file_id_to_parsed_name::Vector{String},
             q_value_threshold::Float32;
             batch_size = 100000,
-            min_peptides = 1)
+            min_peptides = 1)  # Keep for potential future use in filtering
     
     # Always use lazy DataFrame loading (memory efficient)
     prot = DataFrame(Arrow.Table(file_path(prot_ref)))
@@ -347,7 +332,6 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     # Main processing logic (inlined from original LFQ function)
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
-    total_protein_groups_processed = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
     @info "Is prot sorted? $is_prot_sorted"
 
@@ -364,7 +348,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         batch_end_idx = min(batch_start_idx + batch_size, size(prot, 1))
         
         # Apply pipeline operations to this batch
-        for (desc, op) in preprocessing_pipeline.operations
+        for (_, op) in preprocessing_pipeline.operations
             subdf = op(subdf)
         end
         
