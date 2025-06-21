@@ -99,8 +99,9 @@ mutable struct PSMFileReference <: FileReference
         # Read schema from file
         tbl = Arrow.Table(file_path)
         schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column
-        row_count = length(Tables.getcolumn(tbl, 1))
+        # Get row count from first column if columns exist
+        col_names = Tables.columnnames(tbl)
+        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
         
         new(file_path, schema, (), row_count, true)
     end
@@ -128,8 +129,9 @@ mutable struct ProteinGroupFileReference <: FileReference
         # Read schema from file
         tbl = Arrow.Table(file_path)
         schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column
-        row_count = length(Tables.getcolumn(tbl, 1))
+        # Get row count from first column if columns exist
+        col_names = Tables.columnnames(tbl)
+        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
         
         new(file_path, schema, (), row_count, true)
     end
@@ -159,8 +161,9 @@ mutable struct ProteinQuantFileReference <: FileReference
         # Read schema from file
         tbl = Arrow.Table(file_path)
         schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column
-        row_count = length(Tables.getcolumn(tbl, 1))
+        # Get row count from first column if columns exist
+        col_names = Tables.columnnames(tbl)
+        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
         
         # Estimate protein groups and experiments for MaxLFQ context
         n_protein_groups = 0
@@ -307,11 +310,11 @@ function validate_exists(ref::FileReference)
 end
 
 """
-    sort_file_by_keys!(ref::FileReference, keys::Symbol...)
+    sort_file_by_keys!(ref::FileReference, keys::Symbol...; reverse=false)
 
 Sort a file by the specified keys and update the reference.
 """
-function sort_file_by_keys!(ref::FileReference, keys::Symbol...)
+function sort_file_by_keys!(ref::FileReference, keys::Symbol...; reverse=false)
     validate_exists(ref)
     
     # Validate all sort keys exist in schema
@@ -321,7 +324,7 @@ function sort_file_by_keys!(ref::FileReference, keys::Symbol...)
     
     # Read into DataFrame (creates a copy), sort, and write back
     df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    sort!(df, collect(keys))
+    sort!(df, collect(keys); rev=reverse)
     
     # Write sorted data
     Arrow.write(file_path(ref), df)

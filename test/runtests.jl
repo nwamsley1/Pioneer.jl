@@ -123,4 +123,8 @@ end
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
+    
+    # FileReference and FileOperations comprehensive tests
+    include("./UnitTests/test_file_references_comprehensive.jl")
+    include("./UnitTests/test_file_operations.jl")
 end
