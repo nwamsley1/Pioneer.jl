@@ -189,7 +189,7 @@ function summarize_results!(
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
-        # Use FileReference-based LFQ with optional pipeline preprocessing
+        # Use FileReference-based LFQ with TransformPipeline preprocessing
         LFQ(
             merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
@@ -197,8 +197,7 @@ function summarize_results!(
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
             batch_size = params.batch_size,
-            min_peptides = params.min_peptides,
-            use_pipeline = true  # Enable TransformPipeline preprocessing
+            min_peptides = params.min_peptides
         )
         
         # Create FileReference for output metadata tracking

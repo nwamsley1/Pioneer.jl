@@ -28,10 +28,6 @@ sorted_by(ref::FileReference) = ref.sorted_by
 row_count(ref::FileReference) = ref.row_count
 exists(ref::FileReference) = ref.file_exists
 
-# Specialized accessors for ProteinQuantFileReference
-n_protein_groups(ref::ProteinQuantFileReference) = ref.n_protein_groups
-n_experiments(ref::ProteinQuantFileReference) = ref.n_experiments
-
 #==========================================================
 Schema Management
 ==========================================================#
@@ -186,6 +182,10 @@ mutable struct ProteinQuantFileReference <: FileReference
         new(file_path, schema, (), row_count, true, n_protein_groups, n_experiments)
     end
 end
+
+# Specialized accessors for ProteinQuantFileReference
+n_protein_groups(ref::ProteinQuantFileReference) = ref.n_protein_groups
+n_experiments(ref::ProteinQuantFileReference) = ref.n_experiments
 
 #==========================================================
 Paired File References

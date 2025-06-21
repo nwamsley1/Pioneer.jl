@@ -324,104 +324,51 @@ function LFQ(prot::DataFrame,
               q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
 end
 
-# New FileReference-based implementation
+# New FileReference-based implementation (simplified)
 function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
             quant_col::Symbol,
             file_id_to_parsed_name::Vector{String},
             q_value_threshold::Float32;
             batch_size = 100000,
-            min_peptides = 1,
-            use_pipeline::Bool = true)  # Option to use TransformPipeline
+            min_peptides = 1)
     
     # Always use lazy DataFrame loading (memory efficient)
     prot = DataFrame(Arrow.Table(file_path(prot_ref)))
     
-    if use_pipeline
-        # Use TransformPipeline operations but apply them per batch, not to whole file
-        try
-            # Create pipeline operations for batch-wise application
-            preprocessing_pipeline = TransformPipeline() |>
-                filter_by_multiple_thresholds([
-                    (:pg_qval, q_value_threshold),
-                    (:global_qval_pg, q_value_threshold)
-                ]) |>
-                filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
-            
-            # Call implementation with pipeline operations for batch filtering
-            _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
-                     q_value_threshold; batch_size=batch_size, min_peptides=min_peptides, 
-                     use_pipeline_per_batch=true, pipeline_ops=preprocessing_pipeline.operations)
-        catch e
-            @warn "Pipeline preprocessing failed, falling back to manual filtering" exception=e
-            # Fallback to original manual filtering approach
-            _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
-                     q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
-        end
-    else
-        # Use original manual filtering approach
-        _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
-                 q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
-    end
-end
-
-# Core implementation (extracted from original LFQ function)
-function _LFQ_impl(prot::DataFrame,
-                   protein_quant_path::String,
-                   quant_col::Symbol,
-                   file_id_to_parsed_name::Vector{String},
-                   q_value_threshold::Float32;
-                   batch_size = 100000,
-                   min_peptides = 1,
-                   skip_filtering::Bool = false,
-                   use_pipeline_per_batch::Bool = false,
-                   pipeline_ops = nothing)
-
-    batch_start_idx, batch_end_idx = 1,min(batch_size,size(prot, 1))  # Fixed: was batch_size+1
+    # Create pipeline operations for batch-wise application
+    preprocessing_pipeline = TransformPipeline() |>
+        filter_by_multiple_thresholds([
+            (:pg_qval, q_value_threshold),
+            (:global_qval_pg, q_value_threshold)
+        ]) |>
+        filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
+    
+    # Main processing logic (inlined from original LFQ function)
+    batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
-    total_protein_groups_processed = 0  # Initialize counter
+    total_protein_groups_processed = 0
     is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
     @info "Is prot sorted? $is_prot_sorted"
 
     while batch_start_idx <= size(prot, 1)
-        last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
+        last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
         while batch_end_idx < size(prot, 1)
-            if prot[batch_end_idx+1,:inferred_protein_group]!=last_prot_idx
+            if prot[batch_end_idx+1, :inferred_protein_group] != last_prot_idx
                 break
             end
             batch_end_idx += 1
         end
-        subdf = prot[range(batch_start_idx, batch_end_idx),:]
+        subdf = prot[range(batch_start_idx, batch_end_idx), :]
         batch_start_idx = batch_end_idx + 1
-        batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
+        batch_end_idx = min(batch_start_idx + batch_size, size(prot, 1))
         
-        # Apply filtering: either pipeline operations per batch or original manual filtering
-        if !skip_filtering
-            if use_pipeline_per_batch && pipeline_ops !== nothing
-                # Apply pipeline operations to this batch
-                try
-                    for (desc, op) in pipeline_ops
-                        subdf = op(subdf)
-                    end
-                catch e
-                    @warn "Pipeline operation failed on batch, falling back to manual filtering" exception=e
-                    # Fallback to manual filtering for this batch
-                    subdf = subdf[(
-                        subdf[!,:pg_qval].<=q_value_threshold
-                    ).&(subdf[!,:global_qval_pg].<=q_value_threshold
-                    ).&(subdf[!,:use_for_protein_quant])
-                    ,:]
-                end
-            else
-                # Original manual filtering approach
-                subdf = subdf[(
-                    subdf[!,:pg_qval].<=q_value_threshold
-                ).&(subdf[!,:global_qval_pg].<=q_value_threshold
-                ).&(subdf[!,:use_for_protein_quant])
-                ,:]
-            end
+        # Apply pipeline operations to this batch
+        for (desc, op) in preprocessing_pipeline.operations
+            subdf = op(subdf)
         end
         
+        # Continue with original LFQ logic
         #Exclude precursors with mods that impact quantitation
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
@@ -431,7 +378,8 @@ function _LFQ_impl(prot::DataFrame,
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
-        #pre allocate the batch
+        
+        # Pre-allocate the batch
         out = Dict(
             :target => Vector{Union{Missing, Bool}}(undef, nrows),
             :entrap_id => Vector{Union{Missing, UInt8}}(undef, nrows),
@@ -491,7 +439,7 @@ function _LFQ_impl(prot::DataFrame,
         filter!(x->(!ismissing(x.n_peptides)), out);#&(x.n_peptides>=min_peptides), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
         
-        # Track protein groups written
+        # Write results
         if iszero(n_writes)
             if isfile(protein_quant_path)
                 rm(protein_quant_path)
@@ -528,6 +476,7 @@ function _LFQ_impl(prot::DataFrame,
     
     return nothing
 end
+
 
 function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})
     
