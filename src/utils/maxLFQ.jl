@@ -334,10 +334,13 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             min_peptides = 1,
             use_pipeline::Bool = true)  # Option to use TransformPipeline
     
+    # Always use lazy DataFrame loading (memory efficient)
+    prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+    
     if use_pipeline
-        # Use TransformPipeline for preprocessing
+        # Use TransformPipeline operations but apply them per batch, not to whole file
         try
-            # Import TransformPipeline operations (assumes they're available in calling scope)
+            # Create pipeline operations for batch-wise application
             preprocessing_pipeline = TransformPipeline() |>
                 filter_by_multiple_thresholds([
                     (:pg_qval, q_value_threshold),
@@ -345,31 +348,18 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                 ]) |>
                 filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
             
-            # Create temporary directory for filtered file
-            temp_dir = mktempdir()
-            try
-                # Apply pipeline to create filtered file
-                filtered_refs = apply_pipeline_batch([prot_ref], preprocessing_pipeline, temp_dir)
-                
-                # Load filtered data (lazy approach)
-                prot = DataFrame(Arrow.Table(file_path(filtered_refs[1])))
-                
-                # Call implementation with pre-filtered data (skip internal filtering)
-                _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
-                         1.0f0; batch_size=batch_size, min_peptides=min_peptides, skip_filtering=true)
-            finally
-                rm(temp_dir, recursive=true)
-            end
+            # Call implementation with pipeline operations for batch filtering
+            _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
+                     q_value_threshold; batch_size=batch_size, min_peptides=min_peptides, 
+                     use_pipeline_per_batch=true, pipeline_ops=preprocessing_pipeline.operations)
         catch e
-            @warn "Pipeline preprocessing failed, falling back to DataFrame approach" exception=e
-            # Fallback to loading DataFrame directly
-            prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+            @warn "Pipeline preprocessing failed, falling back to manual filtering" exception=e
+            # Fallback to original manual filtering approach
             _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
                      q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
         end
     else
-        # Load DataFrame and use original approach
-        prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+        # Use original manual filtering approach
         _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
                  q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
     end
@@ -383,7 +373,9 @@ function _LFQ_impl(prot::DataFrame,
                    q_value_threshold::Float32;
                    batch_size = 100000,
                    min_peptides = 1,
-                   skip_filtering::Bool = false)
+                   skip_filtering::Bool = false,
+                   use_pipeline_per_batch::Bool = false,
+                   pipeline_ops = nothing)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size,size(prot, 1))  # Fixed: was batch_size+1
     n_writes = 0
@@ -403,13 +395,31 @@ function _LFQ_impl(prot::DataFrame,
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         
-        # Apply filtering unless it was already done by pipeline preprocessing
+        # Apply filtering: either pipeline operations per batch or original manual filtering
         if !skip_filtering
-            subdf = subdf[(
-                subdf[!,:pg_qval].<=q_value_threshold
-            ).&(subdf[!,:global_qval_pg].<=q_value_threshold
-            ).&(subdf[!,:use_for_protein_quant])
-            ,:]
+            if use_pipeline_per_batch && pipeline_ops !== nothing
+                # Apply pipeline operations to this batch
+                try
+                    for (desc, op) in pipeline_ops
+                        subdf = op(subdf)
+                    end
+                catch e
+                    @warn "Pipeline operation failed on batch, falling back to manual filtering" exception=e
+                    # Fallback to manual filtering for this batch
+                    subdf = subdf[(
+                        subdf[!,:pg_qval].<=q_value_threshold
+                    ).&(subdf[!,:global_qval_pg].<=q_value_threshold
+                    ).&(subdf[!,:use_for_protein_quant])
+                    ,:]
+                end
+            else
+                # Original manual filtering approach
+                subdf = subdf[(
+                    subdf[!,:pg_qval].<=q_value_threshold
+                ).&(subdf[!,:global_qval_pg].<=q_value_threshold
+                ).&(subdf[!,:use_for_protein_quant])
+                ,:]
+            end
         end
         
         #Exclude precursors with mods that impact quantitation
