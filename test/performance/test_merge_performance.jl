@@ -46,7 +46,6 @@ end
 # Include the modules we want to test
 include("../../src/Routines/SearchDIA/SearchMethods/FileReferences.jl")
 include("../../src/Routines/SearchDIA/SearchMethods/FileOperations.jl")
-include("../../src/Routines/SearchDIA/SearchMethods/FileOperations_TypeStable.jl")
 include("../../src/utils/writeArrow.jl")
 
 export test_accuracy, benchmark_merge_strategies, run_all_tests, 
@@ -168,7 +167,7 @@ function test_accuracy(test_dir::String; n_files::Int=10, verbose::Bool=true)
             typed_success = false
             typed_rows = 0
             try
-                @time typed_ref = stream_sorted_merge_typed(
+                @time typed_ref = stream_sorted_merge(
                     refs, typed_output, sort_keys...;
                     reverse=reverse, batch_size=100_000
                 )
@@ -413,7 +412,7 @@ function benchmark_typed_implementation(refs, temp_dir, sort_keys, reverse, batc
     output_path = joinpath(temp_dir, "typed.arrow")
     try
         elapsed = @simple_time begin
-            stream_sorted_merge_typed(
+            stream_sorted_merge(
                 refs, output_path, sort_keys...;
                 reverse=reverse, batch_size=batch_size
             )
@@ -481,8 +480,8 @@ function profile_memory_usage(test_dir::String; n_files::Int=50)
         before_memory = Sys.total_memory() - Sys.free_memory()
         
         output_path = joinpath(temp_dir, "typed_memory.arrow")
-        @time stream_sorted_merge_typed(refs, output_path, :pg_score, :target; 
-                                       reverse=[true, true], batch_size=50_000)
+        @time stream_sorted_merge(refs, output_path, :pg_score, :target; 
+                                 reverse=[true, true], batch_size=50_000)
         
         GC.gc()
         after_memory = Sys.total_memory() - Sys.free_memory()

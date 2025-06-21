@@ -309,6 +309,9 @@ function getProtAbundance(protein::String,
 
 end
 
+# Add imports needed for FileReference support at the top of the file
+# Note: These will be included via the SearchMethods module when used
+
 function LFQ(prot::DataFrame,
              protein_quant_path::String,
             quant_col::Symbol,
@@ -316,6 +319,71 @@ function LFQ(prot::DataFrame,
             q_value_threshold::Float32;
             batch_size = 100000,
             min_peptides = 1)
+    # Original DataFrame-based implementation for backward compatibility
+    _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
+              q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
+end
+
+# New FileReference-based implementation
+function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
+             protein_quant_path::String,
+            quant_col::Symbol,
+            file_id_to_parsed_name::Vector{String},
+            q_value_threshold::Float32;
+            batch_size = 100000,
+            min_peptides = 1,
+            use_pipeline::Bool = true)  # Option to use TransformPipeline
+    
+    if use_pipeline
+        # Use TransformPipeline for preprocessing
+        try
+            # Import TransformPipeline operations (assumes they're available in calling scope)
+            preprocessing_pipeline = TransformPipeline() |>
+                filter_by_multiple_thresholds([
+                    (:pg_qval, q_value_threshold),
+                    (:global_qval_pg, q_value_threshold)
+                ]) |>
+                filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
+            
+            # Create temporary directory for filtered file
+            temp_dir = mktempdir()
+            try
+                # Apply pipeline to create filtered file
+                filtered_refs = apply_pipeline_batch([prot_ref], preprocessing_pipeline, temp_dir)
+                
+                # Load filtered data (lazy approach)
+                prot = DataFrame(Arrow.Table(file_path(filtered_refs[1])))
+                
+                # Call implementation with pre-filtered data (skip internal filtering)
+                _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
+                         1.0f0; batch_size=batch_size, min_peptides=min_peptides, skip_filtering=true)
+            finally
+                rm(temp_dir, recursive=true)
+            end
+        catch e
+            @warn "Pipeline preprocessing failed, falling back to DataFrame approach" exception=e
+            # Fallback to loading DataFrame directly
+            prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+            _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
+                     q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
+        end
+    else
+        # Load DataFrame and use original approach
+        prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+        _LFQ_impl(prot, protein_quant_path, quant_col, file_id_to_parsed_name, 
+                 q_value_threshold; batch_size=batch_size, min_peptides=min_peptides)
+    end
+end
+
+# Core implementation (extracted from original LFQ function)
+function _LFQ_impl(prot::DataFrame,
+                   protein_quant_path::String,
+                   quant_col::Symbol,
+                   file_id_to_parsed_name::Vector{String},
+                   q_value_threshold::Float32;
+                   batch_size = 100000,
+                   min_peptides = 1,
+                   skip_filtering::Bool = false)
 
     batch_start_idx, batch_end_idx = 1,min(batch_size,size(prot, 1))  # Fixed: was batch_size+1
     n_writes = 0
@@ -335,11 +403,14 @@ function LFQ(prot::DataFrame,
         batch_start_idx = batch_end_idx + 1
         batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
         
-        subdf = subdf[(
-            subdf[!,:pg_qval].<=q_value_threshold
-        ).&(subdf[!,:global_qval_pg].<=q_value_threshold
-        ).&(subdf[!,:use_for_protein_quant])
-        ,:]
+        # Apply filtering unless it was already done by pipeline preprocessing
+        if !skip_filtering
+            subdf = subdf[(
+                subdf[!,:pg_qval].<=q_value_threshold
+            ).&(subdf[!,:global_qval_pg].<=q_value_threshold
+            ).&(subdf[!,:use_for_protein_quant])
+            ,:]
+        end
         
         #Exclude precursors with mods that impact quantitation
         #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)

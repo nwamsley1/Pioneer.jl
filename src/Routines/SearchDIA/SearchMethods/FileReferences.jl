@@ -28,6 +28,10 @@ sorted_by(ref::FileReference) = ref.sorted_by
 row_count(ref::FileReference) = ref.row_count
 exists(ref::FileReference) = ref.file_exists
 
+# Specialized accessors for ProteinQuantFileReference
+n_protein_groups(ref::ProteinQuantFileReference) = ref.n_protein_groups
+n_experiments(ref::ProteinQuantFileReference) = ref.n_experiments
+
 #==========================================================
 Schema Management
 ==========================================================#
@@ -132,6 +136,54 @@ mutable struct ProteinGroupFileReference <: FileReference
         row_count = length(Tables.getcolumn(tbl, 1))
         
         new(file_path, schema, (), row_count, true)
+    end
+end
+
+"""
+    ProteinQuantFileReference <: FileReference
+
+Reference to a protein quantification Arrow file with metadata.
+Specialized for MaxLFQ quantification results with additional metadata.
+"""
+mutable struct ProteinQuantFileReference <: FileReference
+    file_path::String
+    schema::FileSchema
+    sorted_by::Tuple{Vararg{Symbol}}
+    row_count::Int64
+    file_exists::Bool
+    n_protein_groups::Int64
+    n_experiments::Int64
+    
+    # Constructor that validates file and extracts metadata
+    function ProteinQuantFileReference(file_path::String)
+        if !isfile(file_path)
+            return new(file_path, FileSchema(Symbol[]), (), 0, false, 0, 0)
+        end
+        
+        # Read schema from file
+        tbl = Arrow.Table(file_path)
+        schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
+        # Get row count from first column
+        row_count = length(Tables.getcolumn(tbl, 1))
+        
+        # Estimate protein groups and experiments for MaxLFQ context
+        n_protein_groups = 0
+        n_experiments = 0
+        
+        # Try to extract meaningful counts if the file has appropriate columns
+        if has_column(schema, :protein)
+            protein_col = Tables.getcolumn(tbl, :protein)
+            n_protein_groups = length(unique(skipmissing(protein_col)))
+        end
+        
+        if has_column(schema, :experiments) || has_column(schema, :file_name)
+            exp_col = has_column(schema, :experiments) ? 
+                     Tables.getcolumn(tbl, :experiments) : 
+                     Tables.getcolumn(tbl, :file_name)
+            n_experiments = length(unique(skipmissing(exp_col)))
+        end
+        
+        new(file_path, schema, (), row_count, true, n_protein_groups, n_experiments)
     end
 end
 
@@ -333,10 +385,21 @@ function create_reference(file_path::String, ::Type{ProteinGroupFileReference})
     return ProteinGroupFileReference(file_path)
 end
 
+function create_reference(file_path::String, ::Type{ProteinQuantFileReference})
+    return ProteinQuantFileReference(file_path)
+end
+
+"""
+    create_protein_quant_reference(file_path::String) -> ProteinQuantFileReference
+
+Create a protein quantification file reference, extracting metadata from the file.
+"""
+create_protein_quant_reference(file_path::String) = ProteinQuantFileReference(file_path)
+
 # Export all public types and functions
-export FileReference, FileSchema, PSMFileReference, ProteinGroupFileReference, PairedSearchFiles,
-       file_path, schema, sorted_by, row_count, exists,
+export FileReference, FileSchema, PSMFileReference, ProteinGroupFileReference, ProteinQuantFileReference, PairedSearchFiles,
+       file_path, schema, sorted_by, row_count, exists, n_protein_groups, n_experiments,
        has_column, get_column_or_default, validate_required_columns, validate_schema,
        mark_sorted!, is_sorted_by, ensure_sorted!, validate_exists,
-       sort_file_by_keys!, create_psm_reference, create_protein_reference, create_reference,
+       sort_file_by_keys!, create_psm_reference, create_protein_reference, create_protein_quant_reference, create_reference,
        describe_reference

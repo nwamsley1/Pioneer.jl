@@ -165,6 +165,17 @@ function summarize_results!(
         # Verify the merged file is sorted (reference-based merge guarantees this)
         @info "Merged PSM file created at: $(file_path(merged_psm_ref))"
         @info "File contains $(row_count(merged_psm_ref)) rows and is sorted by: $(sorted_by(merged_psm_ref))"
+        
+        # Add FileReference validation for MaxLFQ input
+        @info "Validating input for MaxLFQ processing..."
+        validate_maxlfq_input(merged_psm_ref)
+        
+        # Validate MaxLFQ parameters
+        validate_maxlfq_parameters(Dict(
+            :q_value_threshold => params.q_value_threshold,
+            :batch_size => params.batch_size,
+            :min_peptides => params.min_peptides
+        ))
         @info "Writing precursor results..."
         # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(
@@ -178,15 +189,21 @@ function summarize_results!(
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
+        # Use FileReference-based LFQ with optional pipeline preprocessing
         LFQ(
-            DataFrame(Arrow.Table(precursors_long_path)),
+            merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
             precursor_quant_col,
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
             batch_size = params.batch_size,
-            min_peptides = params.min_peptides
+            min_peptides = params.min_peptides,
+            use_pipeline = true  # Enable TransformPipeline preprocessing
         )
+        
+        # Create FileReference for output metadata tracking
+        protein_ref = ProteinQuantFileReference(protein_long_path)
+        @info "MaxLFQ completed" output_file=protein_long_path n_protein_groups=n_protein_groups(protein_ref) n_experiments=n_experiments(protein_ref)
 
         @info "Writing protein group results..."
         # Create wide format protein table
