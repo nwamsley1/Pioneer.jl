@@ -5,8 +5,7 @@ using DataStructures  # For heap operations
 # Include the necessary files
 cd(@__DIR__)  # Change to test directory
 package_root = dirname(dirname(@__DIR__))
-include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "FileReferences.jl"))
-include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "FileOperations.jl"))
+include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
 @testset "FileOperations Comprehensive Tests" begin
     

@@ -102,7 +102,7 @@ export FileReference, FileSchema, PSMFileReference, ProteinGroupFileReference,
        create_reference, describe_reference
 
 # Streaming operations
-export stream_filter, stream_transform, process_with_memory_limit, estimate_batch_size,
+export stream_transform, process_with_memory_limit, estimate_batch_size,
        add_column_to_file!, update_column_in_file!, add_column_and_sort!,
        stream_sorted_merge
 
@@ -115,11 +115,9 @@ export TransformPipeline, PipelineOperation, |>,
 
 # Algorithm integrations
 export apply_protein_inference, update_psms_with_scores,
-       apply_maxlfq, prepare_maxlfq_input,
        validate_maxlfq_input, validate_maxlfq_parameters, check_maxlfq_memory_requirements,
        validate_join_compatibility, validate_sort_compatibility
 
 # I/O operations
 export sort_file_by_keys!, write_arrow_file, load_dataframe, column_names, has_columns,
-       safe_join_files, ensure_directory_exists, create_temp_path, cleanup_temp_files,
-       safe_move_file, get_file_size_mb, estimate_processing_time
+       ensure_directory_exists, get_file_size_mb

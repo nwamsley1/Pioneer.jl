@@ -4,7 +4,8 @@ using Arrow, DataFrames
 # Include the necessary files
 cd(@__DIR__)
 package_root = dirname(dirname(@__DIR__))
-include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "FileReferences.jl"))
+include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
+# SearchResultReferences is still in SearchMethods (not part of FileOperations refactoring)
 include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchResultReferences.jl"))
 
 @testset "SearchResultReferences Tests" begin

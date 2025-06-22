@@ -44,8 +44,7 @@ macro simple_time(expr)
 end
 
 # Include the modules we want to test
-include("../../src/Routines/SearchDIA/SearchMethods/FileReferences.jl")
-include("../../src/Routines/SearchDIA/SearchMethods/FileOperations.jl")
+include("../../src/utils/FileOperations/FileOperations.jl")
 include("../../src/utils/writeArrow.jl")
 
 export test_accuracy, benchmark_merge_strategies, run_all_tests, 

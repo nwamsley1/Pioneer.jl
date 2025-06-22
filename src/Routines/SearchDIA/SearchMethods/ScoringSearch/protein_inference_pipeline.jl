@@ -111,7 +111,7 @@ Inference Wrapper Functions
     apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecursors)
 
 Apply the core infer_proteins algorithm to a prepared DataFrame.
-Returns structured inference results.
+Returns structured inference results using type-safe protein inference.
 """
 function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecursors)
     if nrow(df) == 0
@@ -126,38 +126,25 @@ function apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecurso
     unique_pairs = unique(df, [:sequence, :accession_numbers, :is_decoy, :entrap_id])
     
     # Convert to format expected by infer_proteins
-    proteins_vec = Vector{NamedTuple{(:protein_name, :decoy, :entrap_id), Tuple{String, Bool, UInt8}}}()
-    peptides_vec = Vector{String}()
+    proteins_vec = Vector{ProteinKey}(undef, nrow(unique_pairs))
+    peptides_vec = Vector{PeptideKey}(undef, nrow(unique_pairs))
     
-    for row in eachrow(unique_pairs)
-        push!(proteins_vec, (
-            protein_name = row.accession_numbers,
-            decoy = row.is_decoy,
-            entrap_id = row.entrap_id
-        ))
-        push!(peptides_vec, row.sequence)
-    end
-    
-    # Call core inference algorithm
-    raw_result = infer_proteins(proteins_vec, peptides_vec)
-    
-    # Convert to structured result
-    peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
-    use_for_quant = Dictionary{PeptideKey, Bool}()
-    
-    for (pep_nt, prot_result) in pairs(raw_result)
-        pep_key = PeptideKey(pep_nt.peptide, !pep_nt.decoy, pep_nt.entrap_id)
-        prot_key = ProteinKey(
-            prot_result.protein_name,
-            !prot_result.decoy,
-            prot_result.entrap_id
+    for (i, row) in enumerate(eachrow(unique_pairs))
+        proteins_vec[i] = ProteinKey(
+            row.accession_numbers,
+            !row.is_decoy,  # Convert is_decoy to is_target
+            row.entrap_id
         )
         
-        insert!(peptide_to_protein, pep_key, prot_key)
-        insert!(use_for_quant, pep_key, prot_result.retain)
+        peptides_vec[i] = PeptideKey(
+            row.sequence,
+            !row.is_decoy,  # Convert is_decoy to is_target
+            row.entrap_id
+        )
     end
     
-    return InferenceResult(peptide_to_protein, use_for_quant)
+    # Call inference algorithm
+    return infer_proteins(proteins_vec, peptides_vec)
 end
 
 #==========================================================

@@ -4,6 +4,9 @@ using Arrow, DataFrames
 # Include the necessary files
 cd(@__DIR__)
 package_root = dirname(dirname(@__DIR__))
+# First include FileOperations for FileReferences
+include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
+# Then include the scoring interface (still in SearchMethods)
 include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "ScoringSearch", "scoring_interface.jl"))
 
 @testset "ScoringInterface Tests" begin

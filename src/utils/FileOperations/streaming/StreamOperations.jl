@@ -16,35 +16,6 @@ Basic Streaming Operations
 ==========================================================#
 
 """
-    stream_filter(input_ref::FileReference, output_path::String, 
-                 filter_fn::Function; batch_size=100_000)
-
-Filter a file without loading it entirely into memory.
-Returns a FileReference of the same type as the input.
-"""
-function stream_filter(input_ref::FileReference,
-                      output_path::String, 
-                      filter_fn::Function;
-                      batch_size::Int=100_000)
-    validate_exists(input_ref)
-    
-    # For now, load entire file and filter
-    # In production would use proper streaming
-    df = DataFrame(Arrow.Table(file_path(input_ref)))
-    filtered_df = filter(filter_fn, df)
-    
-    # Write filtered data using writeArrow for Windows compatibility
-    writeArrow(output_path, filtered_df)
-    
-    # Create reference for output of same type as input
-    output_ref = create_reference(output_path, typeof(input_ref))
-    # Filtering may break sort order
-    mark_sorted!(output_ref)  # Empty tuple - not sorted
-    
-    return output_ref
-end
-
-"""
     stream_transform(input_ref::FileReference, output_path::String,
                     transform_fn::Function; batch_size=100_000)
 
@@ -110,4 +81,4 @@ function estimate_batch_size(schema::FileSchema, max_memory_mb::Int)
 end
 
 # Export streaming functions
-export stream_filter, stream_transform, process_with_memory_limit, estimate_batch_size
+export stream_transform, process_with_memory_limit, estimate_batch_size

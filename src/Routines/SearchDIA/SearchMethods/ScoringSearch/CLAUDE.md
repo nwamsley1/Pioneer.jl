@@ -10,10 +10,12 @@ ScoringSearch is the 7th stage in the Pioneer DIA search pipeline. It performs X
 
 ```
 ScoringSearch/
-├── ScoringSearch.jl       # Main search method implementation
-├── score_psms.jl          # XGBoost model training and PSM scoring
-├── utils.jl               # Protein group analysis and helper functions
-└── utils_protein_ml.jl    # ML-enhanced protein scoring (when enabled)
+├── ScoringSearch.jl              # Main search method implementation
+├── score_psms.jl                 # XGBoost model training and PSM scoring
+├── utils.jl                      # Protein group analysis and helper functions (legacy)
+├── utils_protein_ml.jl           # ML-enhanced protein scoring (when enabled)
+├── protein_inference_pipeline.jl # Modern composable protein inference pipeline
+└── scoring_interface.jl          # Type-safe file reference operations
 ```
 
 ## Key Components
@@ -37,16 +39,26 @@ The scoring search performs these steps:
 - Handles both in-memory and out-of-memory training
 - Maintains CV fold consistency for downstream analysis
 
-### Protein Group Analysis (utils.jl)
+### Protein Group Analysis
 
-Key functions:
+**Modern Pipeline (protein_inference_pipeline.jl)**:
+- **`perform_protein_inference_pipeline`**: Composable pipeline approach
+- **`apply_inference_to_dataframe`**: Wrapper around type-safe `infer_proteins()`
+- **`group_psms_by_protein`**: Aggregates PSMs into protein groups
+- **`add_inferred_protein_column`**: Updates PSMs with protein assignments
+- **`add_quantification_flag`**: Marks peptides for quantification use
 
-- **`get_protein_groups`**: Main entry point for protein analysis
-- **`perform_protein_inference`**: File-by-file protein inference
-- **`getProteinGroupsDict`**: Creates protein groups from PSMs
+**Legacy Functions (utils.jl)**:
+- **`get_protein_groups`**: Main entry point for protein analysis (legacy)
+- **`perform_protein_inference`**: File-by-file protein inference (legacy)
+- **`getProteinGroupsDict`**: Creates protein groups from PSMs (legacy)
 - **`writeProteinGroups`**: Outputs protein groups with features
 - **`update_psms_with_probit_scores`**: Updates PSMs with refined scores
 - **`merge_sorted_protein_groups`**: Memory-efficient merging
+
+**Type-Safe Operations (scoring_interface.jl)**:
+- File reference-based operations for safer data handling
+- Abstracts file operations from core algorithms
 
 ### Protein Scoring Flow
 
@@ -117,8 +129,22 @@ Key outputs to verify:
 - File I/O dominates for large experiments
 - Thread-safe operations in score_psms.jl
 
-## Recent Changes
+## Recent Changes (2025-01)
 
+### Protein Inference Modernization
+- **Type-Safe Inference**: Migrated to `infer_proteins()` using `ProteinKey` and `PeptideKey` types
+- **Composable Pipeline**: Added `protein_inference_pipeline.jl` with modular operations
+- **Legacy Preservation**: Maintained backward compatibility with existing `utils.jl` functions
+- **Function Updates**: Updated calls from `infer_proteins_typed()` to `infer_proteins()`
+
+### SearchMethods Refactoring Completion  
+- **File References**: Implemented type-safe file operations via `scoring_interface.jl`
+- **Algorithm Wrappers**: Added safe wrappers around protein inference algorithms
+- **Memory Efficiency**: Enhanced heap-based merging for large datasets
+- **Code Cleanup**: Removed outdated refactoring documentation
+
+### API Improvements
 - Moved protein inference functions to module scope for accessibility
-- Added `update_psms_with_probit_scores` for proper score propagation
+- Added `update_psms_with_probit_scores` for proper score propagation  
 - Enhanced bidirectional file mapping between PSMs and protein groups
+- Simplified MaxLFQSearch integration using MSData directly

@@ -124,7 +124,10 @@ end
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
     
-    # FileReference and FileOperations comprehensive tests
+    # FileReference and FileOperations comprehensive tests (legacy - kept for backward compatibility)
     include("./UnitTests/test_file_references_comprehensive.jl")
     include("./UnitTests/test_file_operations.jl")
+    
+    # New modular FileOperations test suite
+    include("./utils/FileOperations/test_file_operations_suite.jl")
 end
