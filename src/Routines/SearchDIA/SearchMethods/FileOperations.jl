@@ -27,15 +27,8 @@ Available operations:
 - `filter_rows(predicate; desc)` - Filter rows by condition
 - `sort_by(cols; rev)` - Sort with automatic state tracking
 """
-
-using Arrow, DataFrames, Tables
-using DataStructures: BinaryMinHeap, BinaryMaxHeap
-
-# FileReferences.jl is already included by importScripts.jl
-# But we need to ensure it's loaded first
-if !@isdefined(FileReference)
-    include(joinpath(@__DIR__, "FileReferences.jl"))
-end
+# FileReferences.jl is loaded by importScripts.jl before this file
+# No need to include it again - this eliminates duplicate documentation warnings
 
 # Note: The real getProteinGroupsDict implementation is in ScoringSearch/utils.jl
 # To avoid circular dependencies, we pass it as a function parameter to apply_protein_inference
@@ -1152,31 +1145,6 @@ function transform_and_write!(transform_fn::Function, ref::FileReference)
     
     # Write back using writeArrow for Windows compatibility
     return write_arrow_file(ref, transformed_df)
-end
-
-"""
-    transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
-    
-Load entire file, apply transformation, and write to a new location.
-Does not modify the original file.
-"""
-function transform_and_write!(transform_fn::Function, ref::FileReference, output_path::String)
-    validate_exists(ref)
-    
-    # Ensure output directory exists
-    output_dir = dirname(output_path)
-    !isdir(output_dir) && mkpath(output_dir)
-    
-    # Load entire file into memory
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    
-    # Apply transformation
-    transformed_df = transform_fn(df)
-    
-    # Write to output path
-    writeArrow(output_path, transformed_df)
-    
-    return nothing
 end
 
 """

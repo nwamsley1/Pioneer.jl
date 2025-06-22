@@ -309,30 +309,8 @@ function validate_exists(ref::FileReference)
     return true
 end
 
-"""
-    sort_file_by_keys!(ref::FileReference, keys::Symbol...; reverse=false)
-
-Sort a file by the specified keys and update the reference.
-"""
-function sort_file_by_keys!(ref::FileReference, keys::Symbol...; reverse=false)
-    validate_exists(ref)
-    
-    # Validate all sort keys exist in schema
-    for key in keys
-        has_column(schema(ref), key) || error("Sort key '$key' not in schema")
-    end
-    
-    # Read into DataFrame (creates a copy), sort, and write back
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
-    sort!(df, collect(keys); rev=reverse)
-    
-    # Write sorted data
-    Arrow.write(file_path(ref), df)
-    
-    # Update metadata
-    mark_sorted!(ref, keys...)
-    return ref
-end
+# Note: sort_file_by_keys! is implemented in FileOperations.jl with advanced features
+# including Vector{Bool} reverse directions and better error handling
 
 """
     create_psm_reference(file_path::String) -> PSMFileReference

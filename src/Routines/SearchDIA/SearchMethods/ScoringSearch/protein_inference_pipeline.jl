@@ -108,16 +108,6 @@ Inference Wrapper Functions
 ==========================================================#
 
 """
-    InferenceResult
-
-Container for protein inference results.
-"""
-struct InferenceResult
-    peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
-    use_for_quant::Dictionary{PeptideKey, Bool}
-end
-
-"""
     apply_inference_to_dataframe(df::DataFrame, precursors::LibraryPrecursors)
 
 Apply the core infer_proteins algorithm to a prepared DataFrame.

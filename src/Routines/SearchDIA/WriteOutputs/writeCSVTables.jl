@@ -1,8 +1,4 @@
-function parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
-    #Example: "1(7,M,Oxidation)(13,K,AnExampleMod)"
-    mods_regex = r"(?<=\().*?(?=\))"
-    return eachmatch(mods_regex, mods_string)
-end
+
 
 function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}) where {S<:AbstractString}
     # Convert the original string into an array of characters for easier manipulation
