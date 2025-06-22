@@ -72,6 +72,10 @@ function importScriptsSpecLib(files_loaded::Set{String} = Set{String}())
     # Include KoinaStructs directory
     safe_include_directory!(files_loaded, joinpath(package_root, "src", "structs", "KoinaStructs"))
     
+    # Include FileOperations (only if not already loaded)
+    fileops_path = joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl")
+    safe_include!(files_loaded, fileops_path)
+    
     # FASTA processing
     safe_include!(files_loaded, joinpath(root_path, "structs", "mods.jl"))
     safe_include!(files_loaded, joinpath(root_path, "fasta", "fasta_parser.jl"))

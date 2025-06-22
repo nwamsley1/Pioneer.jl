@@ -122,7 +122,7 @@ function importScripts()
     )
 
 
-    # Utils
+    # Utils (must load writeArrow before FileOperations)
     include_files!(
         joinpath(package_root, "src", "utils"),
         [
@@ -135,6 +135,9 @@ function importScripts()
             "profile.jl"
         ]
     )
+
+    # Include new FileOperations module from utils (after writeArrow is loaded)
+    safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
     # PSMs
     include_files!(
@@ -157,14 +160,10 @@ function importScripts()
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
     
-    # SearchMethods with explicit dependency management
+    # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
-    # Load core dependencies first (FileReferences before FileOperations)
-    safe_include!(joinpath(search_methods_dir, "FileReferences.jl"))
-    safe_include!(joinpath(search_methods_dir, "FileOperations.jl"))
-    
-    # Include remaining SearchMethods files
+    # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
     safe_include_directory!(search_methods_dir)
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
