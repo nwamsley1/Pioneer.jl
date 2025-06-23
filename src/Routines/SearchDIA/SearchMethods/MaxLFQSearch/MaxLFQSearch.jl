@@ -150,16 +150,18 @@ function summarize_results!(
         
         # Ensure all PSM files are sorted correctly for MaxLFQ
         sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
-        for (i, psm_ref) in enumerate(psm_refs)
-            if !is_sorted_by(psm_ref, sort_keys...)
-                @info "Sorting PSM file $i for MaxLFQ..."
-                sort_file_by_keys!(psm_ref, sort_keys...)
-            end
-        end
+        @info "Sorting PSM files by keys: $(sort_keys)..."
+        #for (i, psm_ref) in ProgressBar(enumerate(psm_refs))
+        #    if !is_sorted_by(psm_ref, sort_keys...)
+        #        sort_file_by_keys!(psm_ref, sort_keys...)
+        #    end
+        #end
+        sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
+                           reverse=[true, true, true, true], parallel=true )
         
         # Use reference-based merge with 4 sort keys (all descending)
         @info "Merging $(length(psm_refs)) PSM files using reference-based approach..."
-        merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
+        @time merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
                                            batch_size=1000000, reverse=true)
 
         # Verify the merged file is sorted (reference-based merge guarantees this)
@@ -168,7 +170,7 @@ function summarize_results!(
         
         # Add FileReference validation for MaxLFQ input
         @info "Validating input for MaxLFQ processing..."
-        validate_maxlfq_input(merged_psm_ref)
+        @time validate_maxlfq_input(merged_psm_ref)
         
         # Validate MaxLFQ parameters
         validate_maxlfq_parameters(Dict(

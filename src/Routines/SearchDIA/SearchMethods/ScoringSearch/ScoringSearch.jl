@@ -223,7 +223,6 @@ function summarize_results!(
             remove_columns(:best_trace) |>
             sort_by([:global_prob, :target], rev=[true, true])
         
-        @info "Applying pipeline to $(length(second_pass_refs)) files"
         apply_pipeline!(second_pass_refs, quant_processing_pipeline)
         
         filtered_refs = second_pass_refs

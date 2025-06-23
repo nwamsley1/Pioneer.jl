@@ -101,13 +101,14 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
     end
     
     if parallel && length(refs) > 1
-        Threads.@threads for ref in refs
+        Threads.@threads for ref in ProgressBar(refs)
             if exists(ref)
                 sort_file_by_keys!(ref, keys...; reverse=reverse)
             end
         end
     else
-        for ref in refs
+        # Sequential with traditional progress bar
+        for ref in ProgressBar(refs)
             if exists(ref)
                 sort_file_by_keys!(ref, keys...; reverse=reverse)
             end

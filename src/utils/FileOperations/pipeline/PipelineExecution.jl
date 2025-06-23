@@ -22,12 +22,6 @@ function apply_pipeline!(ref::FileReference, pipeline::TransformPipeline)
         return ref
     end
     
-    # Log operations
-    @info "Applying pipeline to $(file_path(ref)):"
-    for (desc, _) in pipeline.operations
-        @info "  - $desc"
-    end
-    
     # Apply all operations in single pass
     transform_and_write!(ref) do df
         for (desc, op) in pipeline.operations

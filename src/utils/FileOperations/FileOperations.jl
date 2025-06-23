@@ -90,34 +90,3 @@ include("algorithms/ValidationUtils.jl")
 # Load I/O operations
 include("io/ArrowOperations.jl")
 include("io/FileUtilities.jl")
-
-# Re-export all public functions from submodules
-# Core types and functions
-export FileReference, FileSchema, PSMFileReference, ProteinGroupFileReference, 
-       ProteinQuantFileReference, PairedSearchFiles,
-       file_path, schema, sorted_by, row_count, exists, n_protein_groups, n_experiments,
-       has_column, get_column_or_default, validate_required_columns, validate_schema,
-       mark_sorted!, is_sorted_by, ensure_sorted!, validate_exists,
-       create_psm_reference, create_protein_reference, create_protein_quant_reference, 
-       create_reference, describe_reference
-
-# Streaming operations
-export stream_transform, process_with_memory_limit, estimate_batch_size,
-       add_column_to_file!, update_column_in_file!, add_column_and_sort!,
-       stream_sorted_merge
-
-# Pipeline framework
-export TransformPipeline, PipelineOperation, |>,
-       add_column, rename_column, select_columns, remove_columns,
-       filter_rows, sort_by, add_interpolated_column, filter_by_threshold,
-       filter_by_multiple_thresholds,
-       apply_pipeline!, transform_and_write!, apply_pipeline_batch, write_transformed
-
-# Algorithm integrations
-export apply_protein_inference, update_psms_with_scores,
-       validate_maxlfq_input, validate_maxlfq_parameters, check_maxlfq_memory_requirements,
-       validate_join_compatibility, validate_sort_compatibility
-
-# I/O operations
-export sort_file_by_keys!, write_arrow_file, load_dataframe, column_names, has_columns,
-       ensure_directory_exists, get_file_size_mb

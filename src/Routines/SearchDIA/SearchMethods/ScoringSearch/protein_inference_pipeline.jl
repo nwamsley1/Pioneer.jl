@@ -1,19 +1,3 @@
-"""
-    protein_inference_pipeline.jl
-
-Composable pipeline operations for protein inference workflow.
-This module provides a clear, testable interface for protein inference
-while preserving the core `infer_proteins` algorithm.
-"""
-
-using DataFrames
-using Arrow
-using Tables
-using Dictionaries
-
-# Import the core inference algorithm
-using Pioneer: infer_proteins
-
 #==========================================================
 Pipeline Operations for Protein Inference
 ==========================================================#
@@ -29,18 +13,20 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
     
     op = function(df)
         # Get library data
-        all_sequences = getSequence(precursors)
-        all_accessions = getAccessionNumbers(precursors)
-        all_is_decoys = getIsDecoy(precursors)
-        all_entrap_ids = getEntrapmentGroupId(precursors)
+        all_sequences = getSequence(precursors)::AbstractVector{String}
+        all_accessions = getAccessionNumbers(precursors)::AbstractVector{String}
+        all_is_decoys = getIsDecoy(precursors)::AbstractVector{Bool}
+        all_entrap_ids = getEntrapmentGroupId(precursors)::AbstractVector{UInt8}
+        
+        # Extract precursor_idx column with type assertion for performance
+        precursor_idx = df.precursor_idx::AbstractVector{UInt32}
+        n_rows = length(precursor_idx)
         
         # Add columns if they don't exist
-        n_rows = nrow(df)
         if !hasproperty(df, :sequence)
             sequences = Vector{String}(undef, n_rows)
             for i in 1:n_rows
-                pid = df.precursor_idx[i]
-                sequences[i] = all_sequences[pid]
+                sequences[i] = all_sequences[precursor_idx[i]]
             end
             df.sequence = sequences
         end
@@ -48,8 +34,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         if !hasproperty(df, :accession_numbers)
             accessions = Vector{String}(undef, n_rows)
             for i in 1:n_rows
-                pid = df.precursor_idx[i]
-                accessions[i] = all_accessions[pid]
+                accessions[i] = all_accessions[precursor_idx[i]]
             end
             df.accession_numbers = accessions
         end
@@ -58,8 +43,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         if !hasproperty(df, :is_decoy)
             is_decoy_vec = Vector{Bool}(undef, n_rows)
             for i in 1:n_rows
-                pid = df.precursor_idx[i]
-                is_decoy_vec[i] = all_is_decoys[pid]
+                is_decoy_vec[i] = all_is_decoys[precursor_idx[i]]
             end
             df.is_decoy = is_decoy_vec
         end
@@ -68,8 +52,7 @@ function add_peptide_metadata(precursors::LibraryPrecursors)
         if !hasproperty(df, :entrap_id)
             entrap_vec = Vector{UInt8}(undef, n_rows)
             for i in 1:n_rows
-                pid = df.precursor_idx[i]
-                entrap_vec[i] = all_entrap_ids[pid]
+                entrap_vec[i] = all_entrap_ids[precursor_idx[i]]
             end
             df.entrap_id = entrap_vec
         end
@@ -160,14 +143,20 @@ function add_inferred_protein_column(inference_result::InferenceResult)
     desc = "add_inferred_protein_column"
     
     op = function(df)
-        n_rows = nrow(df)
+        # Extract columns with type assertions for performance
+        sequences = df.sequence::AbstractVector{String}
+        is_decoy = df.is_decoy::AbstractVector{Bool}
+        entrap_ids = df.entrap_id::AbstractVector{UInt8}
+        accession_numbers = df.accession_numbers::AbstractVector{String}
+        
+        n_rows = length(sequences)
         inferred_proteins = Vector{String}(undef, n_rows)
         
         for i in 1:n_rows
             pep_key = PeptideKey(
-                df.sequence[i],
-                !df.is_decoy[i],
-                df.entrap_id[i]
+                sequences[i],
+                !is_decoy[i],
+                entrap_ids[i]
             )
             
             if haskey(inference_result.peptide_to_protein, pep_key)
@@ -175,7 +164,7 @@ function add_inferred_protein_column(inference_result::InferenceResult)
                 inferred_proteins[i] = protein_key.name
             else
                 # Fallback to original protein
-                inferred_proteins[i] = df.accession_numbers[i]
+                inferred_proteins[i] = accession_numbers[i]
             end
         end
         
@@ -195,14 +184,19 @@ function add_quantification_flag(inference_result::InferenceResult)
     desc = "add_quantification_flag"
     
     op = function(df)
-        n_rows = nrow(df)
+        # Extract columns with type assertions for performance
+        sequences = df.sequence::AbstractVector{String}
+        is_decoy = df.is_decoy::AbstractVector{Bool}
+        entrap_ids = df.entrap_id::AbstractVector{UInt8}
+        
+        n_rows = length(sequences)
         use_for_quant = Vector{Bool}(undef, n_rows)
         
         for i in 1:n_rows
             pep_key = PeptideKey(
-                df.sequence[i],
-                !df.is_decoy[i],
-                df.entrap_id[i]
+                sequences[i],
+                !is_decoy[i],
+                entrap_ids[i]
             )
             
             if haskey(inference_result.use_for_quant, pep_key)
@@ -384,9 +378,7 @@ function perform_protein_inference_pipeline(
     pg_refs = ProteinGroupFileReference[]
     psm_to_pg_mapping = Dict{String, String}()
     
-    @info "Performing protein inference on $(length(psm_refs)) files"
-    
-    for (idx, psm_ref) in enumerate(psm_refs)
+    for (idx, psm_ref) in ProgressBar(collect(enumerate(psm_refs)))
         if !exists(psm_ref)
             continue
         end
@@ -435,19 +427,5 @@ function perform_protein_inference_pipeline(
         end
     end
     
-    @info "Created $(length(pg_refs)) protein group files"
-    
     return pg_refs, psm_to_pg_mapping
 end
-
-# Export functions
-export perform_protein_inference_pipeline,
-       add_peptide_metadata,
-       validate_peptide_data,
-       add_inferred_protein_column,
-       add_quantification_flag,
-       filter_by_min_peptides,
-       add_protein_features,
-       apply_inference_to_dataframe,
-       group_psms_by_protein,
-       InferenceResult

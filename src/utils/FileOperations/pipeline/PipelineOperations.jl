@@ -20,7 +20,18 @@ Add a new column by applying compute_fn to each row.
 function add_column(name::Symbol, compute_fn::Function)
     desc = "add_column_$name"
     op = function(df)
-        df[!, name] = [compute_fn(row) for row in eachrow(df)]
+        # Pre-allocate result vector for performance
+        n_rows = nrow(df)
+        result = Vector{Any}(undef, n_rows)
+        
+        # Use indexed iteration instead of eachrow for better type stability
+        for i in 1:n_rows
+            # Create a NamedTuple row for the compute function
+            row_data = NamedTuple{Tuple(propertynames(df))}(Tuple(df[i, col] for col in propertynames(df)))
+            result[i] = compute_fn(row_data)
+        end
+        
+        df[!, name] = result
         return df
     end
     return desc => op
@@ -115,8 +126,16 @@ function add_interpolated_column(new_col::Symbol, source_col::Symbol,
                                interpolator::Interpolations.Extrapolation)
     desc = "add_interpolated_column($new_col from $source_col)"
     op = function(df)
-        # Apply interpolator to source column
-        df[!, new_col] = [Float32(interpolator(val)) for val in df[!, source_col]]
+        # Extract source column with type assertion for performance
+        source_data = df[!, source_col]::AbstractVector{Float32}
+        
+        # Apply interpolator with pre-allocated result vector
+        result = Vector{Float32}(undef, length(source_data))
+        for i in eachindex(source_data)
+            result[i] = Float32(interpolator(source_data[i]))
+        end
+        
+        df[!, new_col] = result
         return df
     end
     return desc => op
@@ -156,8 +175,19 @@ function filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = 
     end
     
     op = function(df)
-        # Filter rows based on comparison
-        filter!(row -> comp_fn(row[col]), df)
+        # Extract column with type assertion for performance
+        col_data = df[!, col]::AbstractVector{Float32}
+        
+        # Create boolean mask for filtering
+        keep_mask = Vector{Bool}(undef, length(col_data))
+        for i in eachindex(col_data)
+            keep_mask[i] = comp_fn(col_data[i])
+        end
+        
+        # Filter using the mask (more efficient than row-by-row)
+        df_filtered = df[keep_mask, :]
+        empty!(df)
+        append!(df, df_filtered)
         return df
     end
     
@@ -211,19 +241,39 @@ function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real
     end
     
     op = function(df)
+        n_rows = nrow(df)
+        keep_mask = Vector{Bool}(undef, n_rows)
+        
         if logic == :and
             # AND logic - all conditions must be true
-            filter!(df) do row
-                all(comp_fn(row[col], threshold) for (col, threshold) in conditions)
+            fill!(keep_mask, true)  # Start with all true
+            for (col, threshold) in conditions
+                col_data = df[!, col]::AbstractVector{Float32}
+                for i in 1:n_rows
+                    if keep_mask[i]  # Only check if still true
+                        keep_mask[i] = comp_fn(col_data[i], threshold)
+                    end
+                end
             end
         elseif logic == :or
             # OR logic - at least one condition must be true
-            filter!(df) do row
-                any(comp_fn(row[col], threshold) for (col, threshold) in conditions)
+            fill!(keep_mask, false)  # Start with all false
+            for (col, threshold) in conditions
+                col_data = df[!, col]::AbstractVector{Float32}
+                for i in 1:n_rows
+                    if !keep_mask[i]  # Only check if still false
+                        keep_mask[i] = comp_fn(col_data[i], threshold)
+                    end
+                end
             end
         else
             error("Unsupported logic: $logic. Use :and or :or")
         end
+        
+        # Filter using the mask
+        df_filtered = df[keep_mask, :]
+        empty!(df)
+        append!(df, df_filtered)
         return df
     end
     

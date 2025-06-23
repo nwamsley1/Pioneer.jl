@@ -17,7 +17,6 @@ function get_best_traces(
     second_pass_psms_paths::Vector{String},
     min_prob::Float32 = 0.75f0
 )
-    @info "[PERF] get_best_traces: Starting" n_files=length(second_pass_psms_paths)
     start_time = time()
     initial_memory = Base.gc_live_bytes() / 1024^2  # MB
     
@@ -66,12 +65,6 @@ function get_best_traces(
     end
     filter!(x->x.best_trace, psms_trace_df);
     traces_passing = Set([(precursor_idx = x.precursor_idx, isotopes_captured = x.isotopes_captured) for x in eachrow(psms_trace_df)]);
-    
-    elapsed = time() - start_time
-    final_memory = Base.gc_live_bytes() / 1024^2
-    memory_used = final_memory - initial_memory
-    @info "[PERF] get_best_traces: Completed" elapsed=round(elapsed, digits=3) memory_used_MB=round(memory_used, digits=1) n_traces=length(traces_passing) files_processed=files_processed total_rows=total_rows_processed avg_rows_per_file=round(total_rows_processed/max(files_processed,1), digits=1)
-    
     return traces_passing
 end
 
@@ -517,8 +510,7 @@ function count_protein_peptides(precursors::LibraryPrecursors)
     all_decoys = getIsDecoy(precursors)
     all_entrap_ids = getEntrapmentGroupId(precursors)
     n_precursors = length(all_accession_numbers)
-    @info "[PERF] count_protein_peptides: Starting" n_precursors=n_precursors
-    
+
     for i in 1:n_precursors
         protein_names = split(all_accession_numbers[i], ';')  # Handle shared peptides
         is_decoy = all_decoys[i]
@@ -532,10 +524,7 @@ function count_protein_peptides(precursors::LibraryPrecursors)
             push!(protein_to_possible_peptides[key], all_sequences[i])
         end
     end
-    
-    peptide_count_time = time() - peptide_count_start
-    @info "[PERF] count_protein_peptides: Completed" elapsed=round(peptide_count_time, digits=3) n_proteins=length(protein_to_possible_peptides)
-    
+
     return protein_to_possible_peptides
 end
 
@@ -618,9 +607,7 @@ function update_psms_with_probit_scores_refs(
     pg_score_to_qval::Interpolations.Extrapolation,
     global_pg_score_to_qval::Interpolations.Extrapolation
 )
-    start_time = time()
-    @info "[PERF] update_psms_with_probit_scores_refs: Starting"
-    
+
     total_psms_updated = 0
     files_processed = 0
     
@@ -711,9 +698,6 @@ function update_psms_with_probit_scores_refs(
         
         files_processed += 1
     end
-    
-    elapsed = time() - start_time
-    @info "[PERF] update_psms_with_probit_scores_refs: Completed" elapsed=round(elapsed, digits=3) files_processed=files_processed total_psms_updated=total_psms_updated
 end
 
 
@@ -842,7 +826,6 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]#, :log_binom_coeff]
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
-    @info "describe(all_protein_groups[!,:pg_score])" describe(all_protein_groups[!,:pg_score])
     y = all_protein_groups.target
     
     # Fit probit model
@@ -864,6 +847,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         # Use the new apply_probit_scores! function with references
         apply_probit_scores!(pg_refs, β_fitted, feature_names)
     end
+    #=
     if show_improvement && !isempty(pg_refs)
         # Merge all protein group files to calculate improvement
         pg_paths = [file_path(ref) for ref in pg_refs]
@@ -879,6 +863,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
         percent_improv = 100.0*(new_passing - old_passing)/old_passing |> round 
         @info "Probit regression improved passing targets by $(percent_improv)%"
     end
+    =#
 end
 
 
@@ -906,7 +891,6 @@ function fit_probit_model(X::Matrix{Float64}, y::Vector{Bool})
     # Add intercept column
     X_with_intercept = hcat(ones(size(X_standardized, 1)), X_standardized)
     X_df = DataFrame(X_with_intercept, [:intercept; Symbol.("feature_", 1:size(X, 2))])
-    @info "Describe input" describe(X_df)
     
     # Initialize coefficients
     β = zeros(Float64, size(X_with_intercept, 2))

@@ -4,43 +4,6 @@ Interface functions for ScoringSearch that work exclusively with file references
 These functions provide a clean abstraction layer between ScoringSearch and file operations,
 ensuring all file access goes through the reference system.
 """
-
-# FileReferences.jl, SearchResultReferences.jl and FileOperations.jl are already included by importScripts.jl
-
-using DataFrames, Arrow
-
-#==========================================================
-PSM Processing Functions
-==========================================================#
-
-
-
-#==========================================================
-Protein Group Operations
-==========================================================#
-
-
-
-#==========================================================
-Score Calculation Functions
-==========================================================#
-
-
-
-#==========================================================
-Q-value Calculation Functions  
-==========================================================#
-
-
-#==========================================================
-Summary Functions
-==========================================================#
-
-
-
-
-
-
 #==========================================================
 Reference-Based Wrappers for Direct File Operations
 ==========================================================#
@@ -140,14 +103,17 @@ Scoring-Specific Pipeline Operations
 Add best trace indicator based on isotope trace type.
 """
 function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)
-    desc = "add_best_trace_indicator"
     op = function(df)  # df is passed by transform_and_write!
         if seperateTraces(isotope_type)
+            # Extract columns with type assertions for performance
+            precursor_idx_col = df.precursor_idx::AbstractVector{UInt32}
+            isotopes_captured_col = df.isotopes_captured::AbstractVector{Tuple{Int8, Int8}}   
+            
             # Efficient vectorized operation for separate traces
             df[!,:best_trace] = [
-                (precursor_idx=row.precursor_idx, 
-                 isotopes_captured=row.isotopes_captured) ∈ best_traces
-                for row in eachrow(df)
+                (precursor_idx=precursor_idx_col[i], 
+                 isotopes_captured=isotopes_captured_col[i]) ∈ best_traces
+                for i in eachindex(precursor_idx_col)
             ]
         else
             # Group-based operation for combined traces
@@ -156,7 +122,7 @@ function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::S
         end
         return df
     end
-    return desc => op
+    return "" => op
 end
 
 """
@@ -185,9 +151,3 @@ function get_quant_necessary_columns()
         :ms_file_idx
     ]
 end
-
-# Export all interface functions
-export merge_psm_files,
-       calculate_and_add_global_scores!, apply_probit_scores!,
-       # Pipeline operations
-       add_best_trace_indicator, get_quant_necessary_columns
