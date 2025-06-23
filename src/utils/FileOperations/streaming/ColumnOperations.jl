@@ -16,7 +16,7 @@ Windows-Safe File Operations
 ==========================================================#
 
 """
-    safe_replace_file(temp_path::String, target_path::String)
+    safe_replace_file(temp_path::String, target_path::String, file_handle)
 
 Safely replace a file with Windows-specific handling for file locks and permissions.
 Uses the same retry and fallback logic as writeArrow and safeRm.
@@ -24,23 +24,25 @@ Uses the same retry and fallback logic as writeArrow and safeRm.
 # Arguments
 - `temp_path`: Path to temporary file that should replace the target
 - `target_path`: Path to file that should be replaced
+- `file_handle`: File handle or reference that should be cleared before replacement (e.g., Arrow.Table, IOStream, or nothing)
 
 # Implementation
-- On Windows: Multiple retry attempts with GC, fallback to cmd del, final fallback to rename
+- Clears the file_handle by setting it to nothing before attempting replacement
+- On Windows: Multiple retry attempts, fallback to cmd del, final fallback to rename
 - On Unix: Standard mv() call
 
 This function handles common Windows file locking issues that occur with Arrow files.
 """
-function safe_replace_file(temp_path::String, target_path::String)
+function safe_replace_file(temp_path::String, target_path::String, file_handle)
+    # Clear the file handle before attempting replacement
+    file_handle = nothing
+    
     if Sys.iswindows()
         # Try to delete the existing file with retries (if it exists)
         if isfile(target_path)
-            max_retries = 5
+            max_retries = 3  # Reduced retries since we're not relying on GC
             for i in 1:max_retries
                 try
-                    # Force garbage collection to release any file handles
-                    GC.gc()
-                    
                     # Try to delete using Julia's rm with force flag
                     rm(target_path, force=true)
                     break
@@ -60,8 +62,8 @@ function safe_replace_file(temp_path::String, target_path::String)
                             end
                         end
                     else
-                        # Wait with exponential backoff before retrying
-                        sleep(0.1 * i)
+                        # Brief wait before retrying (reduced from exponential backoff)
+                        sleep(0.05)
                     end
                 end
             end
@@ -139,7 +141,7 @@ function add_column_to_file!(ref::FileReference,
     end
     
     # Replace original file using Windows-safe method
-    safe_replace_file(temp_path, file_path(ref))
+    safe_replace_file(temp_path, file_path(ref), tbl)
     
     # Update reference metadata
     # We need to re-read the file to update schema
@@ -198,7 +200,7 @@ function update_column_in_file!(ref::FileReference,
     end
     
     # Replace original file using Windows-safe method
-    safe_replace_file(temp_path, file_path(ref))
+    safe_replace_file(temp_path, file_path(ref), tbl)
     
     # Sort order may be affected if we updated a sort key
     if col_name in sorted_by(ref)

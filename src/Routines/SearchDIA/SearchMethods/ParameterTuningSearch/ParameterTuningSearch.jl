@@ -347,7 +347,7 @@ function summarize_results!(
     output_path = joinpath(rt_alignment_folder, "rt_alignment_plots.pdf")
     try
         if isfile(output_path)
-            safeRm(output_path)
+            safeRm(output_path, nothing)
         end
     catch e
         @warn "Could not clear existing file: $e"

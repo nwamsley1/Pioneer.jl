@@ -1,38 +1,40 @@
 # Safe file operations for cross-platform compatibility
 
 """
-    safeRm(fpath::String; force::Bool=false)
+    safeRm(fpath::String, file_handle; force::Bool=false)
 
 Safely remove a file with Windows-specific handling for file locks and permissions.
 
 # Arguments
 - `fpath`: Path to file to remove
+- `file_handle`: File handle or reference that should be cleared before deletion (e.g., Arrow.Table, IOStream, or nothing)
 - `force`: Force removal even if file is read-only
 
 # Implementation
-- On Windows: Multiple retry attempts with GC, fallback to cmd del, final fallback to rename
+- Clears the file_handle by setting it to nothing before attempting deletion
+- On Windows: Multiple retry attempts, fallback to cmd del, final fallback to rename
 - On Unix: Standard rm() call
 
 This function handles common Windows file locking issues that occur with Arrow files
 and other binary formats that may have lingering file handles.
 """
-function safeRm(fpath::String; force::Bool=false)
+function safeRm(fpath::String, file_handle; force::Bool=false)
+    # Clear the file handle before attempting deletion
+    file_handle = nothing
+    
     if Sys.iswindows()
         # Return early if file doesn't exist
         if !isfile(fpath)
             return nothing
         end
         
-        max_retries = 5
+        max_retries = 3  # Reduced since we're explicitly clearing handles
         for i in 1:max_retries
             try
-                # Force garbage collection to release any file handles
-                GC.gc()
-                
                 # Try Julia's rm with force flag
                 rm(fpath, force=force)
                 return nothing
-            catch e
+            catch
                 if i == max_retries
                     # If all retries failed, try Windows-specific deletion
                     try

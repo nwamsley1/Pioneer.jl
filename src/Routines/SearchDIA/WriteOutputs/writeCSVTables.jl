@@ -95,7 +95,7 @@ function writePrecursorCSV(
     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
     if isfile(wide_precursors_arrow_path)
-        safeRm(wide_precursors_arrow_path)
+        safeRm(wide_precursors_arrow_path, nothing)
     end
     wide_columns = ["species"
     "inferred_protein_group"
@@ -206,8 +206,8 @@ function writePrecursorCSV(
         end
     end
     if write_csv == false
-        safeRm(long_precursors_path, force = true)
-        safeRm(wide_precursors_path, force = true)
+        safeRm(long_precursors_path, nothing, force = true)
+        safeRm(wide_precursors_path, nothing, force = true)
     end
     return wide_precursors_arrow_path
 end
@@ -243,7 +243,7 @@ function writeProteinGroupsCSV(
     wide_protein_groups_path = joinpath(out_dir,"protein_groups_wide.tsv")
     wide_protein_groups_arrow = joinpath(out_dir,"protein_groups_wide.arrow")
     if isfile(wide_protein_groups_arrow)
-        safeRm(wide_protein_groups_arrow)
+        safeRm(wide_protein_groups_arrow, nothing)
     end
     # Update wide columns to include n_peptides
     wide_columns = ["species", "protein", "target"]
@@ -317,8 +317,8 @@ function writeProteinGroupsCSV(
             end
         end
         if write_csv == false
-            safeRm(long_protein_groups_path, force = true)
-            safeRm(wide_protein_groups_path, force = true)
+            safeRm(long_protein_groups_path, nothing, force = true)
+            safeRm(wide_protein_groups_path, nothing, force = true)
         end
     end
     return wide_protein_groups_arrow

@@ -558,7 +558,7 @@ function qcPlots(
     output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
     try
         if isfile(output_path)
-            safeRm(output_path)
+            safeRm(output_path, nothing)
         end
     catch e
         @warn "Could not clear existing file: $e"
