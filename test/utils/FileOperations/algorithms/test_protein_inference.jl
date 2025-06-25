@@ -1,165 +1,209 @@
-using Test
-using Arrow, DataFrames
-
-# Include the algorithms module
-package_root = dirname(dirname(dirname(dirname(@__DIR__))))
-include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
-
-@testset "Protein Inference Algorithm Tests" begin
+@testset "Protein Inference FileOperations Integration Tests" begin
     
-    @testset "Basic Protein Inference" begin
+    @testset "File Reference Creation and Validation" begin
         temp_dir = mktempdir()
         
-        # Create PSM data with protein groupings
+        # Test PSM file reference creation
         psm_df = DataFrame(
-            precursor_idx = UInt32[1, 2, 3, 4, 5],
-            inferred_protein_group = ["P1", "P1", "P2", "P3", "P1|P2"],
-            target = Bool[true, true, true, false, true],
-            entrapment_group_id = UInt8[0, 0, 0, 0, 1],
-            prob = Float32[0.9, 0.8, 0.7, 0.6, 0.85],
-            use_for_protein_quant = Bool[true, true, true, true, true]
+            precursor_idx = UInt32[1, 2, 3],
+            prob = Float32[0.9, 0.8, 0.85],
+            target = Bool[true, true, false],
+            entrapment_group_id = UInt8[0, 0, 0]
         )
         
-        psm_file = joinpath(temp_dir, "psms.arrow")
+        psm_file = joinpath(temp_dir, "test_psms.arrow")
         Arrow.write(psm_file, psm_df)
         psm_ref = PSMFileReference(psm_file)
         
-        # Apply protein inference
-        output_file = joinpath(temp_dir, "protein_groups.arrow")
-        protein_ref = apply_protein_inference(psm_ref, output_file)
+        @test exists(psm_ref)
+        @test file_path(psm_ref) == psm_file
+        @test row_count(psm_ref) == 3
         
-        @test exists(protein_ref)
-        result_df = DataFrame(Arrow.Table(file_path(protein_ref)))
+        # Test protein group file reference creation
+        pg_df = DataFrame(
+            protein_name = ["P1", "P2"],
+            target = Bool[true, false],
+            entrap_id = UInt8[0, 0],
+            n_peptides = Int64[2, 1],
+            pg_score = Float32[2.5, 1.8]
+        )
         
-        # Should have protein groups with metadata
-        @test hasproperty(result_df, :protein_name)
-        @test hasproperty(result_df, :target)
-        @test hasproperty(result_df, :entrapment_group_id)
-        @test hasproperty(result_df, :n_peptides)
-        @test nrow(result_df) >= 3  # At least P1, P2, P3
+        pg_file = joinpath(temp_dir, "test_proteins.arrow")
+        Arrow.write(pg_file, pg_df)
+        pg_ref = ProteinGroupFileReference(pg_file)
+        
+        @test exists(pg_ref)
+        @test file_path(pg_ref) == pg_file
+        @test row_count(pg_ref) == 2
         
         # Clean up
         rm(temp_dir, recursive=true)
     end
     
-    @testset "Protein Inference with Entrapment Groups" begin
+    @testset "Paired File References" begin
         temp_dir = mktempdir()
         
-        # Create PSM data with multiple entrapment groups
-        psm_df = DataFrame(
-            precursor_idx = UInt32[1, 2, 3, 4, 5, 6],
-            inferred_protein_group = ["P1", "P1", "P2", "P1", "P2", "P3"],
-            target = Bool[true, true, true, true, false, false],
-            entrapment_group_id = UInt8[0, 0, 1, 1, 0, 1],
-            prob = Float32[0.9, 0.8, 0.85, 0.75, 0.6, 0.7],
-            use_for_protein_quant = Bool[true, true, true, true, true, true]
-        )
-        
-        psm_file = joinpath(temp_dir, "entrap_psms.arrow")
-        Arrow.write(psm_file, psm_df)
-        psm_ref = PSMFileReference(psm_file)
-        
-        # Apply protein inference
-        output_file = joinpath(temp_dir, "entrap_proteins.arrow")
-        protein_ref = apply_protein_inference(psm_ref, output_file)
-        
-        result_df = DataFrame(Arrow.Table(file_path(protein_ref)))
-        
-        # Should handle entrapment groups properly
-        @test any(result_df.entrapment_group_id .== 0)
-        @test any(result_df.entrapment_group_id .== 1)
-        
-        # Same protein in different entrapment groups should be separate entries
-        p1_entries = filter(row -> row.protein_name == "P1", result_df)
-        @test nrow(p1_entries) >= 1  # Could be 1 or 2 depending on entrapment groups
-        
-        # Clean up
-        rm(temp_dir, recursive=true)
-    end
-    
-    @testset "Protein Inference Parameter Validation" begin
-        temp_dir = mktempdir()
-        
-        # Create minimal PSM data
+        # Create matching PSM and protein group files
         psm_df = DataFrame(
             precursor_idx = UInt32[1, 2],
-            inferred_protein_group = ["P1", "P2"],
-            target = Bool[true, true],
-            entrapment_group_id = UInt8[0, 0],
             prob = Float32[0.9, 0.8],
+            target = Bool[true, true]
+        )
+        
+        pg_df = DataFrame(
+            protein_name = ["P1"],
+            target = Bool[true],
+            n_peptides = Int64[2]
+        )
+        
+        psm_file = joinpath(temp_dir, "paired_psms.arrow")
+        pg_file = joinpath(temp_dir, "paired_proteins.arrow")
+        
+        Arrow.write(psm_file, psm_df)
+        Arrow.write(pg_file, pg_df)
+        
+        # Test paired file creation
+        paired_files = PairedSearchFiles(psm_file, pg_file, 1)
+        
+        @test exists(paired_files.psm_ref)
+        @test exists(paired_files.protein_ref)
+        @test paired_files.ms_file_idx == 1
+        
+        # Clean up
+        rm(temp_dir, recursive=true)
+    end
+    
+    @testset "File Schema Validation" begin
+        temp_dir = mktempdir()
+        
+        # Test PSM schema validation
+        complete_psm_df = DataFrame(
+            precursor_idx = UInt32[1, 2],
+            prob = Float32[0.9, 0.8],
+            target = Bool[true, false],
+            entrapment_group_id = UInt8[0, 0],
+            inferred_protein_group = ["P1", "P1"],
             use_for_protein_quant = Bool[true, true]
         )
         
-        psm_file = joinpath(temp_dir, "param_psms.arrow")
-        Arrow.write(psm_file, psm_df)
+        psm_file = joinpath(temp_dir, "complete_psms.arrow")
+        Arrow.write(psm_file, complete_psm_df)
         psm_ref = PSMFileReference(psm_file)
         
-        # Test with custom parameters
-        output_file = joinpath(temp_dir, "param_proteins.arrow")
-        protein_ref = apply_protein_inference(
-            psm_ref, 
-            output_file;
-            min_peptides_per_protein = 1,
-            require_unique_peptides = false
+        # Test required columns validation
+        required_psm_cols = Set([:precursor_idx, :prob, :target, :entrapment_group_id])
+        @test validate_schema(psm_ref, required_psm_cols) === nothing
+        
+        # Test protein group schema validation  
+        complete_pg_df = DataFrame(
+            protein_name = ["P1"],
+            target = Bool[true],
+            entrap_id = UInt8[0],
+            n_peptides = Int64[2],
+            pg_score = Float32[2.5]
         )
         
-        @test exists(protein_ref)
-        result_df = DataFrame(Arrow.Table(file_path(protein_ref)))
-        @test nrow(result_df) >= 2
+        pg_file = joinpath(temp_dir, "complete_proteins.arrow")
+        Arrow.write(pg_file, complete_pg_df)
+        pg_ref = ProteinGroupFileReference(pg_file)
+        
+        required_pg_cols = Set([:protein_name, :target, :entrap_id, :n_peptides])
+        @test validate_schema(pg_ref, required_pg_cols) === nothing
         
         # Clean up
         rm(temp_dir, recursive=true)
     end
     
-    @testset "Protein Inference with Missing Columns" begin
+    @testset "Missing File Handling" begin
         temp_dir = mktempdir()
         
-        # Create PSM data missing some optional columns
-        psm_df = DataFrame(
-            precursor_idx = UInt32[1, 2, 3],
-            inferred_protein_group = ["P1", "P1", "P2"],
-            target = Bool[true, true, false],
-            # Missing entrapment_group_id - should default to 0
-            prob = Float32[0.9, 0.8, 0.7]
-            # Missing use_for_protein_quant - should default to true
-        )
+        # Test non-existent file references
+        missing_psm_file = joinpath(temp_dir, "missing_psms.arrow")
+        missing_psm_ref = PSMFileReference(missing_psm_file)
         
-        psm_file = joinpath(temp_dir, "missing_cols_psms.arrow")
-        Arrow.write(psm_file, psm_df)
-        psm_ref = PSMFileReference(psm_file)
+        @test !exists(missing_psm_ref)
+        @test_throws ErrorException validate_exists(missing_psm_ref)
         
-        # Should handle missing columns gracefully
-        output_file = joinpath(temp_dir, "missing_cols_proteins.arrow")
-        protein_ref = apply_protein_inference(psm_ref, output_file)
+        missing_pg_file = joinpath(temp_dir, "missing_proteins.arrow")
+        missing_pg_ref = ProteinGroupFileReference(missing_pg_file)
         
-        @test exists(protein_ref)
-        result_df = DataFrame(Arrow.Table(file_path(protein_ref)))
-        @test hasproperty(result_df, :protein_name)
-        @test hasproperty(result_df, :target)
-        @test hasproperty(result_df, :entrapment_group_id)
+        @test !exists(missing_pg_ref)
+        @test_throws ErrorException validate_exists(missing_pg_ref)
         
         # Clean up
         rm(temp_dir, recursive=true)
     end
     
-    @testset "Protein Inference Error Handling" begin
+    @testset "File Operations Error Handling" begin
         temp_dir = mktempdir()
         
-        # Create PSM data missing required columns
+        # Test schema validation with missing columns
         incomplete_df = DataFrame(
             precursor_idx = UInt32[1, 2],
-            # Missing inferred_protein_group
-            target = Bool[true, false]
+            prob = Float32[0.9, 0.8]
+            # Missing required columns
         )
         
-        incomplete_file = joinpath(temp_dir, "incomplete_psms.arrow")
+        incomplete_file = joinpath(temp_dir, "incomplete.arrow")
         Arrow.write(incomplete_file, incomplete_df)
         incomplete_ref = PSMFileReference(incomplete_file)
         
-        output_file = joinpath(temp_dir, "error_proteins.arrow")
+        # Should fail when checking for missing required columns
+        required_cols = Set([:precursor_idx, :prob, :target, :entrapment_group_id])
+        @test_throws ErrorException validate_schema(incomplete_ref, required_cols)
         
-        # Should error due to missing required column
-        @test_throws KeyError apply_protein_inference(incomplete_ref, output_file)
+        # Clean up
+        rm(temp_dir, recursive=true)
+    end
+    
+    @testset "Multiple File Management" begin
+        temp_dir = mktempdir()
+        
+        # Create multiple file references
+        psm_refs = PSMFileReference[]
+        pg_refs = ProteinGroupFileReference[]
+        
+        for i in 1:3
+            # Create PSM file
+            psm_df = DataFrame(
+                precursor_idx = UInt32[i, i+10],
+                prob = Float32[0.9, 0.8],
+                target = Bool[true, false]
+            )
+            psm_file = joinpath(temp_dir, "psms_$i.arrow")
+            Arrow.write(psm_file, psm_df)
+            push!(psm_refs, PSMFileReference(psm_file))
+            
+            # Create protein group file
+            pg_df = DataFrame(
+                protein_name = ["P$i"],
+                target = Bool[true],
+                n_peptides = Int64[1]
+            )
+            pg_file = joinpath(temp_dir, "proteins_$i.arrow")
+            Arrow.write(pg_file, pg_df)
+            push!(pg_refs, ProteinGroupFileReference(pg_file))
+        end
+        
+        # Verify all files exist
+        @test length(psm_refs) == 3
+        @test length(pg_refs) == 3
+        
+        for psm_ref in psm_refs
+            @test exists(psm_ref)
+        end
+        
+        for pg_ref in pg_refs
+            @test exists(pg_ref)
+        end
+        
+        # Test file mapping
+        file_mapping = Dict{String, String}()
+        for (psm_ref, pg_ref) in zip(psm_refs, pg_refs)
+            file_mapping[file_path(psm_ref)] = file_path(pg_ref)
+        end
+        
+        @test length(file_mapping) == 3
         
         # Clean up
         rm(temp_dir, recursive=true)

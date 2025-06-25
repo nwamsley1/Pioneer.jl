@@ -315,8 +315,6 @@ function summarize_results!(
                            for (idx, (psm_path, pg_path)) in enumerate(psm_to_pg_mapping)]
             
             isempty(paired_files) && error("No protein groups created during protein inference")
-            
-            scoring_refs = ScoringSearchResultRefs(paired_files)
         end
         @info "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
@@ -404,7 +402,7 @@ function summarize_results!(
         @info "Step 20: Updating PSMs with final protein scores..."
         step20_time = @elapsed begin
             update_psms_with_probit_scores_refs(
-                scoring_refs.paired_files,
+                paired_files,
                 acc_to_max_pg_score,
                 search_context.pg_score_to_qval[],
                 search_context.global_pg_score_to_qval[]

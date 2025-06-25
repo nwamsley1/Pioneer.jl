@@ -1,9 +1,9 @@
 using Test
 using Dictionaries
 
-# Include the protein inference types and functions
+# Include only the protein inference functions
+# (types are already loaded by importScripts.jl in runtests.jl)
 package_root = dirname(dirname(@__DIR__))
-include(joinpath(package_root, "src", "structs", "protein_inference_types.jl"))
 include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
 @testset "Protein Inference Typed Implementation" begin

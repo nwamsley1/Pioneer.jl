@@ -43,6 +43,14 @@ end
 Validate MaxLFQ parameters for safety and correctness.
 """
 function validate_maxlfq_parameters(params::Dict)
+    # Check for required parameters
+    required_params = [:q_value_threshold, :batch_size, :min_peptides]
+    for param in required_params
+        if !haskey(params, param)
+            error("Missing required parameter: $param")
+        end
+    end
+    
     # Validate q-value threshold
     if haskey(params, :q_value_threshold)
         q_val = params[:q_value_threshold]
@@ -154,6 +162,3 @@ function validate_sort_compatibility(refs::Vector{<:FileReference}, sort_keys::S
     return true
 end
 
-# Export validation functions
-export validate_maxlfq_input, validate_maxlfq_parameters, check_maxlfq_memory_requirements,
-       validate_join_compatibility, validate_sort_compatibility

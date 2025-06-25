@@ -18,8 +18,6 @@ Test Structure:
 - io/: Tests for ValidationFunctions and file I/O operations
 """
 
-using Test
-
 @testset "FileOperations Comprehensive Test Suite" begin
     
     # Core module tests

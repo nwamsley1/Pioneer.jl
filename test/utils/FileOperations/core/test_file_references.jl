@@ -1,10 +1,3 @@
-using Test
-using Arrow, DataFrames, Tables
-using Random: shuffle
-
-# Include the core FileReferences module
-package_root = dirname(dirname(dirname(dirname(@__DIR__))))
-include(joinpath(package_root, "src", "utils", "FileOperations", "core", "FileReferences.jl"))
 
 @testset "FileReference Core Tests" begin
     

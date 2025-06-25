@@ -1,10 +1,5 @@
-using Test
-using Arrow, DataFrames
-using Random: shuffle
 
-# Include the core FileReferences module
-package_root = dirname(dirname(dirname(dirname(@__DIR__))))
-include(joinpath(package_root, "src", "utils", "FileOperations", "core", "FileReferences.jl"))
+using Random
 
 @testset "Sort State Management Tests" begin
     
@@ -62,9 +57,13 @@ include(joinpath(package_root, "src", "utils", "FileOperations", "core", "FileRe
         ensure_sorted!(ref, :a)  # Should not change state
         @test is_sorted_by(ref, :a)
         
-        # Test with wrong sort state
+        # Test ensure_sorted! with different column - should sort successfully
         mark_sorted!(ref, :b)  # Mark as sorted by :b
-        @test_throws ErrorException ensure_sorted!(ref, :c)  # Should error because not sorted by :c
+        ensure_sorted!(ref, :c)  # Should sort the file by :c
+        @test is_sorted_by(ref, :c)  # File should now be sorted by :c
+        
+        # Test error condition with non-existent column
+        @test_throws ErrorException ensure_sorted!(ref, :nonexistent_column)
         
         # Clean up
         rm(temp_dir, recursive=true)

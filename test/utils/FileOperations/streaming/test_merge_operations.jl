@@ -1,9 +1,3 @@
-using Test
-using Arrow, DataFrames
-
-# Include the merge operations module
-package_root = dirname(dirname(dirname(dirname(@__DIR__))))
-include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
 
 @testset "Merge Operations Tests" begin
     
@@ -247,9 +241,16 @@ include(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations
         file3 = joinpath(temp_dir, "missing_col.arrow")
         Arrow.write(file3, df3)
         ref3 = PSMFileReference(file3)
-        mark_sorted!(ref3, :different_col)
+        mark_sorted!(ref3, :id)  # Mark as sorted by :id even though it doesn't have that column
         
-        @test_throws BoundsError stream_sorted_merge([ref1, ref3], output_file, :id)
+        # Create a properly sorted file to test with ref3
+        df4 = DataFrame(id = [10, 11, 12], value = [7, 8, 9])
+        file4 = joinpath(temp_dir, "sorted.arrow")
+        Arrow.write(file4, df4)
+        ref4 = PSMFileReference(file4)
+        mark_sorted!(ref4, :id)
+        
+        @test_throws BoundsError stream_sorted_merge([ref4, ref3], output_file, :id)
         
         # Clean up
         rm(temp_dir, recursive=true)

@@ -1,32 +1,5 @@
 
-
-function plotIsotopes(
-    iso_a,
-    iso_b,
-    label_a,
-    label_b,
-    test_frag;
-    title::String = "title here"
-    )
-
-    frag_charge = test_frag.frag_charge
-    p = plot(title = title)
-    iso_idx = 0
-    for i in range(1, length(iso_a))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
-        plot!(p, [mz, mz], [0.0, iso_a[i]], color = 1, alpha = 0.5, lw = 5, label = nothing)
-        iso_idx += 1
-    end
-    hline!(p,[0.0], lw = 4, color = 1, labels = label_a)
-    iso_idx = 0
-    for i in range(1, length(iso_b))
-        mz = test_frag.mz + iso_idx*NEUTRON/frag_charge
-        plot!(p, [mz, mz], [0.0, iso_b[i]], color = 2, alpha = 0.5, lw = 5, label = nothing)
-        iso_idx += 1
-    end
-    hline!(p,[0.0], lw = 4, color = 2, labels = label_b)
-    plot!(p, show = true)
-end
+# plotIsotopes function is defined in isotopeSplines.jl to avoid duplicate definitions
 
 test_precursor = (mz = 981.5947f0,
  sequence = "TFTLKTVLMIAIQLITR",

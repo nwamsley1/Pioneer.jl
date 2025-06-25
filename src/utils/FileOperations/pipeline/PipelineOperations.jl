@@ -279,8 +279,3 @@ function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real
     
     return desc => op
 end
-
-# Export pipeline operation builders
-export add_column, rename_column, select_columns, remove_columns,
-       filter_rows, sort_by, add_interpolated_column, filter_by_threshold,
-       filter_by_multiple_thresholds

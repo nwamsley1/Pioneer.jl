@@ -7,7 +7,8 @@ and mixed sort directions.
 """
 
 using Arrow, DataFrames, Tables
-using DataStructures: BinaryMinHeap, BinaryMaxHeap
+using DataStructures: BinaryMinHeap, BinaryMaxHeap, BinaryHeap
+using Base.Order: Ordering, Forward, Reverse, By, Lt
 
 #==========================================================
 Helper Functions for Heap-based Merge
@@ -218,13 +219,58 @@ function _normalize_reverse_spec(reverse::Union{Bool,Vector{Bool}}, n_keys::Int)
 end
 
 """
-Generate heap type dynamically based on sort types and reverse specification.
+Compare two tuples with mixed reverse directions for each key.
 """
-function _create_typed_heap(::Type{SortTypes}, reverse_all::Bool) where SortTypes
-    if reverse_all
+function _mixed_reverse_compare(a, b, reverse_vec::Vector{Bool})
+    # Compare each sort key according to its reverse setting
+    for i in 1:(length(a)-1)  # -1 to skip table_idx (last element)
+        val_a, val_b = a[i], b[i]
+        if reverse_vec[i]
+            # Reverse order: larger values come first
+            if val_a > val_b
+                return true
+            elseif val_a < val_b
+                return false
+            end
+            # Equal values continue to next key
+        else
+            # Normal order: smaller values come first
+            if val_a < val_b
+                return true
+            elseif val_a > val_b
+                return false
+            end
+            # Equal values continue to next key
+        end
+    end
+    # All sort keys are equal, use table_idx as tiebreaker (always ascending)
+    return a[end] < b[end]
+end
+
+"""
+Generate heap type dynamically based on sort types and reverse specification.
+Supports mixed reverse directions for different keys.
+"""
+function _create_typed_heap(::Type{SortTypes}, reverse_vec::Vector{Bool}) where SortTypes
+    if length(reverse_vec) == 1
+        # Single key - use simple min/max heap
+        if reverse_vec[1]
+            return BinaryMaxHeap{SortTypes}()
+        else
+            return BinaryMinHeap{SortTypes}()
+        end
+    elseif all(reverse_vec)
+        # All keys reversed - use max heap
         return BinaryMaxHeap{SortTypes}()
-    else
+    elseif !any(reverse_vec)
+        # No keys reversed - use min heap
         return BinaryMinHeap{SortTypes}()
+    else
+        # Mixed reverse directions - use custom comparison with BinaryHeap
+        # Create comparison function that returns true if a < b in our desired order
+        comp_func = (a, b) -> _mixed_reverse_compare(a, b, reverse_vec)
+        ordering = Lt(comp_func)
+        return BinaryHeap(ordering, SortTypes[])
     end
 end
 
@@ -237,7 +283,7 @@ function _add_to_nkey_heap!(
     table_idx::Int,
     row_idx::Int,
     sort_keys::NTuple{N,Symbol}
-) where {N, H<:Union{BinaryMinHeap, BinaryMaxHeap}}
+) where {N, H<:Union{BinaryMinHeap, BinaryMaxHeap, BinaryHeap}}
     # Build tuple: (val1, val2, ..., valN, table_idx)
     values = tuple((Tables.getcolumn(table, key)[row_idx] for key in sort_keys)..., table_idx)
     push!(heap, values)
@@ -351,8 +397,26 @@ function _stream_sorted_merge_nkey_impl(
         validate_exists(ref)
     end
     
+    # Validate that all files are sorted by the requested keys
+    for ref in refs
+        if !is_sorted_by(ref, sort_keys...)
+            error("File $(file_path(ref)) is not sorted by the required keys: $(sort_keys). Use sort_file_by_keys! or mark_sorted! first.")
+        end
+    end
+    
     # Load all tables
     tables = [Arrow.Table(file_path(ref)) for ref in refs]
+    
+    # Validate that all tables have the required sort columns
+    for (i, table) in enumerate(tables)
+        available_columns = Set(Tables.columnnames(table))
+        for key in sort_keys
+            if key ∉ available_columns
+                throw(BoundsError("Column $key not found in file $(file_path(refs[i])). Available columns: $(collect(available_columns))"))
+            end
+        end
+    end
+    
     table_sizes = [length(Tables.getcolumn(table, 1)) for table in tables]
     table_indices = ones(Int64, length(tables))
     
@@ -362,8 +426,7 @@ function _stream_sorted_merge_nkey_impl(
     
     # Create heap with full type information
     heap_tuple_type = Tuple{sort_types..., Int64}
-    use_max_heap = all(reverse_vec)  # Only use max heap if all keys are reversed
-    heap = _create_typed_heap(heap_tuple_type, use_max_heap)
+    heap = _create_typed_heap(heap_tuple_type, reverse_vec)
     
     # Initialize heap with first row from each table
     for (i, table) in enumerate(tables)
@@ -415,17 +478,8 @@ function _stream_sorted_merge_nkey_impl(
     # Create output reference
     output_ref = create_reference(output_path, typeof(first(refs)))
     
-    # Handle mixed reverse cases with post-processing sort
-    if !all(reverse_vec) && any(reverse_vec)
-        # For mixed reverse, we need to sort the final file
-        # Note: sort_file_by_keys! doesn't support reverse parameter yet
-        # For now, we'll mark as sorted and rely on the heap-based ordering
-        @warn "Mixed reverse sorting not fully implemented - using heap-based ordering"
-        mark_sorted!(output_ref, sort_keys...)
-    else
-        # Mark as sorted for consistent reverse directions
-        mark_sorted!(output_ref, sort_keys...)
-    end
+    # Mark as sorted - heap-based merge maintains sort order for all cases
+    mark_sorted!(output_ref, sort_keys...)
     
     return output_ref
 end
