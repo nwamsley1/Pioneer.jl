@@ -26,7 +26,7 @@ using Dates
 
 main_dir = joinpath(@__DIR__, "../src")
 include(joinpath(dirname(@__DIR__), "src", "Routines","SearchDIA","importScripts.jl"))
-importScripts()
+files_loaded = importScripts()
 
 """
 Type alias for m/z to eV interpolation functions.
@@ -47,7 +47,7 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
 }
 
 include(joinpath(dirname(@__DIR__), "src", "Routines","BuildSpecLib","importScripts.jl"))
-importScripts()
+importScriptsSpecLib(files_loaded)
 #include(joinpath(main_dir, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))
 #const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
@@ -101,7 +101,6 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
-    
     @testset "process_test_speclib" begin 
         @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     end
@@ -117,10 +116,10 @@ end
     include("./UnitTests/queryFragmentIndex.jl")
     include("./UnitTests/testIsotopesJun13.jl")
     include("./UnitTests/uniformBassisCubicSpline.jl")
-    
-
-    include("./UnitTests/proteinInference.jl")
+    include("./UnitTests/test_protein_inference.jl")
     include("./UnitTests/ChronologerPrepTests.jl")
     include("./UnitTests/FastaDigestTests.jl")
     include("./UnitTests/BuildPionLibTest.jl")
+
+    include("./utils/FileOperations/test_file_operations_suite.jl")
 end

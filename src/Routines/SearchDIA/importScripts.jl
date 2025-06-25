@@ -1,6 +1,12 @@
 function importScripts()
     package_root = dirname(dirname(dirname(@__DIR__)))
-    #package_root = dirname(@__DIR__)
+    
+    # Simple safe import system without world age issues
+    files_loaded = Set{String}()
+    total_attempts = 0
+    successful_includes = 0
+    conflicts_skipped = String[]
+    
     function get_julia_files(dir::String)
         julia_files = String[]
         for (root, _, files) in walkdir(dir)
@@ -12,15 +18,57 @@ function importScripts()
         end
         return julia_files
     end
-    function include_files!(files_loded::Set{String}, file_dir::String, file_names::Vector{String})
-        file_paths = [joinpath(file_dir, fname) for fname in file_names]
-        [include(fpath) for fpath in file_paths if fpath ∉ files_loaded]
-        push!(files_loaded, file_paths...)
-        return nothing 
+    
+    function safe_include!(file_path::String)::Bool
+        total_attempts += 1
+        
+        # Check if file already loaded
+        if file_path in files_loaded
+            return false
+        end
+        
+        # Check if file exists
+        if !isfile(file_path)
+            @warn "File not found: $file_path"
+            return false
+        end
+        
+        # Include the file
+        try
+            include(file_path)
+            push!(files_loaded, file_path)
+            successful_includes += 1
+            return true
+        catch e
+            @warn "Failed to include $file_path: $e"
+            return false
+        end
     end
-    files_loaded = Set{String}()
+    
+    function include_files!(file_dir::String, file_names::Vector{String})
+        file_paths = [joinpath(file_dir, fname) for fname in file_names]
+        successful_count = 0
+        for fpath in file_paths
+            if safe_include!(fpath)
+                successful_count += 1
+            end
+        end
+        return successful_count
+    end
+    
+    function safe_include_directory!(dir::String)
+        files = get_julia_files(dir)
+        successful_count = 0
+        for jfile in files
+            if safe_include!(jfile)
+                successful_count += 1
+            end
+        end
+        return successful_count
+    end
+    
+    # Include files using the safe import system
     include_files!(
-        files_loaded, 
         joinpath(package_root, "src","utils", "quadTransmissionModeling"),
         [
             "quadTransmissionModel.jl",
@@ -33,10 +81,10 @@ function importScripts()
         ]
     )
 
-    include(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
-    include(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines","SearchDIA", "ParseInputs", "parseParams.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines","BuildSpecLib", "structs", "mods.jl"))
+    
     include_files!(
-        files_loaded, 
         joinpath(package_root, "src","structs"),
         [
             "MassSpecData.jl",
@@ -52,14 +100,14 @@ function importScripts()
             "FragBoundModel.jl",
             "RetentionTimeIndex.jl",
             "MassErrorModel.jl",                                                                  
-            "RetentionTimeConversionModel.jl"
+            "RetentionTimeConversionModel.jl",
+            "protein_inference_types.jl"
             ]
     )
 
     
     # Utilities/ML
     include_files!(
-        files_loaded,
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
@@ -74,23 +122,25 @@ function importScripts()
     )
 
 
-    # Utils
+    # Utils (must load writeArrow before FileOperations)
     include_files!(
-        files_loaded,
         joinpath(package_root, "src", "utils"),
         [
             "isotopes.jl",
             "isotopeSplines.jl",
             "maxLFQ.jl",
-                        "writeArrow.jl",
+            "writeArrow.jl",
+            "safeFileOps.jl",
             "proteinInference.jl",
             "profile.jl"
         ]
     )
 
+    # Include new FileOperations module from utils (after writeArrow is loaded)
+    safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
+
     # PSMs
     include_files!(
-        files_loaded,
         joinpath(package_root, "src", "Routines", "SearchDIA", "PSMs"),
         [
             "PSM.jl",
@@ -102,19 +152,24 @@ function importScripts()
 
         
     #Search Method 
-    include(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
 
-    include(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils", "selectTransitions", "selectTransitions.jl"))
 
-    #[println(fpath) for fpath in collect(files_loaded)]
+    # Include remaining files using safe import for directories
+    safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
+    safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs"))
+    
+    # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
+    search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
+    
+    # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
+    safe_include_directory!(search_methods_dir)
+    
+    safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils")) if jfile ∉ files_loaded]
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
+    
 
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "ParseInputs")) if jfile ∉ files_loaded]
-
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")) if jfile ∉ files_loaded]
-
-    [include(jfile) for jfile in get_julia_files(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs")) if jfile ∉ files_loaded]
-
-    include(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
+    return files_loaded
 end

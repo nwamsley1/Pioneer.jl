@@ -76,16 +76,41 @@ end
 
 ### Modifying Protein Group Scoring
 
-Protein group handling is in `ScoringSearch/utils.jl`:
+Protein group handling spans multiple modules:
 
-**Key Functions**:
-- `getProteinGroupsDict()` - Creates protein groups from PSMs
+**Core Protein Inference** (`src/utils/proteinInference.jl`):
+- `infer_proteins()` - Type-safe protein inference using ProteinKey and PeptideKey
+- Implements greedy set cover algorithm for minimal protein sets
+- Handles complex cases: distinct, differentiable, indistinguishable proteins
+
+**ScoringSearch Integration** (`ScoringSearch/protein_inference_pipeline.jl`):
+- `perform_protein_inference_pipeline()` - Composable pipeline for protein inference
+- `apply_inference_to_dataframe()` - Wrapper around core infer_proteins algorithm
+- `group_psms_by_protein()` - Aggregates PSMs into protein groups
+
+**Legacy Functions** (`ScoringSearch/utils.jl`):
+- `getProteinGroupsDict()` - Creates protein groups from PSMs (legacy approach)
 - `merge_sorted_protein_groups()` - Memory-efficient merging using heap
 - `writeProteinGroups()` - Outputs final protein groups
 
-**Protein Group Key Structure**:
+**Type-Safe Structures**:
 ```julia
-(protein_name::String, is_target::Bool, entrap_id::UInt8)
+struct ProteinKey
+    name::String
+    is_target::Bool
+    entrap_id::UInt8
+end
+
+struct PeptideKey
+    sequence::String
+    is_target::Bool
+    entrap_id::UInt8
+end
+
+struct InferenceResult
+    peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
+    use_for_quant::Dictionary{PeptideKey, Bool}
+end
 ```
 
 The `merge_sorted_protein_groups` function is critical for handling large datasets:
@@ -179,6 +204,35 @@ include("test/UnitTests/SearchMethods/test_scoring_search.jl")
 - `CommonSearchUtils/matchPeaks.jl` - Core spectral matching
 - `CommonSearchUtils/selectTransitions/` - Transition selection strategies
 - `WriteOutputs/` - Result formatting and plotting
+
+## Recent Development Updates (2025-01)
+
+### Protein Inference Refactoring
+The protein inference system was recently refactored to use type-safe structures:
+
+**Completed Changes**:
+- Replaced complex NamedTuples with `ProteinKey` and `PeptideKey` types
+- Unified API with single `infer_proteins()` function
+- Added comprehensive test suite (89 passing tests)
+- Removed legacy functions and conversion utilities
+- ~350 lines of code reduction
+
+**Migration Guide**:
+- Old: `infer_proteins_typed()` → New: `infer_proteins()`
+- Old: Complex NamedTuple keys → New: `ProteinKey` and `PeptideKey` structs
+- Old: Multiple function variants → New: Single type-safe function
+
+**Testing**:
+- Integration: `SearchDIA("./data/ecoli_test/ecoli_test_params.json")`
+- Unit tests: `include("test/UnitTests/test_protein_inference.jl")`
+
+### SearchMethods Refactoring Status
+All planned SearchMethods refactoring has been completed:
+- ✅ FileReference type hierarchy with PSMFileReference and ProteinGroupFileReference
+- ✅ Algorithm wrappers for protein inference and PSM score updates  
+- ✅ ScoringSearch interface using file references
+- ✅ Generic heap-based merge supporting N sort keys
+- ✅ MaxLFQSearch simplified to use MSData directly
 
 ## Module-Specific Documentation
 

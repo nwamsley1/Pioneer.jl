@@ -1,8 +1,4 @@
-function parseMods(mods_string::AbstractString)::Base.RegexMatchIterator
-    #Example: "1(7,M,Oxidation)(13,K,AnExampleMod)"
-    mods_regex = r"(?<=\().*?(?=\))"
-    return eachmatch(mods_regex, mods_string)
-end
+
 
 function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}) where {S<:AbstractString}
     # Convert the original string into an array of characters for easier manipulation
@@ -99,7 +95,7 @@ function writePrecursorCSV(
     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
     if isfile(wide_precursors_arrow_path)
-        rm(wide_precursors_arrow_path)
+        safeRm(wide_precursors_arrow_path, nothing)
     end
     wide_columns = ["species"
     "inferred_protein_group"
@@ -117,11 +113,19 @@ function writePrecursorCSV(
 
     long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
-    rename!(precursors_long, [:new_best_scan => :apex_scan,
-                              :prec_prob => :run_specific_prob,
-                              :pg_score => :run_specific_pg_score,
-                              :isotopes_captured_traces => :isotopes_captured,
-                              :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted])
+    
+    # Build rename pairs dynamically to avoid conflicts
+    rename_pairs = Pair{Symbol,Symbol}[]
+    push!(rename_pairs, :new_best_scan => :apex_scan)
+    push!(rename_pairs, :prec_prob => :run_specific_prob)
+    push!(rename_pairs, :pg_score => :run_specific_pg_score)
+    push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
+    push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
+    
+    # Apply all renames at once
+    if !isempty(rename_pairs)
+        rename!(precursors_long, rename_pairs)
+    end
     # order columns
     select!(precursors_long, [:file_name,
                              :species,
@@ -136,7 +140,7 @@ function writePrecursorCSV(
                              :global_prob,
                              :run_specific_prob,
                              :global_qval,
-                             :run_specific_qval,
+                             :qval,
                              :peak_area,
                              :peak_area_normalized,
                              :points_integrated,
@@ -202,8 +206,8 @@ function writePrecursorCSV(
         end
     end
     if write_csv == false
-        rm(long_precursors_path, force = true)
-        rm(wide_precursors_path, force = true)
+        safeRm(long_precursors_path, nothing, force = true)
+        safeRm(wide_precursors_path, nothing, force = true)
     end
     return wide_precursors_arrow_path
 end
@@ -239,7 +243,7 @@ function writeProteinGroupsCSV(
     wide_protein_groups_path = joinpath(out_dir,"protein_groups_wide.tsv")
     wide_protein_groups_arrow = joinpath(out_dir,"protein_groups_wide.arrow")
     if isfile(wide_protein_groups_arrow)
-        rm(wide_protein_groups_arrow)
+        safeRm(wide_protein_groups_arrow, nothing)
     end
     # Update wide columns to include n_peptides
     wide_columns = ["species", "protein", "target"]
@@ -313,8 +317,8 @@ function writeProteinGroupsCSV(
             end
         end
         if write_csv == false
-            rm(long_protein_groups_path, force = true)
-            rm(wide_protein_groups_path, force = true)
+            safeRm(long_protein_groups_path, nothing, force = true)
+            safeRm(wide_protein_groups_path, nothing, force = true)
         end
     end
     return wide_protein_groups_arrow

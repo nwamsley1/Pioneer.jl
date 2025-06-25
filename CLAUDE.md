@@ -261,6 +261,9 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 - **AlphaPeptDeep** - Supports QE, LUMOS, TIMSTOF, SCIEXTOF instruments
 
 ### Current Development Focus
+- Refactoring ScoringSearch and MaxLFQSearch for better encapsulation
+- See src/Routines/SearchDIA/SearchMethods/REFACTORING_PLAN_V2.md for detailed plan
+- Adding FileReference abstraction layer for type-safe file operations
 - Protein group ML scoring integration using XGBoost random forests
 - See PROTEIN_ML_SCORING_INTEGRATION.md for implementation details
 - Features top-N precursor scores with cross-validation consistency
@@ -309,3 +312,73 @@ diagnose_protein_scoring_issue(passing_psms_paths, passing_pg_paths, precursors)
 
 ## Memories
 - remember me as memory update
+
+## Current Development: SearchMethods Refactoring (2025-01)
+
+### Overview
+Refactoring ScoringSearch and MaxLFQSearch to improve encapsulation using file references instead of direct file access. See REFACTORING_PLAN_V2.md for detailed plan.
+
+### Completed Work
+1. **Phase 1**: Created abstract FileReference type hierarchy
+   - FileReferences.jl: Abstract base type with PSMFileReference and ProteinGroupFileReference
+   - SearchResultReferences.jl: Type-safe result management
+   - FileOperations.jl: Updated to use abstract types
+
+2. **Phase 2**: Added algorithm wrappers
+   - apply_protein_inference: Wraps getProteinGroupsDict from utils
+   - update_psms_with_scores: Streaming PSM score updates
+
+3. **Phase 3**: Created ScoringSearch interface
+   - scoring_interface.jl: Reference-only functions for ScoringSearch
+   - All file access through FileOperations layer
+   - Comprehensive unit tests
+
+4. **Phase 4.1**: Added method results storage to SearchContext
+   - Added method_results field as Dict{Type{<:SearchMethod}, Any}
+   - Added store_results!, get_results, has_results accessor functions
+   - Updated SearchContext constructor
+
+5. **Phase 4.3**: Implemented generic heap-based merge in FileOperations
+   - Generic heap-based merge supporting arbitrary number of sort keys
+   - Dynamic heap type construction based on column types
+   - Memory-efficient batch processing
+   - Specialized merge functions: merge_psm_scores, merge_protein_groups_by_score
+
+### Test Files Created
+- test/UnitTests/test_file_references.jl
+- test/UnitTests/test_result_references.jl  
+- test/UnitTests/test_scoring_interface.jl
+
+### Completed Refactoring
+All phases of the SearchMethods refactoring have been completed:
+- ✅ Phase 1: Abstract FileReference type hierarchy
+- ✅ Phase 2: Algorithm wrappers for protein inference and PSM updates
+- ✅ Phase 3: ScoringSearch interface with reference-only operations
+- ✅ Phase 4.1: SearchContext method results storage (later removed as unnecessary)
+- ✅ Phase 4.2: ScoringSearch updated to use references
+- ✅ Phase 4.3: Generic heap-based merge supporting N sort keys
+- ✅ Phase 4.4: MaxLFQSearch simplified to use MSData directly
+
+### Key Achievements
+1. **Type-safe file references** prevent accidental misuse of files
+2. **Generic N-key merge** more flexible than fixed 2/4-key implementations
+3. **Simplified data flow** - removed unnecessary SearchContext storage
+4. **Backward compatibility** maintained throughout refactoring
+
+### Important Notes
+- The protein inference and MaxLFQ algorithms already exist and are NOT being reimplemented
+- We are only wrapping them with better abstractions and safety checks
+- ScoringSearch uses file references internally but doesn't store them in SearchContext
+- MaxLFQ gets file paths directly from MSData, not from stored references
+- All tests passing for completed phases
+
+### Recent Improvements (2025-01)
+1. **Unified PSM scoring entry point**: `score_precursor_isotope_traces` function automatically chooses between in-memory and out-of-memory processing
+2. **Fixed column management**: Added `:best_trace` to necessary columns for filtering, then removed after use
+3. **Simplified MaxLFQSearch**: Removed dependency on ScoringSearch references, uses MSData directly
+4. **Bug fixes**: Fixed `sort_and_filter_quant_tables_refs` to return references instead of `nothing`
+5. **Pipeline API**: Implemented composable file operations for clearer, more testable transformations
+   - Replaced opaque `sort_and_filter_quant_tables_refs` with explicit pipeline operations
+   - Each operation (add_column, filter_rows, sort_by, etc.) is individually testable
+   - Single-pass execution maintains efficiency
+   - Automatic sort state tracking via Base.sort! override

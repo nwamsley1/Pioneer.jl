@@ -1,9 +1,9 @@
 using JSON
-
-struct InvalidParametersError <: Exception
-    message::String
-    params::Dict{String, Any}
-end
+#see src/Routines/BuildspecKib/utils
+#struct InvalidParametersError <: Exception
+#    message::String
+#    params::Dict{String, Any}
+#end
 
 function checkParams(json_path::String)
     params = JSON.parsefile(json_path)

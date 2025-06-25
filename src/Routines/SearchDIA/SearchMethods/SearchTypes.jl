@@ -194,7 +194,9 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
     irt_obs::Dict{UInt32, Float32}
     pg_score_to_qval::Ref{Any}
     global_pg_score_to_qval::Ref{Any}
-
+    
+    # Method results storage
+    method_results::Dict{Type{<:SearchMethod}, Any}
     
     # Configuration
     n_threads::Int64
@@ -229,7 +231,8 @@ mutable struct SearchContext{N,L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
             Dict{UInt32, Float32}(),
-            Ref{Any}(),
+            Ref{Any}(), Ref{Any}(),
+            Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0  # Initialize library stats with defaults
         )
@@ -471,4 +474,37 @@ function setIrtErrors!(s::SearchContext, errs::Dictionary{Int64, Float32})
     end
 end
 
-# ... rest of data structure getters ...
+#==========================================================
+Method Results Storage Accessors
+==========================================================#
+
+"""
+    store_results!(ctx::SearchContext, ::Type{T}, results) where T<:SearchMethod
+
+Store results from a search method in the context.
+"""
+function store_results!(ctx::SearchContext, ::Type{T}, results) where T<:SearchMethod
+    ctx.method_results[T] = results
+    return nothing
+end
+
+"""
+    get_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
+
+Retrieve stored results for a search method. Returns nothing if not found.
+"""
+function get_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
+    return get(ctx.method_results, T, nothing)
+end
+
+"""
+    has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
+
+Check if results exist for a search method.
+"""
+function has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
+    return haskey(ctx.method_results, T)
+end
+
+# Export new accessor functions
+export store_results!, get_results, has_results

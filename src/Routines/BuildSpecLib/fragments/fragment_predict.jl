@@ -247,6 +247,3 @@ function sort_fragments!(df::DataFrame)
     sort!(df, [:precursor_idx, order(:intensities, rev=true)])
 end
 
-function sort_fragments!(df::DataFrame)
-    sort!(df, [:precursor_idx, order(:intensities, rev=true)])
-end

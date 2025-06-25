@@ -1,6 +1,73 @@
 #==========================================================
 PSM sampling and scoring 
 ==========================================================#
+
+"""
+    score_precursor_isotope_traces(second_pass_folder::String, 
+                                  file_paths::Vector{String},
+                                  precursors::LibraryPrecursors,
+                                  match_between_runs::Bool,
+                                  max_q_value_xgboost_rescore::Float32,
+                                  max_q_value_xgboost_mbr_rescore::Float32,
+                                  max_psms_in_memory::Int64)
+
+Main entry point for PSM scoring. Automatically chooses between in-memory and out-of-memory
+processing based on data size.
+
+# Arguments
+- `second_pass_folder`: Folder containing second pass PSM files
+- `file_paths`: Vector of PSM file paths
+- `precursors`: Library precursors
+- `match_between_runs`: Whether to perform match between runs
+- `max_q_value_xgboost_rescore`: Max q-value for XGBoost rescoring
+- `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
+- `max_psms_in_memory`: Maximum PSMs to keep in memory
+
+# Returns
+- Trained XGBoost models
+"""
+function score_precursor_isotope_traces(
+    second_pass_folder::String,
+    file_paths::Vector{String},
+    precursors::LibraryPrecursors,
+    match_between_runs::Bool,
+    max_q_value_xgboost_rescore::Float32,
+    max_q_value_xgboost_mbr_rescore::Float32,
+    max_psms_in_memory::Int64
+)
+    # Count total PSMs
+    psms_count = get_psms_count(file_paths)
+    
+    if psms_count > max_psms_in_memory
+        # Use out-of-memory algorithm
+        best_psms = sample_psms_for_xgboost(second_pass_folder, psms_count, max_psms_in_memory)
+        models = score_precursor_isotope_traces_out_of_memory!(
+            best_psms,
+            file_paths,
+            precursors,
+            match_between_runs,
+            max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore
+        )
+    else
+        # Use in-memory algorithm
+        best_psms = load_psms_for_xgboost(second_pass_folder)
+        models = score_precursor_isotope_traces_in_memory!(
+            best_psms,
+            file_paths,
+            precursors,
+            match_between_runs,
+            max_q_value_xgboost_rescore,
+            max_q_value_xgboost_mbr_rescore
+        )
+    end
+    
+    # Clean up
+    best_psms = nothing
+    GC.gc()
+    
+    return models
+end
 """
      get_psms_count(quant_psms_folder::String)::Integer
 

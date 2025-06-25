@@ -426,18 +426,6 @@ function LibrarySearchNceTuning(
     return vcat(nonempty_dfs...)
 end
 
-function collectFragErrs(all_fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
-    for match in range(1, nmatches)
-        if n < length(all_fmatches)
-            n += 1
-            all_fmatches[n] = new_fmatches[match]
-        else
-            all_fmatches = append!(all_fmatches, [M() for x in range(1, length(all_fmatches))])
-        end
-    end
-    return n
-end
-
 function getRTWindow(irt::U, irt_tol::T) where {T,U<:AbstractFloat}
     return Float32(irt - irt_tol), Float32(irt + irt_tol)
 end

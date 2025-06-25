@@ -11,6 +11,9 @@ This search:
 """
 struct MaxLFQSearch <: SearchMethod end
 
+# Note: FileReferences, SearchResultReferences, and FileOperations are already
+# included by importScripts.jl - no need to include them here
+
 #==========================================================
 Type Definitions 
 ==========================================================#
@@ -141,14 +144,40 @@ function summarize_results!(
         )
 
         @info "Merging quantification tables..."
-        # Merge quantification tables
-        mergeSortedArrowTables(
-            passing_psms_folder,
-            precursors_long_path,
-            (:inferred_protein_group, :precursor_idx),
-            N = 1000000
-        )
+        # Get PSM paths from MSData and create references
+        passing_psm_paths = getPassingPsms(getMSData(search_context))
+        psm_refs = [PSMFileReference(path) for path in passing_psm_paths]
+        
+        # Ensure all PSM files are sorted correctly for MaxLFQ
+        sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
+        @info "Sorting PSM files by keys: $(sort_keys)..."
+        #for (i, psm_ref) in ProgressBar(enumerate(psm_refs))
+        #    if !is_sorted_by(psm_ref, sort_keys...)
+        #        sort_file_by_keys!(psm_ref, sort_keys...)
+        #    end
+        #end
+        sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
+                           reverse=[true, true, true, true], parallel=true )
+        
+        # Use reference-based merge with 4 sort keys (all descending)
+        @info "Merging $(length(psm_refs)) PSM files using reference-based approach..."
+        @time merged_psm_ref = stream_sorted_merge(psm_refs, precursors_long_path, sort_keys...;
+                                           batch_size=1000000, reverse=true)
 
+        # Verify the merged file is sorted (reference-based merge guarantees this)
+        @info "Merged PSM file created at: $(file_path(merged_psm_ref))"
+        @info "File contains $(row_count(merged_psm_ref)) rows and is sorted by: $(sorted_by(merged_psm_ref))"
+        
+        # Add FileReference validation for MaxLFQ input
+        @info "Validating input for MaxLFQ processing..."
+        @time validate_maxlfq_input(merged_psm_ref)
+        
+        # Validate MaxLFQ parameters
+        validate_maxlfq_parameters(Dict(
+            :q_value_threshold => params.q_value_threshold,
+            :batch_size => params.batch_size,
+            :min_peptides => params.min_peptides
+        ))
         @info "Writing precursor results..."
         # Create wide format precursor table
         precursors_wide_path = writePrecursorCSV(
@@ -162,17 +191,20 @@ function summarize_results!(
         # Perform MaxLFQ protein quantification
         precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
 
+        # Use FileReference-based LFQ with TransformPipeline preprocessing
         LFQ(
-            DataFrame(Arrow.Table(precursors_long_path)),
+            merged_psm_ref,  # Use FileReference instead of DataFrame
             protein_long_path,
             precursor_quant_col,
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
-            search_context.global_pg_score_to_qval[],
-            search_context.pg_score_to_qval[],#getPGQValueInterp(search_context),
             batch_size = params.batch_size,
             min_peptides = params.min_peptides
         )
+        
+        # Create FileReference for output metadata tracking
+        protein_ref = ProteinQuantFileReference(protein_long_path)
+        @info "MaxLFQ completed" output_file=protein_long_path n_protein_groups=n_protein_groups(protein_ref) n_experiments=n_experiments(protein_ref)
 
         @info "Writing protein group results..."
         # Create wide format protein table
@@ -199,6 +231,7 @@ function summarize_results!(
             precursors,
             params
         )
+
 
         if params.delete_temp
             @info "Removing temporary data..."

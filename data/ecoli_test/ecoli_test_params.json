@@ -117,7 +117,7 @@
         }
     },
     "proteinInference": {
-        "min_peptides": 2
+        "min_peptides": 1
     },
     "maxLFQ": {
         "run_to_run_normalization": false

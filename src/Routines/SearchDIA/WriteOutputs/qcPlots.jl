@@ -119,7 +119,7 @@ function qcPlots(
     function getIdCounts(
         precursors_long::DataFrame;
         file_column::Symbol = :file_name,
-        q_value_column::Symbol = :run_specific_qval,
+        q_value_column::Symbol = :qval,
         q_value_threshold::Real = 0.01f0
         )
         
@@ -177,7 +177,7 @@ function qcPlots(
         precursors_long::DataFrame;
         n_files_per_plot::Int = 20,
         file_column::Symbol = :ms_file_idx,
-        q_value_column::Symbol = :run_specific_qval,
+        q_value_column::Symbol = :qval,
         q_value_threshold::Real = 0.01f0,
         qc_plot_folder::String = "./qc_plots/"
     )
@@ -211,7 +211,7 @@ function qcPlots(
     create_precursor_id_plots(precursors_long_df, 
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
-                                q_value_column = :run_specific_qval,
+                                q_value_column = :qval,
                                 q_value_threshold = params_.global_settings.scoring.q_value_threshold,
                                 qc_plot_folder = qc_plot_folder)   
     ###############
@@ -558,7 +558,7 @@ function qcPlots(
     output_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
     try
         if isfile(output_path)
-            rm(output_path)
+            safeRm(output_path, nothing)
         end
     catch e
         @warn "Could not clear existing file: $e"

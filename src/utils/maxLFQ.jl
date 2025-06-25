@@ -186,7 +186,7 @@ function getProtAbundance(protein::String,
                             use_for_quant::AbstractVector{Bool},
                             abundance::AbstractVector{Union{T, Missing}},
                             global_qvals::AbstractVector{Float32},
-                            run_specific_qvals::AbstractVector{Float32},
+                            qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -195,7 +195,7 @@ function getProtAbundance(protein::String,
                             experiments_out::Vector{Union{Missing, UInt32}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
-                            run_specific_qval_out::Vector{Union{Missing, Float32}}) where {T <: Real}
+                            qval_out::Vector{Union{Missing, Float32}}) where {T <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -216,7 +216,7 @@ function getProtAbundance(protein::String,
                             unique_peptides::Vector{UInt32}, 
                             log2_abundances::Vector{T},
                             global_qvals::AbstractVector{Float32},
-                            run_specific_qvals::AbstractVector{Float32},
+                            qvals::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
@@ -224,7 +224,7 @@ function getProtAbundance(protein::String,
                             peptides_out::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}}, 
                             global_qval_out::Vector{Union{Missing, Float32}}, 
-                            run_specific_qval_out::Vector{Union{Missing, Float32}}, 
+                            qval_out::Vector{Union{Missing, Float32}}, 
                             experiments_out::Vector{Union{Missing, I}}, 
                             S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
@@ -253,7 +253,7 @@ function getProtAbundance(protein::String,
         for i in range(0, N-1)
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
             global_qval_out[row_idx + i] = global_qvals[i + 1]
-            run_specific_qval_out[row_idx + i] = run_specific_qvals[i + 1]
+            qval_out[row_idx + i] = qvals[i + 1]
             experiments_out[row_idx + i] = unique_experiments[i + 1]
             protein_out[row_idx + i] = protein
             species_out[row_idx + i] = species
@@ -278,6 +278,13 @@ function getProtAbundance(protein::String,
 
     #Solve linear system to get log-2 abundances 
     log2_abundances = (A\B)[1:(end - 1)]
+    
+    # Debug: Check if all abundances are missing/NaN/Inf
+    n_valid_abundances = sum(!ismissing(x) && isfinite(x) for x in log2_abundances)
+    if n_valid_abundances == 0
+        @debug "MaxLFQ produced all invalid abundances for protein" protein=protein n_peptides=M n_experiments=N
+    end
+    
     appendResults!(
                    row_idx,
                    N,
@@ -288,7 +295,7 @@ function getProtAbundance(protein::String,
                    unique_peptides, 
                    log2_abundances,
                    global_qvals,
-                   run_specific_qvals,
+                   qvals,
                    target_out,
                    entrap_id_out,
                    species_out,
@@ -296,48 +303,58 @@ function getProtAbundance(protein::String,
                    peptides_out, 
                    log2_abundance_out,
                    global_qval_out,
-                   run_specific_qval_out,
+                   qval_out,
                    experiments_out,
                    S)
 
 end
 
-function LFQ(prot::DataFrame,
+# FileReference-based implementation with TransformPipeline preprocessing
+function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issues
              protein_quant_path::String,
-                quant_col::Symbol,
-                file_id_to_parsed_name::Vector{String},
-                q_value_threshold::Float32,
-                global_score_to_qval::Interpolations.Extrapolation,
-                score_to_qval::Interpolations.Extrapolation;
-                batch_size = 100000,
-                min_peptides = 2)
-
-    batch_start_idx, batch_end_idx = 1,min(batch_size+1,size(prot, 1))
+            quant_col::Symbol,
+            file_id_to_parsed_name::Vector{String},
+            q_value_threshold::Float32;
+            batch_size = 100000,
+            min_peptides = 1)  # Keep for potential future use in filtering
+    
+    # Always use lazy DataFrame loading (memory efficient)
+    prot = DataFrame(Arrow.Table(file_path(prot_ref)))
+    
+    # Create pipeline operations for batch-wise application
+    preprocessing_pipeline = TransformPipeline() |>
+        filter_by_multiple_thresholds([
+            (:pg_qval, q_value_threshold),
+            (:global_qval_pg, q_value_threshold)
+        ]) |>
+        filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
+    
+    # Main processing logic (inlined from original LFQ function)
+    batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))
     n_writes = 0
-
-    prot[!,:global_qval_pg] = zeros(Float32, nrow(prot))
-    prot[!,:run_specific_qval_pg] = zeros(Float32, nrow(prot))
+    is_prot_sorted = issorted(prot, :inferred_protein_group, rev = true)
+    @info "Is prot sorted? $is_prot_sorted"
 
     while batch_start_idx <= size(prot, 1)
-        last_prot_idx = prot[batch_end_idx,:inferred_protein_group]
+        last_prot_idx = prot[batch_end_idx, :inferred_protein_group]
         while batch_end_idx < size(prot, 1)
-            if prot[batch_end_idx+1,:inferred_protein_group]!=last_prot_idx
+            if prot[batch_end_idx+1, :inferred_protein_group] != last_prot_idx
                 break
             end
             batch_end_idx += 1
         end
-        subdf = prot[range(batch_start_idx, batch_end_idx),:]
+        subdf = prot[range(batch_start_idx, batch_end_idx), :]
         batch_start_idx = batch_end_idx + 1
-        batch_end_idx = min(batch_start_idx + batch_size,size(prot, 1))
-
-        subdf.global_qval_pg = global_score_to_qval.(coalesce.(subdf.global_pg_score, 0.0f0))
-        subdf.run_specific_qval_pg = score_to_qval.(coalesce.(subdf.pg_score, 0.0f0))
-        #Get rid of low scoring proteins 
-        filter!(x-> x.global_qval_pg <= q_value_threshold, subdf);
-        filter!(x-> x.run_specific_qval_pg <= q_value_threshold, subdf);
-
+        batch_end_idx = min(batch_start_idx + batch_size, size(prot, 1))
+        
+        # Apply pipeline operations to this batch
+        for (_, op) in preprocessing_pipeline.operations
+            subdf = op(subdf)
+        end
+        
+        # Continue with original LFQ logic
         #Exclude precursors with mods that impact quantitation
-        filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
+        #filter!(x->!occursin("M,Unimod:35", coalesce(x.structural_mods, "")), subdf)
         gpsms = groupby(
             subdf,
             [:target, :entrapment_group_id, :species, :inferred_protein_group]
@@ -345,8 +362,8 @@ function LFQ(prot::DataFrame,
         ngroups = length(gpsms)
         nfiles = length(unique(prot[!,:ms_file_idx]))
         nrows = nfiles*ngroups
-        nrows = nfiles*ngroups
-        #pre allocate the batch
+        
+        # Pre-allocate the batch
         out = Dict(
             :target => Vector{Union{Missing, Bool}}(undef, nrows),
             :entrap_id => Vector{Union{Missing, UInt8}}(undef, nrows),
@@ -356,7 +373,7 @@ function LFQ(prot::DataFrame,
             :log2_abundance => zeros(Union{Missing, Float32}, nrows),
             :experiments => zeros(Union{Missing, UInt32}, nrows),
             :global_qval => zeros(Union{Missing, Float32}, nrows),
-            :run_specific_qval => zeros(Union{Missing, Float32}, nrows),
+            :qval => zeros(Union{Missing, Float32}, nrows),
         )
         for i in range(1, nrows)
             out[:target][i] = missing
@@ -367,12 +384,10 @@ function LFQ(prot::DataFrame,
             out[:experiments][i] = missing
             out[:log2_abundance][i] = missing
             out[:global_qval][i] = missing
-            out[:run_specific_qval][i] = missing
+            out[:qval][i] = missing
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
-            #filter!(x->x.use_for_protein_quant::Bool, data) #Maybe this is a bit slow. But works for now. 
-            data = data[data[!,:use_for_protein_quant],:]
             getProtAbundance(protein[:inferred_protein_group], 
                                 (group_idx*nfiles) - nfiles + 1,
                                 protein[:target],
@@ -383,7 +398,7 @@ function LFQ(prot::DataFrame,
                                 data[!,:use_for_protein_quant],
                                 data[!,quant_col],
                                 data[!,:global_qval_pg],
-                                data[!,:run_specific_qval_pg],
+                                data[!,:pg_qval],
                                 out[:target],
                                 out[:entrap_id],
                                 out[:species],
@@ -392,7 +407,7 @@ function LFQ(prot::DataFrame,
                                 out[:experiments],
                                 out[:log2_abundance],
                                 out[:global_qval],
-                                out[:run_specific_qval]
+                                out[:qval]
                             )
         end
         out = DataFrame(out)
@@ -405,11 +420,10 @@ function LFQ(prot::DataFrame,
                 out[i,:file_name] = file_id_to_parsed_name[out[i,:experiments]]
             end
         end
-        filter!(x->(!ismissing(x.n_peptides))&(x.n_peptides>min_peptides), out);
+        filter!(x->(!ismissing(x.n_peptides)), out);#&(x.n_peptides>=min_peptides), out);
         out[!,:abundance] = exp2.(out[!,:log2_abundance])
-        if size(out, 1) == 0
-            continue
-        end
+        
+        # Write results
         if iszero(n_writes)
             if isfile(protein_quant_path)
                 rm(protein_quant_path)
@@ -421,7 +435,7 @@ function LFQ(prot::DataFrame,
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance]); 
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance]); 
                 file=false)  # file=false creates stream format
             end
         else
@@ -432,14 +446,21 @@ function LFQ(prot::DataFrame,
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:run_specific_qval,:abundance])
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance])
             )
         end
         n_writes += 1
     end
-
+    
+    # Check if we processed all rows
+    if batch_start_idx <= size(prot, 1)
+        @warn "Not all rows processed!" last_processed_idx=batch_end_idx total_rows=size(prot, 1) unprocessed_rows=size(prot, 1)-batch_end_idx
+        throw("Not all rows processed!  last_processed_idx=",batch_end_idx, "total_rows=",size(prot, 1), "unprocessed_rows=",size(prot, 1)-batch_end_idx)
+    end
+    
     return nothing
 end
+
 
 function countPeptides(peptides::Vector{Union{Missing, Vector{Union{Missing, UInt32}}}})
     

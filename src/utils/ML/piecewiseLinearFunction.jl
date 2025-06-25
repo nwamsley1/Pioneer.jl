@@ -46,6 +46,7 @@ For a given mass-to-charge ratio x and charge state z:
 
 See also: [`fit_nce_model`](@ref)
 """
+#=
  function fit_nce_model(
     pwlm::PiecewiseNceModel{T},
     x::AbstractVector,
@@ -104,7 +105,7 @@ See also: [`fit_nce_model`](@ref)
         T(optimal_params[4])  # charge_slope
     )
 end
-
+=#
 """
    fit_nce_model(pwlm::PiecewiseNceModel{T}, x::AbstractVector, y::AbstractVector, 
                 charge::AbstractVector, breakpoint::Real) where {T<:AbstractFloat}

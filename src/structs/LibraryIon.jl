@@ -194,9 +194,9 @@ function save_detailed_frags(filename::String, data::Vector{<:DetailedFrag})
     jldsave(filename; data)
 end
 
-function load_detailed_frags(filename::String)
-    return load(filename, "data")
-end
+#function load_detailed_frags(filename::String)
+#    return load(filename, "data")
+#end
 ArrowTypes.arrowname(::Type{DetailedFrag{Float32}}) = :DetailedFrag
 ArrowTypes.JuliaType(::Val{:DetailedFrag}) = DetailedFrag
 
@@ -563,7 +563,7 @@ struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
 end
 end
 getDegree(lfp::SplineFragmentLookup) = lfp.degree
-getKnots(lfp::SplineFragmentLookup) = lfp.knots
+#getKnots(lfp::SplineFragmentLookup) = lfp.knots
 getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} = range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
@@ -747,10 +747,10 @@ import Base.length
 Base.length(ms_data::LibraryPrecursors) = ms_data.n
 getProteinGroupId(lp::LibraryPrecursors, accession_numbers::String)::UInt32 = lp.accession_numbers_to_pid[accession_numbers]
 getCvFold(lp::LibraryPrecursors, precursor_idx::I) where {I<:Integer} = lp.pid_to_cv_fold[precursor_idx]
-getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:proteome_identifiers]
+#getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:proteome_identifiers]
 getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:proteome_identifiers]
 getAccessionNumbers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:accession_numbers]
-getSequence(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:sequence]
+#getSequence(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:sequence]
 getSequence(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:sequence]
 getStructuralMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
 getCharge(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}}  = lp.data[:prec_charge]
