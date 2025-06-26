@@ -320,7 +320,7 @@ function process_file!(
             )
         catch
             column_names = [
-            :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,
+            :spectral_contrast, :city_block, :entropy_score, :scribe,
             :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept
             ]
             score_main_search_psms!(

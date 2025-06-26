@@ -907,11 +907,12 @@ function init_summary_columns!(
         (:max_gof,         Float16)
         (:max_fitted_manhattan_distance,          Float16)
         (:max_fitted_spectral_contrast,         Float16)
+        (:max_scribe, Float16)
         (:y_ions_sum,               UInt16)
         (:max_y_ions,               UInt16)
         (:max_matched_ratio,        Float16)
         (:num_scans,        UInt16)
-        (:smoothness,        Float16)
+        (:smoothness,        Float32)
         (:weights,        Vector{Float32})
         (:irts,         Vector{Float32})
         ];
@@ -946,6 +947,7 @@ function get_summary_scores!(
                             #entropy::AbstractVector{Float16},
                             fitted_manhattan_distance::AbstractVector{Float16},
                             fitted_spectral_contrast::AbstractVector{Float16},
+                            scribe::AbstractVector{Float16},
                             y_count::AbstractVector{UInt8},
                             rt_to_irt_interp::RtConversionModel
                         )
@@ -955,6 +957,7 @@ function get_summary_scores!(
    # max_entropy = -100.0
     max_fitted_manhattan_distance = -100.0
     max_fitted_spectral_contrast= -100
+    max_scribe = -100
     count = 0
     y_ions_sum = 0
     max_y_ions = 0
@@ -984,6 +987,10 @@ function get_summary_scores!(
 
         if fitted_spectral_contrast[i]>max_fitted_spectral_contrast
             max_fitted_spectral_contrast = fitted_spectral_contrast[i]
+        end
+
+        if scribe[i]>max_scribe
+            max_scribe = scribe[i]
         end
     
         y_ions_sum += y_count[i]
@@ -1017,6 +1024,7 @@ function get_summary_scores!(
    # psms.max_entropy[apex_scan] = max_entropy
     psms.max_fitted_manhattan_distance[apex_scan] = max_fitted_manhattan_distance
     psms.max_fitted_spectral_contrast[apex_scan] = max_fitted_spectral_contrast
+    psms.max_scribe[apex_scan] = max_scribe
     psms.y_ions_sum[apex_scan] = y_ions_sum
     psms.max_y_ions[apex_scan] = max_y_ions
     psms.num_scans[apex_scan] = length(weight)
