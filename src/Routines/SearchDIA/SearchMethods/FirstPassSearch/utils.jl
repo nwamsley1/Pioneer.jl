@@ -196,14 +196,14 @@ end
 
 """
     get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}}; 
-                   max_local_fdr::Float32=1.00f0, fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
+                   max_PEP::Float32=0.9f0, fdr_scale_factor::Float32=1.0f0) where {T<:AbstractFloat}
 
 Processes PSMs to identify the best matches and calculate peak characteristics.
 
 # Arguments
 - `psms`: DataFrame containing peptide-spectrum matches
 - `prec_mz`: Vector of precursor m/z values
-- `max_local_fdr`: Maximum local FDR threshold for filtering PSMs
+- `max_PEP`: Maximum local FDR threshold for filtering PSMs
 - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio
 
 # Modifies PSMs DataFrame to add:
@@ -216,12 +216,12 @@ Note: Assumes psms is sorted by retention time in ascending order.
 """
 function get_best_psms!(psms::DataFrame,
                         prec_mz::Arrow.Primitive{T, Vector{T}};
-                        max_local_fdr::Float32 = 1.00f0,
+                        max_PEP::Float32 = 0.9f0,
                         fdr_scale_factor::Float32 = 1.0f0
 ) where {T<:AbstractFloat}
 
     #highest scoring psm for a given precursor
-    psms[!,:local_fdr] = zeros(Float16, size(psms, 1))
+    psms[!,:PEP] = zeros(Float16, size(psms, 1))
     #highest scoring psm for a given precursor
     psms[!,:best_psm] = zeros(Bool, size(psms, 1))
     #fwhm estimate of the precursor
@@ -285,25 +285,17 @@ function get_best_psms!(psms::DataFrame,
 
     filter!(x->x.best_psm, psms);
     sort!(psms,:score, rev = true)
-    # Will use local FDR for final filter
-    get_local_FDR!(psms[!,:score], psms[!,:target], psms[!,:local_fdr]; doSort=false, fdr_scale_factor=fdr_scale_factor);
+    # Will use PEP for final filter
+    get_PEP!(psms[!,:score], psms[!,:target], psms[!,:PEP]; doSort=false, fdr_scale_factor=fdr_scale_factor);
 
     n = size(psms, 1)
-    
+    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])
 
-    select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:local_fdr,:target])
-    #Instead of max_psms, 2x the number at 10% fdr. 
-    psms_passing = 0
-    local_fdrs = psms[!,:local_fdr]::Vector{Float16}
-    @inbounds for i in range(1, n)
-        psms_passing += 1
-        if local_fdrs[i]>=max_local_fdr
-            break
-        end
+    first_fail = searchsortedfirst(psms[!,:PEP], Float16(max_PEP))
+    if first_fail <= n
+        deleteat!(psms, first_fail:n)
     end
-    #println("unique IDs prefilter: ", n, " ", psms_passing, " ", sum(psms.target), " ", sum(psms.target[1:min(n, round(Int64, psms_passing))]), "\n\n")
-
-    deleteat!(psms, min(n, round(Int64, psms_passing) + 1):n)
+    #println("unique IDs prefilter: ", n, " ", first_fail, "\n\n")
 
     mz = zeros(T, size(psms, 1));
     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
