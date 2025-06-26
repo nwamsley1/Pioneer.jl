@@ -171,7 +171,7 @@ function score_presearch!(psms::DataFrame)
 end
 
 
-# Note: get_qvalues! and get_local_FDR! functions have been moved to src/utils/ML/fdrUtilities.jl
+# Note: get_qvalues! and get_PEP! functions have been moved to src/utils/ML/fdrUtilities.jl
 # They are imported through the module loading system and are available in the Pioneer module namespace
 
 #==========================================================

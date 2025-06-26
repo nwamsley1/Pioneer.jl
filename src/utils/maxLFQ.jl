@@ -187,6 +187,7 @@ function getProtAbundance(protein::String,
                             abundance::AbstractVector{Union{T, Missing}},
                             global_qvals::AbstractVector{Float32},
                             qvals::AbstractVector{Float32},
+                            peps::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -195,7 +196,8 @@ function getProtAbundance(protein::String,
                             experiments_out::Vector{Union{Missing, UInt32}}, 
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
-                            qval_out::Vector{Union{Missing, Float32}}) where {T <: Real}
+                            qval_out::Vector{Union{Missing, Float32}},
+                            pep_out::Vector{Union{Missing, Float32}}) where {T <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -217,6 +219,7 @@ function getProtAbundance(protein::String,
                             log2_abundances::Vector{T},
                             global_qvals::AbstractVector{Float32},
                             qvals::AbstractVector{Float32},
+                            peps::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
@@ -225,6 +228,7 @@ function getProtAbundance(protein::String,
                             log2_abundance_out::Vector{Union{Missing, Float32}}, 
                             global_qval_out::Vector{Union{Missing, Float32}}, 
                             qval_out::Vector{Union{Missing, Float32}}, 
+                            pep_out::Vector{Union{Missing, Float32}},
                             experiments_out::Vector{Union{Missing, I}}, 
                             S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
@@ -249,13 +253,15 @@ function getProtAbundance(protein::String,
             end
         end
 
-        
+
+        pep_val = peps[1]
         for i in range(0, N-1)
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
             global_qval_out[row_idx + i] = global_qvals[i + 1]
             qval_out[row_idx + i] = qvals[i + 1]
             experiments_out[row_idx + i] = unique_experiments[i + 1]
             protein_out[row_idx + i] = protein
+            pep_out[row_idx + i] = pep_val
             species_out[row_idx + i] = species
             target_out[row_idx + i] = target
             entrap_id_out[row_idx + i] = entrap_id
@@ -296,6 +302,7 @@ function getProtAbundance(protein::String,
                    log2_abundances,
                    global_qvals,
                    qvals,
+                   peps,
                    target_out,
                    entrap_id_out,
                    species_out,
@@ -304,6 +311,7 @@ function getProtAbundance(protein::String,
                    log2_abundance_out,
                    global_qval_out,
                    qval_out,
+                   pep_out,
                    experiments_out,
                    S)
 
@@ -374,6 +382,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :experiments => zeros(Union{Missing, UInt32}, nrows),
             :global_qval => zeros(Union{Missing, Float32}, nrows),
             :qval => zeros(Union{Missing, Float32}, nrows),
+            :pg_pep => zeros(Union{Missing, Float32}, nrows),
         )
         for i in range(1, nrows)
             out[:target][i] = missing
@@ -385,6 +394,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             out[:log2_abundance][i] = missing
             out[:global_qval][i] = missing
             out[:qval][i] = missing
+            out[:pg_pep][i] = missing
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
@@ -399,6 +409,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 data[!,quant_col],
                                 data[!,:global_qval_pg],
                                 data[!,:pg_qval],
+                                data[!,:pg_pep],
                                 out[:target],
                                 out[:entrap_id],
                                 out[:species],
@@ -407,7 +418,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:experiments],
                                 out[:log2_abundance],
                                 out[:global_qval],
-                                out[:qval]
+                                out[:qval],
+                                out[:pg_pep]
                             )
         end
         out = DataFrame(out)
@@ -435,7 +447,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance]); 
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:abundance]); 
                 file=false)  # file=false creates stream format
             end
         else
@@ -446,7 +458,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:abundance])
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:abundance])
             )
         end
         n_writes += 1

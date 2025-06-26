@@ -82,7 +82,7 @@ function checkParams(json_path::String)
     check_param(score_settings, "n_train_rounds", Integer)
     check_param(score_settings, "max_iterations", Integer)
     check_param(score_settings, "max_q_value_probit_rescore", Real)
-    check_param(score_settings, "max_local_fdr", Real)
+    check_param(score_settings, "max_PEP", Real)
 
     score_settings = first_search["irt_mapping"]
     check_param(score_settings, "max_prob_to_impute_irt", Real)
