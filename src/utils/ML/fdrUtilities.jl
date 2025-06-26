@@ -91,7 +91,7 @@ function get_PEP!(scores::AbstractVector{U}, is_target::AbstractVector{Bool}, fd
     # prepare labels and weights
     labels = Vector{Float64}(undef, N + 1)
     weights = Vector{Float64}(undef, N + 1)
-    labels[1] = 0.5              # pseudo observation
+    labels[1] = 0.0              # pseudo observation
     weights[1] = 1.0
 
     @inbounds for j in 1:N

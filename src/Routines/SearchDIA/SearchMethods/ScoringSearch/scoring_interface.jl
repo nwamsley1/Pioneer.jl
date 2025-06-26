@@ -139,7 +139,7 @@ function get_quant_necessary_columns()
         :global_qval,
         :run_specific_qval,
         :prec_mz,
-        #:pep,  # Commented out as in original
+        :pep,
         :weight,
         :target,
         :rt,

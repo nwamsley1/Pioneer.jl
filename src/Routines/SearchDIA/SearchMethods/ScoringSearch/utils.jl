@@ -624,8 +624,8 @@ function update_psms_with_probit_scores_refs(
         # Load protein groups to get probit-scored pg_score values
         pg_table = Arrow.Table(file_path(pg_ref))
         
-        # Create lookup dictionary: ProteinKey -> probit pg_score
-        pg_score_lookup = Dict{ProteinKey, Float32}()
+        # Create lookup dictionary: ProteinKey -> (probit pg_score, PEP)
+        pg_score_lookup = Dict{ProteinKey, Tuple{Float32, Float32}}()
         n_pg_rows = length(pg_table[:protein_name])
         
         for i in 1:n_pg_rows
@@ -634,7 +634,8 @@ function update_psms_with_probit_scores_refs(
                 pg_table[:target][i],
                 pg_table[:entrap_id][i]
             )
-            pg_score_lookup[key] = pg_table[:pg_score][i]  # This is now the probit score
+            pep_val = hasproperty(pg_table, :pg_pep) ? pg_table[:pg_pep][i] : 1.0f0
+            pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val) # pg_score is now the probit score
         end
         
         # Transform PSM file
@@ -646,6 +647,7 @@ function update_psms_with_probit_scores_refs(
             global_pg_scores = Vector{Float32}(undef, n_psms)
             pg_qvals = Vector{Float32}(undef, n_psms)
             global_pg_qvals = Vector{Float32}(undef, n_psms)
+            pg_peps = Vector{Float32}(undef, n_psms)
             
             for i in 1:n_psms
                 # Skip if missing inferred protein group
@@ -659,6 +661,7 @@ function update_psms_with_probit_scores_refs(
                     global_pg_scores[i] = 0.0f0
                     pg_qvals[i] = 1.0f0
                     global_pg_qvals[i] = 1.0f0
+                    pg_peps[i] = 1.0f0
                     continue
                 end
                 
@@ -669,11 +672,13 @@ function update_psms_with_probit_scores_refs(
                     psms_df[i, :entrapment_group_id]
                 )
                 
-                # Get scores
+                # Get scores and PEP
                 if !haskey(pg_score_lookup, key)
                     throw("Missing pg score lookup key!!!")
                 end
-                probit_pg_scores[i] = pg_score_lookup[key]
+                scores_tuple = pg_score_lookup[key]
+                probit_pg_scores[i] = scores_tuple[1]
+                pg_peps[i] = scores_tuple[2]
                 
                 if !haskey(acc_to_max_pg_score, key)
                     throw("Missing global pg score lookup key!!!")
@@ -690,6 +695,7 @@ function update_psms_with_probit_scores_refs(
             psms_df[!, :global_pg_score] = global_pg_scores
             psms_df[!, :pg_qval] = pg_qvals
             psms_df[!, :global_qval_pg] = global_pg_qvals
+            psms_df[!, :pg_pep] = pg_peps
             
             total_psms_updated += n_psms
             
@@ -824,7 +830,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_decoys = sum(.!all_protein_groups.target)
     @info "In memory probit regression analysis" n_targets=n_targets n_decoys=n_decoys total_protein_groups=nrow(all_protein_groups)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]#, :log_binom_coeff]
+    feature_names = [ :peptide_coverage, :n_possible_peptides]#, :log_binom_coeff] #:pg_score,
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
     
@@ -942,6 +948,28 @@ function calculate_probit_scores(X::Matrix{Float64}, β::Vector{Float64}
     return prob_scores
 end
 
+
+
+"""
+    add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
+                   doSort::Bool=false, fdr_scale_factor::Float32=1.0f0)
+
+Add a column of posterior error probabilities using `get_PEP!`.
+The input DataFrame must already be sorted by `score_col` if `doSort` is false.
+"""
+function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
+                        doSort::Bool=false, fdr_scale_factor::Float32=1.0f0)
+    desc = "add_pep_column($new_col from $score_col)"
+    op = function(df)
+        scores = df[!, score_col]::AbstractVector{Float32}
+        targets = df[!, target_col]::AbstractVector{Bool}
+        pep_vals = Vector{Float32}(undef, length(scores))
+        get_PEP!(scores, targets, pep_vals; doSort=doSort, fdr_scale_factor=fdr_scale_factor)
+        df[!, new_col] = pep_vals
+        return df
+    end
+    return desc => op
+end
 
 
 

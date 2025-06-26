@@ -24,7 +24,6 @@ Results container for scoring search.
 struct ScoringSearchResults <: SearchResults
     # Paths to results
     best_traces::Dict{Int64, Float32}
-    precursor_pep_spline::Base.Ref{<:UniformSpline}  # Spline for PEP calculation
     precursor_global_qval_interp::Base.Ref{Any} # Interpolation for global q-values
     precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
     pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
@@ -88,7 +87,6 @@ get_parameters(::ScoringSearch, params::Any) = ScoringSearchParameters(params)
 function init_search_results(::ScoringSearchParameters, search_context::SearchContext)
     return ScoringSearchResults(
         Dict{Int64, Float32}(),  # best_traces
-        Ref{UniformSpline}(),  # precursor_pep_spline
         Ref(undef),  # precursor_global_qval_interp
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # pg_qval_interp
@@ -276,7 +274,10 @@ function summarize_results!(
                 filter_by_multiple_thresholds([
                     (:global_qval, params.q_value_threshold),
                     (:qval, params.q_value_threshold)
-                ])
+                ]) |>
+                add_pep_column(:pep, :prec_prob, :target;
+                               doSort=false,
+                               fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) 
             
             passing_refs = apply_pipeline_batch(
                 filtered_refs,
@@ -392,7 +393,10 @@ function summarize_results!(
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
                 add_column(:passes_qval, df -> 
                     (df.global_pg_qval .<= params.q_value_threshold) .& 
-                    (df.pg_qval .<= params.q_value_threshold))
+                    (df.pg_qval .<= params.q_value_threshold)) |>
+                add_pep_column(:pg_pep, :pg_score, :target;
+                            doSort=false,
+                            fdr_scale_factor=getLibraryFdrScaleFactor(search_context))
 
             apply_pipeline!(pg_refs, protein_qval_pipeline)
         end
