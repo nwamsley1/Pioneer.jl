@@ -144,7 +144,7 @@ function initSearchContext(
     search_context.n_library_decoys = n_decoys
     search_context.library_fdr_scale_factor = Float32(n_targets / max(n_decoys, 1))
     
-    @info "Library contains $n_targets targets and $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=3)))"
+    @info "Library contains $n_targets targets and $n_decoys decoys (FDR scale factor: $(round(search_context.library_fdr_scale_factor, digits=7)))"
     
     return search_context
 end
