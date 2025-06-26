@@ -217,7 +217,10 @@ function score_precursor_isotope_traces_in_memory!(
             :error_ms1,
             :m0_error_ms1,
             :n_iso_ms1,
-            :big_iso_ms1
+            :big_iso_ms1,
+            :percent_theoretical_ignored,
+            :scribe,
+            :max_scribe
         ];
         features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
@@ -379,7 +382,10 @@ function score_precursor_isotope_traces_out_of_memory!(
             :error_ms1,
             :m0_error_ms1,
             :n_iso_ms1,
-            :big_iso_ms1
+            :big_iso_ms1,
+            :percent_theoretical_ignored,
+            :scribe,
+            :max_scribe
         ];
         features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs

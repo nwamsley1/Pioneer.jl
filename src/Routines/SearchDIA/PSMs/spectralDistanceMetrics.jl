@@ -8,6 +8,8 @@ struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
     max_unmatched_residual::T
     fitted_manhattan_distance::T
     matched_ratio::T
+    scribe::T
+    percent_theoretical_ignored::T
     #entropy_score::T
 end
 
@@ -193,10 +195,16 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
 
     return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
-function getDistanceMetrics(w::Vector{T}, 
-                            r::Vector{T}, 
-                            H::SparseArray{Ti,T}, 
-                            spectral_scores::Vector{SpectralScoresComplex{U}}) where {Ti<:Integer,T,U<:AbstractFloat}
+function getDistanceMetrics(w::Vector{T},
+    r::Vector{T},
+    H::SparseArray{Ti,T},
+    spectral_scores::Vector{SpectralScoresComplex{U}};
+    relative_improvement_threshold::Float32 = 1.25f0,
+    min_frags::Int = 3
+   ) where {Ti<:Integer,T,U<:AbstractFloat}
+
+    # zero residual vector (can be re‑used between columns)
+    fill!(r, zero(T))
 
 
     ########
@@ -220,83 +228,188 @@ function getDistanceMetrics(w::Vector{T},
         end
     end
 
-    for col in range(1, H.n)
-        
-        h2_sum = zero(T)
-        x2_sum = zero(T)
-        x_sum = zero(T)
-        dot_product = zero(T)
-        fitted_dotp = zero(T)
-        matched_sum = zero(T)
-        unmatched_sum = zero(T)    
-
-        manhattan_distance = zero(T)
-        max_matched_residual = zero(T)
-        max_unmatched_residual = zero(T)
-        sum_of_residuals = zero(T)
-        fitted_dotp = zero(T)        
-        fitted_dotp_norm1 = zero(T)
-        sum_of_fitted_peaks_matched = zero(T)
-        sum_of_fitted_peaks_unmatched = zero(T)
-        sum_of_fitted_peaks_matched_squared = zero(T)
-        sum_of_fitted_peaks_unmatched_squared = zero(T)
-
-        @inbounds @fastmath for i in range(H.colptr[col], H.colptr[col + 1]-1)
-
-            #Fitted Manhattan Distance
-            x_sum += H.x[i]
-            manhattan_distance += abs(w[col]*H.nzval[i] - H.x[i])
-
-            #Normalized Dot Product 
-            dot_product += H.nzval[i]*H.x[i]
-            x2_sum += (H.x[i])^2
-            h2_sum += (H.nzval[i])^2 
-    
-
-            fitted_peak = w[col]*H.nzval[i]
-            r_abs = abs(r[H.rowval[i]])
-            sum_of_residuals += r_abs  
-
-            if H.matched[i]
-                matched_sum += H.nzval[i]
-                shadow_peak = fitted_peak - r[H.rowval[i]]
-                fitted_dotp += shadow_peak*fitted_peak
-                fitted_dotp_norm1 += shadow_peak^2
-                
-                sum_of_fitted_peaks_matched += fitted_peak
-                sum_of_fitted_peaks_matched_squared += fitted_peak^2
-                if r_abs > max_matched_residual
-                    max_matched_residual = r_abs
-                end
-            else
-                unmatched_sum += H.nzval[i]
-                sum_of_fitted_peaks_unmatched += fitted_peak
-                sum_of_fitted_peaks_unmatched_squared += fitted_peak^2
-                if r_abs > max_unmatched_residual
-                    max_unmatched_residual = r_abs
-                end
-            end
+    # ------------------------------------------------------------------  
+    # iterate over precursors
+    # ------------------------------------------------------------------
+    for col in 1:H.n
+        # ---- gather indices of usable peaks in this spectrum ----------
+        incl = Int[]
+        tot_pred_signal = zero(T)
+        for i in H.colptr[col]:(H.colptr[col+1]-1)
+            push!(incl, i)
+            tot_pred_signal += H.nzval[i]
         end
-        sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
-        sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
 
-        fitted_dotp_norm = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
-        fitted_spectral_contrast = fitted_dotp_norm#1 - 2*acos(fitted_dotp_norm)/π
-        dot_product_norm = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
-        spectral_contrast = dot_product_norm#1 - 2*acos(dot_product_norm)/π
+        tot_pred_signal = max(tot_pred_signal, eps(T))
+        
+       
+        # ---- compute metrics, iteratively drop worst peak -------------
+        best = nothing
+        pct_ignored = zero(Float32)
+        num_matching_peaks = min_frags
 
+        while num_matching_peaks ≥ min_frags
+            scr, spectral_contrast, fitted_spectral_contrast, gof, max_matched_residual, max_unmatched_residual, 
+            fitted_manhattan_distance, matched_ratio, worst_pos, worst_pred, num_matching_peaks = computeFittedMetricsFor(w, H, r, col, incl)
+
+            if best === nothing || scr > best.scribe * relative_improvement_threshold
+                best = (scribe=scr, sc=spectral_contrast, fsc=fitted_spectral_contrast, gof=gof, mmr=max_matched_residual, 
+                        mur=max_unmatched_residual, fmd=fitted_manhattan_distance, mr=matched_ratio)
+                pct_ignored += worst_pred
+            else
+                break                     # improvement too small
+            end
+
+            worst_pos == 0 && break       # no more interfering peaks
+            deleteat!(incl, worst_pos)
+        end
+
+        pct_ignored /= tot_pred_signal    # convert to fraction
+
+        # ---- write result ------------------------------------------------
         spectral_scores[col] = SpectralScoresComplex(
-            Float16(spectral_contrast), #spectral_contrast
-            Float16(fitted_spectral_contrast), #fitted_spectral_contrast
-            Float16(-log2(sum_of_residuals/sum_of_fitted_peaks)), #gof
-            Float16(-log2(max_matched_residual/sum_of_fitted_peaks_matched)),#max_matched_residual
-            Float16(-log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)), #max_unmatched_residual
-            Float16(-log2(manhattan_distance/x_sum)), #fitted_manhattan_distance
-            Float16(log2(matched_sum/unmatched_sum)), #matched_ratio
-            #Float16(-1.0*getEntropy(H, r, col)) #entropy
+            Float16(best.sc),                         # spectral_contrast
+            Float16(best.fsc),                        # fitted_spectral_contrast
+            Float16(best.gof),                        # gof (−log city)
+            Float16(best.mmr),                        # max matched residual (−log)
+            Float16(best.mur),                        # max unmatched residual (−log)
+            Float16(best.fmd),                        # fitted manhattan (−log)
+            Float16(best.mr),                         # matched / unmatched
+            Float16(best.scribe),                     # scribe
+            Float16(pct_ignored)                      # percent_theoretical_ignored
         )
     end
 end
+
+
+function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T}, col, included_indices) where {Ti<:Integer,T<:AbstractFloat}
+    # Keep track of the worst match, i.e. the position with max difference between (nzval[i], x[i])
+    worst_val = -Inf
+    worst_pos = 0
+    worst_idx = 0
+    num_matching_peaks = 0
+
+    # Sums for numerator/denominator
+    # We also want the "normalized" predicted and observed, so we can correctly find the worst inteferring peak
+    total_h = zero(T)
+    total_x = zero(T)
+
+    @inbounds @fastmath for i in included_indices
+        fitted_peak = w[col]*H.nzval[i]
+        shadow_peak = fitted_peak - r[H.rowval[i]]
+        total_h += fitted_peak
+        total_x += shadow_peak
+        if H.x[i] > 0
+            num_matching_peaks += 1
+        end
+    end
+
+    h_sqrt_sum = zero(T)
+    x_sqrt_sum = zero(T)
+    h2_sum = zero(T)
+    x2_sum = zero(T)
+    x_sum = zero(T)
+    dot_product = zero(T)
+    fitted_dotp = zero(T)
+    matched_sum = zero(T)
+    unmatched_sum = zero(T)    
+
+    scribe_score = zero(T)
+    manhattan_distance = zero(T)
+    max_matched_residual = zero(T)
+    max_unmatched_residual = zero(T)
+    sum_of_residuals = zero(T)
+    fitted_dotp = zero(T)        
+    fitted_dotp_norm1 = zero(T)
+    sum_of_fitted_peaks_matched = zero(T)
+    sum_of_fitted_peaks_unmatched = zero(T)
+    sum_of_fitted_peaks_matched_squared = zero(T)
+    sum_of_fitted_peaks_unmatched_squared = zero(T)
+
+    N = 0
+    @inbounds @fastmath for (local_pos, i) in enumerate(included_indices)
+        #Fitted Manhattan Distance
+        x_sum += H.x[i]
+        manhattan_distance += abs(w[col]*H.nzval[i] - H.x[i])
+
+        #Normalized Dot Product 
+        dot_product += H.nzval[i]*H.x[i]
+        x2_sum += (H.x[i])^2
+        h2_sum += (H.nzval[i])^2 
+
+
+        fitted_peak = w[col]*H.nzval[i]
+        shadow_peak = fitted_peak - r[H.rowval[i]]
+
+        r_abs = abs(r[H.rowval[i]])
+        sum_of_residuals += r_abs  
+
+         #For scribe
+         h_sqrt_sum += sqrt(fitted_peak)
+         x_sqrt_sum += sqrt(shadow_peak)
+
+        if H.matched[i]
+            matched_sum += H.nzval[i]
+            fitted_dotp += shadow_peak*fitted_peak
+            fitted_dotp_norm1 += shadow_peak^2
+
+            sum_of_fitted_peaks_matched += fitted_peak
+            sum_of_fitted_peaks_matched_squared += fitted_peak^2
+            if r_abs > max_matched_residual
+                max_matched_residual = r_abs
+            end
+        else
+            unmatched_sum += H.nzval[i]
+            sum_of_fitted_peaks_unmatched += fitted_peak
+            sum_of_fitted_peaks_unmatched_squared += fitted_peak^2
+            if r_abs > max_unmatched_residual
+                max_unmatched_residual = r_abs
+            end
+        end
+
+
+        # "normalized" predicted and observed, so we can know which peak is the worst for spectral angle
+        h_val_v2 = fitted_peak / total_h
+        x_val_v2 = shadow_peak / total_x
+
+        diff = x_val_v2 - h_val_v2 # only look for positive difference because it implies there's interference
+        if (diff > worst_val) && (x_val_v2 > 0)
+            worst_val = diff
+            worst_pos = local_pos
+            worst_idx = i
+        end
+
+        N += 1
+    end
+
+
+    @inbounds @fastmath for i in included_indices
+        fitted_peak = w[col]*H.nzval[i]
+        shadow_peak = fitted_peak - r[H.rowval[i]]
+        scribe_score += ((sqrt(fitted_peak)/h_sqrt_sum) - (sqrt(shadow_peak)/x_sqrt_sum))^2
+    end
+
+
+    sum_of_fitted_peaks =  sum_of_fitted_peaks_matched +  sum_of_fitted_peaks_unmatched
+    sum_of_fitted_peaks_squared =  sum_of_fitted_peaks_matched_squared +  sum_of_fitted_peaks_unmatched_squared
+
+    fitted_spectral_contrast = fitted_dotp/(sqrt(fitted_dotp_norm1)*sqrt(sum_of_fitted_peaks_squared))
+    spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
+
+    scribe_score = -log2(scribe_score / N)
+    gof   = -log2(sum_of_residuals/sum_of_fitted_peaks)
+    max_matched_residual = -log2(max_matched_residual/sum_of_fitted_peaks_matched)
+    max_unmatched_residual = -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)
+    fitted_manhattan_distance = -log2(manhattan_distance/x_sum)
+    matched_ratio = log2(matched_sum/unmatched_sum)
+    worst_intensity_ignored = worst_idx > 0 ? H.nzval[worst_idx] : 0.0
+
+    return (scribe_score, spectral_contrast, fitted_spectral_contrast, gof, max_matched_residual, max_unmatched_residual, 
+            fitted_manhattan_distance, matched_ratio, worst_pos, worst_intensity_ignored, num_matching_peaks)
+end
+
+
+
 function getDistanceMetrics(w::Vector{T}, 
                             r::Vector{T}, 
                             H::SparseArray{Ti,T}, 

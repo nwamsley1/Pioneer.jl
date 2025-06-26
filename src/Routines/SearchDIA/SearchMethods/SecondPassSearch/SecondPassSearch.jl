@@ -328,6 +328,7 @@ function process_search_results!(
                 gpsms[!,:matched_ratio],
                 gpsms[!,:fitted_manhattan_distance],
                 gpsms[!,:fitted_spectral_contrast],
+                gpsms[!,:scribe],
                 gpsms[!,:y_count],
                 getRtIrtModel(search_context, ms_file_idx)
             );
