@@ -911,7 +911,7 @@ function init_summary_columns!(
         (:max_y_ions,               UInt16)
         (:max_matched_ratio,        Float16)
         (:num_scans,        UInt16)
-        (:smoothness,        Float16)
+        (:smoothness,        Float32)
         (:weights,        Vector{Float32})
         (:irts,         Vector{Float32})
         ];
