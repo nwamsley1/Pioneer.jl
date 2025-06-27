@@ -125,7 +125,7 @@
         "run_to_run_normalization": false
     },
     "output": {
-        "write_csv": true,
+        "write_csv": false,
         "write_decoys": false,
         "delete_temp": true,
         "plots_per_page": 12
