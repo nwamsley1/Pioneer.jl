@@ -162,10 +162,23 @@ function parse_fragment_annotation(frag_regex_iterator::UniSpecFragRegexIterator
     RegexMatch("+2i")
     =#
     for annotation_piece in annotation_pieces
-        if endswith(annotation_piece.match,'i') #"+2i" isotope_stage
-            #making an assumption here that there are no "-"
-            isotope = getNumeric(annotation_piece.match, one(UInt8))
-        elseif startswith(annotation_piece.match, '^') #"^2" charge state
+        if occursin('i', annotation_piece.match) #"+2i" isotope_stage
+            match = annotation_piece.match
+            if occursin('/', annotation_piece.match) #"/2i" isotope stage
+                match = first(split(annotation_piece.match, '/'))
+            end
+            if startswith(match, '+') #"+2i" isotope stage
+                #Isotope stage can't be higher than 9
+                isotope = getNumeric(match, one(UInt8))
+                continue
+            elseif startswith(match, '-') #"-2i" isotope stage
+                #Isotope stage can't be lower than -9
+                isotope = -getNumeric(match, one(UInt8))
+                continue
+            end
+        end
+        
+        if startswith(annotation_piece.match, '^') #"^2" charge state
             #Charge state can't be higher than 9
             charge = getNumeric(annotation_piece.match, one(UInt8))
         elseif startswith(annotation_piece.match, '-') #neutral loss "-2H2O"

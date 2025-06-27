@@ -51,6 +51,3 @@ function validate_required_columns(schema::FileSchema, required::Set{Symbol})
     isempty(missing_cols) || error("Missing required columns: $missing_cols")
     return nothing
 end
-
-# Export schema functions
-export FileSchema, has_column, get_column_or_default, validate_required_columns

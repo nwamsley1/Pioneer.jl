@@ -9,11 +9,6 @@ struct ScoringSearch <: SearchMethod end
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
 
-# Export new types for use in other modules
-export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
-       ProteinGroupBuilder, InferenceResult, FileMapping,
-       add_peptide!, finalize, to_protein_key, to_namedtuple, to_peptide_key
-
 #==========================================================
 Type Definitions 
 ==========================================================#

@@ -122,4 +122,5 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
 
     include("./utils/FileOperations/test_file_operations_suite.jl")
+    "./Routines/BuildSpecLib/fragments/test_fragments_suite.jl" |> include
 end

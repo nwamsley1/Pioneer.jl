@@ -107,6 +107,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML, safeRm, 
-       infer_proteins, ProteinKey, PeptideKey, InferenceResult
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
 end
