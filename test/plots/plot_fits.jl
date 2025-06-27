@@ -1,3 +1,20 @@
+# Copyright (C) 2024 Nathan Wamsley
+#
+# This file is part of Pioneer.jl
+#
+# Pioneer.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 base_path = "/Users/nathanwamsley/Data/Mar_2025/Kevin_DE_Tag_Pioneer/KMD_DE_out_L2Test_lambda1en4/qc_plots"
 using JLD2, Plots
 A = load(joinpath(base_path, "A_mat.jld2"))["H"]
