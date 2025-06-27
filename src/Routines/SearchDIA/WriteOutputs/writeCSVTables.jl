@@ -150,6 +150,7 @@ function writePrecursorCSV(
     "structural_mods"
     "isotopic_mods"
     "prec_mz"
+    "global_score"
     "global_qval"
     "use_for_protein_quant"
     "precursor_idx"
@@ -170,8 +171,8 @@ function writePrecursorCSV(
     # Build rename pairs dynamically to avoid conflicts
     rename_pairs = Pair{Symbol,Symbol}[]
     push!(rename_pairs, :new_best_scan => :apex_scan)
-    push!(rename_pairs, :prec_prob => :run_specific_prob)
-    push!(rename_pairs, :pg_score => :run_specific_pg_score)
+    push!(rename_pairs, :prec_prob => :score)
+    push!(rename_pairs, :global_prob => :global_score)
     push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
     push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
     
@@ -179,6 +180,7 @@ function writePrecursorCSV(
     if !isempty(rename_pairs)
         rename!(precursors_long, rename_pairs)
     end
+
     # order columns
     select!(precursors_long, [:file_name,
                              :species,
@@ -192,8 +194,8 @@ function writePrecursorCSV(
                              :isotopic_mods,
                              :prec_mz,
                              :missed_cleavage,
-                             :global_prob,
-                             :run_specific_prob,
+                             :global_score,
+                             :score,
                              :global_qval,
                              :qval,
                              :pep,
@@ -205,7 +207,7 @@ function writePrecursorCSV(
                              :rt,
                              :apex_scan,
                              :global_pg_score,
-                             :run_specific_pg_score,
+                             :pg_score,
                              :use_for_protein_quant,
                              :precursor_idx,
                              :target,
@@ -281,7 +283,7 @@ function writeProteinGroupsCSV(
     function makeWideFormat(
         longdf::DataFrame)
         # First create a DataFrame with the non-abundance columns we want to keep
-        metadata_df = unique(longdf[:, [:species, :gene_names, :protein_names, :protein, :target, :entrap_id]])#, :n_peptides]])
+        metadata_df = unique(longdf[:, [:species, :gene_names, :protein_names, :protein, :global_pg_score, :global_qval, :target, :entrap_id,]])#, :n_peptides]])
         
         # Create the abundance wide format
         abundance_df = unstack(longdf,
@@ -312,7 +314,7 @@ function writeProteinGroupsCSV(
     protein_groups_long[!, :protein_names] = _map_accession_vector(protein_groups_long.protein, prot_map)
 
     # Update wide columns to include n_peptides
-    wide_columns = ["species", "gene_names", "protein_names", "protein", "target", "entrap_id"]
+    wide_columns = ["species", "gene_names", "protein_names", "protein", "target", "entrap_id", "global_pg_score", "global_qval"]
 
     select!(protein_groups_long, [:file_name,
                              :species,
@@ -323,6 +325,8 @@ function writeProteinGroupsCSV(
                              :entrap_id,
                              :peptides,
                              :n_peptides,
+                             :global_pg_score,
+                             :pg_score,
                              :global_qval,
                              :qval,
                              :pg_pep,
