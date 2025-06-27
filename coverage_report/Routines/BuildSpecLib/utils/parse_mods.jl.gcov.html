@@ -1,0 +1,1192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - Routines/BuildSpecLib/utils/parse_mods.jl</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory Routines/BuildSpecLib/utils">Routines/BuildSpecLib/utils</a> - parse_mods.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">94.9&nbsp;%</td>
+            <td class="headerCovTableEntry">316</td>
+            <td class="headerCovTableEntry">300</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : &quot;&quot;&quot;</span>
+<span id="L2"><span class="lineNum">       2</span>              :     getFixedMods!(</span>
+<span id="L3"><span class="lineNum">       3</span>              :         fixed_mods::Vector{PeptideMod},</span>
+<span id="L4"><span class="lineNum">       4</span>              :         mod_matches::Base.RegexMatchIterator,</span>
+<span id="L5"><span class="lineNum">       5</span>              :         mod_name::String)</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : Add fixed modifications to the provided vector based on regex matches.</span>
+<span id="L8"><span class="lineNum">       8</span>              : </span>
+<span id="L9"><span class="lineNum">       9</span>              : # Parameters</span>
+<span id="L10"><span class="lineNum">      10</span>              : - `fixed_mods::Vector{PeptideMod}`: Vector to store fixed modifications</span>
+<span id="L11"><span class="lineNum">      11</span>              : - `mod_matches::Base.RegexMatchIterator`: Iterator of regex matches for modification sites</span>
+<span id="L12"><span class="lineNum">      12</span>              : - `mod_name::String`: Name of the modification to apply</span>
+<span id="L13"><span class="lineNum">      13</span>              : </span>
+<span id="L14"><span class="lineNum">      14</span>              : # Effects</span>
+<span id="L15"><span class="lineNum">      15</span>              : Adds `PeptideMod` objects to the `fixed_mods` vector for each regex match</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : # Returns</span>
+<span id="L18"><span class="lineNum">      18</span>              : `nothing` - Modifies `fixed_mods` in place</span>
+<span id="L19"><span class="lineNum">      19</span>              : &quot;&quot;&quot;</span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">           3 : function getFixedMods!(</span></span>
+<span id="L21"><span class="lineNum">      21</span>              :                         fixed_mods::Vector{PeptideMod},</span>
+<span id="L22"><span class="lineNum">      22</span>              :                         mod_matches::Base.RegexMatchIterator,</span>
+<span id="L23"><span class="lineNum">      23</span>              :                         mod_name::String)</span>
+<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">           5 :     for mod_match in mod_matches</span></span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">           3 :         index = UInt8(mod_match.offset)</span></span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">           3 :         aa = mod_match.match</span></span>
+<span id="L27"><span class="lineNum">      27</span> <span class="tlaGNC">           6 :         push!(fixed_mods, PeptideMod(index, first(aa), mod_name))</span></span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">           4 :     end</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC">           3 :     return nothing</span></span>
+<span id="L30"><span class="lineNum">      30</span>              : end</span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span>              : </span>
+<span id="L33"><span class="lineNum">      33</span>              : &quot;&quot;&quot;</span>
+<span id="L34"><span class="lineNum">      34</span>              :     matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span>              : Find all potential variable modification sites in a peptide sequence based on regex patterns.</span>
+<span id="L37"><span class="lineNum">      37</span>              : </span>
+<span id="L38"><span class="lineNum">      38</span>              : # Parameters</span>
+<span id="L39"><span class="lineNum">      39</span>              : - `sequence::String`: The peptide sequence to search for modification sites</span>
+<span id="L40"><span class="lineNum">      40</span>              : - `var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}}`: Vector of modification patterns and names</span>
+<span id="L41"><span class="lineNum">      41</span>              :   - `:p`: Regex pattern that matches amino acids to be modified</span>
+<span id="L42"><span class="lineNum">      42</span>              :   - `:r`: String identifier for the modification (e.g., &quot;Unimod:35&quot;)</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              : # Returns</span>
+<span id="L45"><span class="lineNum">      45</span>              : - `Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Vector of matches with:</span>
+<span id="L46"><span class="lineNum">      46</span>              :   - `:regex_match`: RegexMatch object containing position and matched text</span>
+<span id="L47"><span class="lineNum">      47</span>              :   - `:name`: String identifier of the modification</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : # Examples</span>
+<span id="L50"><span class="lineNum">      50</span>              : ```julia</span>
+<span id="L51"><span class="lineNum">      51</span>              : sequence = &quot;PEPTMSK&quot;</span>
+<span id="L52"><span class="lineNum">      52</span>              : var_mods = [(p=r&quot;M&quot;, r=&quot;Oxidation&quot;), (p=r&quot;[ST]&quot;, r=&quot;Phospho&quot;)]</span>
+<span id="L53"><span class="lineNum">      53</span>              : matches = matchVarMods(sequence, var_mods)</span>
+<span id="L54"><span class="lineNum">      54</span>              : # Returns matches for M (Oxidation) and S/T (Phospho) positions</span>
+<span id="L55"><span class="lineNum">      55</span>              : Notes</span>
+<span id="L56"><span class="lineNum">      56</span>              : This function identifies all potential modification sites without applying any</span>
+<span id="L57"><span class="lineNum">      57</span>              : constraints on the maximum number of modifications. The returned matches can be</span>
+<span id="L58"><span class="lineNum">      58</span>              : used to generate valid combinations of modifications in subsequent processing.</span>
+<span id="L59"><span class="lineNum">      59</span>              : &quot;&quot;&quot;</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">          12 : function matchVarMods(sequence::String, var_mods::Vector{NamedTuple{(:p, :r), Tuple{Regex, String}}})</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">          12 :     var_mod_matches = Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}()</span></span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">          12 :     for mod in var_mods</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">          37 :         for mod_match in eachmatch(mod[:p], sequence)</span></span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">          27 :             push!(var_mod_matches, (regex_match=mod_match, name=mod[:r]))</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">          36 :         end</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">          19 :     end</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">          12 :     return var_mod_matches</span></span>
+<span id="L68"><span class="lineNum">      68</span>              : end</span>
+<span id="L69"><span class="lineNum">      69</span>              : </span>
+<span id="L70"><span class="lineNum">      70</span>              : &quot;&quot;&quot;</span>
+<span id="L71"><span class="lineNum">      71</span>              :     countVarModCombinations(var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span>
+<span id="L72"><span class="lineNum">      72</span>              :                            max_var_mods::Int)</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span>              : Calculate the total number of possible variable modification combinations for a sequence, including the unmodified version.</span>
+<span id="L75"><span class="lineNum">      75</span>              : </span>
+<span id="L76"><span class="lineNum">      76</span>              : # Arguments</span>
+<span id="L77"><span class="lineNum">      77</span>              : - `var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Vector of modification matches from matchVarMods()</span>
+<span id="L78"><span class="lineNum">      78</span>              : - `max_var_mods::Int`: Maximum number of variable modifications allowed per sequence</span>
+<span id="L79"><span class="lineNum">      79</span>              : </span>
+<span id="L80"><span class="lineNum">      80</span>              : # Returns</span>
+<span id="L81"><span class="lineNum">      81</span>              : - `Int`: Total number of possible modification combinations, including the unmodified sequence</span>
+<span id="L82"><span class="lineNum">      82</span>              : </span>
+<span id="L83"><span class="lineNum">      83</span>              : # Examples</span>
+<span id="L84"><span class="lineNum">      84</span>              : ```julia</span>
+<span id="L85"><span class="lineNum">      85</span>              : sequence = &quot;PEPMTIDME&quot;</span>
+<span id="L86"><span class="lineNum">      86</span>              : var_mods = [(p=r&quot;M&quot;, r=&quot;Unimod:35&quot;)]</span>
+<span id="L87"><span class="lineNum">      87</span>              : matches = matchVarMods(sequence, var_mods)</span>
+<span id="L88"><span class="lineNum">      88</span>              : n_combinations = countVarModCombinations(matches, 2)</span>
+<span id="L89"><span class="lineNum">      89</span>              : # Returns 4: one unmodified sequence + two single mods + one double mod</span>
+<span id="L90"><span class="lineNum">      90</span>              : ```</span>
+<span id="L91"><span class="lineNum">      91</span>              : </span>
+<span id="L92"><span class="lineNum">      92</span>              : Note: The function uses the binomial coefficient to calculate combinations of modifications </span>
+<span id="L93"><span class="lineNum">      93</span>              : up to max_var_mods and adds 1 for the unmodified sequence.</span>
+<span id="L94"><span class="lineNum">      94</span>              : &quot;&quot;&quot;</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">           9 : function countVarModCombinations(var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span></span>
+<span id="L96"><span class="lineNum">      96</span>              :     max_var_mods::Int)</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">           9 :     n_var_mods = length(var_mod_matches)</span></span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">           9 :     n_var_mod_combinations = 0</span></span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">           9 :     for N in 1:min(max_var_mods, n_var_mods)</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">          17 :         n_var_mod_combinations += binomial(n_var_mods, N)</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">          26 :     end</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">           9 :     n_var_mod_combinations += 1 #For the sequence with no variable modifications </span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">           9 :     return n_var_mod_combinations</span></span>
+<span id="L104"><span class="lineNum">     104</span>              : end</span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span>              : #=</span>
+<span id="L107"><span class="lineNum">     107</span>              : &quot;&quot;&quot;</span>
+<span id="L108"><span class="lineNum">     108</span>              :     fillVarModStrings!(var_mod_strings::Vector{String},</span>
+<span id="L109"><span class="lineNum">     109</span>              :                        var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span>
+<span id="L110"><span class="lineNum">     110</span>              :                        fixed_mods_string::String,</span>
+<span id="L111"><span class="lineNum">     111</span>              :                        max_var_mods::Int)</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              : Fill a pre-allocated vector with all possible combinations of variable modifications, including fixed modifications.</span>
+<span id="L114"><span class="lineNum">     114</span>              : </span>
+<span id="L115"><span class="lineNum">     115</span>              : # Arguments</span>
+<span id="L116"><span class="lineNum">     116</span>              : - `var_mod_strings::Vector{String}`: Pre-allocated vector to store modification strings</span>
+<span id="L117"><span class="lineNum">     117</span>              : - `var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Vector of modification matches from matchVarMods()</span>
+<span id="L118"><span class="lineNum">     118</span>              : - `fixed_mods_string::String`: String containing any fixed modifications in format &quot;(index,aa,mod_name)&quot;</span>
+<span id="L119"><span class="lineNum">     119</span>              : - `max_var_mods::Int`: Maximum number of variable modifications allowed per sequence</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span>              : # Output Format</span>
+<span id="L122"><span class="lineNum">     122</span>              : Each modification String follows the format: &quot;(index,amino_acid,modification_name)&quot;, concatenated for multiple modifications.</span>
+<span id="L123"><span class="lineNum">     123</span>              : </span>
+<span id="L124"><span class="lineNum">     124</span>              : # Examples</span>
+<span id="L125"><span class="lineNum">     125</span>              : ```julia</span>
+<span id="L126"><span class="lineNum">     126</span>              : sequence = &quot;PEPMTIDME&quot;</span>
+<span id="L127"><span class="lineNum">     127</span>              : var_mods = [(p=r&quot;M&quot;, r=&quot;Unimod:35&quot;)]</span>
+<span id="L128"><span class="lineNum">     128</span>              : matches = matchVarMods(sequence, var_mods)</span>
+<span id="L129"><span class="lineNum">     129</span>              : n_combinations = countVarModCombinations(matches, 2)</span>
+<span id="L130"><span class="lineNum">     130</span>              : var_mods_string = Vector{String}(undef, n_combinations)</span>
+<span id="L131"><span class="lineNum">     131</span>              : fillVarModStrings!(var_mods_string, matches, &quot;&quot;, 2)</span>
+<span id="L132"><span class="lineNum">     132</span>              : # Results in:</span>
+<span id="L133"><span class="lineNum">     133</span>              : # [&quot;(4,M,Unimod:35)&quot;,</span>
+<span id="L134"><span class="lineNum">     134</span>              : #  &quot;(8,M,Unimod:35)&quot;,</span>
+<span id="L135"><span class="lineNum">     135</span>              : #  &quot;(4,M,Unimod:35)(8,M,Unimod:35)&quot;,</span>
+<span id="L136"><span class="lineNum">     136</span>              : #  &quot;&quot;]</span>
+<span id="L137"><span class="lineNum">     137</span>              : ```</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              : Note: The function uses Combinatorics.combinations to generate all possible modification combinations.</span>
+<span id="L140"><span class="lineNum">     140</span>              : Requires `using Combinatorics`.</span>
+<span id="L141"><span class="lineNum">     141</span>              : &quot;&quot;&quot;</span>
+<span id="L142"><span class="lineNum">     142</span>              : function fillVarModStrings!(</span>
+<span id="L143"><span class="lineNum">     143</span>              :                             var_mod_strings::Vector{String},</span>
+<span id="L144"><span class="lineNum">     144</span>              :                             var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span>
+<span id="L145"><span class="lineNum">     145</span>              :                             fixed_mods_string::String,</span>
+<span id="L146"><span class="lineNum">     146</span>              :                             max_var_mods::Int</span>
+<span id="L147"><span class="lineNum">     147</span>              :                             )</span>
+<span id="L148"><span class="lineNum">     148</span>              :     i = 1</span>
+<span id="L149"><span class="lineNum">     149</span>              :     for N in 1:min(max_var_mods, length(var_mod_matches))</span>
+<span id="L150"><span class="lineNum">     150</span>              :         for mods in combinations(var_mod_matches, N)</span>
+<span id="L151"><span class="lineNum">     151</span>              :             mods_string = fixed_mods_string</span>
+<span id="L152"><span class="lineNum">     152</span>              :             for mod in mods</span>
+<span id="L153"><span class="lineNum">     153</span>              :                 index = UInt8(mod[:regex_match].offset)</span>
+<span id="L154"><span class="lineNum">     154</span>              :                 aa = mod[:regex_match].match</span>
+<span id="L155"><span class="lineNum">     155</span>              :                 mods_string *= &quot;(&quot;*string(index)*&quot;,&quot;*aa*&quot;,&quot;*mod[:name]*&quot;)&quot;</span>
+<span id="L156"><span class="lineNum">     156</span>              :             end</span>
+<span id="L157"><span class="lineNum">     157</span>              :             var_mod_strings[i] = mods_string</span>
+<span id="L158"><span class="lineNum">     158</span>              :             i += 1</span>
+<span id="L159"><span class="lineNum">     159</span>              :         end</span>
+<span id="L160"><span class="lineNum">     160</span>              :     end</span>
+<span id="L161"><span class="lineNum">     161</span>              :     #Version with 0 variable mods</span>
+<span id="L162"><span class="lineNum">     162</span>              :     var_mod_strings[end] = fixed_mods_string</span>
+<span id="L163"><span class="lineNum">     163</span>              : end</span>
+<span id="L164"><span class="lineNum">     164</span>              : =#</span>
+<span id="L165"><span class="lineNum">     165</span>              : </span>
+<span id="L166"><span class="lineNum">     166</span>              : &quot;&quot;&quot;</span>
+<span id="L167"><span class="lineNum">     167</span>              :     fillVarModStrings!(</span>
+<span id="L168"><span class="lineNum">     168</span>              :         all_mods::Vector{Vector{PeptideMod}},</span>
+<span id="L169"><span class="lineNum">     169</span>              :         var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span>
+<span id="L170"><span class="lineNum">     170</span>              :         fixed_mods::Vector{PeptideMod},</span>
+<span id="L171"><span class="lineNum">     171</span>              :         max_var_mods::Int)</span>
+<span id="L172"><span class="lineNum">     172</span>              : </span>
+<span id="L173"><span class="lineNum">     173</span>              : Fill a vector with all valid combinations of variable modifications up to a specified maximum.</span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span>              : # Parameters</span>
+<span id="L176"><span class="lineNum">     176</span>              : - `all_mods::Vector{Vector{PeptideMod}}`: Pre-allocated vector to store all modification combinations</span>
+<span id="L177"><span class="lineNum">     177</span>              : - `var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}}`: Potential variable modification sites</span>
+<span id="L178"><span class="lineNum">     178</span>              : - `fixed_mods::Vector{PeptideMod}`: Fixed modifications to include in all combinations</span>
+<span id="L179"><span class="lineNum">     179</span>              : - `max_var_mods::Int`: Maximum number of variable modifications to apply to a single peptide</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span>              : # Effects</span>
+<span id="L182"><span class="lineNum">     182</span>              : Fills `all_mods` with different combinations of modifications, each element containing </span>
+<span id="L183"><span class="lineNum">     183</span>              : a complete set of modifications (both fixed and variable) for a peptide variant</span>
+<span id="L184"><span class="lineNum">     184</span>              : </span>
+<span id="L185"><span class="lineNum">     185</span>              : # Returns</span>
+<span id="L186"><span class="lineNum">     186</span>              : `nothing` - Modifies `all_mods` in place</span>
+<span id="L187"><span class="lineNum">     187</span>              : </span>
+<span id="L188"><span class="lineNum">     188</span>              : # Notes</span>
+<span id="L189"><span class="lineNum">     189</span>              : The function generates combinations using the `combinations` function and ensures</span>
+<span id="L190"><span class="lineNum">     190</span>              : that each combination includes all fixed modifications. The combinations are</span>
+<span id="L191"><span class="lineNum">     191</span>              : sorted for consistent output.</span>
+<span id="L192"><span class="lineNum">     192</span>              : &quot;&quot;&quot;</span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">           2 : function fillVarModStrings!(</span></span>
+<span id="L194"><span class="lineNum">     194</span>              :                             all_mods::Vector{Vector{PeptideMod}},</span>
+<span id="L195"><span class="lineNum">     195</span>              :                             var_mod_matches::Vector{NamedTuple{(:regex_match, :name), Tuple{RegexMatch, String}}},</span>
+<span id="L196"><span class="lineNum">     196</span>              :                             fixed_mods::Vector{PeptideMod},</span>
+<span id="L197"><span class="lineNum">     197</span>              :                             max_var_mods::Int</span>
+<span id="L198"><span class="lineNum">     198</span>              :                             )</span>
+<span id="L199"><span class="lineNum">     199</span> <span class="tlaGNC">           2 :     i = 1</span></span>
+<span id="L200"><span class="lineNum">     200</span>              :     #from 1 to length(var_mod_matches) variable mods </span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">           2 :     for N in 1:min(max_var_mods, length(var_mod_matches))</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :         #Each combination of 'N' var mods </span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">           8 :         for mods in combinations(var_mod_matches, N)</span></span>
+<span id="L204"><span class="lineNum">     204</span>              :             #Need a unique key that can map between the target and reverse decoy verion of a sequence. </span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">           6 :             peptide_all_mods = copy(fixed_mods)</span></span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">           6 :             for mod in mods</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">           8 :                 index = UInt8(mod[:regex_match].offset)</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">           8 :                 aa = mod[:regex_match].match</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">           8 :                 push!(peptide_all_mods, PeptideMod(index, first(aa), mod[:name]))</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">           8 :             end</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">           6 :             all_mods[i] = peptide_all_mods</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">           6 :             i += 1</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">           8 :         end</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">           6 :     end</span></span>
+<span id="L215"><span class="lineNum">     215</span>              :     #Version with 0 variable mods</span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">           2 :     all_mods[end] = fixed_mods</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">           2 :     sort!(all_mods)</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">           2 :     return nothing</span></span>
+<span id="L219"><span class="lineNum">     219</span>              : end</span>
+<span id="L220"><span class="lineNum">     220</span>              : </span>
+<span id="L221"><span class="lineNum">     221</span>              : &quot;&quot;&quot;</span>
+<span id="L222"><span class="lineNum">     222</span>              :     parseEmpiricalLibraryMods(sequence::String)</span>
+<span id="L223"><span class="lineNum">     223</span>              : </span>
+<span id="L224"><span class="lineNum">     224</span>              : Parse modifications embedded in a sequence String and return them in a standardized format.</span>
+<span id="L225"><span class="lineNum">     225</span>              : Modifications in the sequence are in the format AA(mod_name).</span>
+<span id="L226"><span class="lineNum">     226</span>              : </span>
+<span id="L227"><span class="lineNum">     227</span>              : # Arguments</span>
+<span id="L228"><span class="lineNum">     228</span>              : - `sequence::String`: Peptide sequence with embedded modifications</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              : # Returns</span>
+<span id="L231"><span class="lineNum">     231</span>              : - `String`: Modified String containing modifications in format &quot;(position,amino_acid,mod_name)&quot;</span>
+<span id="L232"><span class="lineNum">     232</span>              : </span>
+<span id="L233"><span class="lineNum">     233</span>              : # Examples</span>
+<span id="L234"><span class="lineNum">     234</span>              : ```julia</span>
+<span id="L235"><span class="lineNum">     235</span>              : # Test case 1</span>
+<span id="L236"><span class="lineNum">     236</span>              : sequence = &quot;I(exTag1)LSISADI(Unimod:35)ETIGEILK(exTag1)&quot;</span>
+<span id="L237"><span class="lineNum">     237</span>              : result = parseEmpiricalLibraryMods(sequence)</span>
+<span id="L238"><span class="lineNum">     238</span>              : @assert result == &quot;(1,I,exTag1)(8,I,Unimod:35)(16,K,exTag1)&quot; &quot;Test 1 failed&quot;</span>
+<span id="L239"><span class="lineNum">     239</span>              : </span>
+<span id="L240"><span class="lineNum">     240</span>              : # Test case 2</span>
+<span id="L241"><span class="lineNum">     241</span>              : sequence = &quot;n(exTag1)PEPTIDE(exTag1)&quot;</span>
+<span id="L242"><span class="lineNum">     242</span>              : result = parseEmpiricalLibraryMods(sequence)</span>
+<span id="L243"><span class="lineNum">     243</span>              : @assert result == &quot;(1,n,exTag1)(7,E,exTag1)&quot; &quot;Test 2 failed&quot;</span>
+<span id="L244"><span class="lineNum">     244</span>              : </span>
+<span id="L245"><span class="lineNum">     245</span>              : # Test case 3</span>
+<span id="L246"><span class="lineNum">     246</span>              : sequence = &quot;n(exTag1)PEPTIDEc(exTag1)&quot;</span>
+<span id="L247"><span class="lineNum">     247</span>              : result = parseEmpiricalLibraryMods(sequence)</span>
+<span id="L248"><span class="lineNum">     248</span>              : @assert result == &quot;(1,n,exTag1)(7,c,exTag1)&quot; &quot;Test 3 failed&quot;</span>
+<span id="L249"><span class="lineNum">     249</span>              : </span>
+<span id="L250"><span class="lineNum">     250</span>              : println(&quot;All tests passed!&quot;)</span>
+<span id="L251"><span class="lineNum">     251</span>              : ```</span>
+<span id="L252"><span class="lineNum">     252</span>              : &quot;&quot;&quot;</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">          66 : function parseEmpiricalLibraryMods(sequence::String)</span></span>
+<span id="L254"><span class="lineNum">     254</span>              :     # Regex to find modifications in sequence</span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">          66 :     mod_regex = r&quot;([A-Z]|[nc])\(([^)]+)\)&quot;</span></span>
+<span id="L256"><span class="lineNum">     256</span>              :     </span>
+<span id="L257"><span class="lineNum">     257</span>              :     # Check for terminal markers</span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">          66 :     has_n_term = startswith(sequence, &quot;n&quot;)</span></span>
+<span id="L259"><span class="lineNum">     259</span>              :     </span>
+<span id="L260"><span class="lineNum">     260</span>              :     # Track position adjustments due to removing modification text</span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">          66 :     pos_adjust = 0</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">          66 :     if has_n_term</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">           4 :         pos_adjust += 1  # Start position counting after 'n'</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :     end</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">          66 :     mods = String[]</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :     </span>
+<span id="L267"><span class="lineNum">     267</span>              :     # Find all modifications</span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">         132 :     for m in eachmatch(mod_regex, sequence)</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">         116 :         aa = m.captures[1]</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">         116 :         mod_name = m.captures[2]</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">         232 :         if 'n' ∈ aa</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">           8 :             push!(mods, &quot;(1,n,$mod_name)&quot;)</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">         112 :         elseif 'c' ∈ aa</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">           2 :             pos = m.offset - pos_adjust - 1</span></span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">           2 :             push!(mods, &quot;($pos,c,$mod_name)&quot;)</span></span>
+<span id="L276"><span class="lineNum">     276</span>              :         else</span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">         110 :             pos = m.offset - pos_adjust</span></span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">         110 :             push!(mods, &quot;($pos,$aa,$mod_name)&quot;)</span></span>
+<span id="L279"><span class="lineNum">     279</span>              :         end</span>
+<span id="L280"><span class="lineNum">     280</span>              :         # Adjust for removal of (mod_name)</span>
+<span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">         116 :         pos_adjust += length(m.match) - 1</span></span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">         166 :     end</span></span>
+<span id="L283"><span class="lineNum">     283</span>              :     # Sort by position and join</span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">         166 :     sort!(mods, by=x-&gt;parse(Int, match(r&quot;\((\d+)&quot;, x).captures[1]))</span></span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">          66 :     return join(mods)</span></span>
+<span id="L287"><span class="lineNum">     287</span>              : end</span>
+<span id="L288"><span class="lineNum">     288</span>              : </span>
+<span id="L289"><span class="lineNum">     289</span>              : &quot;&quot;&quot;</span>
+<span id="L290"><span class="lineNum">     290</span>              :     getMassOffset(start_idx::Integer, stop_idx::Integer, mod_masses::Vector{Float32})</span>
+<span id="L291"><span class="lineNum">     291</span>              : </span>
+<span id="L292"><span class="lineNum">     292</span>              : Calculate the total modification mass for a sequence fragment.</span>
+<span id="L293"><span class="lineNum">     293</span>              : </span>
+<span id="L294"><span class="lineNum">     294</span>              : # Arguments</span>
+<span id="L295"><span class="lineNum">     295</span>              : - `start_idx::Integer`: Starting position in the sequence (inclusive)</span>
+<span id="L296"><span class="lineNum">     296</span>              : - `stop_idx::Integer`: Ending position in the sequence (inclusive)</span>
+<span id="L297"><span class="lineNum">     297</span>              : - `mod_masses::Vector{Float32}`: Array containing modification masses at each position</span>
+<span id="L298"><span class="lineNum">     298</span>              : </span>
+<span id="L299"><span class="lineNum">     299</span>              : # Returns</span>
+<span id="L300"><span class="lineNum">     300</span>              : - `Float32`: Total mass of modifications in the specified range</span>
+<span id="L301"><span class="lineNum">     301</span>              : </span>
+<span id="L302"><span class="lineNum">     302</span>              : # Examples</span>
+<span id="L303"><span class="lineNum">     303</span>              : ```julia</span>
+<span id="L304"><span class="lineNum">     304</span>              : mod_masses = [229.163f0, 0.0f0, 0.0f0, 0.0f0, 229.163f0]</span>
+<span id="L305"><span class="lineNum">     305</span>              : mass_offset = getMassOffset(1, 3, mod_masses)  # Returns mass for positions 1-3</span>
+<span id="L306"><span class="lineNum">     306</span>              : ```</span>
+<span id="L307"><span class="lineNum">     307</span>              : &quot;&quot;&quot;</span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">           8 : function getMassOffset(start_idx::Integer, stop_idx::Integer, mod_masses::Vector{Float32})</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">           8 :     mass_offset = 0.0f0</span></span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaGNC">           8 :     for i in start_idx:stop_idx</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">          24 :         mass_offset += mod_masses[i]</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">          40 :     end</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">           8 :     return mass_offset</span></span>
+<span id="L314"><span class="lineNum">     314</span>              : end</span>
+<span id="L315"><span class="lineNum">     315</span>              : </span>
+<span id="L316"><span class="lineNum">     316</span>              : &quot;&quot;&quot;</span>
+<span id="L317"><span class="lineNum">     317</span>              :     addIsoMods(isotopic_mods::String, </span>
+<span id="L318"><span class="lineNum">     318</span>              :                structural_mods::String, </span>
+<span id="L319"><span class="lineNum">     319</span>              :                mod_key::String,</span>
+<span id="L320"><span class="lineNum">     320</span>              :                mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})</span>
+<span id="L321"><span class="lineNum">     321</span>              : </span>
+<span id="L322"><span class="lineNum">     322</span>              : Creates a new String combining existing isotopic modifications with additional isotopic channel information </span>
+<span id="L323"><span class="lineNum">     323</span>              : for specified structural modifications. The function identifies all instances of the target modification in </span>
+<span id="L324"><span class="lineNum">     324</span>              : the structural modifications String and adds corresponding isotopic channel annotations.</span>
+<span id="L325"><span class="lineNum">     325</span>              : </span>
+<span id="L326"><span class="lineNum">     326</span>              : # Arguments</span>
+<span id="L327"><span class="lineNum">     327</span>              : - `isotopic_mods::String`: Existing isotopic modifications in format &quot;(mod_index, channel)&quot;, where mod_index refers </span>
+<span id="L328"><span class="lineNum">     328</span>              :    to the position of the modification in the structural_mods String</span>
+<span id="L329"><span class="lineNum">     329</span>              : - `structural_mods::String`: Structural modifications in format &quot;(position,amino_acid,mod_name)&quot;</span>
+<span id="L330"><span class="lineNum">     330</span>              : - `mod_key::String`: Target modification to add isotopic channel for (e.g., &quot;exTag1&quot;)</span>
+<span id="L331"><span class="lineNum">     331</span>              : - `mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}}`: Isotopic channel information</span>
+<span id="L332"><span class="lineNum">     332</span>              :     - `:channel`: String identifier for the isotopic channel (e.g., &quot;d0&quot;)</span>
+<span id="L333"><span class="lineNum">     333</span>              :     - `:mass`: Mass shift associated with the channel (unused in String generation)</span>
+<span id="L334"><span class="lineNum">     334</span>              : </span>
+<span id="L335"><span class="lineNum">     335</span>              : # Returns</span>
+<span id="L336"><span class="lineNum">     336</span>              : - `String`: New String containing all isotopic modifications in format &quot;(mod_index, channel)&quot;, where mod_index </span>
+<span id="L337"><span class="lineNum">     337</span>              :    refers to the order of appearance in structural_mods (1-based indexing)</span>
+<span id="L338"><span class="lineNum">     338</span>              : </span>
+<span id="L339"><span class="lineNum">     339</span>              : # Examples</span>
+<span id="L340"><span class="lineNum">     340</span>              : ```julia</span>
+<span id="L341"><span class="lineNum">     341</span>              : # Basic case with structural mod indices</span>
+<span id="L342"><span class="lineNum">     342</span>              : structural_mods = &quot;(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)&quot;</span>
+<span id="L343"><span class="lineNum">     343</span>              : isotopic_mods = &quot;&quot;</span>
+<span id="L344"><span class="lineNum">     344</span>              : result = addIsoMods(isotopic_mods, structural_mods, &quot;exTag1&quot;, (channel=&quot;d0&quot;, mass=0.0f0))</span>
+<span id="L345"><span class="lineNum">     345</span>              : # Returns &quot;(1, d0)(3, d0)&quot;</span>
+<span id="L346"><span class="lineNum">     346</span>              : # Here:</span>
+<span id="L347"><span class="lineNum">     347</span>              : #   - 1 refers to first modification &quot;(1,n,exTag1)&quot;</span>
+<span id="L348"><span class="lineNum">     348</span>              : #   - 3 refers to third modification &quot;(16,c,exTag1)&quot;</span>
+<span id="L349"><span class="lineNum">     349</span>              : </span>
+<span id="L350"><span class="lineNum">     350</span>              : # With existing isotopic mods</span>
+<span id="L351"><span class="lineNum">     351</span>              : structural_mods = &quot;(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)&quot;</span>
+<span id="L352"><span class="lineNum">     352</span>              : isotopic_mods = &quot;(2, d4)&quot;  # Refers to second structural mod &quot;(5,L,exTag3)&quot;</span>
+<span id="L353"><span class="lineNum">     353</span>              : result = addIsoMods(isotopic_mods, structural_mods, &quot;exTag1&quot;, (channel=&quot;d0&quot;, mass=0.0f0))</span>
+<span id="L354"><span class="lineNum">     354</span>              : # Returns &quot;(1, d0)(2, d4)(3, d0)&quot;</span>
+<span id="L355"><span class="lineNum">     355</span>              : # Here:</span>
+<span id="L356"><span class="lineNum">     356</span>              : #   - 1, 3 refer to first and third exTag1 modifications</span>
+<span id="L357"><span class="lineNum">     357</span>              : #   - 2 refers to existing isotopic mod on second structural modification</span>
+<span id="L358"><span class="lineNum">     358</span>              : ```</span>
+<span id="L359"><span class="lineNum">     359</span>              : </span>
+<span id="L360"><span class="lineNum">     360</span>              : Note: Mod indices in the output are sorted numerically for consistent ordering. If no instances </span>
+<span id="L361"><span class="lineNum">     361</span>              : of the target modification are found, returns the original isotopic_mods String unchanged.</span>
+<span id="L362"><span class="lineNum">     362</span>              : The indices in the output refer to the order of appearance in structural_mods (1-based), not </span>
+<span id="L363"><span class="lineNum">     363</span>              : to sequence positions.</span>
+<span id="L364"><span class="lineNum">     364</span>              : &quot;&quot;&quot;</span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">         248 : function addIsoMods(isotopic_mods::String, </span></span>
+<span id="L366"><span class="lineNum">     366</span>              :                     structural_mods::String, </span>
+<span id="L367"><span class="lineNum">     367</span>              :                     mod_key::String,</span>
+<span id="L368"><span class="lineNum">     368</span>              :                     mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})</span>
+<span id="L369"><span class="lineNum">     369</span>              :     </span>
+<span id="L370"><span class="lineNum">     370</span>              :     # Parse structural mods to find indices of target modification</span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">         248 :     struct_mod_regex = r&quot;\((\d+),([A-Z]|[nc]),([^,\)]+)\)&quot;</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">         248 :     mod_indices = Int[]  # Store the index of the modification, not its position</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :     </span>
+<span id="L374"><span class="lineNum">     374</span>              :     # Find all instances where the target modification occurs</span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">         494 :     for (mod_idx, m) in enumerate(eachmatch(struct_mod_regex, structural_mods))</span></span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">         424 :         mod_name = m.captures[3]</span></span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">         848 :         if mod_name == mod_key</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">         416 :             push!(mod_indices, mod_idx)</span></span>
+<span id="L379"><span class="lineNum">     379</span>              :         end</span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">         602 :     end</span></span>
+<span id="L381"><span class="lineNum">     381</span>              :     </span>
+<span id="L382"><span class="lineNum">     382</span>              :     # If no target modifications found, return original isotopic mods</span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">         248 :     isempty(mod_indices) &amp;&amp; return isotopic_mods</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :     </span>
+<span id="L385"><span class="lineNum">     385</span>              :     # Parse existing isotopic modifications</span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">         244 :     iso_mod_regex = r&quot;\((\d+),\s*([^)]+)\)&quot;</span></span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaGNC">         244 :     existing_mods = Dict{Int, String}()</span></span>
+<span id="L388"><span class="lineNum">     388</span>              :     </span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaGNC">         244 :     if !isempty(isotopic_mods)</span></span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">           4 :         for m in eachmatch(iso_mod_regex, isotopic_mods)</span></span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaGNC">           2 :             idx = parse(Int, m.captures[1])</span></span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">           2 :             channel = m.captures[2]</span></span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaGNC">           4 :             existing_mods[idx] = channel</span></span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaGNC">           2 :         end</span></span>
+<span id="L395"><span class="lineNum">     395</span>              :     end</span>
+<span id="L396"><span class="lineNum">     396</span>              :     </span>
+<span id="L397"><span class="lineNum">     397</span>              :     # Add new modifications</span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaGNC">         244 :     for idx in mod_indices</span></span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaGNC">         416 :         existing_mods[idx] = mod_channel.channel</span></span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaGNC">         416 :     end</span></span>
+<span id="L401"><span class="lineNum">     401</span>              :     </span>
+<span id="L402"><span class="lineNum">     402</span>              :     # Create sorted output</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">         488 :     sorted_indices = sort(collect(keys(existing_mods)))</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">         244 :     return join(&quot;($idx, $(existing_mods[idx]))&quot; for idx in sorted_indices)</span></span>
+<span id="L405"><span class="lineNum">     405</span>              : end</span>
+<span id="L406"><span class="lineNum">     406</span>              : </span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">         240 : function addIsoMods(isotopic_mods::Missing, </span></span>
+<span id="L408"><span class="lineNum">     408</span>              :     structural_mods::String, </span>
+<span id="L409"><span class="lineNum">     409</span>              :     mod_key::String,</span>
+<span id="L410"><span class="lineNum">     410</span>              :     mod_channel::NamedTuple{(:channel, :mass), Tuple{String, Float32}})</span>
+<span id="L411"><span class="lineNum">     411</span>              : </span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">         240 :     isotopic_mods = addIsoMods(&quot;&quot;, structural_mods, mod_key, mod_channel)</span></span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC">         240 :     if length(isotopic_mods) == 0</span></span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaUNC">           0 :         return missing</span></span>
+<span id="L415"><span class="lineNum">     415</span>              :     else</span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">         240 :         return isotopic_mods</span></span>
+<span id="L417"><span class="lineNum">     417</span>              :     end</span>
+<span id="L418"><span class="lineNum">     418</span>              : end</span>
+<span id="L419"><span class="lineNum">     419</span>              : </span>
+<span id="L420"><span class="lineNum">     420</span>              : &quot;&quot;&quot;</span>
+<span id="L421"><span class="lineNum">     421</span>              :     getIsoModMasses!(iso_mod_masses::Vector{Float32},</span>
+<span id="L422"><span class="lineNum">     422</span>              :                      structural_mods::String,</span>
+<span id="L423"><span class="lineNum">     423</span>              :                      isotopic_mods::String,</span>
+<span id="L424"><span class="lineNum">     424</span>              :                      iso_mods_dict::Dict{String, Dict{String, Float32}})</span>
+<span id="L425"><span class="lineNum">     425</span>              : </span>
+<span id="L426"><span class="lineNum">     426</span>              : Maps isotopic modification masses to their positions in a peptide sequence by filling an array of masses.</span>
+<span id="L427"><span class="lineNum">     427</span>              : Uses structural modifications to identify modification types and isotopic modifications to determine channels.</span>
+<span id="L428"><span class="lineNum">     428</span>              : </span>
+<span id="L429"><span class="lineNum">     429</span>              : # Arguments</span>
+<span id="L430"><span class="lineNum">     430</span>              : - `iso_mod_masses::Vector{Float32}`: Pre-allocated vector to store isotopic modification masses</span>
+<span id="L431"><span class="lineNum">     431</span>              : - `structural_mods::String`: String containing structural modifications in format &quot;(position,aa,mod_name)&quot;</span>
+<span id="L432"><span class="lineNum">     432</span>              : - `isotopic_mods::String`: String containing isotopic channels in format &quot;(mod_index, channel)&quot; where mod_index </span>
+<span id="L433"><span class="lineNum">     433</span>              :    refers to the position of the modification in structural_mods (1-based)</span>
+<span id="L434"><span class="lineNum">     434</span>              : - `iso_mods_dict::Dict{String, Dict{String, Float32}}`: Nested dictionary mapping modification names and channels to masses</span>
+<span id="L435"><span class="lineNum">     435</span>              : </span>
+<span id="L436"><span class="lineNum">     436</span>              : # Effects</span>
+<span id="L437"><span class="lineNum">     437</span>              : - Fills `iso_mod_masses` with isotopic modification masses at sequence positions</span>
+<span id="L438"><span class="lineNum">     438</span>              : - All other positions remain 0.0</span>
+<span id="L439"><span class="lineNum">     439</span>              : </span>
+<span id="L440"><span class="lineNum">     440</span>              : # Example</span>
+<span id="L441"><span class="lineNum">     441</span>              : ```julia</span>
+<span id="L442"><span class="lineNum">     442</span>              : iso_mods_dict = Dict(</span>
+<span id="L443"><span class="lineNum">     443</span>              :     &quot;exTag1&quot; =&gt; Dict(&quot;d0&quot; =&gt; 0.0f0, &quot;d4&quot; =&gt; 4.0f0),</span>
+<span id="L444"><span class="lineNum">     444</span>              :     &quot;exTag3&quot; =&gt; Dict(&quot;d0&quot; =&gt; 0.0f0, &quot;d4&quot; =&gt; 4.0f0)</span>
+<span id="L445"><span class="lineNum">     445</span>              : )</span>
+<span id="L446"><span class="lineNum">     446</span>              : # Third modification in structural_mods gets d4 channel</span>
+<span id="L447"><span class="lineNum">     447</span>              : structural_mods = &quot;(1,I,exTag1)(5,L,exTag3)(7,K,exTag1)&quot;</span>
+<span id="L448"><span class="lineNum">     448</span>              : isotopic_mods = &quot;(3, d4)&quot;  # Refers to third mod &quot;(7,K,exTag1)&quot;</span>
+<span id="L449"><span class="lineNum">     449</span>              : iso_mod_masses = zeros(Float32, 255)</span>
+<span id="L450"><span class="lineNum">     450</span>              : getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)</span>
+<span id="L451"><span class="lineNum">     451</span>              : # Results in iso_mod_masses[7] = 4.</span>
+<span id="L452"><span class="lineNum">     452</span>              : </span>
+<span id="L453"><span class="lineNum">     453</span>              : iso_mods_dict = Dict(</span>
+<span id="L454"><span class="lineNum">     454</span>              :     &quot;exTag1&quot; =&gt; Dict(&quot;d0&quot; =&gt; 0.0f0, &quot;d4&quot; =&gt; 4.0f0),</span>
+<span id="L455"><span class="lineNum">     455</span>              :     &quot;exTag3&quot; =&gt; Dict(&quot;d0&quot; =&gt; 0.0f0, &quot;d4&quot; =&gt; 4.0f0)</span>
+<span id="L456"><span class="lineNum">     456</span>              : )</span>
+<span id="L457"><span class="lineNum">     457</span>              : </span>
+<span id="L458"><span class="lineNum">     458</span>              : # Test 1: Basic indexing</span>
+<span id="L459"><span class="lineNum">     459</span>              : structural_mods = &quot;(1,I,exTag1)(5,L,exTag3)(7,K,exTag1)&quot;</span>
+<span id="L460"><span class="lineNum">     460</span>              : isotopic_mods = &quot;(3, d4)&quot;  # Third mod gets d4</span>
+<span id="L461"><span class="lineNum">     461</span>              : iso_mod_masses = zeros(Float32, 255)</span>
+<span id="L462"><span class="lineNum">     462</span>              : getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)</span>
+<span id="L463"><span class="lineNum">     463</span>              : @assert iso_mod_masses[7] == 4.0f0 &quot;Failed: Third mod should have mass 4.0&quot;</span>
+<span id="L464"><span class="lineNum">     464</span>              : @assert iso_mod_masses[1] == 0.0f0 &quot;Failed: First mod should have mass 0.0&quot;</span>
+<span id="L465"><span class="lineNum">     465</span>              : </span>
+<span id="L466"><span class="lineNum">     466</span>              : # Test 2: Multiple mods</span>
+<span id="L467"><span class="lineNum">     467</span>              : structural_mods = &quot;(1,n,exTag1)(5,L,exTag3)(16,c,exTag1)&quot;</span>
+<span id="L468"><span class="lineNum">     468</span>              : isotopic_mods = &quot;(1, d0)(2, d4)&quot;  # First mod gets d0, second gets d4</span>
+<span id="L469"><span class="lineNum">     469</span>              : iso_mod_masses = zeros(Float32, 255)</span>
+<span id="L470"><span class="lineNum">     470</span>              : getIsoModMasses!(iso_mod_masses, structural_mods, isotopic_mods, iso_mods_dict)</span>
+<span id="L471"><span class="lineNum">     471</span>              : @assert iso_mod_masses[1] == 0.0f0 &quot;Failed: First mod should have mass 0.0&quot;</span>
+<span id="L472"><span class="lineNum">     472</span>              : @assert iso_mod_masses[5] == 4.0f0 &quot;Failed: Second mod should have mass 4.0&quot;</span>
+<span id="L473"><span class="lineNum">     473</span>              : </span>
+<span id="L474"><span class="lineNum">     474</span>              : println(&quot;All tests passed!&quot;)</span>
+<span id="L475"><span class="lineNum">     475</span>              : ```</span>
+<span id="L476"><span class="lineNum">     476</span>              : &quot;&quot;&quot;</span>
+<span id="L477"><span class="lineNum">     477</span> <span class="tlaGNC">         248 : function getIsoModMasses!(iso_mod_masses::Vector{Float32},</span></span>
+<span id="L478"><span class="lineNum">     478</span>              :                          structural_mods::String,</span>
+<span id="L479"><span class="lineNum">     479</span>              :                          isotopic_mods::String,</span>
+<span id="L480"><span class="lineNum">     480</span>              :                          iso_mods_dict::Dict{String, Dict{String, Float32}})</span>
+<span id="L481"><span class="lineNum">     481</span>              :     </span>
+<span id="L482"><span class="lineNum">     482</span>              :     # Reset the masses array</span>
+<span id="L483"><span class="lineNum">     483</span> <span class="tlaGNC">       63240 :     fill!(iso_mod_masses, 0.0f0)</span></span>
+<span id="L484"><span class="lineNum">     484</span>              :     </span>
+<span id="L485"><span class="lineNum">     485</span>              :     # Return early if no mods</span>
+<span id="L486"><span class="lineNum">     486</span> <span class="tlaGNC">         248 :     (isempty(structural_mods) || isempty(isotopic_mods)) &amp;&amp; return</span></span>
+<span id="L487"><span class="lineNum">     487</span>              :     </span>
+<span id="L488"><span class="lineNum">     488</span>              :     # Parse structural mods into sequence of (position, mod_name) pairs</span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">         248 :     struct_mod_regex = r&quot;\((\d+),(?:[A-Z]|[nc]),([^,\)]+)\)&quot;</span></span>
+<span id="L490"><span class="lineNum">     490</span> <span class="tlaGNC">         248 :     structural_mods_seq = Vector{Tuple{Int, String}}()</span></span>
+<span id="L491"><span class="lineNum">     491</span>              :     </span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaGNC">         496 :     for m in eachmatch(struct_mod_regex, structural_mods)</span></span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaGNC">         424 :         pos = parse(Int, m.captures[1])</span></span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaGNC">         424 :         mod_name = m.captures[2]</span></span>
+<span id="L495"><span class="lineNum">     495</span> <span class="tlaGNC">         424 :         if haskey(iso_mods_dict, mod_name)</span></span>
+<span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">         424 :             push!(structural_mods_seq, (pos, mod_name))</span></span>
+<span id="L497"><span class="lineNum">     497</span>              :         end</span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaGNC">         600 :     end</span></span>
+<span id="L499"><span class="lineNum">     499</span>              :     </span>
+<span id="L500"><span class="lineNum">     500</span>              :     # Parse isotopic mods and apply masses</span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">         248 :     iso_mod_regex = r&quot;\((\d+),\s*([^)]+)\)&quot;</span></span>
+<span id="L502"><span class="lineNum">     502</span>              :     </span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaGNC">         496 :     for m in eachmatch(iso_mod_regex, isotopic_mods)</span></span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">         418 :         mod_idx = parse(Int, m.captures[1])</span></span>
+<span id="L505"><span class="lineNum">     505</span> <span class="tlaGNC">         418 :         channel = strip(m.captures[2])</span></span>
+<span id="L506"><span class="lineNum">     506</span>              :         </span>
+<span id="L507"><span class="lineNum">     507</span>              :         # Check if this index exists in our structural mods sequence</span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaGNC">         418 :         if 1 &lt;= mod_idx &lt;= length(structural_mods_seq)</span></span>
+<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC">         418 :             pos, mod_name = structural_mods_seq[mod_idx]</span></span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">         418 :             if haskey(iso_mods_dict, mod_name) &amp;&amp; haskey(iso_mods_dict[mod_name], channel)</span></span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">         418 :                 iso_mod_masses[pos] = iso_mods_dict[mod_name][channel]</span></span>
+<span id="L512"><span class="lineNum">     512</span>              :             end</span>
+<span id="L513"><span class="lineNum">     513</span>              :         end</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">         418 :     end</span></span>
+<span id="L515"><span class="lineNum">     515</span>              : end</span>
+<span id="L516"><span class="lineNum">     516</span>              : </span>
+<span id="L517"><span class="lineNum">     517</span>              : &quot;&quot;&quot;</span>
+<span id="L518"><span class="lineNum">     518</span>              :     get_aa_masses!(aa_masses::Vector{T}, sequence::String) where {T&lt;:AbstractFloat}</span>
+<span id="L519"><span class="lineNum">     519</span>              : </span>
+<span id="L520"><span class="lineNum">     520</span>              : Fill a pre-allocated vector with amino acid masses for each position in the sequence.</span>
+<span id="L521"><span class="lineNum">     521</span>              : </span>
+<span id="L522"><span class="lineNum">     522</span>              : # Arguments</span>
+<span id="L523"><span class="lineNum">     523</span>              : - `aa_masses::Vector{T}`: Pre-allocated vector to store amino acid masses</span>
+<span id="L524"><span class="lineNum">     524</span>              : - `sequence::String`: Peptide sequence</span>
+<span id="L525"><span class="lineNum">     525</span>              : </span>
+<span id="L526"><span class="lineNum">     526</span>              : # Effects</span>
+<span id="L527"><span class="lineNum">     527</span>              : Fills `aa_masses` with the mass of each amino acid at its corresponding position</span>
+<span id="L528"><span class="lineNum">     528</span>              : </span>
+<span id="L529"><span class="lineNum">     529</span>              : # Examples</span>
+<span id="L530"><span class="lineNum">     530</span>              : ```julia</span>
+<span id="L531"><span class="lineNum">     531</span>              : # Test 1: Simple tripeptide</span>
+<span id="L532"><span class="lineNum">     532</span>              : sequence = &quot;PAK&quot;</span>
+<span id="L533"><span class="lineNum">     533</span>              : aa_masses = zeros(Float32, 3)</span>
+<span id="L534"><span class="lineNum">     534</span>              : get_aa_masses!(aa_masses, sequence)</span>
+<span id="L535"><span class="lineNum">     535</span>              : aa_masses .≈ [97.05276,    # P</span>
+<span id="L536"><span class="lineNum">     536</span>              :   71.03711,    # A</span>
+<span id="L537"><span class="lineNum">     537</span>              :   128.09496]   # K</span>
+<span id="L538"><span class="lineNum">     538</span>              : </span>
+<span id="L539"><span class="lineNum">     539</span>              : # Test 3: Sequence with all 20 standard amino acids</span>
+<span id="L540"><span class="lineNum">     540</span>              : sequence = &quot;ACDEFGHIKLMNPQRSTVWY&quot;</span>
+<span id="L541"><span class="lineNum">     541</span>              : aa_masses = zeros(Float32, 20)</span>
+<span id="L542"><span class="lineNum">     542</span>              : get_aa_masses!(aa_masses, sequence)</span>
+<span id="L543"><span class="lineNum">     543</span>              : @assert aa_masses[1] ≈ 71.03711f0  # A</span>
+<span id="L544"><span class="lineNum">     544</span>              : @assert aa_masses[8] ≈ 113.08406f0 # I</span>
+<span id="L545"><span class="lineNum">     545</span>              : @assert aa_masses[20] ≈ 163.06333f0 # Y</span>
+<span id="L546"><span class="lineNum">     546</span>              : ```</span>
+<span id="L547"><span class="lineNum">     547</span>              : </span>
+<span id="L548"><span class="lineNum">     548</span>              : Note: All masses are monoisotopic masses in Daltons (Da).</span>
+<span id="L549"><span class="lineNum">     549</span>              : See AA_to_mass dictionary for the complete mass mapping.</span>
+<span id="L550"><span class="lineNum">     550</span>              : &quot;&quot;&quot;</span>
+<span id="L551"><span class="lineNum">     551</span> <span class="tlaGNC">         248 : function get_aa_masses!(aa_masses::Vector{T}, sequence::AbstractString) where {T&lt;:AbstractFloat}</span></span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC">       62266 :     fill!(aa_masses, zero(T))</span></span>
+<span id="L553"><span class="lineNum">     553</span> <span class="tlaGNC">         248 :     for (i, aa) in enumerate(sequence)</span></span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">        3714 :         aa_masses[i] = convert(T, AA_to_mass[aa])</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">        3714 :     end</span></span>
+<span id="L556"><span class="lineNum">     556</span>              : end</span>
+<span id="L557"><span class="lineNum">     557</span>              : </span>
+<span id="L558"><span class="lineNum">     558</span>              : &quot;&quot;&quot;</span>
+<span id="L559"><span class="lineNum">     559</span>              :     get_structural_mod_masses!(mod_masses::Vector{T}, </span>
+<span id="L560"><span class="lineNum">     560</span>              :                              structural_mods::String,</span>
+<span id="L561"><span class="lineNum">     561</span>              :                              mod_to_mass::Dict{String, T}) where {T&lt;:AbstractFloat}</span>
+<span id="L562"><span class="lineNum">     562</span>              : </span>
+<span id="L563"><span class="lineNum">     563</span>              : Fill a pre-allocated vector with structural modification masses.</span>
+<span id="L564"><span class="lineNum">     564</span>              : </span>
+<span id="L565"><span class="lineNum">     565</span>              : # Arguments</span>
+<span id="L566"><span class="lineNum">     566</span>              : - `mod_masses::Vector{T}`: Pre-allocated vector to store modification masses</span>
+<span id="L567"><span class="lineNum">     567</span>              : - `structural_mods::String`: String containing modifications in format &quot;(index,aa,mod_name)&quot;</span>
+<span id="L568"><span class="lineNum">     568</span>              : - `mod_to_mass::Dict{String, T}`: Dictionary mapping modification names to masses</span>
+<span id="L569"><span class="lineNum">     569</span>              : </span>
+<span id="L570"><span class="lineNum">     570</span>              : # Example</span>
+<span id="L571"><span class="lineNum">     571</span>              : ```julia</span>
+<span id="L572"><span class="lineNum">     572</span>              : sequence = &quot;PEPTIDE&quot;</span>
+<span id="L573"><span class="lineNum">     573</span>              : structural_mods = &quot;(1,P,Phospho)(7,E,Acetyl)&quot;</span>
+<span id="L574"><span class="lineNum">     574</span>              : mod_masses = zeros(Float32, length(sequence))</span>
+<span id="L575"><span class="lineNum">     575</span>              : mod_to_mass = Dict(&quot;Phospho&quot; =&gt; 79.966331f0, &quot;Acetyl&quot; =&gt; 42.010565f0)</span>
+<span id="L576"><span class="lineNum">     576</span>              : get_structural_mod_masses!(mod_masses, structural_mods, mod_to_mass)</span>
+<span id="L577"><span class="lineNum">     577</span>              : ```</span>
+<span id="L578"><span class="lineNum">     578</span>              : &quot;&quot;&quot;</span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">         250 : function get_structural_mod_masses!(mod_masses::Vector{T}, </span></span>
+<span id="L580"><span class="lineNum">     580</span>              :                                   structural_mods::AbstractString,</span>
+<span id="L581"><span class="lineNum">     581</span>              :                                   mod_to_mass::Dict{String, T}) where {T&lt;:AbstractFloat}</span>
+<span id="L582"><span class="lineNum">     582</span> <span class="tlaGNC">       62262 :     fill!(mod_masses, zero(T))</span></span>
+<span id="L583"><span class="lineNum">     583</span>              :     </span>
+<span id="L584"><span class="lineNum">     584</span>              :     # If no mods, return early</span>
+<span id="L585"><span class="lineNum">     585</span> <span class="tlaGNC">         250 :     isempty(structural_mods) &amp;&amp; return</span></span>
+<span id="L586"><span class="lineNum">     586</span>              :     </span>
+<span id="L587"><span class="lineNum">     587</span>              :     # Parse modification entries</span>
+<span id="L588"><span class="lineNum">     588</span> <span class="tlaGNC">         248 :     mod_regex = r&quot;\((\d+),([A-Z]|[nc]),([^)]+)\)&quot;</span></span>
+<span id="L589"><span class="lineNum">     589</span>              :     </span>
+<span id="L590"><span class="lineNum">     590</span> <span class="tlaGNC">         496 :     for m in eachmatch(mod_regex, structural_mods)</span></span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">         420 :         index = parse(Int, m.captures[1])</span></span>
+<span id="L592"><span class="lineNum">     592</span> <span class="tlaGNC">         420 :         mod_name = m.captures[3]</span></span>
+<span id="L593"><span class="lineNum">     593</span>              :         </span>
+<span id="L594"><span class="lineNum">     594</span> <span class="tlaGNC">         420 :         if haskey(mod_to_mass, mod_name)</span></span>
+<span id="L595"><span class="lineNum">     595</span> <span class="tlaGNC">         418 :             mod_masses[index] = mod_to_mass[mod_name]</span></span>
+<span id="L596"><span class="lineNum">     596</span>              :         end</span>
+<span id="L597"><span class="lineNum">     597</span> <span class="tlaGNC">         420 :     end</span></span>
+<span id="L598"><span class="lineNum">     598</span>              : end</span>
+<span id="L599"><span class="lineNum">     599</span>              : </span>
+<span id="L600"><span class="lineNum">     600</span> <span class="tlaGNC">         248 : function get_fragment_mz(</span></span>
+<span id="L601"><span class="lineNum">     601</span>              :                         start_idx::Integer, stop_idx::Integer, </span>
+<span id="L602"><span class="lineNum">     602</span>              :                         base_type::Char, charge::UInt8, </span>
+<span id="L603"><span class="lineNum">     603</span>              :                         aa_masses::Vector{T},</span>
+<span id="L604"><span class="lineNum">     604</span>              :                         structural_mod_masses::Vector{T},</span>
+<span id="L605"><span class="lineNum">     605</span>              :                         iso_mod_masses::Vector{T})::T where {T&lt;:AbstractFloat}</span>
+<span id="L606"><span class="lineNum">     606</span>              :     #H2O and PROTON are global constants defined in Pioneer.jl </span>
+<span id="L607"><span class="lineNum">     607</span>              :     # Get modification mass for this fragment range</span>
+<span id="L608"><span class="lineNum">     608</span> <span class="tlaGNC">         248 :     frag_mass = zero(T)</span></span>
+<span id="L609"><span class="lineNum">     609</span> <span class="tlaGNC">         248 :     for idx in range(start_idx, stop_idx)</span></span>
+<span id="L610"><span class="lineNum">     610</span> <span class="tlaGNC">         762 :         frag_mass += aa_masses[idx] + structural_mod_masses[idx] + iso_mod_masses[idx]</span></span>
+<span id="L611"><span class="lineNum">     611</span> <span class="tlaGNC">        1276 :     end</span></span>
+<span id="L612"><span class="lineNum">     612</span>              : </span>
+<span id="L613"><span class="lineNum">     613</span>              :     # Calculate base mass depending on ion type</span>
+<span id="L614"><span class="lineNum">     614</span> <span class="tlaGNC">         248 :     base_mass = if base_type == 'b'</span></span>
+<span id="L615"><span class="lineNum">     615</span> <span class="tlaGNC">         116 :         PROTON * charge  # b-ions just get protons</span></span>
+<span id="L616"><span class="lineNum">     616</span>              :     else</span>
+<span id="L617"><span class="lineNum">     617</span> <span class="tlaGNC">         380 :         PROTON * charge + H2O  # y-ions get water plus protons</span></span>
+<span id="L618"><span class="lineNum">     618</span>              :     end</span>
+<span id="L619"><span class="lineNum">     619</span>              :     </span>
+<span id="L620"><span class="lineNum">     620</span>              :     # Return final m/z</span>
+<span id="L621"><span class="lineNum">     621</span> <span class="tlaGNC">         248 :     return (frag_mass + base_mass) / charge</span></span>
+<span id="L622"><span class="lineNum">     622</span>              : end</span>
+<span id="L623"><span class="lineNum">     623</span>              : </span>
+<span id="L624"><span class="lineNum">     624</span> <span class="tlaGNC">         248 : function get_precursor_mz(</span></span>
+<span id="L625"><span class="lineNum">     625</span>              :                         seq_length::Integer, charge::UInt8, </span>
+<span id="L626"><span class="lineNum">     626</span>              :                         aa_masses::Vector{T},</span>
+<span id="L627"><span class="lineNum">     627</span>              :                         structural_mod_masses::Vector{T},</span>
+<span id="L628"><span class="lineNum">     628</span>              :                         iso_mod_masses::Vector{T})::T where {T&lt;:AbstractFloat}</span>
+<span id="L629"><span class="lineNum">     629</span>              :     #H2O and PROTON are global constants defined in Pioneer.jl </span>
+<span id="L630"><span class="lineNum">     630</span>              :     # Get modification mass for this fragment range</span>
+<span id="L631"><span class="lineNum">     631</span> <span class="tlaGNC">         248 :     precursor_mass = zero(T)</span></span>
+<span id="L632"><span class="lineNum">     632</span> <span class="tlaGNC">         248 :     charge = convert(T, charge)</span></span>
+<span id="L633"><span class="lineNum">     633</span> <span class="tlaGNC">         248 :     for idx in range(1, seq_length)</span></span>
+<span id="L634"><span class="lineNum">     634</span> <span class="tlaGNC">        3680 :         precursor_mass += aa_masses[idx] + structural_mod_masses[idx] + iso_mod_masses[idx]</span></span>
+<span id="L635"><span class="lineNum">     635</span> <span class="tlaGNC">        7112 :     end</span></span>
+<span id="L636"><span class="lineNum">     636</span>              :     </span>
+<span id="L637"><span class="lineNum">     637</span>              :     # Return final m/z</span>
+<span id="L638"><span class="lineNum">     638</span> <span class="tlaGNC">         248 :     return (precursor_mass + PROTON*charge + H2O) / charge</span></span>
+<span id="L639"><span class="lineNum">     639</span>              : end</span>
+<span id="L640"><span class="lineNum">     640</span>              : </span>
+<span id="L641"><span class="lineNum">     641</span>              : &quot;&quot;&quot;</span>
+<span id="L642"><span class="lineNum">     642</span>              :     get_sulfur_counts!(sulfur_counts::Vector{Int8}, sequence::String, structural_mods::String, mods_to_sulfur_diff::Dict{String, Int8})</span>
+<span id="L643"><span class="lineNum">     643</span>              : </span>
+<span id="L644"><span class="lineNum">     644</span>              : Fill a pre-allocated vector with sulfur counts for each position in the sequence,</span>
+<span id="L645"><span class="lineNum">     645</span>              : including both amino acid sulfurs (C, M) and modification-based sulfurs.</span>
+<span id="L646"><span class="lineNum">     646</span>              : </span>
+<span id="L647"><span class="lineNum">     647</span>              : # Arguments</span>
+<span id="L648"><span class="lineNum">     648</span>              : - `sulfur_counts::Vector{Int8}`: Pre-allocated vector to store sulfur counts</span>
+<span id="L649"><span class="lineNum">     649</span>              : - `sequence::String`: Peptide sequence</span>
+<span id="L650"><span class="lineNum">     650</span>              : - `structural_mods::String`: String containing modifications in format &quot;(pos,aa,mod_name)&quot;</span>
+<span id="L651"><span class="lineNum">     651</span>              : - `mods_to_sulfur_diff::Dict{String, Int8}`: Dictionary mapping modification names to sulfur count changes</span>
+<span id="L652"><span class="lineNum">     652</span>              : </span>
+<span id="L653"><span class="lineNum">     653</span>              : # Effects</span>
+<span id="L654"><span class="lineNum">     654</span>              : Fills `sulfur_counts` with the number of sulfurs at each position</span>
+<span id="L655"><span class="lineNum">     655</span>              : &quot;&quot;&quot;</span>
+<span id="L656"><span class="lineNum">     656</span> <span class="tlaGNC">         248 : function get_sulfur_counts!(sulfur_counts::Vector{Int8}, </span></span>
+<span id="L657"><span class="lineNum">     657</span>              :                           sequence::AbstractString, </span>
+<span id="L658"><span class="lineNum">     658</span>              :                           structural_mods::AbstractString,</span>
+<span id="L659"><span class="lineNum">     659</span>              :                           mods_to_sulfur_diff::Dict{String, Int8})</span>
+<span id="L660"><span class="lineNum">     660</span> <span class="tlaGNC">         248 :     fill!(sulfur_counts, zero(Int8))</span></span>
+<span id="L661"><span class="lineNum">     661</span>              :     </span>
+<span id="L662"><span class="lineNum">     662</span>              :     # Count sulfurs in sequence</span>
+<span id="L663"><span class="lineNum">     663</span> <span class="tlaGNC">         248 :     for (i, aa) in enumerate(sequence)</span></span>
+<span id="L664"><span class="lineNum">     664</span> <span class="tlaGNC">        3700 :         sulfur_counts[i] = Int8((aa == 'C') | (aa == 'M'))</span></span>
+<span id="L665"><span class="lineNum">     665</span> <span class="tlaGNC">        7152 :     end</span></span>
+<span id="L666"><span class="lineNum">     666</span>              :     </span>
+<span id="L667"><span class="lineNum">     667</span>              :     # Add sulfurs from modifications</span>
+<span id="L668"><span class="lineNum">     668</span> <span class="tlaGNC">         248 :     if !isempty(structural_mods)</span></span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">         246 :         mod_regex = r&quot;\((\d+),([A-Z]|[nc]),([^)]+)\)&quot;</span></span>
+<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">         492 :         for m in eachmatch(mod_regex, structural_mods)</span></span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">         416 :             idx = parse(Int, m.captures[1])</span></span>
+<span id="L672"><span class="lineNum">     672</span> <span class="tlaGNC">         416 :             mod_name = m.captures[3]</span></span>
+<span id="L673"><span class="lineNum">     673</span> <span class="tlaGNC">         416 :             if haskey(mods_to_sulfur_diff, mod_name)</span></span>
+<span id="L674"><span class="lineNum">     674</span> <span class="tlaGNC">         416 :                 sulfur_counts[idx] += mods_to_sulfur_diff[mod_name]</span></span>
+<span id="L675"><span class="lineNum">     675</span>              :             end</span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">         416 :         end</span></span>
+<span id="L677"><span class="lineNum">     677</span>              :     end</span>
+<span id="L678"><span class="lineNum">     678</span>              : end</span>
+<span id="L679"><span class="lineNum">     679</span>              : </span>
+<span id="L680"><span class="lineNum">     680</span>              : &quot;&quot;&quot;</span>
+<span id="L681"><span class="lineNum">     681</span>              :     calculate_reversed_mz!(df::DataFrame, iso_mod_masses::Vector{Float32})</span>
+<span id="L682"><span class="lineNum">     682</span>              : </span>
+<span id="L683"><span class="lineNum">     683</span>              : Reverses the peptide sequence (except last AA) and recalculates fragment m/z values.</span>
+<span id="L684"><span class="lineNum">     684</span>              : Terminal modifications stay in place and are included in m/z calculations.</span>
+<span id="L685"><span class="lineNum">     685</span>              : &quot;&quot;&quot;</span>
+<span id="L686"><span class="lineNum">     686</span> <span class="tlaGNC">           4 : function calculate_mz_and_sulfur_count!(df::DataFrame, </span></span>
+<span id="L687"><span class="lineNum">     687</span>              :                     structural_mod_to_mass::Dict{String, T},</span>
+<span id="L688"><span class="lineNum">     688</span>              :                     iso_mods_dict::Dict{String, Dict{String, T}},</span>
+<span id="L689"><span class="lineNum">     689</span>              :                     mods_to_sulfur_diff::Dict{String, Int8}) where {T&lt;:AbstractFloat}</span>
+<span id="L690"><span class="lineNum">     690</span>              :     </span>
+<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">        1020 :     aa_masses = zeros(Float32, 255)</span></span>
+<span id="L692"><span class="lineNum">     692</span> <span class="tlaGNC">        1020 :     structural_mod_masses = zeros(Float32, 255)</span></span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">        1020 :     iso_mod_masses = zeros(Float32, 255)</span></span>
+<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">           4 :     sulfur_counts = zeros(Int8, 255)</span></span>
+<span id="L695"><span class="lineNum">     695</span>              :     </span>
+<span id="L696"><span class="lineNum">     696</span> <span class="tlaGNC">           8 :     for row in eachrow(df)</span></span>
+<span id="L697"><span class="lineNum">     697</span> <span class="tlaGNC">         244 :         seq_length = length(row.sequence)</span></span>
+<span id="L698"><span class="lineNum">     698</span> <span class="tlaGNC">         244 :         base_type = first(row.frag_type)</span></span>
+<span id="L699"><span class="lineNum">     699</span>              :         </span>
+<span id="L700"><span class="lineNum">     700</span>              :         # Calculate masses</span>
+<span id="L701"><span class="lineNum">     701</span> <span class="tlaGNC">         244 :         get_aa_masses!(aa_masses, row.sequence)</span></span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">         244 :         get_structural_mod_masses!(structural_mod_masses, row.structural_mods, structural_mod_to_mass)</span></span>
+<span id="L703"><span class="lineNum">     703</span> <span class="tlaGNC">         244 :         getIsoModMasses!(iso_mod_masses, row.structural_mods, row.isotopic_mods, iso_mods_dict)</span></span>
+<span id="L704"><span class="lineNum">     704</span>              :         </span>
+<span id="L705"><span class="lineNum">     705</span>              :         # Calculate sulfur counts</span>
+<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">         244 :         get_sulfur_counts!(sulfur_counts, row.sequence, row.structural_mods, mods_to_sulfur_diff)</span></span>
+<span id="L707"><span class="lineNum">     707</span>              :         </span>
+<span id="L708"><span class="lineNum">     708</span>              :         # Get fragment indices</span>
+<span id="L709"><span class="lineNum">     709</span> <span class="tlaGNC">         374 :         start_idx, stop_idx = get_fragment_indices(</span></span>
+<span id="L710"><span class="lineNum">     710</span>              :             base_type,</span>
+<span id="L711"><span class="lineNum">     711</span>              :             row.frag_series_number,</span>
+<span id="L712"><span class="lineNum">     712</span>              :             UInt8(seq_length)</span>
+<span id="L713"><span class="lineNum">     713</span>              :         )</span>
+<span id="L714"><span class="lineNum">     714</span>              :         </span>
+<span id="L715"><span class="lineNum">     715</span>              :         # Calculate m/z values</span>
+<span id="L716"><span class="lineNum">     716</span> <span class="tlaGNC">         374 :         row.frag_mz = get_fragment_mz(</span></span>
+<span id="L717"><span class="lineNum">     717</span>              :             start_idx, stop_idx,</span>
+<span id="L718"><span class="lineNum">     718</span>              :             base_type, row.frag_charge,</span>
+<span id="L719"><span class="lineNum">     719</span>              :             aa_masses,</span>
+<span id="L720"><span class="lineNum">     720</span>              :             structural_mod_masses,</span>
+<span id="L721"><span class="lineNum">     721</span>              :             iso_mod_masses</span>
+<span id="L722"><span class="lineNum">     722</span>              :         )</span>
+<span id="L723"><span class="lineNum">     723</span>              :         </span>
+<span id="L724"><span class="lineNum">     724</span> <span class="tlaGNC">         244 :         row.prec_mz = get_precursor_mz(</span></span>
+<span id="L725"><span class="lineNum">     725</span>              :             seq_length, row.prec_charge,</span>
+<span id="L726"><span class="lineNum">     726</span>              :             aa_masses,</span>
+<span id="L727"><span class="lineNum">     727</span>              :             structural_mod_masses,</span>
+<span id="L728"><span class="lineNum">     728</span>              :             iso_mod_masses</span>
+<span id="L729"><span class="lineNum">     729</span>              :         )</span>
+<span id="L730"><span class="lineNum">     730</span>              :         </span>
+<span id="L731"><span class="lineNum">     731</span>              :         # Set sulfur counts</span>
+<span id="L732"><span class="lineNum">     732</span> <span class="tlaGNC">         244 :         row.prec_sulfur_count = sum(sulfur_counts[1:seq_length])</span></span>
+<span id="L733"><span class="lineNum">     733</span> <span class="tlaGNC">         488 :         row.frag_sulfur_count = sum(sulfur_counts[start_idx:stop_idx])</span></span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC">         244 :     end</span></span>
+<span id="L735"><span class="lineNum">     735</span>              : end</span>
+<span id="L736"><span class="lineNum">     736</span>              : </span>
+<span id="L737"><span class="lineNum">     737</span>              : &quot;&quot;&quot;</span>
+<span id="L738"><span class="lineNum">     738</span>              :     reverseSequence(sequence::String, structural_mods::String)</span>
+<span id="L739"><span class="lineNum">     739</span>              : </span>
+<span id="L740"><span class="lineNum">     740</span>              : Reverse a peptide sequence while preserving first and last position modifications.</span>
+<span id="L741"><span class="lineNum">     741</span>              : Internal modifications are moved to correspond with their amino acids in the reversed sequence.</span>
+<span id="L742"><span class="lineNum">     742</span>              : </span>
+<span id="L743"><span class="lineNum">     743</span>              : # Arguments</span>
+<span id="L744"><span class="lineNum">     744</span>              : - `sequence::String`: Original peptide sequence</span>
+<span id="L745"><span class="lineNum">     745</span>              : - `structural_mods::String`: String containing modifications in format &quot;(pos,aa,mod_name)&quot;</span>
+<span id="L746"><span class="lineNum">     746</span>              : </span>
+<span id="L747"><span class="lineNum">     747</span>              : # Returns</span>
+<span id="L748"><span class="lineNum">     748</span>              : - `Tuple{String, String}`: (reversed sequence, updated modification String)</span>
+<span id="L749"><span class="lineNum">     749</span>              : </span>
+<span id="L750"><span class="lineNum">     750</span>              : # Examples</span>
+<span id="L751"><span class="lineNum">     751</span>              : ```julia</span>
+<span id="L752"><span class="lineNum">     752</span>              : # Test 1: Basic reversal with terminal modifications</span>
+<span id="L753"><span class="lineNum">     753</span>              : sequence = &quot;PEPTIDE&quot;</span>
+<span id="L754"><span class="lineNum">     754</span>              : mods = &quot;(4,T,Phospho)(7,E,Acetyl)&quot;</span>
+<span id="L755"><span class="lineNum">     755</span>              : rev_seq, rev_mods = reverseSequence(sequence, mods)</span>
+<span id="L756"><span class="lineNum">     756</span>              : @assert rev_seq == &quot;DITPEPE&quot;</span>
+<span id="L757"><span class="lineNum">     757</span>              : @assert rev_mods == &quot;(3,T,Phospho)(7,E,Acetyl)&quot;</span>
+<span id="L758"><span class="lineNum">     758</span>              : </span>
+<span id="L759"><span class="lineNum">     759</span>              : # Test 2: Reversal with internal modification</span>
+<span id="L760"><span class="lineNum">     760</span>              : sequence = &quot;PEPTIDE&quot;</span>
+<span id="L761"><span class="lineNum">     761</span>              : mods = &quot;(1,P,mymod)(4,T,Phospho)(7,E,Acetyl)&quot;</span>
+<span id="L762"><span class="lineNum">     762</span>              : rev_seq, rev_mods = reverseSequence(sequence, mods)</span>
+<span id="L763"><span class="lineNum">     763</span>              : @assert rev_seq == &quot;DITPEPE&quot;</span>
+<span id="L764"><span class="lineNum">     764</span>              : @assert rev_mods == &quot;(3,T,Phospho)(6,P,mymod)(7,E,Acetyl)&quot;</span>
+<span id="L765"><span class="lineNum">     765</span>              : </span>
+<span id="L766"><span class="lineNum">     766</span>              : # Test 2: Reversal with internal modification</span>
+<span id="L767"><span class="lineNum">     767</span>              : sequence = &quot;PEPTIDE&quot;</span>
+<span id="L768"><span class="lineNum">     768</span>              : mods = &quot;(1,n,mymod-nterm)(1,P,mymod)(4,T,Phospho)(7,E,Acetyl)(7,c,mymod-cterm)&quot;</span>
+<span id="L769"><span class="lineNum">     769</span>              : rev_seq, rev_mods = reverseSequence(sequence, mods)</span>
+<span id="L770"><span class="lineNum">     770</span>              : @assert rev_seq  == &quot;DITPEPE&quot;</span>
+<span id="L771"><span class="lineNum">     771</span>              : @assert rev_mods == &quot;(1,n,mymod-nterm)(3,T,Phospho)(6,P,mymod)(7,E,Acetyl)(7,c,mymod-cterm)&quot;</span>
+<span id="L772"><span class="lineNum">     772</span>              : </span>
+<span id="L773"><span class="lineNum">     773</span>              : ```</span>
+<span id="L774"><span class="lineNum">     774</span>              : &quot;&quot;&quot;</span>
+<span id="L775"><span class="lineNum">     775</span> <span class="tlaGNC">          26 : function reverseSequence(sequence::AbstractString, structural_mods::String)</span></span>
+<span id="L776"><span class="lineNum">     776</span>              :     # Early return if no modifications</span>
+<span id="L777"><span class="lineNum">     777</span> <span class="tlaGNC">          26 :     if isempty(structural_mods)</span></span>
+<span id="L778"><span class="lineNum">     778</span> <span class="tlaUNC">           0 :         return reverse(sequence[1:end-1])*sequence[end], &quot;&quot;</span></span>
+<span id="L779"><span class="lineNum">     779</span>              :     end</span>
+<span id="L780"><span class="lineNum">     780</span>              :     </span>
+<span id="L781"><span class="lineNum">     781</span>              :     # Pre-count number of modifications for array pre-allocation</span>
+<span id="L782"><span class="lineNum">     782</span> <span class="tlaGNC">          26 :     n_mods = count(&quot;(&quot;, structural_mods)</span></span>
+<span id="L783"><span class="lineNum">     783</span>              :     </span>
+<span id="L784"><span class="lineNum">     784</span>              :     # Pre-allocate arrays</span>
+<span id="L785"><span class="lineNum">     785</span> <span class="tlaGNC">          52 :     mod_positions = Vector{Int}(undef, n_mods)</span></span>
+<span id="L786"><span class="lineNum">     786</span> <span class="tlaGNC">          52 :     mod_aas = Vector{Char}(undef, n_mods)</span></span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaGNC">          52 :     mod_names = Vector{String}(undef, n_mods)</span></span>
+<span id="L788"><span class="lineNum">     788</span>              :     </span>
+<span id="L789"><span class="lineNum">     789</span>              :     # Parse modifications into parallel arrays</span>
+<span id="L790"><span class="lineNum">     790</span> <span class="tlaGNC">          26 :     mod_regex = r&quot;\((\d+),([A-Z]|[nc]),([^,\)]+)\)&quot;</span></span>
+<span id="L791"><span class="lineNum">     791</span> <span class="tlaGNC">          26 :     i = 1</span></span>
+<span id="L792"><span class="lineNum">     792</span> <span class="tlaGNC">          52 :     for m in eachmatch(mod_regex, structural_mods)</span></span>
+<span id="L793"><span class="lineNum">     793</span> <span class="tlaGNC">          54 :         mod_positions[i] = parse(Int, m.captures[1])</span></span>
+<span id="L794"><span class="lineNum">     794</span> <span class="tlaGNC">          54 :         mod_aas[i] = first(m.captures[2])</span></span>
+<span id="L795"><span class="lineNum">     795</span> <span class="tlaGNC">         108 :         mod_names[i] = m.captures[3]</span></span>
+<span id="L796"><span class="lineNum">     796</span> <span class="tlaGNC">          54 :         i += 1</span></span>
+<span id="L797"><span class="lineNum">     797</span> <span class="tlaGNC">          82 :     end</span></span>
+<span id="L798"><span class="lineNum">     798</span>              :     </span>
+<span id="L799"><span class="lineNum">     799</span>              :     # Create reversed sequence (keeping last AA in place)</span>
+<span id="L800"><span class="lineNum">     800</span> <span class="tlaGNC">          26 :     seq_length = length(sequence)</span></span>
+<span id="L801"><span class="lineNum">     801</span> <span class="tlaGNC">          52 :     rev_seq = reverse(sequence[1:end-1])*sequence[end]</span></span>
+<span id="L802"><span class="lineNum">     802</span>              :     </span>
+<span id="L803"><span class="lineNum">     803</span>              :     # Calculate new positions and create tuples for sorting</span>
+<span id="L804"><span class="lineNum">     804</span> <span class="tlaGNC">          26 :     n_final_mods = n_mods</span></span>
+<span id="L805"><span class="lineNum">     805</span> <span class="tlaGNC">          52 :     final_mods = Vector{Tuple{Int, String}}(undef, n_final_mods)</span></span>
+<span id="L806"><span class="lineNum">     806</span> <span class="tlaGNC">          26 :     j = 1</span></span>
+<span id="L807"><span class="lineNum">     807</span> <span class="tlaGNC">          26 :     for i in 1:n_mods</span></span>
+<span id="L808"><span class="lineNum">     808</span> <span class="tlaGNC">          54 :         pos = mod_positions[i]</span></span>
+<span id="L809"><span class="lineNum">     809</span> <span class="tlaGNC">          54 :         aa = mod_aas[i]</span></span>
+<span id="L810"><span class="lineNum">     810</span> <span class="tlaGNC">          54 :         name = mod_names[i]</span></span>
+<span id="L811"><span class="lineNum">     811</span>              :         </span>
+<span id="L812"><span class="lineNum">     812</span> <span class="tlaGNC">          54 :         if aa == 'n'</span></span>
+<span id="L813"><span class="lineNum">     813</span> <span class="tlaGNC">           2 :             final_mods[j] = (1, &quot;(1,n,$name)&quot;)</span></span>
+<span id="L814"><span class="lineNum">     814</span> <span class="tlaGNC">          52 :         elseif pos == seq_length</span></span>
+<span id="L815"><span class="lineNum">     815</span> <span class="tlaGNC">          20 :             final_mods[j] = (seq_length, &quot;($pos,$aa,$name)&quot;)</span></span>
+<span id="L816"><span class="lineNum">     816</span>              :         else</span>
+<span id="L817"><span class="lineNum">     817</span> <span class="tlaGNC">          32 :             new_pos = seq_length - pos</span></span>
+<span id="L818"><span class="lineNum">     818</span> <span class="tlaGNC">          64 :             new_aa = rev_seq[new_pos]</span></span>
+<span id="L819"><span class="lineNum">     819</span> <span class="tlaGNC">          32 :             final_mods[j] = (new_pos, &quot;($new_pos,$new_aa,$name)&quot;)</span></span>
+<span id="L820"><span class="lineNum">     820</span>              :         end</span>
+<span id="L821"><span class="lineNum">     821</span> <span class="tlaGNC">          54 :         j += 1</span></span>
+<span id="L822"><span class="lineNum">     822</span> <span class="tlaGNC">          82 :     end</span></span>
+<span id="L823"><span class="lineNum">     823</span>              :     </span>
+<span id="L824"><span class="lineNum">     824</span>              :     # Sort by new positions and join</span>
+<span id="L825"><span class="lineNum">     825</span> <span class="tlaGNC">          26 :     sort!(final_mods, by=first)</span></span>
+<span id="L826"><span class="lineNum">     826</span> <span class="tlaGNC">          26 :     return rev_seq, join(last.(final_mods))</span></span>
+<span id="L827"><span class="lineNum">     827</span>              : end</span>
+<span id="L828"><span class="lineNum">     828</span>              : </span>
+<span id="L829"><span class="lineNum">     829</span>              : &quot;&quot;&quot;</span>
+<span id="L830"><span class="lineNum">     830</span>              :     getRevDecoys!(speclibdf::BasicEmpiricalLibrary)</span>
+<span id="L831"><span class="lineNum">     831</span>              : </span>
+<span id="L832"><span class="lineNum">     832</span>              : Generates reversed decoy sequences for a spectral library while maintaining consistency</span>
+<span id="L833"><span class="lineNum">     833</span>              : across fragments of the same precursor. Reverses each unique precursor sequence once</span>
+<span id="L834"><span class="lineNum">     834</span>              : and applies the same reversed sequence to all its fragments.</span>
+<span id="L835"><span class="lineNum">     835</span>              : </span>
+<span id="L836"><span class="lineNum">     836</span>              : # Arguments</span>
+<span id="L837"><span class="lineNum">     837</span>              : - `speclibdf::BasicEmpiricalLibrary`: Spectral library containing peptide sequences,</span>
+<span id="L838"><span class="lineNum">     838</span>              :    modifications, and precursor indices</span>
+<span id="L839"><span class="lineNum">     839</span>              : </span>
+<span id="L840"><span class="lineNum">     840</span>              : # Effects</span>
+<span id="L841"><span class="lineNum">     841</span>              : - Modifies `speclibdf` in place by appending non-duplicate reversed sequences</span>
+<span id="L842"><span class="lineNum">     842</span>              : - Sets `is_decoy=true` for all appended reversed sequences</span>
+<span id="L843"><span class="lineNum">     843</span>              : - Maintains consistency across fragments of the same precursor</span>
+<span id="L844"><span class="lineNum">     844</span>              : - Discards all fragments of a precursor if its reversed sequence matches any forward sequence</span>
+<span id="L845"><span class="lineNum">     845</span>              : </span>
+<span id="L846"><span class="lineNum">     846</span>              : # Run test if this file is executed directly</span>
+<span id="L847"><span class="lineNum">     847</span>              : ```julia</span>
+<span id="L848"><span class="lineNum">     848</span>              : println(&quot;test&quot;)</span>
+<span id="L849"><span class="lineNum">     849</span>              : ```</span>
+<span id="L850"><span class="lineNum">     850</span>              : &quot;&quot;&quot;</span>
+<span id="L851"><span class="lineNum">     851</span> <span class="tlaGNC">           2 : function getRevDecoys!(speclibdf::BasicEmpiricalLibrary)</span></span>
+<span id="L852"><span class="lineNum">     852</span>              :     # Make a deep copy and sort by precursor_idx</span>
+<span id="L853"><span class="lineNum">     853</span> <span class="tlaGNC">           2 :     rev_libdf = deepcopy(speclibdf.libdf)</span></span>
+<span id="L854"><span class="lineNum">     854</span> <span class="tlaGNC">           2 :     sort!(rev_libdf, :precursor_idx)</span></span>
+<span id="L855"><span class="lineNum">     855</span>              :     </span>
+<span id="L856"><span class="lineNum">     856</span>              :     # Create a Set of forward sequences for O(1) lookup</span>
+<span id="L857"><span class="lineNum">     857</span> <span class="tlaGNC">           2 :     forward_seqs = Set(speclibdf.libdf.sequence)</span></span>
+<span id="L858"><span class="lineNum">     858</span>              :     </span>
+<span id="L859"><span class="lineNum">     859</span>              :     # Track which rows to keep</span>
+<span id="L860"><span class="lineNum">     860</span> <span class="tlaGNC">           2 :     keep_rows = trues(size(rev_libdf, 1))</span></span>
+<span id="L861"><span class="lineNum">     861</span>              :     </span>
+<span id="L862"><span class="lineNum">     862</span>              :     # Track current precursor and its reversed sequence</span>
+<span id="L863"><span class="lineNum">     863</span> <span class="tlaGNC">           2 :     current_precursor = nothing</span></span>
+<span id="L864"><span class="lineNum">     864</span> <span class="tlaGNC">           2 :     current_rev_seq = nothing</span></span>
+<span id="L865"><span class="lineNum">     865</span> <span class="tlaGNC">           2 :     current_rev_mods = nothing</span></span>
+<span id="L866"><span class="lineNum">     866</span>              :     </span>
+<span id="L867"><span class="lineNum">     867</span>              :     # Process rows maintaining precursor consistency</span>
+<span id="L868"><span class="lineNum">     868</span> <span class="tlaGNC">           4 :     for (idx, row) in enumerate(eachrow(rev_libdf))</span></span>
+<span id="L869"><span class="lineNum">     869</span> <span class="tlaGNC">         120 :         if row.precursor_idx != current_precursor</span></span>
+<span id="L870"><span class="lineNum">     870</span>              :             # New precursor encountered - need to generate new reversal</span>
+<span id="L871"><span class="lineNum">     871</span> <span class="tlaGNC">          20 :             current_precursor = row.precursor_idx</span></span>
+<span id="L872"><span class="lineNum">     872</span>              :             </span>
+<span id="L873"><span class="lineNum">     873</span>              :             # Generate reversed sequence</span>
+<span id="L874"><span class="lineNum">     874</span> <span class="tlaGNC">          20 :             rev_sequence, rev_structural_mods = reverseSequence(row.sequence, row.structural_mods)</span></span>
+<span id="L875"><span class="lineNum">     875</span>              :             </span>
+<span id="L876"><span class="lineNum">     876</span>              :             # If reversed sequence exists in forward set, mark all rows of this precursor for removal</span>
+<span id="L877"><span class="lineNum">     877</span> <span class="tlaGNC">          20 :             if rev_sequence in forward_seqs</span></span>
+<span id="L878"><span class="lineNum">     878</span> <span class="tlaUNC">           0 :                 idx_start = idx</span></span>
+<span id="L879"><span class="lineNum">     879</span> <span class="tlaUNC">           0 :                 while idx_start &lt;= size(rev_libdf, 1) &amp;&amp; </span></span>
+<span id="L880"><span class="lineNum">     880</span>              :                       rev_libdf[idx_start, :precursor_idx] == current_precursor</span>
+<span id="L881"><span class="lineNum">     881</span> <span class="tlaUNC">           0 :                     keep_rows[idx_start] = false</span></span>
+<span id="L882"><span class="lineNum">     882</span> <span class="tlaUNC">           0 :                     idx_start += 1</span></span>
+<span id="L883"><span class="lineNum">     883</span> <span class="tlaUNC">           0 :                 end</span></span>
+<span id="L884"><span class="lineNum">     884</span> <span class="tlaUNC">           0 :                 continue</span></span>
+<span id="L885"><span class="lineNum">     885</span>              :             end</span>
+<span id="L886"><span class="lineNum">     886</span>              :             </span>
+<span id="L887"><span class="lineNum">     887</span>              :             # Store reversed sequence for this precursor group</span>
+<span id="L888"><span class="lineNum">     888</span> <span class="tlaGNC">          20 :             current_rev_seq = rev_sequence</span></span>
+<span id="L889"><span class="lineNum">     889</span> <span class="tlaGNC">          20 :             current_rev_mods = rev_structural_mods</span></span>
+<span id="L890"><span class="lineNum">     890</span> <span class="tlaGNC">          20 :             push!(forward_seqs, rev_sequence)</span></span>
+<span id="L891"><span class="lineNum">     891</span>              :         end</span>
+<span id="L892"><span class="lineNum">     892</span>              :         </span>
+<span id="L893"><span class="lineNum">     893</span>              :         # Apply current reversed sequence to this row</span>
+<span id="L894"><span class="lineNum">     894</span> <span class="tlaGNC">         120 :         row.sequence = current_rev_seq</span></span>
+<span id="L895"><span class="lineNum">     895</span> <span class="tlaGNC">         240 :         row.structural_mods = current_rev_mods</span></span>
+<span id="L896"><span class="lineNum">     896</span> <span class="tlaGNC">         120 :         row.is_decoy = true</span></span>
+<span id="L897"><span class="lineNum">     897</span> <span class="tlaGNC">         238 :     end</span></span>
+<span id="L898"><span class="lineNum">     898</span>              :     </span>
+<span id="L899"><span class="lineNum">     899</span>              :     # Filter out duplicates and append</span>
+<span id="L900"><span class="lineNum">     900</span> <span class="tlaGNC">           2 :     return rev_libdf[keep_rows, :]</span></span>
+<span id="L901"><span class="lineNum">     901</span>              :     #append!(speclibdf.libdf, rev_libdf[keep_rows, :])</span>
+<span id="L902"><span class="lineNum">     902</span>              : end</span>
+<span id="L903"><span class="lineNum">     903</span>              : </span>
+<span id="L904"><span class="lineNum">     904</span>              : &quot;&quot;&quot;</span>
+<span id="L905"><span class="lineNum">     905</span>              :     shuffleSequence(sequence::String, structural_mods::String)</span>
+<span id="L906"><span class="lineNum">     906</span>              : </span>
+<span id="L907"><span class="lineNum">     907</span>              : Randomly shuffle a peptide sequence (keeping last AA fixed) and update modification positions accordingly.</span>
+<span id="L908"><span class="lineNum">     908</span>              : </span>
+<span id="L909"><span class="lineNum">     909</span>              : # Arguments</span>
+<span id="L910"><span class="lineNum">     910</span>              : - `sequence::String`: Original peptide sequence</span>
+<span id="L911"><span class="lineNum">     911</span>              : - `structural_mods::String`: Modifications in format &quot;(pos,aa,mod_name)&quot;</span>
+<span id="L912"><span class="lineNum">     912</span>              : </span>
+<span id="L913"><span class="lineNum">     913</span>              : # Returns</span>
+<span id="L914"><span class="lineNum">     914</span>              : - `Tuple{String, String}`: (shuffled sequence, updated modification String)</span>
+<span id="L915"><span class="lineNum">     915</span>              : </span>
+<span id="L916"><span class="lineNum">     916</span>              : # Examples</span>
+<span id="L917"><span class="lineNum">     917</span>              : ```julia</span>
+<span id="L918"><span class="lineNum">     918</span>              : # Test 1: Shuffle with terminal modifications</span>
+<span id="L919"><span class="lineNum">     919</span>              : Random.seed!(1844)</span>
+<span id="L920"><span class="lineNum">     920</span>              : sequence = &quot;PEPTIDE&quot;</span>
+<span id="L921"><span class="lineNum">     921</span>              : mods = &quot;(1,n,mymod-nterm)(1,P,mymod)(4,T,Phospho)(7,E,Acetyl)(7,c,mymod-cterm)&quot;</span>
+<span id="L922"><span class="lineNum">     922</span>              : shuffled_seq, shuffled_mods = shuffleSequence(sequence, mods)</span>
+<span id="L923"><span class="lineNum">     923</span>              : </span>
+<span id="L924"><span class="lineNum">     924</span>              : # Test that:</span>
+<span id="L925"><span class="lineNum">     925</span>              : # 1. Seed set so sequence should always be DPTPIEE</span>
+<span id="L926"><span class="lineNum">     926</span>              : @assert shuffled_seq == &quot;DPTPIEE&quot;</span>
+<span id="L927"><span class="lineNum">     927</span>              : @assert shuffled_mods == &quot;(1,n,mymod-nterm)(2,P,mymod)(3,T,Phospho)(7,E,Acetyl)(7,c,mymod-cterm)&quot;</span>
+<span id="L928"><span class="lineNum">     928</span>              : ```</span>
+<span id="L929"><span class="lineNum">     929</span>              : &quot;&quot;&quot;</span>
+<span id="L930"><span class="lineNum">     930</span> <span class="tlaGNC">          20 : function shuffleSequence(sequence::AbstractString, structural_mods::String)</span></span>
+<span id="L931"><span class="lineNum">     931</span>              :     # Early return if no modifications</span>
+<span id="L932"><span class="lineNum">     932</span> <span class="tlaGNC">          20 :     if isempty(structural_mods)</span></span>
+<span id="L933"><span class="lineNum">     933</span>              :         # Shuffle all but last AA</span>
+<span id="L934"><span class="lineNum">     934</span> <span class="tlaUNC">           0 :         return join(Random.shuffle(collect(sequence[1:end-1])))*sequence[end], &quot;&quot;</span></span>
+<span id="L935"><span class="lineNum">     935</span>              :     end</span>
+<span id="L936"><span class="lineNum">     936</span>              :     </span>
+<span id="L937"><span class="lineNum">     937</span>              :     # Pre-count number of modifications</span>
+<span id="L938"><span class="lineNum">     938</span> <span class="tlaGNC">          20 :     n_mods = count(&quot;(&quot;, structural_mods)</span></span>
+<span id="L939"><span class="lineNum">     939</span>              :     </span>
+<span id="L940"><span class="lineNum">     940</span>              :     # Pre-allocate arrays</span>
+<span id="L941"><span class="lineNum">     941</span> <span class="tlaGNC">          40 :     mod_positions = Vector{Int}(undef, n_mods)</span></span>
+<span id="L942"><span class="lineNum">     942</span> <span class="tlaGNC">          40 :     mod_aas = Vector{Char}(undef, n_mods)</span></span>
+<span id="L943"><span class="lineNum">     943</span> <span class="tlaGNC">          40 :     mod_names = Vector{String}(undef, n_mods)</span></span>
+<span id="L944"><span class="lineNum">     944</span>              :     </span>
+<span id="L945"><span class="lineNum">     945</span>              :     # Parse modifications</span>
+<span id="L946"><span class="lineNum">     946</span> <span class="tlaGNC">          20 :     mod_regex = r&quot;\((\d+),([A-Z]|[nc]),([^,\)]+)\)&quot;</span></span>
+<span id="L947"><span class="lineNum">     947</span> <span class="tlaGNC">          20 :     i = 1</span></span>
+<span id="L948"><span class="lineNum">     948</span> <span class="tlaGNC">          40 :     for m in eachmatch(mod_regex, structural_mods)</span></span>
+<span id="L949"><span class="lineNum">     949</span> <span class="tlaGNC">          34 :         mod_positions[i] = parse(Int, m.captures[1])</span></span>
+<span id="L950"><span class="lineNum">     950</span> <span class="tlaGNC">          34 :         mod_aas[i] = first(m.captures[2])</span></span>
+<span id="L951"><span class="lineNum">     951</span> <span class="tlaGNC">          68 :         mod_names[i] = m.captures[3]</span></span>
+<span id="L952"><span class="lineNum">     952</span> <span class="tlaGNC">          34 :         i += 1</span></span>
+<span id="L953"><span class="lineNum">     953</span> <span class="tlaGNC">          48 :     end</span></span>
+<span id="L954"><span class="lineNum">     954</span>              :     </span>
+<span id="L955"><span class="lineNum">     955</span>              :     # Create shuffled sequence (keeping last AA in place)</span>
+<span id="L956"><span class="lineNum">     956</span> <span class="tlaGNC">          20 :     seq_length = length(sequence)</span></span>
+<span id="L957"><span class="lineNum">     957</span> <span class="tlaGNC">          40 :     all_but_last = collect(sequence[1:end-1])</span></span>
+<span id="L958"><span class="lineNum">     958</span> <span class="tlaGNC">          20 :     shuffle!(all_but_last)</span></span>
+<span id="L959"><span class="lineNum">     959</span> <span class="tlaGNC">          40 :     shuffled_seq = String(all_but_last) * sequence[end]</span></span>
+<span id="L960"><span class="lineNum">     960</span>              :     </span>
+<span id="L961"><span class="lineNum">     961</span>              :     # Create position mapping from original to shuffled sequence</span>
+<span id="L962"><span class="lineNum">     962</span> <span class="tlaGNC">          20 :     pos_map = Dict{Int, Int}()</span></span>
+<span id="L963"><span class="lineNum">     963</span> <span class="tlaGNC">          20 :     for (old_pos, aa) in enumerate(sequence[1:end-1])</span></span>
+<span id="L964"><span class="lineNum">     964</span>              :         # Find where this AA went in the shuffled sequence</span>
+<span id="L965"><span class="lineNum">     965</span> <span class="tlaGNC">         284 :         new_pos = findfirst(==(aa), shuffled_seq)</span></span>
+<span id="L966"><span class="lineNum">     966</span> <span class="tlaGNC">         568 :         pos_map[old_pos] = new_pos</span></span>
+<span id="L967"><span class="lineNum">     967</span> <span class="tlaGNC">         548 :     end</span></span>
+<span id="L968"><span class="lineNum">     968</span> <span class="tlaGNC">          20 :     pos_map[seq_length] = seq_length  # Last position stays the same</span></span>
+<span id="L969"><span class="lineNum">     969</span>              :     </span>
+<span id="L970"><span class="lineNum">     970</span>              :     # Calculate new positions and create tuples for sorting</span>
+<span id="L971"><span class="lineNum">     971</span> <span class="tlaGNC">          40 :     final_mods = Vector{Tuple{Int, String}}(undef, n_mods)</span></span>
+<span id="L972"><span class="lineNum">     972</span> <span class="tlaGNC">          20 :     for i in 1:n_mods</span></span>
+<span id="L973"><span class="lineNum">     973</span> <span class="tlaGNC">          34 :         pos = mod_positions[i]</span></span>
+<span id="L974"><span class="lineNum">     974</span> <span class="tlaGNC">          34 :         aa = mod_aas[i]</span></span>
+<span id="L975"><span class="lineNum">     975</span> <span class="tlaGNC">          34 :         name = mod_names[i]</span></span>
+<span id="L976"><span class="lineNum">     976</span>              :         </span>
+<span id="L977"><span class="lineNum">     977</span> <span class="tlaGNC">          34 :         if aa == 'n'</span></span>
+<span id="L978"><span class="lineNum">     978</span> <span class="tlaUNC">           0 :             final_mods[i] = (1, &quot;(1,n,$name)&quot;)</span></span>
+<span id="L979"><span class="lineNum">     979</span> <span class="tlaGNC">          34 :         elseif pos == seq_length</span></span>
+<span id="L980"><span class="lineNum">     980</span> <span class="tlaGNC">          12 :             final_mods[i] = (seq_length, &quot;($pos,$aa,$name)&quot;)</span></span>
+<span id="L981"><span class="lineNum">     981</span>              :         else</span>
+<span id="L982"><span class="lineNum">     982</span> <span class="tlaGNC">          22 :             new_pos = pos_map[pos]</span></span>
+<span id="L983"><span class="lineNum">     983</span> <span class="tlaGNC">          44 :             new_aa = shuffled_seq[new_pos]</span></span>
+<span id="L984"><span class="lineNum">     984</span> <span class="tlaGNC">          22 :             final_mods[i] = (new_pos, &quot;($new_pos,$new_aa,$name)&quot;)</span></span>
+<span id="L985"><span class="lineNum">     985</span>              :         end</span>
+<span id="L986"><span class="lineNum">     986</span> <span class="tlaGNC">          48 :     end</span></span>
+<span id="L987"><span class="lineNum">     987</span>              :     </span>
+<span id="L988"><span class="lineNum">     988</span>              :     # Sort by new positions and join</span>
+<span id="L989"><span class="lineNum">     989</span> <span class="tlaGNC">          20 :     sort!(final_mods, by=first)</span></span>
+<span id="L990"><span class="lineNum">     990</span> <span class="tlaGNC">          20 :     return shuffled_seq, join(last.(final_mods))</span></span>
+<span id="L991"><span class="lineNum">     991</span>              : end</span>
+<span id="L992"><span class="lineNum">     992</span>              : </span>
+<span id="L993"><span class="lineNum">     993</span>              : &quot;&quot;&quot;</span>
+<span id="L994"><span class="lineNum">     994</span>              :     getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary)</span>
+<span id="L995"><span class="lineNum">     995</span>              : </span>
+<span id="L996"><span class="lineNum">     996</span>              : Generates shuffled decoy sequences for a spectral library while maintaining consistency</span>
+<span id="L997"><span class="lineNum">     997</span>              : across fragments of the same precursor. Shuffles each unique precursor sequence once</span>
+<span id="L998"><span class="lineNum">     998</span>              : and applies the same shuffled sequence to all its fragments.</span>
+<span id="L999"><span class="lineNum">     999</span>              : </span>
+<span id="L1000"><span class="lineNum">    1000</span>              : # Arguments</span>
+<span id="L1001"><span class="lineNum">    1001</span>              : - `speclibdf::BasicEmpiricalLibrary`: Spectral library containing peptide sequences,</span>
+<span id="L1002"><span class="lineNum">    1002</span>              :    modifications, and precursor indices</span>
+<span id="L1003"><span class="lineNum">    1003</span>              : </span>
+<span id="L1004"><span class="lineNum">    1004</span>              : # Effects</span>
+<span id="L1005"><span class="lineNum">    1005</span>              : - Modifies `speclibdf` in place by appending non-duplicate shuffled sequences</span>
+<span id="L1006"><span class="lineNum">    1006</span>              : - Sets `is_decoy=true` for all appended shuffled sequences</span>
+<span id="L1007"><span class="lineNum">    1007</span>              : - Maintains consistency across fragments of the same precursor</span>
+<span id="L1008"><span class="lineNum">    1008</span>              : - Discards all fragments of a precursor if shuffling fails after 20 attempts</span>
+<span id="L1009"><span class="lineNum">    1009</span>              : </span>
+<span id="L1010"><span class="lineNum">    1010</span>              : #Tests </span>
+<span id="L1011"><span class="lineNum">    1011</span>              : ```julia</span>
+<span id="L1012"><span class="lineNum">    1012</span>              : # Run test if this file is executed directly</span>
+<span id="L1013"><span class="lineNum">    1013</span>              : if abspath(PROGRAM_FILE) == @__FILE__</span>
+<span id="L1014"><span class="lineNum">    1014</span>              :     using DataFrames</span>
+<span id="L1015"><span class="lineNum">    1015</span>              :     </span>
+<span id="L1016"><span class="lineNum">    1016</span>              :     # Test setup</span>
+<span id="L1017"><span class="lineNum">    1017</span>              :     struct BasicEmpiricalLibrary</span>
+<span id="L1018"><span class="lineNum">    1018</span>              :         libdf::DataFrame</span>
+<span id="L1019"><span class="lineNum">    1019</span>              :     end</span>
+<span id="L1020"><span class="lineNum">    1020</span>              :     </span>
+<span id="L1021"><span class="lineNum">    1021</span>              :     # Create test data with multiple fragments per precursor</span>
+<span id="L1022"><span class="lineNum">    1022</span>              :     test_df = DataFrame(</span>
+<span id="L1023"><span class="lineNum">    1023</span>              :         sequence = repeat([&quot;PEPTIDE&quot;, &quot;PROTEIN&quot;], inner=3),</span>
+<span id="L1024"><span class="lineNum">    1024</span>              :         structural_mods = repeat([&quot;(2,P,Oxidation)&quot;, &quot;&quot;], inner=3),</span>
+<span id="L1025"><span class="lineNum">    1025</span>              :         precursor_idx = repeat([1, 2], inner=3),</span>
+<span id="L1026"><span class="lineNum">    1026</span>              :         fragment_idx = repeat(1:3, outer=2),</span>
+<span id="L1027"><span class="lineNum">    1027</span>              :         is_decoy = falses(6)</span>
+<span id="L1028"><span class="lineNum">    1028</span>              :     )</span>
+<span id="L1029"><span class="lineNum">    1029</span>              :     test_lib = BasicEmpiricalLibrary(test_df)</span>
+<span id="L1030"><span class="lineNum">    1030</span>              :     </span>
+<span id="L1031"><span class="lineNum">    1031</span>              :     # Generate decoys</span>
+<span id="L1032"><span class="lineNum">    1032</span>              :     getShuffledEntrapmentSeqs!(test_lib)</span>
+<span id="L1033"><span class="lineNum">    1033</span>              :     </span>
+<span id="L1034"><span class="lineNum">    1034</span>              :     # Verify results</span>
+<span id="L1035"><span class="lineNum">    1035</span>              :     result_df = test_lib.libdf</span>
+<span id="L1036"><span class="lineNum">    1036</span>              :     </span>
+<span id="L1037"><span class="lineNum">    1037</span>              :     # Basic checks</span>
+<span id="L1038"><span class="lineNum">    1038</span>              :     @assert size(result_df, 1) == 12 &quot;Should have original + decoy rows&quot;</span>
+<span id="L1039"><span class="lineNum">    1039</span>              :     @assert all(result_df[7:end, :is_decoy]) &quot;New rows should be marked as decoys&quot;</span>
+<span id="L1040"><span class="lineNum">    1040</span>              :     </span>
+<span id="L1041"><span class="lineNum">    1041</span>              :     # Check precursor consistency</span>
+<span id="L1042"><span class="lineNum">    1042</span>              :     for precursor_idx in unique(result_df.precursor_idx)</span>
+<span id="L1043"><span class="lineNum">    1043</span>              :         decoy_rows = result_df[result_df.is_decoy .&amp; (result_df.precursor_idx .== precursor_idx), :]</span>
+<span id="L1044"><span class="lineNum">    1044</span>              :         if !isempty(decoy_rows)</span>
+<span id="L1045"><span class="lineNum">    1045</span>              :             # All fragments of same precursor should have same sequence</span>
+<span id="L1046"><span class="lineNum">    1046</span>              :             @assert length(unique(decoy_rows.sequence)) == 1 &quot;All fragments of precursor precursor_idx should have same sequence&quot;</span>
+<span id="L1047"><span class="lineNum">    1047</span>              :             # Sequence should be different from original</span>
+<span id="L1048"><span class="lineNum">    1048</span>              :             orig_seq = first(result_df[.!result_df.is_decoy .&amp; (result_df.precursor_idx .== precursor_idx), :sequence])</span>
+<span id="L1049"><span class="lineNum">    1049</span>              :             @assert first(decoy_rows.sequence) != orig_seq &quot;Decoy sequence should differ from original&quot;</span>
+<span id="L1050"><span class="lineNum">    1050</span>              :         end</span>
+<span id="L1051"><span class="lineNum">    1051</span>              :     end</span>
+<span id="L1052"><span class="lineNum">    1052</span>              :     </span>
+<span id="L1053"><span class="lineNum">    1053</span>              :     println(&quot;All tests passed!&quot;)</span>
+<span id="L1054"><span class="lineNum">    1054</span>              : end</span>
+<span id="L1055"><span class="lineNum">    1055</span>              : ```</span>
+<span id="L1056"><span class="lineNum">    1056</span>              : &quot;&quot;&quot;</span>
+<span id="L1057"><span class="lineNum">    1057</span> <span class="tlaGNC">           2 : function getShuffledEntrapmentSeqs!(speclibdf::BasicEmpiricalLibrary, entrapment_group_id::Integer)</span></span>
+<span id="L1058"><span class="lineNum">    1058</span>              :     # Make a deep copy and sort by precursor_idx</span>
+<span id="L1059"><span class="lineNum">    1059</span> <span class="tlaGNC">           2 :     shuffle_libdf = deepcopy(speclibdf.libdf)</span></span>
+<span id="L1060"><span class="lineNum">    1060</span> <span class="tlaGNC">           2 :     pair_id = UInt32(size(shuffle_libdf, 1) + 1)</span></span>
+<span id="L1061"><span class="lineNum">    1061</span> <span class="tlaGNC">           2 :     sort!(shuffle_libdf, :precursor_idx)</span></span>
+<span id="L1062"><span class="lineNum">    1062</span> <span class="tlaGNC">           2 :     shuffle_libdf[!,:entrapment_group_id] .= UInt8(entrapment_group_id)</span></span>
+<span id="L1063"><span class="lineNum">    1063</span>              :     # Create a Set of forward sequences for O(1) lookup</span>
+<span id="L1064"><span class="lineNum">    1064</span> <span class="tlaGNC">           2 :     forward_seqs = Set(speclibdf.libdf.sequence)</span></span>
+<span id="L1065"><span class="lineNum">    1065</span>              :     </span>
+<span id="L1066"><span class="lineNum">    1066</span>              :     # Track which rows to keep</span>
+<span id="L1067"><span class="lineNum">    1067</span> <span class="tlaGNC">           2 :     keep_rows = trues(size(shuffle_libdf, 1))</span></span>
+<span id="L1068"><span class="lineNum">    1068</span>              :     </span>
+<span id="L1069"><span class="lineNum">    1069</span>              :     # Track current precursor and its shuffled sequence</span>
+<span id="L1070"><span class="lineNum">    1070</span> <span class="tlaGNC">           2 :     current_precursor = nothing</span></span>
+<span id="L1071"><span class="lineNum">    1071</span> <span class="tlaGNC">           2 :     current_shuffled_seq = nothing</span></span>
+<span id="L1072"><span class="lineNum">    1072</span> <span class="tlaGNC">           2 :     current_shuffled_mods = nothing</span></span>
+<span id="L1073"><span class="lineNum">    1073</span>              :     </span>
+<span id="L1074"><span class="lineNum">    1074</span>              :     # Process rows maintaining precursor consistency</span>
+<span id="L1075"><span class="lineNum">    1075</span> <span class="tlaGNC">           4 :     for (idx, row) in enumerate(eachrow(shuffle_libdf))</span></span>
+<span id="L1076"><span class="lineNum">    1076</span> <span class="tlaGNC">          60 :         if row.precursor_idx != current_precursor</span></span>
+<span id="L1077"><span class="lineNum">    1077</span>              :             # New precursor encountered - need to generate new shuffle</span>
+<span id="L1078"><span class="lineNum">    1078</span> <span class="tlaGNC">          20 :             current_precursor = row.precursor_idx</span></span>
+<span id="L1079"><span class="lineNum">    1079</span>              :             </span>
+<span id="L1080"><span class="lineNum">    1080</span>              :             # Try to find a valid shuffle</span>
+<span id="L1081"><span class="lineNum">    1081</span> <span class="tlaGNC">          20 :             found_valid_shuffle = false</span></span>
+<span id="L1082"><span class="lineNum">    1082</span> <span class="tlaGNC">          20 :             shuffle_attempts = 0</span></span>
+<span id="L1083"><span class="lineNum">    1083</span> <span class="tlaGNC">          40 :             while shuffle_attempts &lt; 20 &amp;&amp; !found_valid_shuffle</span></span>
+<span id="L1084"><span class="lineNum">    1084</span> <span class="tlaGNC">          20 :                 shuffled_sequence, shuffled_mods = shuffleSequence(row.sequence, row.structural_mods)</span></span>
+<span id="L1085"><span class="lineNum">    1085</span> <span class="tlaGNC">          20 :                 if !(shuffled_sequence in forward_seqs)</span></span>
+<span id="L1086"><span class="lineNum">    1086</span> <span class="tlaGNC">          20 :                     current_shuffled_seq = shuffled_sequence</span></span>
+<span id="L1087"><span class="lineNum">    1087</span> <span class="tlaGNC">          20 :                     current_shuffled_mods = shuffled_mods</span></span>
+<span id="L1088"><span class="lineNum">    1088</span> <span class="tlaGNC">          20 :                     push!(forward_seqs, shuffled_sequence)</span></span>
+<span id="L1089"><span class="lineNum">    1089</span> <span class="tlaGNC">          20 :                     found_valid_shuffle = true</span></span>
+<span id="L1090"><span class="lineNum">    1090</span>              :                 end</span>
+<span id="L1091"><span class="lineNum">    1091</span> <span class="tlaGNC">          20 :                 shuffle_attempts += 1</span></span>
+<span id="L1092"><span class="lineNum">    1092</span> <span class="tlaGNC">          20 :             end</span></span>
+<span id="L1093"><span class="lineNum">    1093</span>              :             </span>
+<span id="L1094"><span class="lineNum">    1094</span>              :             # If no valid shuffle found, mark all rows of this precursor for removal</span>
+<span id="L1095"><span class="lineNum">    1095</span> <span class="tlaGNC">          20 :             if !found_valid_shuffle</span></span>
+<span id="L1096"><span class="lineNum">    1096</span> <span class="tlaUNC">           0 :                 idx_start = idx</span></span>
+<span id="L1097"><span class="lineNum">    1097</span> <span class="tlaUNC">           0 :                 while idx_start &lt;= size(shuffle_libdf, 1) &amp;&amp; </span></span>
+<span id="L1098"><span class="lineNum">    1098</span>              :                       shuffle_libdf[idx_start, :precursor_idx] == current_precursor</span>
+<span id="L1099"><span class="lineNum">    1099</span> <span class="tlaUNC">           0 :                     keep_rows[idx_start] = false</span></span>
+<span id="L1100"><span class="lineNum">    1100</span> <span class="tlaUNC">           0 :                     idx_start += 1</span></span>
+<span id="L1101"><span class="lineNum">    1101</span> <span class="tlaUNC">           0 :                 end</span></span>
+<span id="L1102"><span class="lineNum">    1102</span> <span class="tlaUNC">           0 :                 continue</span></span>
+<span id="L1103"><span class="lineNum">    1103</span>              :             end</span>
+<span id="L1104"><span class="lineNum">    1104</span>              :         end</span>
+<span id="L1105"><span class="lineNum">    1105</span>              :         </span>
+<span id="L1106"><span class="lineNum">    1106</span>              :         # Apply current shuffled sequence to this row</span>
+<span id="L1107"><span class="lineNum">    1107</span> <span class="tlaGNC">          60 :         row.sequence = current_shuffled_seq</span></span>
+<span id="L1108"><span class="lineNum">    1108</span> <span class="tlaGNC">         120 :         row.structural_mods = current_shuffled_mods</span></span>
+<span id="L1109"><span class="lineNum">    1109</span> <span class="tlaGNC">          60 :         row.pair_id = pair_id</span></span>
+<span id="L1110"><span class="lineNum">    1110</span> <span class="tlaGNC">          60 :         pair_id += one(UInt32)</span></span>
+<span id="L1111"><span class="lineNum">    1111</span> <span class="tlaGNC">          60 :         row.is_decoy = false</span></span>
+<span id="L1112"><span class="lineNum">    1112</span> <span class="tlaGNC">         118 :     end</span></span>
+<span id="L1113"><span class="lineNum">    1113</span>              :     </span>
+<span id="L1114"><span class="lineNum">    1114</span>              :     # Filter out failed shuffles and append</span>
+<span id="L1115"><span class="lineNum">    1115</span> <span class="tlaGNC">           2 :     append!(speclibdf.libdf, shuffle_libdf[keep_rows, :])</span></span>
+<span id="L1116"><span class="lineNum">    1116</span>              : end</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

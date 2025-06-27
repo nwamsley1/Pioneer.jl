@@ -1,0 +1,569 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - Routines/SearchDIA/SearchMethods/FirstPassSearch/utils.jl</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory Routines/SearchDIA/SearchMethods/FirstPassSearch">Routines/SearchDIA/SearchMethods/FirstPassSearch</a> - utils.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">97.2&nbsp;%</td>
+            <td class="headerCovTableEntry">179</td>
+            <td class="headerCovTableEntry">174</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : </span>
+<span id="L2"><span class="lineNum">       2</span>              : &quot;&quot;&quot;</span>
+<span id="L3"><span class="lineNum">       3</span>              :     add_main_search_columns!(psms::DataFrame, rt_irt::UniformSpline,</span>
+<span id="L4"><span class="lineNum">       4</span>              :                            structural_mods::AbstractVector{Union{Missing, String}},</span>
+<span id="L5"><span class="lineNum">       5</span>              :                            prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},</span>
+<span id="L6"><span class="lineNum">       6</span>              :                            prec_is_decoy::Arrow.BoolVector{Bool},</span>
+<span id="L7"><span class="lineNum">       7</span>              :                            prec_irt::Arrow.Primitive{T, Vector{T}},</span>
+<span id="L8"><span class="lineNum">       8</span>              :                            prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},</span>
+<span id="L9"><span class="lineNum">       9</span>              :                            scan_retention_time::AbstractVector{Float32},</span>
+<span id="L10"><span class="lineNum">      10</span>              :                            tic::AbstractVector{Float32},</span>
+<span id="L11"><span class="lineNum">      11</span>              :                            masses::AbstractArray) where {T&lt;:AbstractFloat}</span>
+<span id="L12"><span class="lineNum">      12</span>              : </span>
+<span id="L13"><span class="lineNum">      13</span>              : Adds essential columns to PSM DataFrame for scoring and analysis.</span>
+<span id="L14"><span class="lineNum">      14</span>              : </span>
+<span id="L15"><span class="lineNum">      15</span>              : # Arguments</span>
+<span id="L16"><span class="lineNum">      16</span>              : - `psms`: DataFrame to modify</span>
+<span id="L17"><span class="lineNum">      17</span>              : - `rt_irt`: Spline for RT to iRT conversion</span>
+<span id="L18"><span class="lineNum">      18</span>              : - `structural_mods`: Vector of structural modifications</span>
+<span id="L19"><span class="lineNum">      19</span>              : - `prec_missed_cleavages`: Vector of missed cleavage counts</span>
+<span id="L20"><span class="lineNum">      20</span>              : - `prec_is_decoy`: Vector indicating decoy status</span>
+<span id="L21"><span class="lineNum">      21</span>              : - `prec_irt`: Vector of iRT values</span>
+<span id="L22"><span class="lineNum">      22</span>              : - `prec_charge`: Vector of precursor charges</span>
+<span id="L23"><span class="lineNum">      23</span>              : - `scan_retention_time`: Vector of scan retention times</span>
+<span id="L24"><span class="lineNum">      24</span>              : - `tic`: Vector of total ion currents</span>
+<span id="L25"><span class="lineNum">      25</span>              : - `masses`: Array of mass spectra</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : # Added Columns</span>
+<span id="L28"><span class="lineNum">      28</span>              : - Basic metrics: RT, iRT, charge, TIC</span>
+<span id="L29"><span class="lineNum">      29</span>              : - Modification info: missed_cleavage, Mox</span>
+<span id="L30"><span class="lineNum">      30</span>              : - Scoring columns: score, q_value</span>
+<span id="L31"><span class="lineNum">      31</span>              : - Analysis columns: target, spectrum_peak_count, err_norm</span>
+<span id="L32"><span class="lineNum">      32</span>              : &quot;&quot;&quot;</span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaGNC">           2 : function add_main_search_columns!(psms::DataFrame, </span></span>
+<span id="L34"><span class="lineNum">      34</span>              :                                 rt_irt::UniformSpline,</span>
+<span id="L35"><span class="lineNum">      35</span>              :                                 structural_mods::AbstractVector{Union{Missing, String}},</span>
+<span id="L36"><span class="lineNum">      36</span>              :                                 prec_missed_cleavages::Arrow.Primitive{UInt8, Vector{UInt8}},</span>
+<span id="L37"><span class="lineNum">      37</span>              :                                 prec_is_decoy::Arrow.BoolVector{Bool},</span>
+<span id="L38"><span class="lineNum">      38</span>              :                                 prec_irt::Arrow.Primitive{T, Vector{T}},</span>
+<span id="L39"><span class="lineNum">      39</span>              :                                 prec_charge::Arrow.Primitive{UInt8, Vector{UInt8}},</span>
+<span id="L40"><span class="lineNum">      40</span>              :                                 scan_retention_time::AbstractVector{Float32},</span>
+<span id="L41"><span class="lineNum">      41</span>              :                                 tic::AbstractVector{Float32},</span>
+<span id="L42"><span class="lineNum">      42</span>              :                                 masses::AbstractArray;</span>
+<span id="L43"><span class="lineNum">      43</span>              : ) where {T&lt;:AbstractFloat}</span>
+<span id="L44"><span class="lineNum">      44</span>              :     </span>
+<span id="L45"><span class="lineNum">      45</span>              :     ###########################</span>
+<span id="L46"><span class="lineNum">      46</span>              :     #Allocate new columns</span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">           2 :     N = size(psms, 1)</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">           4 :     missed_cleavage = zeros(UInt8, N);</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">           4 :     Mox = zeros(UInt8, N);</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">       22714 :     irt_pred = zeros(Float32, N);</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">       22714 :     rt = zeros(Float32, N);</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">       22714 :     irt = zeros(Float32, N);</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">       22714 :     TIC = zeros(Float16, N);</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">           4 :     charge = zeros(UInt8, N);</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaGNC">       22714 :     err_norm = zeros(Float16, N);</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">       22714 :     targets = zeros(Bool, N);</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">       22714 :     spectrum_peak_count = zeros(UInt32, N);</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">           2 :     scan_idx::Vector{UInt32} = psms[!,:scan_idx]</span></span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">           2 :     precursor_idx::Vector{UInt32} = psms[!,:precursor_idx] </span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">           2 :     error::Vector{Float32} = psms[!,:error]</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">           2 :     total_ions::Vector{UInt8} = psms[!,:y_count] .+ psms[!,:b_count]</span></span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">       14467 :     function countMOX(seq::String)</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">       14465 :         return UInt8(count(&quot;Unimod:35&quot;, seq))</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :     end</span>
+<span id="L65"><span class="lineNum">      65</span>              : </span>
+<span id="L66"><span class="lineNum">      66</span>              :     #Split data into chunk ranges</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">           2 :     tasks_per_thread = 10</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">           2 :     chunk_size = max(1, size(psms, 1) ÷ (tasks_per_thread * Threads.nthreads()))</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">           2 :     data_chunks = partition(1:size(psms, 1), chunk_size) # partition your data into chunks that</span></span>
+<span id="L70"><span class="lineNum">      70</span>              : </span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">           2 :     tasks = map(data_chunks) do chunk</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">         283 :         Threads.@spawn begin</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">         284 :             for i in chunk</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">       13941 :                 prec_idx = precursor_idx[i]</span></span>
+<span id="L75"><span class="lineNum">      75</span>              : </span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">       14013 :                 targets[i] = prec_is_decoy[prec_idx] == false;</span></span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">       14349 :                 missed_cleavage[i] = prec_missed_cleavages[prec_idx]</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">       14153 :                 Mox[i] = countMOX(coalesce(structural_mods[prec_idx], &quot;&quot;))::UInt8 #UInt8(length(collect(eachmatch(r&quot;ox&quot;,  precursors[precursor_idx[i]].sequence))))</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">       13474 :                 irt_pred[i] = Float32(prec_irt[prec_idx]);</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">       13509 :                 rt[i] = Float32(scan_retention_time[scan_idx[i]]);</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">       13513 :                 irt[i] = rt_irt(rt[i])</span></span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">       13597 :                 TIC[i] = Float16(log2(tic[scan_idx[i]]));</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">       13659 :                 charge[i] = UInt8(prec_charge[prec_idx]);</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">       13684 :                 err_norm[i] = min(Float16.(abs(error[i]/total_ions[i])), Float16(6e4))#Float16(min(abs((error[i])/(total_ions[i])), 6e4))</span></span>
+<span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">       13768 :                 spectrum_peak_count[i] = UInt32(length(masses[scan_idx[i]]))</span></span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaGNC">       13934 :             end</span></span>
+<span id="L87"><span class="lineNum">      87</span>              :         end</span>
+<span id="L88"><span class="lineNum">      88</span>              :     end</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaGNC">           2 :     fetch.(tasks)</span></span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaGNC">           2 :     psms[!,:irt_predicted] = irt_pred</span></span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaGNC">           2 :     psms[!,:rt] = rt</span></span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaGNC">           2 :     psms[!,:irt] = irt</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaGNC">           2 :     psms[!,:TIC] = TIC</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaGNC">           2 :     psms[!,:total_ions] = total_ions</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaGNC">           2 :     psms[!,:err_norm] = err_norm</span></span>
+<span id="L96"><span class="lineNum">      96</span> <span class="tlaGNC">           2 :     psms[!,:target] = targets</span></span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaGNC">           2 :     psms[!,:missed_cleavage] = missed_cleavage</span></span>
+<span id="L98"><span class="lineNum">      98</span> <span class="tlaGNC">           2 :     psms[!,:Mox] = Mox</span></span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">           2 :     psms[!,:charge] = charge</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">           2 :     psms[!,:spectrum_peak_count] = spectrum_peak_count</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">       22714 :     psms[!,:score] = zeros(Float32, N);</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">       22714 :     psms[!,:q_value] = zeros(Float16, N);</span></span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">           2 :     psms[!,:intercept] = ones(Float16, N)</span></span>
+<span id="L104"><span class="lineNum">     104</span>              : end</span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span>              : &quot;&quot;&quot;</span>
+<span id="L107"><span class="lineNum">     107</span>              :     score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};</span>
+<span id="L108"><span class="lineNum">     108</span>              :                            n_train_rounds::Int64=2,</span>
+<span id="L109"><span class="lineNum">     109</span>              :                            max_iter_per_round::Int64=50,</span>
+<span id="L110"><span class="lineNum">     110</span>              :                            max_q_value::Float64=0.01,</span>
+<span id="L111"><span class="lineNum">     111</span>              :                            fdr_scale_factor::Float32=1.0f0)</span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              : Performs iterative probit regression scoring of PSMs.</span>
+<span id="L114"><span class="lineNum">     114</span>              : </span>
+<span id="L115"><span class="lineNum">     115</span>              : # Arguments</span>
+<span id="L116"><span class="lineNum">     116</span>              : - `psms`: DataFrame containing PSMs to score</span>
+<span id="L117"><span class="lineNum">     117</span>              : - `column_names`: Column names to use for scoring</span>
+<span id="L118"><span class="lineNum">     118</span>              : - `n_train_rounds`: Number of training iterations</span>
+<span id="L119"><span class="lineNum">     119</span>              : - `max_iter_per_round`: Maximum iterations per training round</span>
+<span id="L120"><span class="lineNum">     120</span>              : - `max_q_value`: Maximum q-value threshold for filtering</span>
+<span id="L121"><span class="lineNum">     121</span>              : - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio</span>
+<span id="L122"><span class="lineNum">     122</span>              : </span>
+<span id="L123"><span class="lineNum">     123</span>              : # Process</span>
+<span id="L124"><span class="lineNum">     124</span>              : 1. First round: Trains on all data</span>
+<span id="L125"><span class="lineNum">     125</span>              : 2. Subsequent rounds: Trains on decoys and high-scoring targets</span>
+<span id="L126"><span class="lineNum">     126</span>              : 3. Updates scores and q-values after each round</span>
+<span id="L127"><span class="lineNum">     127</span>              : &quot;&quot;&quot;</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">           8 : function score_main_search_psms!(psms::DataFrame, column_names::Vector{Symbol};</span></span>
+<span id="L129"><span class="lineNum">     129</span>              :                              n_train_rounds::Int64 = 2,</span>
+<span id="L130"><span class="lineNum">     130</span>              :                              max_iter_per_round::Int64 = 50,</span>
+<span id="L131"><span class="lineNum">     131</span>              :                              max_q_value::Float64 = 0.01,</span>
+<span id="L132"><span class="lineNum">     132</span>              :                              fdr_scale_factor::Float32 = 1.0f0</span>
+<span id="L133"><span class="lineNum">     133</span>              : )</span>
+<span id="L134"><span class="lineNum">     134</span>              : </span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          54 :     β = zeros(Float64, length(column_names));</span></span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">           4 :     best_psms = nothing#ones(Bool, size(psms, 1))</span></span>
+<span id="L137"><span class="lineNum">     137</span>              : </span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC">           4 :     tasks_per_thread = 10</span></span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">           4 :     M = size(psms, 1)</span></span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">           4 :     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">           4 :     data_chunks = partition(1:M, chunk_size) # partition your data into chunks</span></span>
+<span id="L142"><span class="lineNum">     142</span>              : </span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">           4 :     for i in range(1, n_train_rounds)</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">           6 :         if i &lt; 2 #Train on top scribe data during first round</span></span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">           4 :             get_qvalues!(psms[!,:scribe], psms[!,:target], psms[!,:q_value]; fdr_scale_factor = fdr_scale_factor)</span></span>
+<span id="L146"><span class="lineNum">     146</span>              :         end</span>
+<span id="L147"><span class="lineNum">     147</span>              : </span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">           6 :         if i &lt; n_train_rounds #Get Data to train on</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">           4 :             best_psms = ((psms[!,:q_value].&lt;=max_q_value).&amp;(psms[!,:target])) .| (psms[!,:target].==false);</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :         end</span>
+<span id="L151"><span class="lineNum">     151</span>              : </span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">           6 :         psms_targets = psms[best_psms,:target]</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">           6 :         M = size(psms_targets, 1)</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaGNC">           6 :         sub_chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">           6 :         sub_data_chunks = partition(1:M, sub_chunk_size) # partition your data into chunks that</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">           6 :         β = ProbitRegression(β, psms[best_psms,column_names], psms_targets, sub_data_chunks, max_iter = max_iter_per_round);</span></span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">           4 :         ModelPredict!(psms[!,:score], psms[!,column_names], β, data_chunks); #Get Z-scores </span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">           6 :     end</span></span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">           2 :     return </span></span>
+<span id="L161"><span class="lineNum">     161</span>              : end</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              : &quot;&quot;&quot;</span>
+<span id="L164"><span class="lineNum">     164</span>              :     get_probs!(psms::DataFrame, psms_scores::Vector{Float32})</span>
+<span id="L165"><span class="lineNum">     165</span>              : </span>
+<span id="L166"><span class="lineNum">     166</span>              : Calculates probability scores for PSMs based on their Z-scores using error function.</span>
+<span id="L167"><span class="lineNum">     167</span>              : </span>
+<span id="L168"><span class="lineNum">     168</span>              : # Arguments</span>
+<span id="L169"><span class="lineNum">     169</span>              : - `psms`: DataFrame to modify</span>
+<span id="L170"><span class="lineNum">     170</span>              : - `psms_scores`: Vector of PSM Z-scores</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              : Adds 'prob' column to psms DataFrame containing probability scores.</span>
+<span id="L173"><span class="lineNum">     173</span>              : Uses parallel processing for efficiency.</span>
+<span id="L174"><span class="lineNum">     174</span>              : &quot;&quot;&quot;</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">           2 : function get_probs!(psms::DataFrame,</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :                     psms_scores::Vector{Float32}</span>
+<span id="L177"><span class="lineNum">     177</span>              : )</span>
+<span id="L178"><span class="lineNum">     178</span>              : </span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">       22714 :     psms_probs = zeros(Float32, size(psms, 1))</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">           2 :     tasks_per_thread = 10</span></span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">           2 :     M = size(psms, 1)</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaGNC">           2 :     chunk_size = max(1, M ÷ (tasks_per_thread * Threads.nthreads()))</span></span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">           2 :     data_chunks = partition(1:M, chunk_size) # partition your data into chunks that</span></span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">           2 :     tasks = map(data_chunks) do chunk</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">         252 :         Threads.@spawn begin</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">         250 :             for i in chunk</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">        7833 :                 psms_probs[i] = (1 + SpecialFunctions.erf(psms_scores[i]/sqrt(2)))/2</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">        7770 :             end</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :         end</span>
+<span id="L190"><span class="lineNum">     190</span>              :     end</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaGNC">           2 :     fetch.(tasks)</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">           2 :     psms[!,:prob] = psms_probs</span></span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">           2 :     return nothing</span></span>
+<span id="L194"><span class="lineNum">     194</span>              : end</span>
+<span id="L195"><span class="lineNum">     195</span>              : </span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span>              : &quot;&quot;&quot;</span>
+<span id="L198"><span class="lineNum">     198</span>              :     get_best_psms!(psms::DataFrame, prec_mz::Arrow.Primitive{T, Vector{T}}; </span>
+<span id="L199"><span class="lineNum">     199</span>              :                    max_PEP::Float32=0.9f0, fdr_scale_factor::Float32=1.0f0) where {T&lt;:AbstractFloat}</span>
+<span id="L200"><span class="lineNum">     200</span>              : </span>
+<span id="L201"><span class="lineNum">     201</span>              : Processes PSMs to identify the best matches and calculate peak characteristics.</span>
+<span id="L202"><span class="lineNum">     202</span>              : </span>
+<span id="L203"><span class="lineNum">     203</span>              : # Arguments</span>
+<span id="L204"><span class="lineNum">     204</span>              : - `psms`: DataFrame containing peptide-spectrum matches</span>
+<span id="L205"><span class="lineNum">     205</span>              : - `prec_mz`: Vector of precursor m/z values</span>
+<span id="L206"><span class="lineNum">     206</span>              : - `max_PEP`: Maximum local FDR threshold for filtering PSMs</span>
+<span id="L207"><span class="lineNum">     207</span>              : - `fdr_scale_factor`: Scale factor to correct for library target/decoy ratio</span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span>              : # Modifies PSMs DataFrame to add:</span>
+<span id="L210"><span class="lineNum">     210</span>              : - `best_psm`: Boolean indicating highest scoring PSM for each precursor</span>
+<span id="L211"><span class="lineNum">     211</span>              : - `fwhm`: Full width at half maximum of chromatographic peak</span>
+<span id="L212"><span class="lineNum">     212</span>              : - `scan_count`: Number of scans below q-value threshold</span>
+<span id="L213"><span class="lineNum">     213</span>              : - `prec_mz`: Precursor m/z values</span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span>              : Note: Assumes psms is sorted by retention time in ascending order.</span>
+<span id="L216"><span class="lineNum">     216</span>              : &quot;&quot;&quot;</span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">           4 : function get_best_psms!(psms::DataFrame,</span></span>
+<span id="L218"><span class="lineNum">     218</span>              :                         prec_mz::Arrow.Primitive{T, Vector{T}};</span>
+<span id="L219"><span class="lineNum">     219</span>              :                         max_PEP::Float32 = 0.9f0,</span>
+<span id="L220"><span class="lineNum">     220</span>              :                         fdr_scale_factor::Float32 = 1.0f0</span>
+<span id="L221"><span class="lineNum">     221</span>              : ) where {T&lt;:AbstractFloat}</span>
+<span id="L222"><span class="lineNum">     222</span>              : </span>
+<span id="L223"><span class="lineNum">     223</span>              :     #highest scoring psm for a given precursor</span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">       22714 :     psms[!,:PEP] = zeros(Float16, size(psms, 1))</span></span>
+<span id="L225"><span class="lineNum">     225</span>              :     #highest scoring psm for a given precursor</span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">       22714 :     psms[!,:best_psm] = zeros(Bool, size(psms, 1))</span></span>
+<span id="L227"><span class="lineNum">     227</span>              :     #fwhm estimate of the precursor</span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">       22714 :     psms[!,:fwhm] = zeros(Union{Missing, Float32}, size(psms, 1))</span></span>
+<span id="L229"><span class="lineNum">     229</span>              :     #number of scans below the q value threshold for hte precursor</span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">       22714 :     psms[!,:scan_count] = zeros(UInt16,size(psms, 1))</span></span>
+<span id="L231"><span class="lineNum">     231</span>              : </span>
+<span id="L232"><span class="lineNum">     232</span>              :     </span>
+<span id="L233"><span class="lineNum">     233</span>              :     #Get best psm for each precursor </span>
+<span id="L234"><span class="lineNum">     234</span>              :     #ASSUMES psms IS SOrtED BY rt IN ASCENDING ORDER</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">           2 :     gpsms = groupby(psms,:precursor_idx)</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">           4 :     for (precursor_idx, prec_psms) in pairs(gpsms)</span></span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              :         #Get the best scoring psm, and the its row index. </span>
+<span id="L239"><span class="lineNum">     239</span>              :         #Get the maximum intensity psm (under the q_value threshold) and its row index. </span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">        2565 :         max_irt, min_irt = missing, missing</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">        2565 :         max_log2_intensity, max_idx = missing, one(Int64)</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">        2565 :         best_psm_score, best_psm_idx = zero(Float32), one(Int64)</span></span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">        2565 :         scan_count = one(UInt8)</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">        2565 :         for i in range(1, size(prec_psms, 1))</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">       22714 :             if coalesce(max_log2_intensity, zero(Float32)) &lt; prec_psms[i,:log2_summed_intensity]</span></span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">        9094 :                 max_log2_intensity = prec_psms[i,:log2_summed_intensity]</span></span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaGNC">        9094 :                 max_idx = i</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :             end</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">       22714 :             if prec_psms[i,:score]&gt;best_psm_score</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaGNC">        7097 :                 best_psm_idx = i</span></span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">        7097 :                 best_psm_score = prec_psms[i,:score]</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :             end</span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">       42863 :         end</span></span>
+<span id="L254"><span class="lineNum">     254</span>              :         #Mark the best psm </span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">        2565 :         prec_psms[best_psm_idx,:best_psm] = true</span></span>
+<span id="L256"><span class="lineNum">     256</span>              : </span>
+<span id="L257"><span class="lineNum">     257</span>              :         #Try to estimate the fwhm. </span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">        2565 :         i = max_idx - 1</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaGNC">        5822 :         while i &gt; 0</span></span>
+<span id="L260"><span class="lineNum">     260</span>              :             #Is the i'th psm above half the maximum </span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">        4728 :             if (prec_psms[i,:log2_summed_intensity] &gt; (max_log2_intensity - 1.0))</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaGNC">        4881 :                 scan_count += 1</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaGNC">        3257 :                 min_irt = prec_psms[i,:irt]</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :             else</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaGNC">        1471 :                 break</span></span>
+<span id="L266"><span class="lineNum">     266</span>              :             end</span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaGNC">        3257 :             i -= 1</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">        3257 :         end</span></span>
+<span id="L269"><span class="lineNum">     269</span>              :         </span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">        2565 :         i = max_idx + 1</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">        6257 :         while i &lt;= size(prec_psms, 1)</span></span>
+<span id="L272"><span class="lineNum">     272</span>              :             #Is the i'th psm above half the maximum </span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">        5201 :             if (prec_psms[i,:log2_summed_intensity] &gt; (max_log2_intensity - 1.0))</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">        4028 :                 scan_count += 1</span></span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaGNC">        3692 :                 max_irt = prec_psms[i,:irt]</span></span>
+<span id="L276"><span class="lineNum">     276</span>              :             else</span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">        1509 :                 break</span></span>
+<span id="L278"><span class="lineNum">     278</span>              :             end</span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">        3692 :             i += 1</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">        3692 :         end</span></span>
+<span id="L281"><span class="lineNum">     281</span>              : </span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaGNC">        2565 :         prec_psms[best_psm_idx,:fwhm] = max_irt - min_irt</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaGNC">        2565 :         prec_psms[best_psm_idx,:scan_count] = scan_count</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">        5128 :     end</span></span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">       22716 :     filter!(x-&gt;x.best_psm, psms);</span></span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">           2 :     sort!(psms,:score, rev = true)</span></span>
+<span id="L288"><span class="lineNum">     288</span>              :     # Will use PEP for final filter</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">           2 :     get_PEP!(psms[!,:score], psms[!,:target], psms[!,:PEP]; doSort=false, fdr_scale_factor=fdr_scale_factor);</span></span>
+<span id="L290"><span class="lineNum">     290</span>              : </span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           2 :     n = size(psms, 1)</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">          24 :     select!(psms, [:precursor_idx,:log2_summed_intensity,:rt,:irt_predicted,:q_value,:score,:prob,:fwhm,:scan_count,:scan_idx,:PEP,:target])</span></span>
+<span id="L293"><span class="lineNum">     293</span>              : </span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">           2 :     first_fail = searchsortedfirst(psms[!,:PEP], Float16(max_PEP))</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">           2 :     if first_fail &lt;= n</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">           2 :         deleteat!(psms, first_fail:n)</span></span>
+<span id="L297"><span class="lineNum">     297</span>              :     end</span>
+<span id="L298"><span class="lineNum">     298</span>              :     #println(&quot;unique IDs prefilter: &quot;, n, &quot; &quot;, first_fail, &quot;\n\n&quot;)</span>
+<span id="L299"><span class="lineNum">     299</span>              : </span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaGNC">        2457 :     mz = zeros(T, size(psms, 1));</span></span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaGNC">           2 :     precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">           2 :     Threads.@threads for i in range(1, size(psms, 1))</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaGNC">        1467 :         mz[i] = prec_mz[precursor_idx[i]];</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :     end</span></span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaGNC">           2 :     psms[!,:prec_mz] = mz</span></span>
+<span id="L306"><span class="lineNum">     306</span>              : </span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">           2 :     return</span></span>
+<span id="L308"><span class="lineNum">     308</span>              : end</span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span>              : &quot;&quot;&quot;</span>
+<span id="L311"><span class="lineNum">     311</span>              :     map_retention_times!(search_context::SearchContext, results::FirstPassSearchResults, params::FirstPassSearchParameters)</span>
+<span id="L312"><span class="lineNum">     312</span>              : </span>
+<span id="L313"><span class="lineNum">     313</span>              : Maps retention times between library and empirical scales for each MS file. For files with sufficient high-confidence PSMs </span>
+<span id="L314"><span class="lineNum">     314</span>              : (probability &gt; min_prob_for_irt_mapping), creates spline-based conversion models between retention time (RT) and indexed </span>
+<span id="L315"><span class="lineNum">     315</span>              : retention time (iRT) scales.</span>
+<span id="L316"><span class="lineNum">     316</span>              : </span>
+<span id="L317"><span class="lineNum">     317</span>              : # Arguments</span>
+<span id="L318"><span class="lineNum">     318</span>              : - `search_context`: Contains MS data and mapping information</span>
+<span id="L319"><span class="lineNum">     319</span>              : - `results`: FirstPassSearch results container</span>
+<span id="L320"><span class="lineNum">     320</span>              : - `params`: Search parameters including minimum probability threshold</span>
+<span id="L321"><span class="lineNum">     321</span>              : </span>
+<span id="L322"><span class="lineNum">     322</span>              : Creates and stores:</span>
+<span id="L323"><span class="lineNum">     323</span>              : - RT to iRT mapping splines</span>
+<span id="L324"><span class="lineNum">     324</span>              : - iRT to RT mapping splines</span>
+<span id="L325"><span class="lineNum">     325</span>              : </span>
+<span id="L326"><span class="lineNum">     326</span>              : Throws an error if insufficient high-confidence PSMs are found for mapping.</span>
+<span id="L327"><span class="lineNum">     327</span>              : &quot;&quot;&quot;</span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">           1 : function map_retention_times!(</span></span>
+<span id="L329"><span class="lineNum">     329</span>              :     search_context::SearchContext,</span>
+<span id="L330"><span class="lineNum">     330</span>              :     results::FirstPassSearchResults,</span>
+<span id="L331"><span class="lineNum">     331</span>              :     params::FirstPassSearchParameters</span>
+<span id="L332"><span class="lineNum">     332</span>              : )</span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">           1 :     @info &quot;Mapping library to empirical retention times...&quot;</span></span>
+<span id="L334"><span class="lineNum">     334</span>              :     </span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">           1 :     for (ms_file_idx, psms_path) in enumerate(getFirstPassPsms(getMSData(search_context)))</span></span>
+<span id="L336"><span class="lineNum">     336</span>              :         #if getFailedIndicator(getMSData(search_context), ms_file_idx)==true</span>
+<span id="L337"><span class="lineNum">     337</span>              :         #    continue</span>
+<span id="L338"><span class="lineNum">     338</span>              :         #end</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaGNC">           2 :         psms = Arrow.Table(psms_path)</span></span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">           2 :         best_hits = psms[:prob].&gt;params.min_prob_for_irt_mapping#Map rts using only the best psms</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">           2 :         try#if sum(best_hits) &gt; 100</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">           2 :             best_rts = psms[:rt][best_hits]</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">           2 :             best_irts = psms[:irt_predicted][best_hits]</span></span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">           2 :             irt_to_rt_spline = UniformSpline(</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :                                         best_rts,</span>
+<span id="L346"><span class="lineNum">     346</span>              :                                         best_irts,</span>
+<span id="L347"><span class="lineNum">     347</span>              :                                         3, </span>
+<span id="L348"><span class="lineNum">     348</span>              :                                         5</span>
+<span id="L349"><span class="lineNum">     349</span>              :             )</span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">           2 :             rt_to_irt_spline = UniformSpline(</span></span>
+<span id="L351"><span class="lineNum">     351</span>              :                 best_irts,</span>
+<span id="L352"><span class="lineNum">     352</span>              :                 best_rts,</span>
+<span id="L353"><span class="lineNum">     353</span>              :                 3, </span>
+<span id="L354"><span class="lineNum">     354</span>              :                 5</span>
+<span id="L355"><span class="lineNum">     355</span>              :             )</span>
+<span id="L356"><span class="lineNum">     356</span>              :             #Build rt=&gt;irt and irt=&gt; rt mappings for the file and add to the dictionaries </span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC">           2 :             setRtIrtMap!(search_context, SplineRtConversionModel(rt_to_irt_spline), ms_file_idx)</span></span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">           2 :             setIrtRtMap!(search_context, SplineRtConversionModel(irt_to_rt_spline), ms_file_idx)</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :         catch</span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaUNC">           0 :             throw(&quot;add a default option here...&quot;)</span></span>
+<span id="L361"><span class="lineNum">     361</span>              :             #sensible default here?</span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaUNC">           0 :             continue</span></span>
+<span id="L363"><span class="lineNum">     363</span>              :         end</span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">           3 :     end</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">           1 :     return nothing</span></span>
+<span id="L366"><span class="lineNum">     366</span>              : end</span>
+<span id="L367"><span class="lineNum">     367</span>              : </span>
+<span id="L368"><span class="lineNum">     368</span>              : </span>
+<span id="L369"><span class="lineNum">     369</span>              : PrecToIrtType = Dictionary{UInt32, </span>
+<span id="L370"><span class="lineNum">     370</span>              :     NamedTuple{</span>
+<span id="L371"><span class="lineNum">     371</span>              :         (:best_prob, :best_ms_file_idx, :best_scan_idx, :best_irt, :mean_irt, :var_irt, :n, :mz), </span>
+<span id="L372"><span class="lineNum">     372</span>              :         Tuple{Float32, UInt32, UInt32, Float32, Union{Missing, Float32}, Union{Missing, Float32}, Union{Missing, UInt16}, Float32}</span>
+<span id="L373"><span class="lineNum">     373</span>              :     }</span>
+<span id="L374"><span class="lineNum">     374</span>              : }</span>
+<span id="L375"><span class="lineNum">     375</span>              : </span>
+<span id="L376"><span class="lineNum">     376</span>              : &quot;&quot;&quot;</span>
+<span id="L377"><span class="lineNum">     377</span>              :     create_rt_indices!(search_context::SearchContext, results::FirstPassSearchResults,</span>
+<span id="L378"><span class="lineNum">     378</span>              :                       precursor_dict::PrecToIrtType, params::FirstPassSearchParameters)</span>
+<span id="L379"><span class="lineNum">     379</span>              : </span>
+<span id="L380"><span class="lineNum">     380</span>              : Creates retention time indices for improved search efficiency.</span>
+<span id="L381"><span class="lineNum">     381</span>              : </span>
+<span id="L382"><span class="lineNum">     382</span>              : # Arguments</span>
+<span id="L383"><span class="lineNum">     383</span>              : - `search_context`: Search context containing MS data</span>
+<span id="L384"><span class="lineNum">     384</span>              : - `results`: FirstPassSearch results</span>
+<span id="L385"><span class="lineNum">     385</span>              : - `precursor_dict`: Dictionary mapping precursors to iRT data</span>
+<span id="L386"><span class="lineNum">     386</span>              : - `params`: Search parameters</span>
+<span id="L387"><span class="lineNum">     387</span>              : </span>
+<span id="L388"><span class="lineNum">     388</span>              : # Process</span>
+<span id="L389"><span class="lineNum">     389</span>              : 1. Calculates iRT errors using peak width and variation</span>
+<span id="L390"><span class="lineNum">     390</span>              : 2. Creates precursor to iRT mapping</span>
+<span id="L391"><span class="lineNum">     391</span>              : 3. Generates RT indices for each MS file</span>
+<span id="L392"><span class="lineNum">     392</span>              : 4. Stores indices in search context</span>
+<span id="L393"><span class="lineNum">     393</span>              : &quot;&quot;&quot;</span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaGNC">           1 : function create_rt_indices!(</span></span>
+<span id="L395"><span class="lineNum">     395</span>              :     search_context::SearchContext,</span>
+<span id="L396"><span class="lineNum">     396</span>              :     results::FirstPassSearchResults,</span>
+<span id="L397"><span class="lineNum">     397</span>              :     precursor_dict::PrecToIrtType,</span>
+<span id="L398"><span class="lineNum">     398</span>              :     params::FirstPassSearchParameters</span>
+<span id="L399"><span class="lineNum">     399</span>              : )</span>
+<span id="L400"><span class="lineNum">     400</span>              : </span>
+<span id="L401"><span class="lineNum">     401</span>              : </span>
+<span id="L402"><span class="lineNum">     402</span>              :     # Calculate iRT errors</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">           1 :     @info &quot;Calculating iRT errors...&quot;</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">           1 :     irt_errs = get_irt_errs(results.fwhms, precursor_dict, params)</span></span>
+<span id="L405"><span class="lineNum">     405</span>              : </span>
+<span id="L406"><span class="lineNum">     406</span>              : </span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">           1 :     setIrtErrors!(search_context, irt_errs)</span></span>
+<span id="L408"><span class="lineNum">     408</span>              : </span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC">           1 :     @info &quot;Creating RT indices...&quot;</span></span>
+<span id="L410"><span class="lineNum">     410</span>              :     # Create precursor to iRT mapping</span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaGNC">        1247 :     prec_to_irt = map(x -&gt; (irt=x[:best_irt], mz=x[:mz]), </span></span>
+<span id="L412"><span class="lineNum">     412</span>              :                       precursor_dict)</span>
+<span id="L413"><span class="lineNum">     413</span>              : </span>
+<span id="L414"><span class="lineNum">     414</span>              :     # Set up indices folder</span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">           2 :     rt_indices_folder = joinpath(getDataOutDir(search_context), &quot;temp_data&quot;, &quot;rt_indices&quot;)</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">           1 :     !isdir(rt_indices_folder) &amp;&amp; mkdir(rt_indices_folder)</span></span>
+<span id="L417"><span class="lineNum">     417</span>              : </span>
+<span id="L418"><span class="lineNum">     418</span>              :     # Make RT indices</span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">           1 :     rt_index_paths = makeRTIndices(</span></span>
+<span id="L420"><span class="lineNum">     420</span>              :         rt_indices_folder,</span>
+<span id="L421"><span class="lineNum">     421</span>              :         getFirstPassPsms(getMSData(search_context)),</span>
+<span id="L422"><span class="lineNum">     422</span>              :         prec_to_irt,</span>
+<span id="L423"><span class="lineNum">     423</span>              :         getRtIrtMap(search_context),</span>
+<span id="L424"><span class="lineNum">     424</span>              :         min_prob=params.max_prob_to_impute</span>
+<span id="L425"><span class="lineNum">     425</span>              :     )</span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">           2 :     for (ms_file_idx, rt_index_path) in pairs(rt_index_paths)</span></span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">           2 :         setRtIndex!(getMSData(search_context), ms_file_idx, rt_index_path)</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">           2 :     end</span></span>
+<span id="L429"><span class="lineNum">     429</span>              : end</span>
+<span id="L430"><span class="lineNum">     430</span>              : </span>
+<span id="L431"><span class="lineNum">     431</span>              : </span>
+<span id="L432"><span class="lineNum">     432</span>              : &quot;&quot;&quot;</span>
+<span id="L433"><span class="lineNum">     433</span>              :     get_irt_errs(fwhms::Dictionary, prec_to_irt::Dictionary, params::FirstPassSearchParameters)</span>
+<span id="L434"><span class="lineNum">     434</span>              : </span>
+<span id="L435"><span class="lineNum">     435</span>              : Calculates iRT error tolerances based on peak widths and cross-run variation.</span>
+<span id="L436"><span class="lineNum">     436</span>              : </span>
+<span id="L437"><span class="lineNum">     437</span>              : # Arguments</span>
+<span id="L438"><span class="lineNum">     438</span>              : - `fwhms`: Dictionary of FWHM statistics per file</span>
+<span id="L439"><span class="lineNum">     439</span>              : - `prec_to_irt`: Dictionary of precursor iRT data</span>
+<span id="L440"><span class="lineNum">     440</span>              : - `params`: Parameters including FWHM and iRT standard deviation multipliers</span>
+<span id="L441"><span class="lineNum">     441</span>              : </span>
+<span id="L442"><span class="lineNum">     442</span>              : # Returns</span>
+<span id="L443"><span class="lineNum">     443</span>              : Dictionary mapping file indices to iRT tolerances, combining:</span>
+<span id="L444"><span class="lineNum">     444</span>              : - Peak width variation (FWHM + n*MAD)</span>
+<span id="L445"><span class="lineNum">     445</span>              : - Cross-run iRT variation</span>
+<span id="L446"><span class="lineNum">     446</span>              : &quot;&quot;&quot;</span>
+<span id="L447"><span class="lineNum">     447</span> <span class="tlaGNC">           1 : function get_irt_errs(</span></span>
+<span id="L448"><span class="lineNum">     448</span>              :     fwhms::Dictionary{Int64, </span>
+<span id="L449"><span class="lineNum">     449</span>              :                         @NamedTuple{</span>
+<span id="L450"><span class="lineNum">     450</span>              :                             median_fwhm::Float32,</span>
+<span id="L451"><span class="lineNum">     451</span>              :                             mad_fwhm::Float32</span>
+<span id="L452"><span class="lineNum">     452</span>              :                         }},</span>
+<span id="L453"><span class="lineNum">     453</span>              :     prec_to_irt::Dictionary{UInt32, </span>
+<span id="L454"><span class="lineNum">     454</span>              :     @NamedTuple{best_prob::Float32, </span>
+<span id="L455"><span class="lineNum">     455</span>              :                 best_ms_file_idx::UInt32, </span>
+<span id="L456"><span class="lineNum">     456</span>              :                 best_scan_idx::UInt32, </span>
+<span id="L457"><span class="lineNum">     457</span>              :                 best_irt::Float32, </span>
+<span id="L458"><span class="lineNum">     458</span>              :                 mean_irt::Union{Missing, Float32}, </span>
+<span id="L459"><span class="lineNum">     459</span>              :                 var_irt::Union{Missing, Float32}, </span>
+<span id="L460"><span class="lineNum">     460</span>              :                 n::Union{Missing, UInt16}, </span>
+<span id="L461"><span class="lineNum">     461</span>              :                 mz::Float32}}</span>
+<span id="L462"><span class="lineNum">     462</span>              :     ,</span>
+<span id="L463"><span class="lineNum">     463</span>              :     params::FirstPassSearchParameters</span>
+<span id="L464"><span class="lineNum">     464</span>              : )</span>
+<span id="L465"><span class="lineNum">     465</span>              :     #Get upper bound on peak fwhm. Use median + n*standard_deviation</span>
+<span id="L466"><span class="lineNum">     466</span>              :     #estimate standard deviation by the median absolute deviation. </span>
+<span id="L467"><span class="lineNum">     467</span>              :     #n is a user-defined paramter. </span>
+<span id="L468"><span class="lineNum">     468</span> <span class="tlaGNC">           3 :     fwhms = map(x-&gt;x[:median_fwhm] + params.fwhm_nstd*x[:mad_fwhm],</span></span>
+<span id="L469"><span class="lineNum">     469</span>              :     fwhms)</span>
+<span id="L470"><span class="lineNum">     470</span>              :     #Get variance in irt of apex accross runs. Only consider precursor identified below q-value threshold</span>
+<span id="L471"><span class="lineNum">     471</span>              :     #in more than two runs .</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaGNC">           1 :     irt_std = nothing</span></span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaGNC">        1247 :     variance_  = collect(skipmissing(map(x-&gt; (x[:n] &gt; 2) ? sqrt(x[:var_irt]/(x[:n] - 1)) : missing, prec_to_irt)))</span></span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">           1 :     if !iszero(length(variance_))</span></span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaUNC">           0 :         irt_std = median(variance_)</span></span>
+<span id="L476"><span class="lineNum">     476</span>              :     else</span>
+<span id="L477"><span class="lineNum">     477</span>              :         #This could happen if only two files are being searched </span>
+<span id="L478"><span class="lineNum">     478</span> <span class="tlaGNC">        2334 :         variance_  = collect(skipmissing(map(x-&gt; (x[:n] == 2) ? sqrt(x[:var_irt]) : missing, prec_to_irt)))</span></span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaGNC">           1 :         if iszero(length(variance_)) #only searching one file so </span></span>
+<span id="L480"><span class="lineNum">     480</span> <span class="tlaUNC">           0 :             irt_std = 0.0f0</span></span>
+<span id="L481"><span class="lineNum">     481</span>              :         else</span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaGNC">           1 :             irt_std = median(variance_)</span></span>
+<span id="L483"><span class="lineNum">     483</span>              :         end</span>
+<span id="L484"><span class="lineNum">     484</span>              :     end</span>
+<span id="L485"><span class="lineNum">     485</span>              :     #Number of standard deviations to cover </span>
+<span id="L486"><span class="lineNum">     486</span> <span class="tlaGNC">           1 :     irt_std *= params.irt_nstd</span></span>
+<span id="L487"><span class="lineNum">     487</span>              :     #dictionary maping file name to irt tolerance. </span>
+<span id="L488"><span class="lineNum">     488</span> <span class="tlaGNC">           3 :     return map(x-&gt;Float32((x+irt_std))::Float32, fwhms)::Dictionary{Int64, Float32}</span></span>
+<span id="L489"><span class="lineNum">     489</span>              : end</span>
+<span id="L490"><span class="lineNum">     490</span>              : </span>
+<span id="L491"><span class="lineNum">     491</span>              : </span>
+<span id="L492"><span class="lineNum">     492</span>              : </span>
+<span id="L493"><span class="lineNum">     493</span>              : </span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

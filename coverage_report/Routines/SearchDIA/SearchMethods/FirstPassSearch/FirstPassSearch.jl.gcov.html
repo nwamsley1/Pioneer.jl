@@ -1,0 +1,616 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - Routines/SearchDIA/SearchMethods/FirstPassSearch/FirstPassSearch.jl</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory Routines/SearchDIA/SearchMethods/FirstPassSearch">Routines/SearchDIA/SearchMethods/FirstPassSearch</a> - FirstPassSearch.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryMed">77.9&nbsp;%</td>
+            <td class="headerCovTableEntry">140</td>
+            <td class="headerCovTableEntry">109</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : &quot;&quot;&quot;</span>
+<span id="L2"><span class="lineNum">       2</span>              :     FirstPassSearch</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : Initial search method to identify PSMs and establish retention time calibration.</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : This search:</span>
+<span id="L7"><span class="lineNum">       7</span>              : 1. Performs initial PSM identification with learned scoring</span>
+<span id="L8"><span class="lineNum">       8</span>              : 2. Calculates retention time indices and FWHM statistics</span>
+<span id="L9"><span class="lineNum">       9</span>              : 3. Maps between library and empirical retention times</span>
+<span id="L10"><span class="lineNum">      10</span>              : 4. Generates RT calibration curves for subsequent searches</span>
+<span id="L11"><span class="lineNum">      11</span>              : </span>
+<span id="L12"><span class="lineNum">      12</span>              : # Example Implementation</span>
+<span id="L13"><span class="lineNum">      13</span>              : ```julia</span>
+<span id="L14"><span class="lineNum">      14</span>              : # Define search parameters</span>
+<span id="L15"><span class="lineNum">      15</span>              : params = Dict(</span>
+<span id="L16"><span class="lineNum">      16</span>              :     :isotope_err_bounds =&gt; (0, 2),</span>
+<span id="L17"><span class="lineNum">      17</span>              :     :first_search_params =&gt; Dict(</span>
+<span id="L18"><span class="lineNum">      18</span>              :         &quot;n_train_rounds_probit&quot; =&gt; 10,</span>
+<span id="L19"><span class="lineNum">      19</span>              :         &quot;max_iter_probit&quot; =&gt; 100,</span>
+<span id="L20"><span class="lineNum">      20</span>              :         &quot;max_q_value_probit_rescore&quot; =&gt; 0.01,</span>
+<span id="L21"><span class="lineNum">      21</span>              :         &quot;min_index_search_score&quot; =&gt; 3,</span>
+<span id="L22"><span class="lineNum">      22</span>              :         &quot;min_frag_count&quot; =&gt; 3,</span>
+<span id="L23"><span class="lineNum">      23</span>              :         &quot;min_spectral_contrast&quot; =&gt; 0.1,</span>
+<span id="L24"><span class="lineNum">      24</span>              :         &quot;min_log2_matched_ratio&quot; =&gt; -3.0,</span>
+<span id="L25"><span class="lineNum">      25</span>              :         &quot;min_topn_of_m&quot; =&gt; (3, 5),</span>
+<span id="L26"><span class="lineNum">      26</span>              :         &quot;max_best_rank&quot; =&gt; 3,</span>
+<span id="L27"><span class="lineNum">      27</span>              :         &quot;max_precursors_passing&quot; =&gt; 5000,</span>
+<span id="L28"><span class="lineNum">      28</span>              :         &quot;abreviate_precursor_calc&quot; =&gt; false</span>
+<span id="L29"><span class="lineNum">      29</span>              :     ),</span>
+<span id="L30"><span class="lineNum">      30</span>              :     :summarize_first_search_params =&gt; Dict(</span>
+<span id="L31"><span class="lineNum">      31</span>              :         &quot;min_inference_points&quot; =&gt; 1000,</span>
+<span id="L32"><span class="lineNum">      32</span>              :         &quot;max_q_val_for_irt&quot; =&gt; 0.01,</span>
+<span id="L33"><span class="lineNum">      33</span>              :         &quot;max_precursors&quot; =&gt; 10000,</span>
+<span id="L34"><span class="lineNum">      34</span>              :         &quot;max_irt_bin_size&quot; =&gt; 0.1,</span>
+<span id="L35"><span class="lineNum">      35</span>              :         &quot;max_prob_to_impute&quot; =&gt; 0.99</span>
+<span id="L36"><span class="lineNum">      36</span>              :     ),</span>
+<span id="L37"><span class="lineNum">      37</span>              :     :irt_mapping_params =&gt; Dict(</span>
+<span id="L38"><span class="lineNum">      38</span>              :         &quot;min_prob&quot; =&gt; 0.9</span>
+<span id="L39"><span class="lineNum">      39</span>              :     )</span>
+<span id="L40"><span class="lineNum">      40</span>              : )</span>
+<span id="L41"><span class="lineNum">      41</span>              : </span>
+<span id="L42"><span class="lineNum">      42</span>              : # Execute search</span>
+<span id="L43"><span class="lineNum">      43</span>              : results = execute_search(FirstPassSearch(), search_context, params)</span>
+<span id="L44"><span class="lineNum">      44</span>              : ```</span>
+<span id="L45"><span class="lineNum">      45</span>              : &quot;&quot;&quot;</span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">           1 : struct FirstPassSearch &lt;: SearchMethod end</span></span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span>              : #==========================================================</span>
+<span id="L49"><span class="lineNum">      49</span>              : Type Definitions</span>
+<span id="L50"><span class="lineNum">      50</span>              : ==========================================================#</span>
+<span id="L51"><span class="lineNum">      51</span>              : </span>
+<span id="L52"><span class="lineNum">      52</span>              : &quot;&quot;&quot;</span>
+<span id="L53"><span class="lineNum">      53</span>              : Results container for first pass search.</span>
+<span id="L54"><span class="lineNum">      54</span>              : Holds FWHM statistics, PSM file paths, and model updates.</span>
+<span id="L55"><span class="lineNum">      55</span>              : &quot;&quot;&quot;</span>
+<span id="L56"><span class="lineNum">      56</span>              : struct FirstPassSearchResults &lt;: SearchResults</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">           1 :     fwhms::Dictionary{Int64, @NamedTuple{median_fwhm::Float32,mad_fwhm::Float32}}</span></span>
+<span id="L58"><span class="lineNum">      58</span>              :     psms::Base.Ref{DataFrame}</span>
+<span id="L59"><span class="lineNum">      59</span>              :     ms1_mass_err_model::Base.Ref{&lt;:MassErrorModel}</span>
+<span id="L60"><span class="lineNum">      60</span>              :     ms1_ppm_errs::Vector{Float32}</span>
+<span id="L61"><span class="lineNum">      61</span>              :     qc_plots_folder_path::String</span>
+<span id="L62"><span class="lineNum">      62</span>              : end</span>
+<span id="L63"><span class="lineNum">      63</span>              : </span>
+<span id="L64"><span class="lineNum">      64</span>              : &quot;&quot;&quot;</span>
+<span id="L65"><span class="lineNum">      65</span>              : Parameters for first pass search.</span>
+<span id="L66"><span class="lineNum">      66</span>              : Configures PSM identification, scoring, and RT calibration.</span>
+<span id="L67"><span class="lineNum">      67</span>              : &quot;&quot;&quot;</span>
+<span id="L68"><span class="lineNum">      68</span>              : struct FirstPassSearchParameters{P&lt;:PrecEstimation} &lt;: FragmentIndexSearchParameters</span>
+<span id="L69"><span class="lineNum">      69</span>              :     # Core parameters</span>
+<span id="L70"><span class="lineNum">      70</span>              :     isotope_err_bounds::Tuple{UInt8, UInt8}</span>
+<span id="L71"><span class="lineNum">      71</span>              :     min_fraction_transmitted::Float32</span>
+<span id="L72"><span class="lineNum">      72</span>              :     frag_tol_ppm::Float32</span>
+<span id="L73"><span class="lineNum">      73</span>              :     frag_err_quantile::Float32</span>
+<span id="L74"><span class="lineNum">      74</span>              :     min_index_search_score::UInt8</span>
+<span id="L75"><span class="lineNum">      75</span>              :     min_frag_count::Int64</span>
+<span id="L76"><span class="lineNum">      76</span>              :     min_spectral_contrast::Float32</span>
+<span id="L77"><span class="lineNum">      77</span>              :     min_log2_matched_ratio::Float32</span>
+<span id="L78"><span class="lineNum">      78</span>              :     min_topn_of_m::Tuple{Int64, Int64}</span>
+<span id="L79"><span class="lineNum">      79</span>              :     max_best_rank::UInt8</span>
+<span id="L80"><span class="lineNum">      80</span>              :     n_frag_isotopes::Int64</span>
+<span id="L81"><span class="lineNum">      81</span>              :     max_frag_rank::UInt8</span>
+<span id="L82"><span class="lineNum">      82</span>              :     sample_rate::Float32</span>
+<span id="L83"><span class="lineNum">      83</span>              :     spec_order::Set{Int64}</span>
+<span id="L84"><span class="lineNum">      84</span>              :     match_between_runs::Bool</span>
+<span id="L85"><span class="lineNum">      85</span>              :     relative_improvement_threshold::Float32</span>
+<span id="L86"><span class="lineNum">      86</span>              :     </span>
+<span id="L87"><span class="lineNum">      87</span>              :     # Scoring parameters</span>
+<span id="L88"><span class="lineNum">      88</span>              :     n_train_rounds_probit::Int64</span>
+<span id="L89"><span class="lineNum">      89</span>              :     max_iter_probit::Int64</span>
+<span id="L90"><span class="lineNum">      90</span>              :     max_q_value_probit_rescore::Float32</span>
+<span id="L91"><span class="lineNum">      91</span>              :     max_PEP::Float32</span>
+<span id="L92"><span class="lineNum">      92</span>              :     </span>
+<span id="L93"><span class="lineNum">      93</span>              :     # RT parameters</span>
+<span id="L94"><span class="lineNum">      94</span>              :     min_inference_points::Int64</span>
+<span id="L95"><span class="lineNum">      95</span>              :     max_q_val_for_irt::Float32</span>
+<span id="L96"><span class="lineNum">      96</span>              :     min_prob_for_irt_mapping::Float32</span>
+<span id="L97"><span class="lineNum">      97</span>              :     max_irt_bin_size::Float32</span>
+<span id="L98"><span class="lineNum">      98</span>              :     max_prob_to_impute::Float32</span>
+<span id="L99"><span class="lineNum">      99</span>              :     fwhm_nstd::Float32</span>
+<span id="L100"><span class="lineNum">     100</span>              :     irt_nstd::Float32</span>
+<span id="L101"><span class="lineNum">     101</span>              :     prec_estimation::P</span>
+<span id="L102"><span class="lineNum">     102</span>              : </span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">           1 :     function FirstPassSearchParameters(params::PioneerParameters)</span></span>
+<span id="L104"><span class="lineNum">     104</span>              :         # Extract relevant parameter groups</span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">           1 :         global_params = params.global_settings</span></span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">           1 :         first_params = params.first_search</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">           1 :         frag_params = first_params.fragment_settings</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">           1 :         score_params = first_params.scoring_settings</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">           1 :         rt_params = params.rt_alignment</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">           1 :         irt_mapping_params = first_params.irt_mapping</span></span>
+<span id="L111"><span class="lineNum">     111</span>              :         # Convert isotope error bounds</span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaGNC">           1 :         isotope_bounds = global_params.isotope_settings.err_bounds_first_pass</span></span>
+<span id="L113"><span class="lineNum">     113</span>              :         # Determine precursor estimation strategy</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaGNC">           2 :         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :         </span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">           1 :         new{typeof(prec_estimation)}(</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),</span>
+<span id="L118"><span class="lineNum">     118</span>              :             0.0f0,  # No transmission threshold for first pass</span>
+<span id="L119"><span class="lineNum">     119</span>              :             0.0f0,  # No fragment tolerance for first pass</span>
+<span id="L120"><span class="lineNum">     120</span>              :             Float32(params.parameter_tuning.search_settings.frag_err_quantile),</span>
+<span id="L121"><span class="lineNum">     121</span>              :             UInt8(frag_params.min_score),</span>
+<span id="L122"><span class="lineNum">     122</span>              :             Int64(frag_params.min_count),</span>
+<span id="L123"><span class="lineNum">     123</span>              :             Float32(frag_params.min_spectral_contrast),</span>
+<span id="L124"><span class="lineNum">     124</span>              :             Float32(frag_params.min_log2_ratio),</span>
+<span id="L125"><span class="lineNum">     125</span>              :             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),</span>
+<span id="L126"><span class="lineNum">     126</span>              :             UInt8(1), # max_best_rank</span>
+<span id="L127"><span class="lineNum">     127</span>              :             Int64(frag_params.n_isotopes),</span>
+<span id="L128"><span class="lineNum">     128</span>              :             UInt8(frag_params.max_rank),</span>
+<span id="L129"><span class="lineNum">     129</span>              :             1.0f0,  # Full sampling for first pass</span>
+<span id="L130"><span class="lineNum">     130</span>              :             Set{Int64}([2]),</span>
+<span id="L131"><span class="lineNum">     131</span>              :             global_params.match_between_runs,</span>
+<span id="L132"><span class="lineNum">     132</span>              :             Float32(frag_params.relative_improvement_threshold),</span>
+<span id="L133"><span class="lineNum">     133</span>              :             </span>
+<span id="L134"><span class="lineNum">     134</span>              :             Int64(score_params.n_train_rounds),</span>
+<span id="L135"><span class="lineNum">     135</span>              :             Int64(score_params.max_iterations),</span>
+<span id="L136"><span class="lineNum">     136</span>              :             Float32(score_params.max_q_value_probit_rescore),</span>
+<span id="L137"><span class="lineNum">     137</span>              :             Float32(score_params.max_PEP),</span>
+<span id="L138"><span class="lineNum">     138</span>              :             </span>
+<span id="L139"><span class="lineNum">     139</span>              :             Int64(1000), # Default min_inference_points</span>
+<span id="L140"><span class="lineNum">     140</span>              :             Float32(rt_params.min_probability),</span>
+<span id="L141"><span class="lineNum">     141</span>              :             Float32(rt_params.min_probability),</span>
+<span id="L142"><span class="lineNum">     142</span>              :             Float32(0.1), # Default max_irt_bin_size</span>
+<span id="L143"><span class="lineNum">     143</span>              :             Float32(irt_mapping_params.max_prob_to_impute_irt),  # Default max_prob_to_impute</span>
+<span id="L144"><span class="lineNum">     144</span>              :             Float32(irt_mapping_params.fwhm_nstd),   # Default fwhm_nstd</span>
+<span id="L145"><span class="lineNum">     145</span>              :             Float32(irt_mapping_params.irt_nstd),   # Default irt_nstd</span>
+<span id="L146"><span class="lineNum">     146</span>              :             prec_estimation</span>
+<span id="L147"><span class="lineNum">     147</span>              :         )</span>
+<span id="L148"><span class="lineNum">     148</span>              :     end</span>
+<span id="L149"><span class="lineNum">     149</span>              : end</span>
+<span id="L150"><span class="lineNum">     150</span>              : </span>
+<span id="L151"><span class="lineNum">     151</span>              : #==========================================================</span>
+<span id="L152"><span class="lineNum">     152</span>              : Interface Implementation</span>
+<span id="L153"><span class="lineNum">     153</span>              : ==========================================================#</span>
+<span id="L154"><span class="lineNum">     154</span>              : </span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaGNC">           1 : get_parameters(::FirstPassSearch, params::Any) = FirstPassSearchParameters(params)</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">           2 : getMs1MassErrorModel(ptsr::FirstPassSearchResults) = ptsr.ms1_mass_err_model[]</span></span>
+<span id="L157"><span class="lineNum">     157</span>              : </span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">           1 : function init_search_results(</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :     ::FirstPassSearchParameters,</span>
+<span id="L160"><span class="lineNum">     160</span>              :     search_context::SearchContext</span>
+<span id="L161"><span class="lineNum">     161</span>              : )</span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">           2 :     temp_folder = joinpath(getDataOutDir(search_context), &quot;temp_data&quot;, &quot;first_pass_psms&quot;)</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC">           1 :     !isdir(temp_folder) &amp;&amp; mkdir(temp_folder)</span></span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">           1 :     out_dir = getDataOutDir(search_context)</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">           2 :     qc_dir = joinpath(out_dir, &quot;qc_plots&quot;)</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">           2 :     ms1_mass_error_plots = joinpath(qc_dir, &quot;ms1_mass_error_plots&quot;)</span></span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">           1 :     !isdir(ms1_mass_error_plots ) &amp;&amp; mkdir(ms1_mass_error_plots )</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">           1 :     return FirstPassSearchResults(</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :         Dictionary{Int64, NamedTuple{(:median_fwhm, :mad_fwhm), Tuple{Float32, Float32}}}(),</span>
+<span id="L170"><span class="lineNum">     170</span>              :         Base.Ref{DataFrame}(),</span>
+<span id="L171"><span class="lineNum">     171</span>              :         Base.Ref{MassErrorModel}(),</span>
+<span id="L172"><span class="lineNum">     172</span>              :         Vector{Float32}(),</span>
+<span id="L173"><span class="lineNum">     173</span>              :         qc_dir</span>
+<span id="L174"><span class="lineNum">     174</span>              :     )</span>
+<span id="L175"><span class="lineNum">     175</span>              : end</span>
+<span id="L176"><span class="lineNum">     176</span>              : </span>
+<span id="L177"><span class="lineNum">     177</span>              : #==========================================================</span>
+<span id="L178"><span class="lineNum">     178</span>              : Core Processing Methods</span>
+<span id="L179"><span class="lineNum">     179</span>              : ==========================================================#</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span>              : &quot;&quot;&quot;</span>
+<span id="L182"><span class="lineNum">     182</span>              : Process a single MS file in the first pass search.</span>
+<span id="L183"><span class="lineNum">     183</span>              : &quot;&quot;&quot;</span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">           2 : function process_file!(</span></span>
+<span id="L185"><span class="lineNum">     185</span>              :     results::FirstPassSearchResults,</span>
+<span id="L186"><span class="lineNum">     186</span>              :     params::P, </span>
+<span id="L187"><span class="lineNum">     187</span>              :     search_context::SearchContext,</span>
+<span id="L188"><span class="lineNum">     188</span>              :     ms_file_idx::Int64,</span>
+<span id="L189"><span class="lineNum">     189</span>              :     spectra::MassSpecData</span>
+<span id="L190"><span class="lineNum">     190</span>              : ) where {P&lt;:FirstPassSearchParameters}</span>
+<span id="L191"><span class="lineNum">     191</span>              : </span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">           2 :     &quot;&quot;&quot;</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :     Perform library search with current parameters.</span>
+<span id="L194"><span class="lineNum">     194</span>              :     &quot;&quot;&quot;</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">           4 :     function perform_library_search(</span></span>
+<span id="L196"><span class="lineNum">     196</span>              :         spectra::MassSpecData,</span>
+<span id="L197"><span class="lineNum">     197</span>              :         search_context::SearchContext,</span>
+<span id="L198"><span class="lineNum">     198</span>              :         params::FirstPassSearchParameters,</span>
+<span id="L199"><span class="lineNum">     199</span>              :         ms_file_idx::Int64</span>
+<span id="L200"><span class="lineNum">     200</span>              :     )</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">           2 :         setNceModel!(</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :             getFragmentLookupTable(getSpecLib(search_context)), </span>
+<span id="L203"><span class="lineNum">     203</span>              :             getNceModelModel(search_context, ms_file_idx)</span>
+<span id="L204"><span class="lineNum">     204</span>              :         )</span>
+<span id="L205"><span class="lineNum">     205</span>              :         </span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">           2 :         return library_search(spectra, search_context, params, ms_file_idx)</span></span>
+<span id="L207"><span class="lineNum">     207</span>              :     end</span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :     &quot;&quot;&quot;</span></span>
+<span id="L210"><span class="lineNum">     210</span>              :     Process PSMs from library search.</span>
+<span id="L211"><span class="lineNum">     211</span>              :     &quot;&quot;&quot;</span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">           4 :     function process_psms!(</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :         psms::DataFrame,</span>
+<span id="L214"><span class="lineNum">     214</span>              :         spectra::MassSpecData,</span>
+<span id="L215"><span class="lineNum">     215</span>              :         search_context::SearchContext,</span>
+<span id="L216"><span class="lineNum">     216</span>              :         params::FirstPassSearchParameters,</span>
+<span id="L217"><span class="lineNum">     217</span>              :         ms_file_idx::Int64</span>
+<span id="L218"><span class="lineNum">     218</span>              :     )</span>
+<span id="L219"><span class="lineNum">     219</span>              : </span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaUNC">           0 :         &quot;&quot;&quot;</span></span>
+<span id="L221"><span class="lineNum">     221</span>              :         Select best PSMs based on criteria.</span>
+<span id="L222"><span class="lineNum">     222</span>              :         &quot;&quot;&quot;</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">           4 :         function select_best_psms!(</span></span>
+<span id="L224"><span class="lineNum">     224</span>              :             psms::DataFrame,</span>
+<span id="L225"><span class="lineNum">     225</span>              :             precursor_mzs::AbstractVector,</span>
+<span id="L226"><span class="lineNum">     226</span>              :             params::FirstPassSearchParameters,</span>
+<span id="L227"><span class="lineNum">     227</span>              :             search_context::SearchContext</span>
+<span id="L228"><span class="lineNum">     228</span>              :         )</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">           2 :             fdr_scale_factor = getLibraryFdrScaleFactor(search_context)</span></span>
+<span id="L230"><span class="lineNum">     230</span> <span class="tlaGNC">           2 :             get_best_psms!(</span></span>
+<span id="L231"><span class="lineNum">     231</span>              :                 psms,</span>
+<span id="L232"><span class="lineNum">     232</span>              :                 precursor_mzs,</span>
+<span id="L233"><span class="lineNum">     233</span>              :                 max_PEP=params.max_PEP,</span>
+<span id="L234"><span class="lineNum">     234</span>              :                 fdr_scale_factor=fdr_scale_factor</span>
+<span id="L235"><span class="lineNum">     235</span>              :             )</span>
+<span id="L236"><span class="lineNum">     236</span>              :         end</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">           2 :         rt_model = getRtIrtModel(search_context, ms_file_idx)</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :         # Add columns</span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">           2 :         add_psm_columns!(psms, spectra, search_context, rt_model, ms_file_idx)</span></span>
+<span id="L241"><span class="lineNum">     241</span>              :         </span>
+<span id="L242"><span class="lineNum">     242</span>              :         # Score PSMs</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">           2 :         score_psms!(psms, params, search_context)</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :         # Get best PSMs</span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">           2 :         select_best_psms!(</span></span>
+<span id="L246"><span class="lineNum">     246</span>              :             psms,</span>
+<span id="L247"><span class="lineNum">     247</span>              :             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],</span>
+<span id="L248"><span class="lineNum">     248</span>              :             params,</span>
+<span id="L249"><span class="lineNum">     249</span>              :             search_context</span>
+<span id="L250"><span class="lineNum">     250</span>              :         )</span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">           2 :         return psms</span></span>
+<span id="L252"><span class="lineNum">     252</span>              :     end</span>
+<span id="L253"><span class="lineNum">     253</span>              : </span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaUNC">           0 :     &quot;&quot;&quot;</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :     Add necessary columns to PSM DataFrame.</span>
+<span id="L256"><span class="lineNum">     256</span>              :     &quot;&quot;&quot;</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">           4 :     function add_psm_columns!(</span></span>
+<span id="L258"><span class="lineNum">     258</span>              :         psms::DataFrame,</span>
+<span id="L259"><span class="lineNum">     259</span>              :         spectra::MassSpecData,</span>
+<span id="L260"><span class="lineNum">     260</span>              :         search_context::SearchContext,</span>
+<span id="L261"><span class="lineNum">     261</span>              :         rt_model::RtConversionModel,</span>
+<span id="L262"><span class="lineNum">     262</span>              :         ms_file_idx::Int64</span>
+<span id="L263"><span class="lineNum">     263</span>              :     )</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaGNC">           2 :         add_main_search_columns!(</span></span>
+<span id="L265"><span class="lineNum">     265</span>              :             psms,</span>
+<span id="L266"><span class="lineNum">     266</span>              :             getModel(rt_model),</span>
+<span id="L267"><span class="lineNum">     267</span>              :             getStructuralMods(getPrecursors(getSpecLib(search_context))),</span>
+<span id="L268"><span class="lineNum">     268</span>              :             getMissedCleavages(getPrecursors(getSpecLib(search_context))),</span>
+<span id="L269"><span class="lineNum">     269</span>              :             getIsDecoy(getPrecursors(getSpecLib(search_context))),</span>
+<span id="L270"><span class="lineNum">     270</span>              :             getIrt(getPrecursors(getSpecLib(search_context))),</span>
+<span id="L271"><span class="lineNum">     271</span>              :             getCharge(getPrecursors(getSpecLib(search_context))),</span>
+<span id="L272"><span class="lineNum">     272</span>              :             getRetentionTimes(spectra),</span>
+<span id="L273"><span class="lineNum">     273</span>              :             getTICs(spectra),</span>
+<span id="L274"><span class="lineNum">     274</span>              :             getMzArrays(spectra)</span>
+<span id="L275"><span class="lineNum">     275</span>              :         )</span>
+<span id="L276"><span class="lineNum">     276</span>              :         # Calculate RT values</span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaGNC">           2 :         psms[!, :irt_observed] = rt_model.(psms[!, :rt])</span></span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaGNC">           2 :         psms[!, :irt_error] = Float16.(abs.(psms[!, :irt_observed] .- psms[!, :irt_predicted]))</span></span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaGNC">           2 :         psms[!, :charge2] = UInt8.(psms[!, :charge] .== 2)</span></span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaGNC">           2 :         psms[!, :ms_file_idx] .= UInt32(ms_file_idx)</span></span>
+<span id="L281"><span class="lineNum">     281</span>              :     end</span>
+<span id="L282"><span class="lineNum">     282</span>              : </span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC">           0 :     &quot;&quot;&quot;</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :     Score PSMs using probit model.</span>
+<span id="L285"><span class="lineNum">     285</span>              :     &quot;&quot;&quot;</span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">           4 :     function score_psms!(</span></span>
+<span id="L287"><span class="lineNum">     287</span>              :         psms::DataFrame,</span>
+<span id="L288"><span class="lineNum">     288</span>              :         params::FirstPassSearchParameters,</span>
+<span id="L289"><span class="lineNum">     289</span>              :         search_context::SearchContext</span>
+<span id="L290"><span class="lineNum">     290</span>              :     )</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">          30 :         column_names = [</span></span>
+<span id="L292"><span class="lineNum">     292</span>              :             :spectral_contrast, :city_block, :entropy_score, :scribe, :percent_theoretical_ignored,</span>
+<span id="L293"><span class="lineNum">     293</span>              :             :charge2, :poisson, :irt_error, </span>
+<span id="L294"><span class="lineNum">     294</span>              :             :missed_cleavage, </span>
+<span id="L295"><span class="lineNum">     295</span>              :             :Mox,</span>
+<span id="L296"><span class="lineNum">     296</span>              :             #:charge, Only works with charge 2 if at least 3 charge states presence. otherwise singular error</span>
+<span id="L297"><span class="lineNum">     297</span>              :             #:b_count, might be good for non-tryptic enzymes</span>
+<span id="L298"><span class="lineNum">     298</span>              :             :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept</span>
+<span id="L299"><span class="lineNum">     299</span>              :         ]</span>
+<span id="L300"><span class="lineNum">     300</span>              : </span>
+<span id="L301"><span class="lineNum">     301</span>              :         # Avoid singular error if no peaks were ignored</span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaGNC">           2 :         if maximum(psms.percent_theoretical_ignored) == 0</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaUNC">           0 :             deleteat!(column_names, findfirst(==(:percent_theoretical_ignored), column_names))</span></span>
+<span id="L304"><span class="lineNum">     304</span>              :         end</span>
+<span id="L305"><span class="lineNum">     305</span>              : </span>
+<span id="L306"><span class="lineNum">     306</span>              : </span>
+<span id="L307"><span class="lineNum">     307</span>              :         # Select scoring columns</span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">          20 :         select!(psms, vcat(column_names, [:ms_file_idx, :score, :precursor_idx, :scan_idx,</span></span>
+<span id="L309"><span class="lineNum">     309</span>              :             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target]))</span>
+<span id="L310"><span class="lineNum">     310</span>              :         # Score PSMs</span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">           2 :         fdr_scale_factor = getLibraryFdrScaleFactor(search_context)</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">           2 :         try</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">           2 :             score_main_search_psms!(</span></span>
+<span id="L314"><span class="lineNum">     314</span>              :                 psms,</span>
+<span id="L315"><span class="lineNum">     315</span>              :                 column_names,</span>
+<span id="L316"><span class="lineNum">     316</span>              :                 n_train_rounds=params.n_train_rounds_probit,</span>
+<span id="L317"><span class="lineNum">     317</span>              :                 max_iter_per_round=params.max_iter_probit,</span>
+<span id="L318"><span class="lineNum">     318</span>              :                 max_q_value=Float64(params.max_q_value_probit_rescore),</span>
+<span id="L319"><span class="lineNum">     319</span>              :                 fdr_scale_factor=fdr_scale_factor</span>
+<span id="L320"><span class="lineNum">     320</span>              :             )</span>
+<span id="L321"><span class="lineNum">     321</span>              :         catch</span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">          24 :             column_names = [</span></span>
+<span id="L323"><span class="lineNum">     323</span>              :             :spectral_contrast, :city_block, :entropy_score, :scribe,</span>
+<span id="L324"><span class="lineNum">     324</span>              :             :charge2, :poisson, :irt_error, :TIC, :y_count, :err_norm, :spectrum_peak_count, :intercept</span>
+<span id="L325"><span class="lineNum">     325</span>              :             ]</span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaGNC">           2 :             score_main_search_psms!(</span></span>
+<span id="L327"><span class="lineNum">     327</span>              :                 psms,</span>
+<span id="L328"><span class="lineNum">     328</span>              :                 column_names,</span>
+<span id="L329"><span class="lineNum">     329</span>              :                 n_train_rounds=params.n_train_rounds_probit,</span>
+<span id="L330"><span class="lineNum">     330</span>              :                 max_iter_per_round=params.max_iter_probit,</span>
+<span id="L331"><span class="lineNum">     331</span>              :                 max_q_value=Float64(params.max_q_value_probit_rescore),</span>
+<span id="L332"><span class="lineNum">     332</span>              :                 fdr_scale_factor=fdr_scale_factor</span>
+<span id="L333"><span class="lineNum">     333</span>              :             )</span>
+<span id="L334"><span class="lineNum">     334</span>              :         end</span>
+<span id="L335"><span class="lineNum">     335</span>              :         # Process scores</span>
+<span id="L336"><span class="lineNum">     336</span>              :        </span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaGNC">          20 :         select!(psms, [:ms_file_idx, :score, :precursor_idx, :scan_idx,</span></span>
+<span id="L338"><span class="lineNum">     338</span>              :             :q_value, :log2_summed_intensity, :irt, :rt, :irt_predicted, :target])</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaGNC">           2 :         get_probs!(psms, psms[!,:score])</span></span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">           2 :         sort!(psms, :rt)</span></span>
+<span id="L341"><span class="lineNum">     341</span>              :     end</span>
+<span id="L342"><span class="lineNum">     342</span>              : </span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">           2 :     try</span></span>
+<span id="L344"><span class="lineNum">     344</span>              :         # Get models and update fragment lookup table</span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">           2 :         psms = perform_library_search(spectra, search_context, params, ms_file_idx)</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">           4 :         results.psms[] = process_psms!(psms, spectra, search_context, params, ms_file_idx)</span></span>
+<span id="L347"><span class="lineNum">     347</span>              : </span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">           2 :         temp_psms = results.psms[] </span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">           2 :         temp_psms = temp_psms[temp_psms[!,:q_value].&lt;=0.001,:]</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">           2 :         most_intense = sortperm(temp_psms[!,:log2_summed_intensity], rev = true)</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">           2 :         ms1_errs = vcat(</span></span>
+<span id="L352"><span class="lineNum">     352</span>              :             mass_error_search(</span>
+<span id="L353"><span class="lineNum">     353</span>              :                 spectra, </span>
+<span id="L354"><span class="lineNum">     354</span>              :                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:scan_idx],</span>
+<span id="L355"><span class="lineNum">     355</span>              :                 temp_psms[most_intense[1:(min(3000, length(most_intense)))],:precursor_idx],</span>
+<span id="L356"><span class="lineNum">     356</span>              :                 UInt32(ms_file_idx),</span>
+<span id="L357"><span class="lineNum">     357</span>              :                 getSpecLib(search_context),</span>
+<span id="L358"><span class="lineNum">     358</span>              :                 getSearchData(search_context),</span>
+<span id="L359"><span class="lineNum">     359</span>              :                 MassErrorModel(</span>
+<span id="L360"><span class="lineNum">     360</span>              :                 0.0f0, </span>
+<span id="L361"><span class="lineNum">     361</span>              :                 #(getFragTolPpm(params), getFragTolPpm(params))</span>
+<span id="L362"><span class="lineNum">     362</span>              :                 (20.0f0, 20.0f0)</span>
+<span id="L363"><span class="lineNum">     363</span>              :                 ),</span>
+<span id="L364"><span class="lineNum">     364</span>              :                 params,</span>
+<span id="L365"><span class="lineNum">     365</span>              :                 MS1CHROM()</span>
+<span id="L366"><span class="lineNum">     366</span>              :             )...</span>
+<span id="L367"><span class="lineNum">     367</span>              :         )</span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">           2 :         if length(ms1_errs) &gt; 1</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaUNC">           0 :             mad_dev= mad(ms1_errs)</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 :             med_errs = median(ms1_errs)</span></span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaUNC">           0 :             low_bound, high_bound = med_errs - mad_dev*7, med_errs + mad_dev*7</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaUNC">           0 :             filter!(x-&gt;(low_bound&lt;x)&amp;(high_bound&gt;x), ms1_errs)</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaUNC">           0 :             ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)</span></span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaUNC">           0 :             results.ms1_mass_err_model[] = ms1_mass_err_model</span></span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaUNC">           0 :             append!(results.ms1_ppm_errs, ms1_ppm_errs)</span></span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaUNC">           0 :             select!(results.psms[] , Not(:log2_summed_intensity))</span></span>
+<span id="L377"><span class="lineNum">     377</span>              :         else</span>
+<span id="L378"><span class="lineNum">     378</span>              :             #ms1_mass_err_model, ms1_ppm_errs = mass_err_ms1(ms1_errs, params)</span>
+<span id="L379"><span class="lineNum">     379</span>              :             #Default to MS2 pattern </span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">           2 :             results.ms1_mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)</span></span>
+<span id="L381"><span class="lineNum">     381</span> <span class="tlaGNC">           2 :             append!(results.ms1_ppm_errs, Float32[])</span></span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">           4 :             select!(results.psms[] , Not(:log2_summed_intensity))</span></span>
+<span id="L383"><span class="lineNum">     383</span>              :         end</span>
+<span id="L384"><span class="lineNum">     384</span>              :     catch e</span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :         @warn &quot;First pass search failed&quot; ms_file_idx exception=e</span></span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaUNC">           0 :         rethrow(e)</span></span>
+<span id="L387"><span class="lineNum">     387</span>              :     end</span>
+<span id="L388"><span class="lineNum">     388</span>              : </span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaGNC">           2 :     return results</span></span>
+<span id="L390"><span class="lineNum">     390</span>              : end</span>
+<span id="L391"><span class="lineNum">     391</span>              : </span>
+<span id="L392"><span class="lineNum">     392</span>              : &quot;&quot;&quot;</span>
+<span id="L393"><span class="lineNum">     393</span>              : Initial file processing complete, no additional processing needed.</span>
+<span id="L394"><span class="lineNum">     394</span>              : &quot;&quot;&quot;</span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaGNC">           2 : function process_search_results!(</span></span>
+<span id="L396"><span class="lineNum">     396</span>              :     results::FirstPassSearchResults,</span>
+<span id="L397"><span class="lineNum">     397</span>              :     params::P,</span>
+<span id="L398"><span class="lineNum">     398</span>              :     search_context::SearchContext,</span>
+<span id="L399"><span class="lineNum">     399</span>              :     ms_file_idx::Int64,</span>
+<span id="L400"><span class="lineNum">     400</span>              :     ::MassSpecData</span>
+<span id="L401"><span class="lineNum">     401</span>              : ) where {P&lt;:FirstPassSearchParameters}</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC">           2 :     psms = results.psms[]</span></span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">           2 :     fwhms = skipmissing(psms[!, :fwhm])</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">           2 :     fwhm_points = count(!ismissing, fwhms)</span></span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaGNC">           2 :     if fwhm_points &gt;= 1#params.min_inference_points</span></span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">           2 :         insert!(results.fwhms, ms_file_idx, (</span></span>
+<span id="L407"><span class="lineNum">     407</span>              :             median_fwhm = median(fwhms),</span>
+<span id="L408"><span class="lineNum">     408</span>              :             mad_fwhm = mad(fwhms, normalize=true)))</span>
+<span id="L409"><span class="lineNum">     409</span>              :     else</span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaUNC">           0 :         @warn &quot;Insuficient fwhm_points to estimate for $ms_file_idx&quot;</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaUNC">           0 :         insert!(results.fwhms, ms_file_idx, (</span></span>
+<span id="L412"><span class="lineNum">     412</span>              :             median_fwhm = 0.2f0,</span>
+<span id="L413"><span class="lineNum">     413</span>              :             mad_fwhm = 0.2f0))</span>
+<span id="L414"><span class="lineNum">     414</span>              :     end</span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">           2 :     parsed_fname = getParsedFileName(search_context, ms_file_idx)</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">           4 :     temp_path = joinpath(getDataOutDir(search_context), &quot;temp_data&quot;, &quot;first_pass_psms&quot;, parsed_fname * &quot;.arrow&quot;)</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">           2 :     psms[!, :ms_file_idx] .= UInt32(ms_file_idx)</span></span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">           2 :     Arrow.write(</span></span>
+<span id="L419"><span class="lineNum">     419</span>              :         temp_path,</span>
+<span id="L420"><span class="lineNum">     420</span>              :         select!(psms, [:ms_file_idx, :scan_idx, :precursor_idx, :rt,</span>
+<span id="L421"><span class="lineNum">     421</span>              :             :irt_predicted, :q_value, :score, :prob, :scan_count])</span>
+<span id="L422"><span class="lineNum">     422</span>              :     )</span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">           2 :     setFirstPassPsms!(getMSData(search_context), ms_file_idx, temp_path)</span></span>
+<span id="L424"><span class="lineNum">     424</span>              : </span>
+<span id="L425"><span class="lineNum">     425</span>              :     #####</span>
+<span id="L426"><span class="lineNum">     426</span>              :     #MS1 mass tolerance </span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">           2 :     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">           2 :     parsed_fname = getParsedFileName(search_context, ms_file_idx)</span></span>
+<span id="L429"><span class="lineNum">     429</span>              :     # Generate and save mass error plot</span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">           4 :     mass_plot_path = joinpath(ms1_mass_error_folder, parsed_fname*&quot;.pdf&quot;)</span></span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaGNC">           2 :     generate_ms1_mass_error_plot(results, parsed_fname, mass_plot_path)</span></span>
+<span id="L432"><span class="lineNum">     432</span>              :     # Update models in search context</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaGNC">           2 :     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))</span></span>
+<span id="L434"><span class="lineNum">     434</span>              : end</span>
+<span id="L435"><span class="lineNum">     435</span>              : </span>
+<span id="L436"><span class="lineNum">     436</span>              : &quot;&quot;&quot;</span>
+<span id="L437"><span class="lineNum">     437</span>              : No cleanup needed between files.</span>
+<span id="L438"><span class="lineNum">     438</span>              : &quot;&quot;&quot;</span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">           2 : function reset_results!(results::FirstPassSearchResults)</span></span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaGNC">           2 :     empty!(results.psms[])</span></span>
+<span id="L441"><span class="lineNum">     441</span> <span class="tlaGNC">           2 :     resize!(results.ms1_ppm_errs, 0)</span></span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">           2 :     return nothing</span></span>
+<span id="L443"><span class="lineNum">     443</span>              : end</span>
+<span id="L444"><span class="lineNum">     444</span>              : </span>
+<span id="L445"><span class="lineNum">     445</span>              : &quot;&quot;&quot;</span>
+<span id="L446"><span class="lineNum">     446</span>              : Summarize results across all files.</span>
+<span id="L447"><span class="lineNum">     447</span>              : &quot;&quot;&quot;</span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC">           1 : function summarize_results!(</span></span>
+<span id="L449"><span class="lineNum">     449</span>              :     results::FirstPassSearchResults,</span>
+<span id="L450"><span class="lineNum">     450</span>              :     params::P,</span>
+<span id="L451"><span class="lineNum">     451</span>              :     search_context::SearchContext</span>
+<span id="L452"><span class="lineNum">     452</span>              : ) where {P&lt;:FirstPassSearchParameters}</span>
+<span id="L453"><span class="lineNum">     453</span>              :     </span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">           1 :     &quot;&quot;&quot;</span></span>
+<span id="L455"><span class="lineNum">     455</span>              :     Process precursors and calculate iRT errors.</span>
+<span id="L456"><span class="lineNum">     456</span>              :     &quot;&quot;&quot;</span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">           2 :     function get_best_precursors_accross_runs!(</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :         search_context::SearchContext,</span>
+<span id="L459"><span class="lineNum">     459</span>              :         results::FirstPassSearchResults,</span>
+<span id="L460"><span class="lineNum">     460</span>              :         params::FirstPassSearchParameters</span>
+<span id="L461"><span class="lineNum">     461</span>              :     )</span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">           1 :         @info &quot;Finding best precursors across runs...&quot;</span></span>
+<span id="L463"><span class="lineNum">     463</span>              :         </span>
+<span id="L464"><span class="lineNum">     464</span>              :         # Get best precursors</span>
+<span id="L465"><span class="lineNum">     465</span> <span class="tlaGNC">           1 :         return get_best_precursors_accross_runs(</span></span>
+<span id="L466"><span class="lineNum">     466</span>              :             getFirstPassPsms(getMSData(search_context)),</span>
+<span id="L467"><span class="lineNum">     467</span>              :             getMz(getPrecursors(getSpecLib(search_context))),#[:mz],</span>
+<span id="L468"><span class="lineNum">     468</span>              :             getRtIrtModel(search_context),</span>
+<span id="L469"><span class="lineNum">     469</span>              :             max_q_val=params.max_q_val_for_irt</span>
+<span id="L470"><span class="lineNum">     470</span>              :         )</span>
+<span id="L471"><span class="lineNum">     471</span>              :     end</span>
+<span id="L472"><span class="lineNum">     472</span>              :     #isempty(results.psms_paths) &amp;&amp; return nothing</span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaGNC">           1 :     @info &quot;Summarizing first pass search results...&quot;</span></span>
+<span id="L474"><span class="lineNum">     474</span>              :     # Map retention times</span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaGNC">           1 :     map_retention_times!(search_context, results, params)</span></span>
+<span id="L476"><span class="lineNum">     476</span>              :     # Process precursors</span>
+<span id="L477"><span class="lineNum">     477</span> <span class="tlaGNC">           1 :     precursor_dict = get_best_precursors_accross_runs!(search_context, results, params)</span></span>
+<span id="L478"><span class="lineNum">     478</span>              : </span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaGNC">           1 :     if params.match_between_runs==true</span></span>
+<span id="L480"><span class="lineNum">     480</span>              :         #######</span>
+<span id="L481"><span class="lineNum">     481</span>              :         #Each target has a corresponding decoy and vice versa</span>
+<span id="L482"><span class="lineNum">     482</span>              :         #Add the complement targets/decoys to the precursor dict </span>
+<span id="L483"><span class="lineNum">     483</span>              :         #if the `sibling_peptide_scores` parameter is set to true</span>
+<span id="L484"><span class="lineNum">     484</span>              :         #In the target/decoy scoring (see SearchMethods/ScoringSearch)</span>
+<span id="L485"><span class="lineNum">     485</span>              :         #the maximum score for each target/decoy pair is shared accross runs</span>
+<span id="L486"><span class="lineNum">     486</span>              :         #in an iterative training scheme. </span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaUNC">           0 :         precursors = getPrecursors(getSpecLib(search_context))</span></span>
+<span id="L488"><span class="lineNum">     488</span> <span class="tlaUNC">           0 :         i = 1</span></span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaUNC">           0 :         for (pid, val) in pairs(precursor_dict)</span></span>
+<span id="L490"><span class="lineNum">     490</span> <span class="tlaUNC">           0 :             i += 1</span></span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaUNC">           0 :             setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])</span></span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaUNC">           0 :             partner_pid = getPartnerPrecursorIdx(precursors)[pid]</span></span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC">           0 :             if ismissing(partner_pid)</span></span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :                 continue</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :             end</span>
+<span id="L496"><span class="lineNum">     496</span>              : </span>
+<span id="L497"><span class="lineNum">     497</span>              :             # If the partner needs to be added, then give it the irt of the currently identified precursor</span>
+<span id="L498"><span class="lineNum">     498</span>              :             # Otherwise if the partner was ID'ed, it should keep its original predicted iRT</span>
+<span id="L499"><span class="lineNum">     499</span> <span class="tlaUNC">           0 :             if !haskey(precursor_dict, partner_pid)</span></span>
+<span id="L500"><span class="lineNum">     500</span> <span class="tlaUNC">           0 :                 insert!(precursor_dict, partner_pid, val)</span></span>
+<span id="L501"><span class="lineNum">     501</span> <span class="tlaUNC">           0 :                 setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])</span></span>
+<span id="L502"><span class="lineNum">     502</span>              :             else</span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaUNC">           0 :                 setPredIrt!(search_context, partner_pid, getIrt(getPrecursors(getSpecLib(search_context)))[partner_pid])</span></span>
+<span id="L504"><span class="lineNum">     504</span>              :             end</span>
+<span id="L505"><span class="lineNum">     505</span>              :             </span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L507"><span class="lineNum">     507</span>              :     else</span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaGNC">           2 :         for (pid, val) in pairs(precursor_dict)</span></span>
+<span id="L509"><span class="lineNum">     509</span> <span class="tlaGNC">        1246 :             setPredIrt!(search_context, pid, getIrt(getPrecursors(getSpecLib(search_context)))[pid])</span></span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">        1246 :         end</span></span>
+<span id="L511"><span class="lineNum">     511</span>              :     end</span>
+<span id="L512"><span class="lineNum">     512</span>              : </span>
+<span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC">           1 :     setPrecursorDict!(search_context, precursor_dict)</span></span>
+<span id="L514"><span class="lineNum">     514</span>              :     # Calculate RT indices</span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">           1 :     create_rt_indices!(search_context, results, precursor_dict, params)</span></span>
+<span id="L516"><span class="lineNum">     516</span>              :     </span>
+<span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">           1 :     @info &quot;Search results summarization complete&quot;</span></span>
+<span id="L518"><span class="lineNum">     518</span>              : </span>
+<span id="L519"><span class="lineNum">     519</span>              :     # Merge mass error plots</span>
+<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">           1 :     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)</span></span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">           2 :     output_path = joinpath(ms1_mass_error_folder, &quot;ms1_mass_error_plots.pdf&quot;)</span></span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">           1 :     try</span></span>
+<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">           1 :         if isfile(output_path)</span></span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">           1 :             rm(output_path)</span></span>
+<span id="L525"><span class="lineNum">     525</span>              :         end</span>
+<span id="L526"><span class="lineNum">     526</span>              :     catch e</span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaUNC">           0 :         @warn &quot;Could not clear existing file: $e&quot;</span></span>
+<span id="L528"><span class="lineNum">     528</span>              :     end</span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">           1 :     mass_plots = [joinpath(ms1_mass_error_folder, x) for x in readdir(ms1_mass_error_folder) </span></span>
+<span id="L530"><span class="lineNum">     530</span>              :                     if endswith(x, &quot;.pdf&quot;)]</span>
+<span id="L531"><span class="lineNum">     531</span>              : </span>
+<span id="L532"><span class="lineNum">     532</span> <span class="tlaGNC">           1 :     if !isempty(mass_plots)</span></span>
+<span id="L533"><span class="lineNum">     533</span> <span class="tlaGNC">           1 :         merge_pdfs(mass_plots, </span></span>
+<span id="L534"><span class="lineNum">     534</span>              :                     output_path, </span>
+<span id="L535"><span class="lineNum">     535</span>              :                     cleanup=true)</span>
+<span id="L536"><span class="lineNum">     536</span>              :     end</span>
+<span id="L537"><span class="lineNum">     537</span>              : </span>
+<span id="L538"><span class="lineNum">     538</span>              :         </span>
+<span id="L539"><span class="lineNum">     539</span>              : end</span>
+<span id="L540"><span class="lineNum">     540</span>              : </span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

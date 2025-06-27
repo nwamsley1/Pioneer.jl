@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - Routines/SearchDIA/CommonSearchUtils/selectTransitions/rtIndexTransitionSelection.jl</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory Routines/SearchDIA/CommonSearchUtils/selectTransitions">Routines/SearchDIA/CommonSearchUtils/selectTransitions</a> - rtIndexTransitionSelection.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">97.0&nbsp;%</td>
+            <td class="headerCovTableEntry">33</td>
+            <td class="headerCovTableEntry">32</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : &quot;&quot;&quot;</span>
+<span id="L2"><span class="lineNum">       2</span>              :     _select_transitions_impl!(transitions, ::RTIndexedTransitionSelection, ...)</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : Implement transition selection based on retention time indexing. Handles both filtered </span>
+<span id="L5"><span class="lineNum">       5</span>              : and unfiltered precursor selection through an optional precursors_passing parameter.</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : Returns (transition_idx, n, precs_temp_size) where:</span>
+<span id="L8"><span class="lineNum">       8</span>              : - transition_idx: Number of transitions added</span>
+<span id="L9"><span class="lineNum">       9</span>              : - n: Number of precursors processed</span>
+<span id="L10"><span class="lineNum">      10</span>              : - precs_temp_size: Final size of temporary precursor array</span>
+<span id="L11"><span class="lineNum">      11</span>              : &quot;&quot;&quot;</span>
+<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC">       11170 : function _select_transitions_impl!(</span></span>
+<span id="L13"><span class="lineNum">      13</span>              :     transitions::Vector{DetailedFrag{Float32}},</span>
+<span id="L14"><span class="lineNum">      14</span>              :     ::RTIndexedTransitionSelection,</span>
+<span id="L15"><span class="lineNum">      15</span>              :     prec_estimation_type::PrecEstimation,</span>
+<span id="L16"><span class="lineNum">      16</span>              :     transition_idx::Int64,</span>
+<span id="L17"><span class="lineNum">      17</span>              :     lookup::LibraryFragmentLookup,</span>
+<span id="L18"><span class="lineNum">      18</span>              :     precs_temp::Vector{UInt32},</span>
+<span id="L19"><span class="lineNum">      19</span>              :     prec_mzs::AbstractArray{Float32},</span>
+<span id="L20"><span class="lineNum">      20</span>              :     prec_charges::AbstractArray{UInt8},</span>
+<span id="L21"><span class="lineNum">      21</span>              :     prec_sulfur_counts::AbstractArray{UInt8},</span>
+<span id="L22"><span class="lineNum">      22</span>              :     iso_splines::IsotopeSplineModel,</span>
+<span id="L23"><span class="lineNum">      23</span>              :     quad_transmission_func::QuadTransmissionFunction,</span>
+<span id="L24"><span class="lineNum">      24</span>              :     precursor_transmission::Vector{Float32},</span>
+<span id="L25"><span class="lineNum">      25</span>              :     isotopes::Vector{Float32},</span>
+<span id="L26"><span class="lineNum">      26</span>              :     n_frag_isotopes::Int64,</span>
+<span id="L27"><span class="lineNum">      27</span>              :     max_frag_rank::UInt8,</span>
+<span id="L28"><span class="lineNum">      28</span>              :     rt_index::retentionTimeIndex{Float32, Float32},</span>
+<span id="L29"><span class="lineNum">      29</span>              :     rt_start_idx::Int64,</span>
+<span id="L30"><span class="lineNum">      30</span>              :     rt_stop_idx::Int64,</span>
+<span id="L31"><span class="lineNum">      31</span>              :     frag_mz_bounds::Tuple{Float32, Float32};</span>
+<span id="L32"><span class="lineNum">      32</span>              :     precursors_passing::Union{Set{UInt32}, Nothing} = nothing,</span>
+<span id="L33"><span class="lineNum">      33</span>              :     isotope_err_bounds::Tuple{I, I} = (3, 1),</span>
+<span id="L34"><span class="lineNum">      34</span>              :     block_size::Int64 = 10000</span>
+<span id="L35"><span class="lineNum">      35</span>              : ) where {I&lt;:Integer}</span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaGNC">        5582 :     n = 0</span></span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaGNC">        5582 :     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">        5582 :     precs_temp_size = 0</span></span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaGNC">        5582 :     for rt_bin_idx in rt_start_idx:rt_stop_idx</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaGNC">       19107 :         precs = rt_index.rt_bins[rt_bin_idx].prec</span></span>
+<span id="L41"><span class="lineNum">      41</span>              :         </span>
+<span id="L42"><span class="lineNum">      42</span>              :         # Get precursor range within isolation window</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">       19106 :         start, stop = getPrecursorWindowRange(</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :             precs, min_prec_mz, max_prec_mz, isotope_err_bounds</span>
+<span id="L45"><span class="lineNum">      45</span>              :         )</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">       24843 :         for i in start:stop</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">       25946 :             prec_idx = first(precs[i])</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :             </span>
+<span id="L50"><span class="lineNum">      50</span>              :             # Optional precursor filtering</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">       25944 :             if !isnothing(precursors_passing) &amp;&amp; prec_idx ∉ precursors_passing</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC">           0 :                 continue</span></span>
+<span id="L53"><span class="lineNum">      53</span>              :             end</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              :             # Get and validate precursor properties</span>
+<span id="L56"><span class="lineNum">      56</span>              :             </span>
+<span id="L57"><span class="lineNum">      57</span>              :             #prec_props = getPrecursorProperties(</span>
+<span id="L58"><span class="lineNum">      58</span>              :             #    prec_idx, prec_mzs, prec_charges, prec_sulfur_counts</span>
+<span id="L59"><span class="lineNum">      59</span>              :             #)</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">       25934 :             prec_charge = prec_charges[prec_idx]</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">       25931 :             prec_mz = prec_mzs[prec_idx] </span></span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">       25924 :             prec_sulfur_count = prec_sulfur_counts[prec_idx]</span></span>
+<span id="L63"><span class="lineNum">      63</span>              :    </span>
+<span id="L64"><span class="lineNum">      64</span>              :             # Check quadrupole bounds</span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">       25940 :             if !withinQuadrupoleBounds(</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :                 prec_mz, prec_charge, </span>
+<span id="L67"><span class="lineNum">      67</span>              :                 min_prec_mz, max_prec_mz, isotope_err_bounds</span>
+<span id="L68"><span class="lineNum">      68</span>              :             )</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">         119 :                 continue</span></span>
+<span id="L70"><span class="lineNum">      70</span>              :             end</span>
+<span id="L71"><span class="lineNum">      71</span>              : </span>
+<span id="L72"><span class="lineNum">      72</span>              :             # Update counters and temp storage</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">       25786 :             precs_temp_size += 1</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">       25787 :             n += 1</span></span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">       25788 :             precs_temp[precs_temp_size] = prec_idx</span></span>
+<span id="L76"><span class="lineNum">      76</span>              : </span>
+<span id="L77"><span class="lineNum">      77</span>              :             #nce = getNCE(lookup, prec_charge, prec_mz)</span>
+<span id="L78"><span class="lineNum">      78</span>              :         </span>
+<span id="L79"><span class="lineNum">      79</span>              :             </span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">       25775 :             transition_idx = @inline fillTransitionList!(</span></span>
+<span id="L81"><span class="lineNum">      81</span>              :                 transitions,</span>
+<span id="L82"><span class="lineNum">      82</span>              :                 prec_estimation_type,</span>
+<span id="L83"><span class="lineNum">      83</span>              :                 getPrecFragRange(lookup, prec_idx),</span>
+<span id="L84"><span class="lineNum">      84</span>              :                 getFragments(lookup),</span>
+<span id="L85"><span class="lineNum">      85</span>              :                 getSplineData(lookup, prec_charge, prec_mz),</span>
+<span id="L86"><span class="lineNum">      86</span>              :                 prec_mz,</span>
+<span id="L87"><span class="lineNum">      87</span>              :                 prec_charge,</span>
+<span id="L88"><span class="lineNum">      88</span>              :                 prec_sulfur_count,</span>
+<span id="L89"><span class="lineNum">      89</span>              :                 transition_idx,</span>
+<span id="L90"><span class="lineNum">      90</span>              :                 quad_transmission_func,</span>
+<span id="L91"><span class="lineNum">      91</span>              :                 precursor_transmission,</span>
+<span id="L92"><span class="lineNum">      92</span>              :                 isotopes,</span>
+<span id="L93"><span class="lineNum">      93</span>              :                 n_frag_isotopes,</span>
+<span id="L94"><span class="lineNum">      94</span>              :                 max_frag_rank,</span>
+<span id="L95"><span class="lineNum">      95</span>              :                 iso_splines,</span>
+<span id="L96"><span class="lineNum">      96</span>              :                 frag_mz_bounds,</span>
+<span id="L97"><span class="lineNum">      97</span>              :                 block_size</span>
+<span id="L98"><span class="lineNum">      98</span>              :             )</span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaGNC">       38480 :         end</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">       32673 :     end</span></span>
+<span id="L101"><span class="lineNum">     101</span>              : </span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">        5583 :     return transition_idx, precs_temp_size</span></span>
+<span id="L103"><span class="lineNum">     103</span>              : end</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span>              : # Helper functions to improve readability and maintainability</span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">        5582 : function getQuadrupoleBounds(quad_func::QuadTransmissionFunction)</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">        5582 :     return getPrecMinBound(quad_func), getPrecMaxBound(quad_func)</span></span>
+<span id="L109"><span class="lineNum">     109</span>              : end</span>
+<span id="L110"><span class="lineNum">     110</span>              : </span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">       19110 : function getPrecursorWindowRange(</span></span>
+<span id="L112"><span class="lineNum">     112</span>              :     precs, min_prec_mz::Float32, max_prec_mz::Float32, </span>
+<span id="L113"><span class="lineNum">     113</span>              :     isotope_err_bounds::Tuple{I, I}</span>
+<span id="L114"><span class="lineNum">     114</span>              : ) where {I&lt;:Integer}</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">      162165 :     start = searchsortedfirst(precs, by = x-&gt;last(x), </span></span>
+<span id="L116"><span class="lineNum">     116</span>              :         min_prec_mz - first(isotope_err_bounds)*NEUTRON/2)</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">      164040 :     stop = searchsortedlast(precs, by = x-&gt;last(x), </span></span>
+<span id="L118"><span class="lineNum">     118</span>              :         max_prec_mz + last(isotope_err_bounds)*NEUTRON/2)</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">       19115 :     return start, stop</span></span>
+<span id="L120"><span class="lineNum">     120</span>              : end</span>
+<span id="L121"><span class="lineNum">     121</span>              : </span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">       25908 : function withinQuadrupoleBounds(</span></span>
+<span id="L123"><span class="lineNum">     123</span>              :     prec_mz::Float32, prec_charge::UInt8,</span>
+<span id="L124"><span class="lineNum">     124</span>              :     min_prec_mz::Float32, max_prec_mz::Float32,</span>
+<span id="L125"><span class="lineNum">     125</span>              :     isotope_err_bounds::Tuple{I, I}</span>
+<span id="L126"><span class="lineNum">     126</span>              : )where {I&lt;:Integer}</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">       25909 :     mz_low = min_prec_mz - first(isotope_err_bounds)*NEUTRON/prec_charge</span></span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">       25908 :     mz_high = max_prec_mz + last(isotope_err_bounds)*NEUTRON/prec_charge</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaGNC">       25935 :     return mz_low ≤ prec_mz ≤ mz_high</span></span>
+<span id="L130"><span class="lineNum">     130</span>              : end</span>
+<span id="L131"><span class="lineNum">     131</span>              : </span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

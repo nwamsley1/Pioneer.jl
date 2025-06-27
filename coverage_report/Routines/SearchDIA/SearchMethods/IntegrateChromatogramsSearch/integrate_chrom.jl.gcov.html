@@ -1,0 +1,500 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch/integrate_chrom.jl</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch">Routines/SearchDIA/SearchMethods/IntegrateChromatogramsSearch</a> - integrate_chrom.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">167</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : &quot;&quot;&quot;</span>
+<span id="L2"><span class="lineNum">       2</span>              :     mutable struct Chromatogram{T&lt;:Real, J&lt;:Integer}</span>
+<span id="L3"><span class="lineNum">       3</span>              :         t::Vector{T}</span>
+<span id="L4"><span class="lineNum">       4</span>              :         data::Vector{T}</span>
+<span id="L5"><span class="lineNum">       5</span>              :         max_index::J</span>
+<span id="L6"><span class="lineNum">       6</span>              :     end</span>
+<span id="L7"><span class="lineNum">       7</span>              : </span>
+<span id="L8"><span class="lineNum">       8</span>              : Container for chromatogram data during integration.</span>
+<span id="L9"><span class="lineNum">       9</span>              : </span>
+<span id="L10"><span class="lineNum">      10</span>              : Holds time points, intensities, and current array size.</span>
+<span id="L11"><span class="lineNum">      11</span>              : &quot;&quot;&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : mutable struct Chromatogram{T&lt;:Real, J&lt;:Integer}</span>
+<span id="L13"><span class="lineNum">      13</span>              :     t::Vector{T}</span>
+<span id="L14"><span class="lineNum">      14</span>              :     data::Vector{T}</span>
+<span id="L15"><span class="lineNum">      15</span>              :     max_index::J</span>
+<span id="L16"><span class="lineNum">      16</span>              : end</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : &quot;&quot;&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              :     reset!(state::Chromatogram)</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : Reset chromatogram state by zeroing arrays and index.</span>
+<span id="L22"><span class="lineNum">      22</span>              : &quot;&quot;&quot;</span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaUNC">           0 : function reset!(state::Chromatogram)</span></span>
+<span id="L24"><span class="lineNum">      24</span> <span class="tlaUNC">           0 :     for i in range(1, state.max_index)</span></span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaUNC">           0 :         state.t[i], state.data[i] = zero(eltype(state.t)), zero(eltype(state.data))</span></span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaUNC">           0 :     end</span></span>
+<span id="L27"><span class="lineNum">      27</span> <span class="tlaUNC">           0 :     state.max_index = 0</span></span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaUNC">           0 :     return </span></span>
+<span id="L29"><span class="lineNum">      29</span>              : end</span>
+<span id="L30"><span class="lineNum">      30</span>              : </span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span>              : &quot;&quot;&quot;</span>
+<span id="L33"><span class="lineNum">      33</span>              :     integrate_chrom(chrom::SubDataFrame, apex_scan::Int64,</span>
+<span id="L34"><span class="lineNum">      34</span>              :                    linsolve::LinearSolve.LinearCache, u2::Vector{Float32},</span>
+<span id="L35"><span class="lineNum">      35</span>              :                    state::Chromatogram; max_apex_offset=2, n_pad::Int64=0,</span>
+<span id="L36"><span class="lineNum">      36</span>              :                    isplot::Bool=false) -&gt; Tuple{Float32, UInt32}</span>
+<span id="L37"><span class="lineNum">      37</span>              : </span>
+<span id="L38"><span class="lineNum">      38</span>              : Integrate a single chromatographic peak.</span>
+<span id="L39"><span class="lineNum">      39</span>              : </span>
+<span id="L40"><span class="lineNum">      40</span>              : # Process</span>
+<span id="L41"><span class="lineNum">      41</span>              : 1. Applies Whittaker-Henderson smoothing</span>
+<span id="L42"><span class="lineNum">      42</span>              : 2. Calculates second derivative</span>
+<span id="L43"><span class="lineNum">      43</span>              : 3. Finds true apex within allowed offset</span>
+<span id="L44"><span class="lineNum">      44</span>              : 4. Determines integration bounds</span>
+<span id="L45"><span class="lineNum">      45</span>              : 5. Subtracts baseline</span>
+<span id="L46"><span class="lineNum">      46</span>              : 6. Normalizes and fills state</span>
+<span id="L47"><span class="lineNum">      47</span>              : 7. Performs trapezoidal integration</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : # Returns</span>
+<span id="L50"><span class="lineNum">      50</span>              : - Peak area</span>
+<span id="L51"><span class="lineNum">      51</span>              : - Updated apex scan index</span>
+<span id="L52"><span class="lineNum">      52</span>              : </span>
+<span id="L53"><span class="lineNum">      53</span>              : #Internal Chromatogram Processing Functions:</span>
+<span id="L54"><span class="lineNum">      54</span>              : </span>
+<span id="L55"><span class="lineNum">      55</span>              : - `WHSmooth!`: Apply Whittaker-Henderson smoothing</span>
+<span id="L56"><span class="lineNum">      56</span>              : - `fillU2!`: Calculate second derivatives</span>
+<span id="L57"><span class="lineNum">      57</span>              : - `getApexScan`: Find true apex within allowed offset</span>
+<span id="L58"><span class="lineNum">      58</span>              : - `getIntegrationBounds!`: Determine integration boundaries</span>
+<span id="L59"><span class="lineNum">      59</span>              : - `subtractBaseline!`: Remove linear baseline</span>
+<span id="L60"><span class="lineNum">      60</span>              : - `fillState!`: Normalize and fill chromatogram state</span>
+<span id="L61"><span class="lineNum">      61</span>              : - `integrateTrapezoidal`: Perform trapezoidal integration</span>
+<span id="L62"><span class="lineNum">      62</span>              : &quot;&quot;&quot;</span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 : function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}}, </span></span>
+<span id="L64"><span class="lineNum">      64</span>              :                                 apex_scan::Int64,</span>
+<span id="L65"><span class="lineNum">      65</span>              :                                 b::Vector{Float32},</span>
+<span id="L66"><span class="lineNum">      66</span>              :                                 u2::Vector{Float32},</span>
+<span id="L67"><span class="lineNum">      67</span>              :                                 state::Chromatogram,</span>
+<span id="L68"><span class="lineNum">      68</span>              :                                 avg_cycle_time::Float32,</span>
+<span id="L69"><span class="lineNum">      69</span>              :                                 λ::Float32;</span>
+<span id="L70"><span class="lineNum">      70</span>              :                                 max_apex_offset = 2,</span>
+<span id="L71"><span class="lineNum">      71</span>              :                                 n_pad::Int64 = 0,</span>
+<span id="L72"><span class="lineNum">      72</span>              :                                 isplot::Bool = false)</span>
+<span id="L73"><span class="lineNum">      73</span>              :     </span>
+<span id="L74"><span class="lineNum">      74</span>              :     #########</span>
+<span id="L75"><span class="lineNum">      75</span>              :     #Helper Functions  </span>
+<span id="L76"><span class="lineNum">      76</span>              :     #########</span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 :     function WHSmooth!( b::Vector{Float32}, </span></span>
+<span id="L78"><span class="lineNum">      78</span>              :                         chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector{Int64}},</span>
+<span id="L79"><span class="lineNum">      79</span>              :                         n_pad::Int64,</span>
+<span id="L80"><span class="lineNum">      80</span>              :                         λ::Float32)</span>
+<span id="L81"><span class="lineNum">      81</span>              :         </span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaUNC">           0 :         n = length(b)</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaUNC">           0 :         m = size(chrom, 1)</span></span>
+<span id="L84"><span class="lineNum">      84</span>              : </span>
+<span id="L85"><span class="lineNum">      85</span>              :         # Reset b and second derivative </span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaUNC">           0 :         @inbounds for i in range(1, n)</span></span>
+<span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :             b[i] = zero(Float32)</span></span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaUNC">           0 :             u2[i] = zero(Float32)</span></span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :        </span>
+<span id="L91"><span class="lineNum">      91</span>              :         # Copy data to b</span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaUNC">           0 :         @inbounds for i in range(1, m)</span></span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :             b[i+n_pad] = chrom[!, :intensity][i]</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L95"><span class="lineNum">      95</span>              : </span>
+<span id="L96"><span class="lineNum">      96</span>              :         # Create weight matrix of precursor isolated percentage</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaUNC">           0 :         max_isolation = maximum(chrom[!, :precursor_fraction_transmitted])</span></span>
+<span id="L98"><span class="lineNum">      98</span>              :         </span>
+<span id="L99"><span class="lineNum">      99</span> <span class="tlaUNC">           0 :         w = max_isolation*ones(Float32, n)</span></span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaUNC">           0 :         @inbounds for i in range(1, m)</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaUNC">           0 :             w[i+n_pad] = chrom[!, :precursor_fraction_transmitted][i]</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :         </span>
+<span id="L104"><span class="lineNum">     104</span>              :         # Get RT spacing </span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaUNC">           0 :         rts = chrom[!, :rt]</span></span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC">           0 :         start_rt = rts[1]</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaUNC">           0 :         last_rt = rts[end]</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaUNC">           0 :         default_spacing = m &lt; 2 ? 1.0f0 : rts[2] - start_rt</span></span>
+<span id="L109"><span class="lineNum">     109</span>              : </span>
+<span id="L110"><span class="lineNum">     110</span>              :         # Fill RT differences</span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaUNC">           0 :         x = zeros(Float32, n)</span></span>
+<span id="L112"><span class="lineNum">     112</span>              : </span>
+<span id="L113"><span class="lineNum">     113</span>              :         # left padding</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaUNC">           0 :         for i in range(1, n_pad)</span></span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaUNC">           0 :             x[i] = start_rt - (default_spacing * ((n_pad - i) + 1))</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :         # real values</span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaUNC">           0 :         for i in range(1, m)</span></span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaUNC">           0 :             x[i + n_pad] = rts[i]</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L121"><span class="lineNum">     121</span>              :         # right padding</span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC">           0 :         for i in range(n_pad+m+1, n)</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaUNC">           0 :             x[i] = last_rt + (default_spacing * (i - (n_pad + m)))</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span>              :         # normalize by RT width so the same smoothing parameter is about optimal for all cases</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaUNC">           0 :         rt_width = last_rt-start_rt</span></span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaUNC">           0 :         x = x / rt_width</span></span>
+<span id="L129"><span class="lineNum">     129</span>              : </span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaUNC">           0 :         if m &lt;= 1</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaUNC">           0 :             return b, x</span></span>
+<span id="L132"><span class="lineNum">     132</span>              :         end</span>
+<span id="L133"><span class="lineNum">     133</span>              : </span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC">           0 :         active_length = m + (2*n_pad)</span></span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaUNC">           0 :         z = whitsmddw(x, b, w, active_length, λ)</span></span>
+<span id="L136"><span class="lineNum">     136</span>              : </span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC">           0 :         return z, x</span></span>
+<span id="L138"><span class="lineNum">     138</span>              :     end</span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaUNC">           0 :     function fillU2!(</span></span>
+<span id="L141"><span class="lineNum">     141</span>              :         u2::Vector{Float32},</span>
+<span id="L142"><span class="lineNum">     142</span>              :         u::Vector{Float32},</span>
+<span id="L143"><span class="lineNum">     143</span>              :         t::Vector{Float32}  # time points corresponding to u</span>
+<span id="L144"><span class="lineNum">     144</span>              :     )</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaUNC">           0 :         u2[1], u2[end] = 0.0f0, 0.0f0</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in 2:(length(u) - 1)</span></span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaUNC">           0 :             dt1 = t[i] - t[i - 1]</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :             dt2 = t[i + 1] - t[i]</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaUNC">           0 :             dt_total = t[i + 1] - t[i - 1]</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaUNC">           0 :             a = (u[i + 1] - u[i]) / dt2</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaUNC">           0 :             b = (u[i] - u[i - 1]) / dt1</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaUNC">           0 :             u2[i] = 2f0 / dt_total * (a - b)</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :     end</span>
+<span id="L155"><span class="lineNum">     155</span>              : </span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :     function getApexScan(</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :         apex_scan::Int64,</span>
+<span id="L158"><span class="lineNum">     158</span>              :         n_pad::Int64,</span>
+<span id="L159"><span class="lineNum">     159</span>              :         intensities::AbstractVector{&lt;:AbstractFloat})</span>
+<span id="L160"><span class="lineNum">     160</span>              : </span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :         N = length(intensities)</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaUNC">           0 :         max_intensity = zero(Float32)</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :         apex_scan += n_pad</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :         #for i in range(n_pad+1, length(intensities))</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :         for i in range(max(1, apex_scan - 2), min(N, apex_scan+2))</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaUNC">           0 :             if intensities[i] &gt; max_intensity#intensities[apex_scan]</span></span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC">           0 :                 apex_scan = i</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :                 max_intensity = intensities[i]</span></span>
+<span id="L169"><span class="lineNum">     169</span>              :             end</span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaUNC">           0 :         return apex_scan - n_pad</span></span>
+<span id="L172"><span class="lineNum">     172</span>              :     end</span>
+<span id="L173"><span class="lineNum">     173</span>              : </span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :     &quot;&quot;&quot;</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :     getIntegrationBounds!(u2, u, N, apex_scan, n_pad) -&gt; UnitRange</span>
+<span id="L176"><span class="lineNum">     176</span>              : </span>
+<span id="L177"><span class="lineNum">     177</span>              :     Find the start/stop scan indices of a chromatographic peak whose apex</span>
+<span id="L178"><span class="lineNum">     178</span>              :     (in the *unpadded* region) is at `apex_scan`.</span>
+<span id="L179"><span class="lineNum">     179</span>              : </span>
+<span id="L180"><span class="lineNum">     180</span>              :     * `u2` - second-derivative-like array (length = n_pad + N + n_pad)</span>
+<span id="L181"><span class="lineNum">     181</span>              :     * `u`  - intensity array (same length as `u2`)</span>
+<span id="L182"><span class="lineNum">     182</span>              :     * `N`  - length of the **central** window (without padding)</span>
+<span id="L183"><span class="lineNum">     183</span>              :     * `apex_scan` - 1-based apex position inside the central window</span>
+<span id="L184"><span class="lineNum">     184</span>              :     * `n_pad` - number of padded samples on each side</span>
+<span id="L185"><span class="lineNum">     185</span>              : </span>
+<span id="L186"><span class="lineNum">     186</span>              :     Returns a `UnitRange{Int}` with indices **in the un-padded domain** (`1:N`).</span>
+<span id="L187"><span class="lineNum">     187</span>              :     &quot;&quot;&quot;</span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaUNC">           0 :     function getIntegrationBounds!(u2::Vector{Float32},</span></span>
+<span id="L189"><span class="lineNum">     189</span>              :                                 u::Vector{Float32},</span>
+<span id="L190"><span class="lineNum">     190</span>              :                                 N::Int,</span>
+<span id="L191"><span class="lineNum">     191</span>              :                                 apex_scan::Int,</span>
+<span id="L192"><span class="lineNum">     192</span>              :                                 n_pad::Int)::UnitRange{Int}</span>
+<span id="L193"><span class="lineNum">     193</span>              : </span>
+<span id="L194"><span class="lineNum">     194</span>              :         # indices in the *padded* coordinate system</span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 :         pad_start   = n_pad + 1                   # first index of the real window</span></span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 :         pad_end     = n_pad + N</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 :         apex_padded = n_pad + apex_scan           # apex index in padded coords</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :         </span>
+<span id="L199"><span class="lineNum">     199</span>              :         #return pad_start:pad_end</span>
+<span id="L200"><span class="lineNum">     200</span>              : </span>
+<span id="L201"><span class="lineNum">     201</span>              :         # initialise search bounds</span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaUNC">           0 :         start = apex_padded - 1</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaUNC">           0 :         stop  = apex_padded + 1</span></span>
+<span id="L204"><span class="lineNum">     204</span>              : </span>
+<span id="L205"><span class="lineNum">     205</span>              :         # ──────────────── search to the right (RH boundary) ────────────────</span>
+<span id="L206"><span class="lineNum">     206</span>              :         # 1. advance to first local maximum of u2  (peak of d²/dt² &lt; 0)</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in stop:pad_end-1</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaUNC">           0 :             if (u2[i-1] &lt; u2[i]) &amp;&amp; (u2[i+1] &lt; u2[i])</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :                 stop = i</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaUNC">           0 :                 break</span></span>
+<span id="L211"><span class="lineNum">     211</span>              :             end</span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :         # 2. keep going while the intensity still decreases</span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in stop:pad_end-1</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaUNC">           0 :             if u[i+1] &gt;= u[i]</span></span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaUNC">           0 :                 break</span></span>
+<span id="L217"><span class="lineNum">     217</span>              :             else</span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :                 stop = i+1</span></span>
+<span id="L219"><span class="lineNum">     219</span>              :             end</span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span>              :         # ──────────────── search to the left  (LH boundary) ────────────────</span>
+<span id="L223"><span class="lineNum">     223</span>              :         # 1. first local maximum of u2 when scanning left</span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in reverse(pad_start+1:start)</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaUNC">           0 :             if (u2[i] &gt; u2[i-1]) &amp;&amp; (u2[i+1] &lt; u2[i])</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaUNC">           0 :                 start = i</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :                 break</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :             end</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L230"><span class="lineNum">     230</span>              :         # 2. keep going left while intensity decreases</span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in reverse(pad_start+1:start)</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :             if u[i-1] &gt;= u[i]</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :                 break</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :             else</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaUNC">           0 :                 start = i-1</span></span>
+<span id="L236"><span class="lineNum">     236</span>              :             end</span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L238"><span class="lineNum">     238</span>              : </span>
+<span id="L239"><span class="lineNum">     239</span>              :         # convert from padded indices back to 1…N</span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaUNC">           0 :         start_mid = max(start - n_pad, 1)</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :         stop_mid  = min(stop  - n_pad, N)</span></span>
+<span id="L242"><span class="lineNum">     242</span>              : </span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :         return start_mid:stop_mid</span></span>
+<span id="L244"><span class="lineNum">     244</span>              :     end</span>
+<span id="L245"><span class="lineNum">     245</span>              : </span>
+<span id="L246"><span class="lineNum">     246</span>              : </span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :     function fillState!(state::Chromatogram,</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :                         u::AbstractVector{Float32},</span>
+<span id="L249"><span class="lineNum">     249</span>              :                         rt::AbstractVector{Float32},</span>
+<span id="L250"><span class="lineNum">     250</span>              :                         start::Int64, </span>
+<span id="L251"><span class="lineNum">     251</span>              :                         stop::Int64,</span>
+<span id="L252"><span class="lineNum">     252</span>              :                         apex_scan::Int64,</span>
+<span id="L253"><span class="lineNum">     253</span>              :                         n_pad::Int64</span>
+<span id="L254"><span class="lineNum">     254</span>              :                         )</span>
+<span id="L255"><span class="lineNum">     255</span>              : </span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaUNC">           0 :         start_rt = rt[start]</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaUNC">           0 :         best_rt = rt[apex_scan]</span></span>
+<span id="L258"><span class="lineNum">     258</span>              :         #start_rt, best_rt = rt[start], rt[best_scan]</span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaUNC">           0 :         rt_width = rt[stop] - start_rt</span></span>
+<span id="L260"><span class="lineNum">     260</span>              : </span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaUNC">           0 :         norm_factor = u[apex_scan+n_pad]</span></span>
+<span id="L262"><span class="lineNum">     262</span>              : </span>
+<span id="L263"><span class="lineNum">     263</span>              :         #Write data to state</span>
+<span id="L264"><span class="lineNum">     264</span>              :         #Normalize so that maximum intensity is 1 </span>
+<span id="L265"><span class="lineNum">     265</span>              :         #And time difference from start to finish is 1. </span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in range(1, stop - start + 1)</span></span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaUNC">           0 :             n = start + i - 1</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaUNC">           0 :             state.t[i] = (chrom[n,:rt] - start_rt)/rt_width</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaUNC">           0 :             state.data[i] = u[n+n_pad]/norm_factor</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L271"><span class="lineNum">     271</span>              : </span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaUNC">           0 :         state.max_index = stop - start + 1</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaUNC">           0 :         best_rt = Float32((best_rt - start_rt)/rt_width)</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 :         return norm_factor, start_rt, rt_width, best_rt</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :     end</span>
+<span id="L276"><span class="lineNum">     276</span>              : </span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaUNC">           0 :     function subtractBaseline!(</span></span>
+<span id="L278"><span class="lineNum">     278</span>              :         x::Vector{Float32},  # time (or x-axis values)</span>
+<span id="L279"><span class="lineNum">     279</span>              :         u::Vector{Float32},  # smoothed signal values</span>
+<span id="L280"><span class="lineNum">     280</span>              :         apex_scan::Int,      # peak apex index</span>
+<span id="L281"><span class="lineNum">     281</span>              :         scan_range::UnitRange{Int},</span>
+<span id="L282"><span class="lineNum">     282</span>              :         n_pad::Int</span>
+<span id="L283"><span class="lineNum">     283</span>              :     )</span>
+<span id="L284"><span class="lineNum">     284</span>              :         # Apply pad offset</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaUNC">           0 :         apex_idx  = apex_scan + n_pad</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaUNC">           0 :         scan_start = first(scan_range) + n_pad</span></span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaUNC">           0 :         scan_stop  = last(scan_range) + n_pad</span></span>
+<span id="L288"><span class="lineNum">     288</span>              :     </span>
+<span id="L289"><span class="lineNum">     289</span>              :         # Find left baseline: minimum value between scan_start and apex_idx</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaUNC">           0 :         lmin, li = typemax(Float32), scan_start</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in scan_start:apex_idx</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :             if u[i] &lt; lmin</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :                 lmin = u[i]</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaUNC">           0 :                 li = i</span></span>
+<span id="L295"><span class="lineNum">     295</span>              :             end</span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L297"><span class="lineNum">     297</span>              :     </span>
+<span id="L298"><span class="lineNum">     298</span>              :         # Find right baseline: minimum value between apex_idx and scan_stop</span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :         rmin, ri = typemax(Float32), scan_stop</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in apex_idx:scan_stop</span></span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaUNC">           0 :             if u[i] &lt; rmin</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :                 rmin = u[i]</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaUNC">           0 :                 ri = i</span></span>
+<span id="L304"><span class="lineNum">     304</span>              :             end</span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :     </span>
+<span id="L307"><span class="lineNum">     307</span>              :         # Handle special case where li == apex_idx or ri == apex_idx</span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaUNC">           0 :         if li == apex_idx</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaUNC">           0 :             lmin = rmin</span></span>
+<span id="L310"><span class="lineNum">     310</span>              :         end</span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaUNC">           0 :         if ri == apex_idx</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaUNC">           0 :             rmin = lmin</span></span>
+<span id="L313"><span class="lineNum">     313</span>              :         end</span>
+<span id="L314"><span class="lineNum">     314</span>              : </span>
+<span id="L315"><span class="lineNum">     315</span>              :         # Calculate slope based on actual x values, not index distance</span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaUNC">           0 :         x_left = x[li]</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaUNC">           0 :         x_right = x[ri]</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaUNC">           0 :         dx = x_right - x_left</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaUNC">           0 :         if dx == 0</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaUNC">           0 :             return nothing</span></span>
+<span id="L321"><span class="lineNum">     321</span>              :         end</span>
+<span id="L322"><span class="lineNum">     322</span>              : </span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC">           0 :         slope = (rmin - lmin) / dx</span></span>
+<span id="L324"><span class="lineNum">     324</span>              :     </span>
+<span id="L325"><span class="lineNum">     325</span>              :         # Subtract interpolated baseline</span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaUNC">           0 :         @inbounds @fastmath for i in scan_start:scan_stop</span></span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaUNC">           0 :             xi = x[i]</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaUNC">           0 :             baseline = lmin + (xi - x_left) * slope</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaUNC">           0 :             u[i] = max(0, u[i] - baseline)</span></span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L331"><span class="lineNum">     331</span>              :     </span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaUNC">           0 :         return nothing</span></span>
+<span id="L333"><span class="lineNum">     333</span>              :     end</span>
+<span id="L334"><span class="lineNum">     334</span>              : </span>
+<span id="L335"><span class="lineNum">     335</span>              : </span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaUNC">           0 :     function integrateTrapezoidal(state::Chromatogram, avg_cycle_time::Float32)</span></span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaUNC">           0 :         if state.max_index == 1</span></span>
+<span id="L338"><span class="lineNum">     338</span>              :             # Special case: 1 point only, treat like a triangle on each side</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaUNC">           0 :             height = state.data[1]</span></span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaUNC">           0 :             return avg_cycle_time * height</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 :         elseif state.max_index &gt;= 2</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaUNC">           0 :             retval = 0.0f0</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaUNC">           0 :             retval += avg_cycle_time * (state.data[1] + state.data[state.max_index]) # triangle area on each side</span></span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC">           0 :             @inbounds @fastmath for i in 1:(state.max_index - 1)</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaUNC">           0 :                 dt = state.t[i + 1] - state.t[i]</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaUNC">           0 :                 retval += dt * (state.data[i] + state.data[i + 1])</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaUNC">           0 :             end</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaUNC">           0 :             return 0.5f0 * retval</span></span>
+<span id="L349"><span class="lineNum">     349</span>              :         else</span>
+<span id="L350"><span class="lineNum">     350</span>              :             # No points, no area</span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaUNC">           0 :             return 0.0f0</span></span>
+<span id="L352"><span class="lineNum">     352</span>              :         end</span>
+<span id="L353"><span class="lineNum">     353</span>              :     end</span>
+<span id="L354"><span class="lineNum">     354</span>              : </span>
+<span id="L355"><span class="lineNum">     355</span>              :     #Whittaker Henderson Smoothing</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :     z, x = WHSmooth!(</span></span>
+<span id="L357"><span class="lineNum">     357</span>              :         b,</span>
+<span id="L358"><span class="lineNum">     358</span>              :         chrom,</span>
+<span id="L359"><span class="lineNum">     359</span>              :         n_pad,</span>
+<span id="L360"><span class="lineNum">     360</span>              :         λ</span>
+<span id="L361"><span class="lineNum">     361</span>              :     )</span>
+<span id="L362"><span class="lineNum">     362</span>              : </span>
+<span id="L363"><span class="lineNum">     363</span>              :     #Second discrete derivative of smoothed data</span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaUNC">           0 :     fillU2!(</span></span>
+<span id="L365"><span class="lineNum">     365</span>              :         u2,</span>
+<span id="L366"><span class="lineNum">     366</span>              :         z,</span>
+<span id="L367"><span class="lineNum">     367</span>              :         x</span>
+<span id="L368"><span class="lineNum">     368</span>              :     )</span>
+<span id="L369"><span class="lineNum">     369</span>              :     </span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 :     apex_scan = getApexScan(</span></span>
+<span id="L371"><span class="lineNum">     371</span>              :         apex_scan,</span>
+<span id="L372"><span class="lineNum">     372</span>              :         n_pad,</span>
+<span id="L373"><span class="lineNum">     373</span>              :         z</span>
+<span id="L374"><span class="lineNum">     374</span>              :     )</span>
+<span id="L375"><span class="lineNum">     375</span>              : </span>
+<span id="L376"><span class="lineNum">     376</span>              :     #Integration boundaries based on smoothed second derivative </span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaUNC">           0 :     scan_range = getIntegrationBounds!(</span></span>
+<span id="L378"><span class="lineNum">     378</span>              :         u2,</span>
+<span id="L379"><span class="lineNum">     379</span>              :         z,</span>
+<span id="L380"><span class="lineNum">     380</span>              :         size(chrom, 1),</span>
+<span id="L381"><span class="lineNum">     381</span>              :         apex_scan,</span>
+<span id="L382"><span class="lineNum">     382</span>              :         n_pad</span>
+<span id="L383"><span class="lineNum">     383</span>              :     )</span>
+<span id="L384"><span class="lineNum">     384</span>              : </span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :     subtractBaseline!(</span></span>
+<span id="L386"><span class="lineNum">     386</span>              :         x,</span>
+<span id="L387"><span class="lineNum">     387</span>              :         z,</span>
+<span id="L388"><span class="lineNum">     388</span>              :         apex_scan,</span>
+<span id="L389"><span class="lineNum">     389</span>              :         scan_range,</span>
+<span id="L390"><span class="lineNum">     390</span>              :         n_pad</span>
+<span id="L391"><span class="lineNum">     391</span>              :     )</span>
+<span id="L392"><span class="lineNum">     392</span>              : </span>
+<span id="L393"><span class="lineNum">     393</span>              :     #File `state` to fit EGH function. Get the inensity, and rt normalization factors </span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaUNC">           0 :     norm_factor, start_rt, rt_norm, best_rt = fillState!(</span></span>
+<span id="L395"><span class="lineNum">     395</span>              :         state,</span>
+<span id="L396"><span class="lineNum">     396</span>              :         z,</span>
+<span id="L397"><span class="lineNum">     397</span>              :         chrom[!,:rt],</span>
+<span id="L398"><span class="lineNum">     398</span>              :         first(scan_range),</span>
+<span id="L399"><span class="lineNum">     399</span>              :         last(scan_range),</span>
+<span id="L400"><span class="lineNum">     400</span>              :         apex_scan,</span>
+<span id="L401"><span class="lineNum">     401</span>              :         n_pad</span>
+<span id="L402"><span class="lineNum">     402</span>              :     )</span>
+<span id="L403"><span class="lineNum">     403</span>              :     </span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :     if isplot</span></span>
+<span id="L405"><span class="lineNum">     405</span>              :     #if chrom.precursor_idx[1] == 2098</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaUNC">           0 :         mi = state.max_index</span></span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaUNC">           0 :         start = max(apex_scan - 18, 1)</span></span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaUNC">           0 :         stop = min(apex_scan + 18, length(chrom.rt))</span></span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaUNC">           0 :         plot(chrom.rt[start:stop], chrom.intensity[start:stop], seriestype=:scatter, alpha = 0.5, show = true, label = &quot;raw&quot;)</span></span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaUNC">           0 :         vline!([chrom.rt[first(scan_range)], chrom.rt[last(scan_range)]], label = nothing)</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaUNC">           0 :         plot!(state.t[1:mi].*rt_norm .+ start_rt, norm_factor.*state.data[1:mi], seriestype=:scatter, alpha = 1.0, show = true, label = &quot;smooth&quot;, color = &quot;purple&quot;)</span></span>
+<span id="L412"><span class="lineNum">     412</span>              :         #savefig(&quot;/Users/dennisgoldfarb/Downloads/&quot; * string(chrom.precursor_idx[1]) * &quot; &quot; * string(chrom.intensity[1]) * &quot;.png&quot;)</span>
+<span id="L413"><span class="lineNum">     413</span>              :         #xbins = LinRange(state.t[1]-0.5, state.t[state.max_index]+0.5, 100)</span>
+<span id="L414"><span class="lineNum">     414</span>              :         #plot!(xbins.*rt_norm .+ start_rt, [norm_factor*F(state, x) for x in xbins])</span>
+<span id="L415"><span class="lineNum">     415</span>              :         #plot!(chrom.rt[start:stop], u2[start+n_pad:stop+n_pad])</span>
+<span id="L416"><span class="lineNum">     416</span>              :         #hline!([norm_factor*0.95])</span>
+<span id="L417"><span class="lineNum">     417</span>              :     end</span>
+<span id="L418"><span class="lineNum">     418</span>              : </span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaUNC">           0 :     trapezoid_area = rt_norm * norm_factor * integrateTrapezoidal(state, avg_cycle_time)</span></span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaUNC">           0 :     num_points_integrated = (last(scan_range) - first(scan_range)) + 1</span></span>
+<span id="L421"><span class="lineNum">     421</span>              : </span>
+<span id="L422"><span class="lineNum">     422</span>              :     #trapezoid_area = 0.0f0</span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaUNC">           0 :     return trapezoid_area, chrom[!,:scan_idx][apex_scan], num_points_integrated</span></span>
+<span id="L424"><span class="lineNum">     424</span>              : end</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - lcov.info - utils/safeFileOps.jl</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory utils">utils</a> - safeFileOps.jl</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">lcov.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">24.0&nbsp;%</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntry">6</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-06-27 11:59:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : # Safe file operations for cross-platform compatibility</span>
+<span id="L2"><span class="lineNum">       2</span>              : </span>
+<span id="L3"><span class="lineNum">       3</span>              : &quot;&quot;&quot;</span>
+<span id="L4"><span class="lineNum">       4</span>              :     safeRm(fpath::String, file_handle; force::Bool=false)</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : Safely remove a file with Windows-specific handling for file locks and permissions.</span>
+<span id="L7"><span class="lineNum">       7</span>              : </span>
+<span id="L8"><span class="lineNum">       8</span>              : # Arguments</span>
+<span id="L9"><span class="lineNum">       9</span>              : - `fpath`: Path to file to remove</span>
+<span id="L10"><span class="lineNum">      10</span>              : - `file_handle`: File handle or reference that should be cleared before deletion (e.g., Arrow.Table, IOStream, or nothing)</span>
+<span id="L11"><span class="lineNum">      11</span>              : - `force`: Force removal even if file is read-only</span>
+<span id="L12"><span class="lineNum">      12</span>              : </span>
+<span id="L13"><span class="lineNum">      13</span>              : # Implementation</span>
+<span id="L14"><span class="lineNum">      14</span>              : - Clears the file_handle by setting it to nothing before attempting deletion</span>
+<span id="L15"><span class="lineNum">      15</span>              : - On Windows: Multiple retry attempts, fallback to cmd del, final fallback to rename</span>
+<span id="L16"><span class="lineNum">      16</span>              : - On Unix: Standard rm() call</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : This function handles common Windows file locking issues that occur with Arrow files</span>
+<span id="L19"><span class="lineNum">      19</span>              : and other binary formats that may have lingering file handles.</span>
+<span id="L20"><span class="lineNum">      20</span>              : &quot;&quot;&quot;</span>
+<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">           2 : function safeRm(fpath::String, file_handle; force::Bool=false)</span></span>
+<span id="L22"><span class="lineNum">      22</span>              :     # Clear the file handle before attempting deletion</span>
+<span id="L23"><span class="lineNum">      23</span> <span class="tlaGNC">           1 :     file_handle = nothing</span></span>
+<span id="L24"><span class="lineNum">      24</span>              :     </span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">           1 :     if Sys.iswindows()</span></span>
+<span id="L26"><span class="lineNum">      26</span>              :         # Return early if file doesn't exist</span>
+<span id="L27"><span class="lineNum">      27</span> <span class="tlaUNC">           0 :         if !isfile(fpath)</span></span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaUNC">           0 :             return nothing</span></span>
+<span id="L29"><span class="lineNum">      29</span>              :         end</span>
+<span id="L30"><span class="lineNum">      30</span>              :         </span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaUNC">           0 :         max_retries = 3  # Reduced since we're explicitly clearing handles</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaUNC">           0 :         for i in 1:max_retries</span></span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaUNC">           0 :             try</span></span>
+<span id="L34"><span class="lineNum">      34</span>              :                 # Try Julia's rm with force flag</span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaUNC">           0 :                 rm(fpath, force=force)</span></span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC">           0 :                 return nothing</span></span>
+<span id="L37"><span class="lineNum">      37</span>              :             catch</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaUNC">           0 :                 if i == max_retries</span></span>
+<span id="L39"><span class="lineNum">      39</span>              :                     # If all retries failed, try Windows-specific deletion</span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 :                     try</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :                         run(`cmd /c del /f /q &quot;$fpath&quot;`)</span></span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaUNC">           0 :                         return nothing</span></span>
+<span id="L43"><span class="lineNum">      43</span>              :                     catch</span>
+<span id="L44"><span class="lineNum">      44</span>              :                         # If that also fails, rename the old file instead of deleting</span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaUNC">           0 :                         backup_path = fpath * &quot;.backup_&quot; * string(time_ns())</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaUNC">           0 :                         try</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaUNC">           0 :                             mv(fpath, backup_path, force=true)</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaUNC">           0 :                             @warn &quot;Could not delete $fpath, renamed to $backup_path&quot;</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaUNC">           0 :                             return nothing</span></span>
+<span id="L50"><span class="lineNum">      50</span>              :                         catch</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaUNC">           0 :                             error(&quot;Unable to remove or rename file: $fpath&quot;)</span></span>
+<span id="L52"><span class="lineNum">      52</span>              :                         end</span>
+<span id="L53"><span class="lineNum">      53</span>              :                     end</span>
+<span id="L54"><span class="lineNum">      54</span>              :                 else</span>
+<span id="L55"><span class="lineNum">      55</span>              :                     # Wait with exponential backoff before retrying</span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaUNC">           0 :                     sleep(0.1 * i)</span></span>
+<span id="L57"><span class="lineNum">      57</span>              :                 end</span>
+<span id="L58"><span class="lineNum">      58</span>              :             end</span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaUNC">           0 :         end</span></span>
+<span id="L60"><span class="lineNum">      60</span>              :     else</span>
+<span id="L61"><span class="lineNum">      61</span>              :         # For Linux/MacOS, use the simple approach</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">           1 :         if isfile(fpath)</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">           1 :             rm(fpath, force=force)</span></span>
+<span id="L64"><span class="lineNum">      64</span>              :         end</span>
+<span id="L65"><span class="lineNum">      65</span>              :     end</span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">           1 :     return nothing</span></span>
+<span id="L67"><span class="lineNum">      67</span>              : end</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.1-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
