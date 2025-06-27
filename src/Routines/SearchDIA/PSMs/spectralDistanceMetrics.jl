@@ -1,3 +1,20 @@
+# Copyright (C) 2024 Nathan Wamsley
+#
+# This file is part of Pioneer.jl
+#
+# Pioneer.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 abstract type SpectralScores{T<:AbstractFloat} end
 
 struct SpectralScoresComplex{T<:AbstractFloat} <: SpectralScores{T}
@@ -195,6 +212,7 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
 
     return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
+
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::SparseArray{Ti,T},
@@ -280,7 +298,6 @@ function getDistanceMetrics(w::Vector{T},
         )
     end
 end
-
 
 function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T}, col, included_indices) where {Ti<:Integer,T<:AbstractFloat}
     # Keep track of the worst match, i.e. the position with max difference between (nzval[i], x[i])
@@ -407,8 +424,6 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     return (scribe_score, spectral_contrast, fitted_spectral_contrast, gof, max_matched_residual, max_unmatched_residual, 
             fitted_manhattan_distance, matched_ratio, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
-
-
 
 function getDistanceMetrics(w::Vector{T}, 
                             r::Vector{T}, 

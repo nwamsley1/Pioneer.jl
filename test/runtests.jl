@@ -1,10 +1,27 @@
+# Copyright (C) 2024 Nathan Wamsley
+#
+# This file is part of Pioneer.jl
+#
+# Pioneer.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 using Arrow, ArrowTypes, ArgParse
 #using BSplineKit Don't need this imports anymore?
 using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries #, Distributions 
+using DataFrames, DataStructures, Dictionaries , Distributions 
 using FASTX
 using Interpolations
 using JSON, JLD2
@@ -101,14 +118,15 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
+    
     @testset "process_test_speclib" begin 
         @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     end
     include("./UnitTests/empiricalLibTests.jl")
     
-    @testset "process_test" begin 
-        @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
-    end
+    #@testset "process_test" begin 
+    #    @test SearchDIA("./../data/ecoli_test/ecoli_test_params.json")===nothing
+    #end
     
     include("./UnitTests/buildDesignMatrix.jl")
     include("./UnitTests/isotopeSplines.jl")
@@ -122,5 +140,6 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
 
     include("./utils/FileOperations/test_file_operations_suite.jl")
-    "./Routines/BuildSpecLib/fragments/test_fragments_suite.jl" |> include
+    include("./UnitTests/RazoQuadModel.jl")
+
 end

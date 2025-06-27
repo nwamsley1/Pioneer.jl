@@ -1,3 +1,20 @@
+# Copyright (C) 2024 Nathan Wamsley
+#
+# This file is part of Pioneer.jl
+#
+# Pioneer.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 iso_splines = parseIsoXML(joinpath(dirname(dirname(@__DIR__)),"data", "IsotopeSplines", "IsotopeSplines_10kDa_21isotopes-1.xml"));
 SPEC_LIB_DIR = "/Users/n.t.wamsley/RIS_temp/ASMS_2024/ASTRAL_THREE_PROTEOME/unispec_chronologer_1mc_1var_by_052724/spec_lib/pioneer_lib/"
