@@ -32,7 +32,7 @@ struct FastaEntry
     charge::UInt8
     base_pep_id::UInt32
     base_prec_id::UInt32
-    entrapment_group_id::UInt8
+    entrapment_pair_id::UInt32
     is_decoy::Bool
 end
 
@@ -47,7 +47,7 @@ get_sequence(entry::FastaEntry) = entry.sequence
 get_start_idx(entry::FastaEntry) = entry.start_idx
 get_base_pep_id(entry::FastaEntry) = entry.base_pep_id
 get_base_prec_id(entry::FastaEntry) = entry.base_prec_id
-get_entrapment_group_id(entry::FastaEntry) = entry.entrapment_group_id
+get_entrapment_pair_id(entry::FastaEntry) = entry.entrapment_pair_id
 is_decoy(entry::FastaEntry) = entry.is_decoy
 get_isotopic_mods(entry::FastaEntry) = entry.isotopic_mods
 get_structural_mods(entry::FastaEntry) = entry.structral_mods

@@ -229,6 +229,7 @@ function add_entrapment_sequences(
                         get_charge(target_entry),
                         get_base_pep_id(target_entry),
                         base_prec_id,
+                        get_original_target_id(target_entry),
                         entrapment_group_id,
                         false
                     )
@@ -460,6 +461,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                 get_base_pep_id(target_entry),
                 get_base_prec_id(target_entry),
                 get_entrapment_group_id(target_entry),
+                get_original_target_id(target_entry),
                 true  # This is a decoy sequence
             )
             
@@ -515,6 +517,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
     seq_to_fasta_entry = Dictionary{String, FastaEntry}()
     n = 0
     a = 0
+    base_pep_id = one(UInt32)
     for peptide in peptides
         sequence = get_sequence(peptide)
         sequence_il_equiv = replace(sequence, 'I' => 'L')
@@ -539,11 +542,13 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         get_structural_mods(fasta_entry),
                                                         get_isotopic_mods(fasta_entry),
                                                         get_charge(fasta_entry),
-                                                        get_base_pep_id(fasta_entry),
+                                                        #get_base_pep_id(fasta_entry),
+                                                        base_pep_id,
                                                         get_base_prec_id(fasta_entry),
                                                         get_entrapment_group_id(fasta_entry), 
                                                         is_decoy(fasta_entry)
                                                         )
+            base_pep_id += one(UInt32)
         else
             n += 1
             insert!(seq_to_fasta_entry, sequence_il_equiv, peptide)
