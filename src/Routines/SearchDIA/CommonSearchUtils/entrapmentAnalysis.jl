@@ -1,3 +1,4 @@
+#=
 function entrapmentAnalysis(
     quant_psms_folder::String,
     base_pep_ids::AbstractVector{Int64},
@@ -70,6 +71,7 @@ function entrapmentAnalysis(
     =#
     return DataFrame((decoy_fdr = decoy_fdr, combined_fdp = combined_fdp))
 end
+=#
 #=
 fdr_estimates = entrapmentAnalysis(
     quant_psms_folder,

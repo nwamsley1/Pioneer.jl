@@ -1,3 +1,4 @@
+#=
 function splineQuadTransmissionModel(
                         yt::Vector{T},
                         x0::Vector{T}, 
@@ -121,3 +122,4 @@ function splineQuadTransmissionModel(
         bin_width
     )
 end
+=#

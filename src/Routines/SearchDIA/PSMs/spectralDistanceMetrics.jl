@@ -195,6 +195,7 @@ function computeMetricsFor(H::SparseArray{Ti,T}, col, included_indices) where {T
 
     return (scribe_score, city_block_dist, cosine_similarity, matched_ratio, ent_val, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
+
 function getDistanceMetrics(w::Vector{T},
     r::Vector{T},
     H::SparseArray{Ti,T},
@@ -280,7 +281,6 @@ function getDistanceMetrics(w::Vector{T},
         )
     end
 end
-
 
 function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T}, col, included_indices) where {Ti<:Integer,T<:AbstractFloat}
     # Keep track of the worst match, i.e. the position with max difference between (nzval[i], x[i])
@@ -407,8 +407,6 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     return (scribe_score, spectral_contrast, fitted_spectral_contrast, gof, max_matched_residual, max_unmatched_residual, 
             fitted_manhattan_distance, matched_ratio, worst_pos, worst_intensity_ignored, num_matching_peaks)
 end
-
-
 
 function getDistanceMetrics(w::Vector{T}, 
                             r::Vector{T}, 
