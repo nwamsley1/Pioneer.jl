@@ -181,6 +181,7 @@ function writePrecursorCSV(
                 batch_start_idx = batch_end_idx + 1
                 batch_end_idx = min(batch_start_idx + batch_size, n_rows)
                 if write_csv 
+                    println("writing: ", nrow(subdf))
                     CSV.write(io1, subdf, append=true, header=false, delim="\t")
                 end
                 subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)

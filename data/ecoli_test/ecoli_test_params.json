@@ -37,6 +37,8 @@
         "search_settings": {
             "sample_rate": 0.02,
             "min_samples": 3500,
+            "min_quad_tuning_psms": 5000,
+            "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
             "frag_err_quantile": 0.01
         }
@@ -129,8 +131,8 @@
         "plots_per_page": 12
     },
     "paths": {
-        "library": "./data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin",
+        "library": "./data/ecoli_test/Prosit_ECOLI_500_600mz_062625.poin",
         "ms_data": "./data/ecoli_test/raw",
-        "results": "./../data/ecoli_test/ecoli_test_results"
+        "results": "./data/ecoli_test/ecoli_test_results"
     }
 }

@@ -88,7 +88,9 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     #library_fragment_lookup_table.prec_frag_ranges[end] = last_range
     spec_lib["f_det"] = library_fragment_lookup_table
 
-    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))#DataFrame(precursors)
+    precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
+    proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
+
     f_index = FragmentIndex(
         f_index_frag_bins[:FragIndexBin],
         f_index_rt_bins[:FragIndexBin],
@@ -102,12 +104,14 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     spec_lib["f_index"] = f_index;
     spec_lib["presearch_f_index"] = presearch_f_index;
     spec_lib["precursors"] = precursors;
+    spec_lib["proteins"] = proteins;
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
         return FragmentIndexLibrary(
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
             SetPrecursors(spec_lib["precursors"]), 
+            SetProteins(spec_lib["proteins"]),
             spec_lib["f_det"]
         )
     else
@@ -115,6 +119,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             spec_lib["presearch_f_index"], 
             spec_lib["f_index"], 
             SetPrecursors(spec_lib["precursors"]), 
+            SetProteins(spec_lib["proteins"]),
             spec_lib["f_det"]
         )
     end

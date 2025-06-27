@@ -5,4 +5,6 @@ Manifest.toml
 docs/Manifest.toml
 docs/build/
 data/ecoli_test/ecoli_test_results/
+data/param_test/
 **/.DS_Store
+test/data/ecoli_test/ecoli_test_results

@@ -69,8 +69,8 @@
         ],
     "fasta_names": ["ECOLI"],
     "out_dir": "/Users/n.t.wamsley/TEST_DATA/ECOLI_TEST/arrow_out/TEST_LIB",
-    "lib_name": "Prosit_ECOLI_500_600mz_101924",
-    "new_lib_name": "Prosit_ECOLI_500_600mz_101924",
-    "out_name": "Prosit_ECOLI_500_600mz_101924.tsv",
+    "lib_name": "Prosit_ECOLI_500_600mz_062625",
+    "new_lib_name": "Prosit_ECOLI_500_600mz_062625",
+    "out_name": "Prosit_ECOLI_500_600mz_062625.tsv",
     "predict_fragments": true
 }   
