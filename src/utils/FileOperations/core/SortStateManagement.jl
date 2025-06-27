@@ -86,5 +86,3 @@ function Base.sort!(ref::FileReference, cols::Vector{Symbol};
     return ref
 end
 
-# Export sort state functions
-export mark_sorted!, is_sorted_by, ensure_sorted!

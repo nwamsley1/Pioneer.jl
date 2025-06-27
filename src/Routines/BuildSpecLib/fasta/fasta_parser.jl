@@ -16,7 +16,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    parse_fasta(fasta_path::String, proteome_id::String)::Vector{FastaEntry}
+   parse_fasta(fasta_path::String, proteome_id::String; accession_regex=nothing,
+                 gene_regex=nothing, protein_regex=nothing,
+                 organism_regex=nothing)::Vector{FastaEntry}
 
 Parse a FASTA file and return a vector of FastaEntry objects.
     
@@ -30,13 +32,9 @@ Parse a FASTA file and return a vector of FastaEntry objects.
 # Details
 The function:
 1. Automatically detects and handles compressed (.fasta.gz) or uncompressed (.fasta) files
-2. Parses the headers to extract identifiers
+2. Optionally parses headers for accession, gene, protein and organism using the provided regexes
 3. Creates FastaEntry objects for each sequence with the specified proteome ID
 4. Sets default values for optional fields (modifications, charge, etc.)
-
-The identifier parsing attempts to extract:
-- UniProt-style identifiers when headers contain pipe symbols (e.g., ">sp|P12345|GENE_HUMAN")
-- The first word before any space in other cases
 
 # Examples
 ```julia
@@ -48,21 +46,19 @@ mouse_entries = parse_fasta("mouse_proteome.fasta.gz", "mouse")
 ```
 
 # Notes
-The resulting FastaEntry objects will have default values for fields other than sequence,
-identifier, and proteome_id. These can be modified later with functions like add_mods().
+The resulting `FastaEntry` objects will contain the raw header in the `description`
+field and parsed metadata when the corresponding regular expressions are provided.
+Fields not parsed default to empty strings. Modifications and charge can be added
+later with functions like `add_mods()`.
 """
-function parse_fasta(fasta_path::String, 
-                    proteome_id::String,
-                    #parse_identifier::Function = x -> split(x,"|")[2]
-                    )::Vector{FastaEntry}
-    
-    function parse_identifier(header::AbstractString)
-        if count("|", header) == 2
-            return split(header,"|")[2]
-        else
-            return first(split(header, " "))
-        end
-    end
+function parse_fasta(
+    fasta_path::String,
+    proteome_id::String;
+    accession_regex::Union{Regex,Nothing}=nothing,
+    gene_regex::Union{Regex,Nothing}=nothing,
+    protein_regex::Union{Regex,Nothing}=nothing,
+    organism_regex::Union{Regex,Nothing}=nothing,
+)::Vector{FastaEntry}
     
     function get_reader(fasta_path::String)
         if endswith(fasta_path, ".fasta.gz")
@@ -78,18 +74,53 @@ function parse_fasta(fasta_path::String,
     entries = Vector{FastaEntry}()
 
     for record in reader
+        identifier = FASTA.identifier(record)
+        description = FASTA.description(record)
+
+        accession = if accession_regex === nothing
+            identifier
+        else
+            m = match(accession_regex, identifier)
+            m === nothing ? header : String(first(m.captures))
+        end
+
+        gene = if gene_regex === nothing
+            ""
+        else
+            m = match(gene_regex, description)
+            m === nothing ? "" : String(first(m.captures))
+        end
+
+        protein = if protein_regex === nothing
+            ""
+        else
+            m = match(protein_regex, description)
+            m === nothing ? "" : String(first(m.captures))
+        end
+
+        organism = if organism_regex === nothing
+            ""
+        else
+            m = match(organism_regex, description)
+            m === nothing ? "" : String(first(m.captures))
+        end
+
         push!(entries, FastaEntry(
-            parse_identifier(FASTA.identifier(record)),
+            accession,
             FASTA.description(record),
+            gene,
+            protein,
+            organism,
             proteome_id,
             FASTA.sequence(record),
+            one(UInt32),
             missing,
             missing,
             zero(UInt8),
             zero(UInt32),
             zero(UInt32),
             zero(UInt8),
-            false
+            false,
         ))
     end
 

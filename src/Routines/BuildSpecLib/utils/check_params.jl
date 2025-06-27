@@ -110,6 +110,24 @@ function check_params_bsp(json_string::String)
         params["fasta_paths"][i] = expanduser(params["fasta_paths"][i])
     end
 
+    # Validate per-FASTA regex arrays if provided
+    regex_keys = [
+        "fasta_header_regex_accessions",
+        "fasta_header_regex_genes",
+        "fasta_header_regex_proteins",
+        "fasta_header_regex_organisms",
+    ]
+    for key in regex_keys
+        if haskey(params, key)
+            if !(params[key] isa Vector)
+                throw(InvalidParametersError("$key must be an array", params))
+            end
+            if length(params[key]) != length(params["fasta_paths"])
+                throw(InvalidParametersError("Length of $key must match fasta_paths", params))
+            end
+        end
+    end
+    
     # If all checks pass, return the validated parameters
     return params
 end

@@ -522,6 +522,3 @@ Check if results exist for a search method.
 function has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
     return haskey(ctx.method_results, T)
 end
-
-# Export new accessor functions
-export store_results!, get_results, has_results

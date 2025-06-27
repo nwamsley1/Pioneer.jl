@@ -246,5 +246,3 @@ function add_column_and_sort!(ref::FileReference, col_name::Symbol,
     return ref
 end
 
-# Export column functions
-export add_column_to_file!, update_column_in_file!, add_column_and_sort!

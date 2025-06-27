@@ -500,6 +500,3 @@ function _stream_sorted_merge_nkey_impl(
     
     return output_ref
 end
-
-# Export merge functions
-export stream_sorted_merge

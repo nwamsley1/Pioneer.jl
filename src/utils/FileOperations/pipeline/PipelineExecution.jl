@@ -211,5 +211,3 @@ function write_transformed(ref::FileReference, output_path::String)
     return new_ref
 end
 
-# Export pipeline execution functions
-export apply_pipeline!, transform_and_write!, apply_pipeline_batch, write_transformed

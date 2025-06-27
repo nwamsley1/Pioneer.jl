@@ -233,6 +233,3 @@ function has_columns(ref::FileReference, cols::Symbol...)
     return all(col ∈ available for col in cols)
 end
 
-# Export Arrow operations
-export sort_file_by_keys!, write_arrow_file, transform_and_write!,
-       load_dataframe, column_names, has_columns

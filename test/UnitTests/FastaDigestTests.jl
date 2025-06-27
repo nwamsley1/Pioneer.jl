@@ -22,42 +22,50 @@
     @testset "digest_sequence" begin
         # Test basic tryptic digest with no missed cleavages
         sequence = "MKVGPKAFRVLTEDEMAKR"
-        peptides = digest_sequence(sequence, r"[KR][^P]", 20, 5, 1)
+        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 1)
         @test Set(peptides) == Set(["MKVGPK", "VGPKAFR", "VLTEDEMAK", "VLTEDEMAKR", "AFRVLTEDEMAK"])
+        @test Set(starts) == Set([1, 3, 7, 10])
         
-        peptides = digest_sequence(sequence, r"[KR][^P]", 20, 5, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR][^P]", 20, 5, 0)
         @test Set(peptides) == Set(["VLTEDEMAK"])
+        @test Set(starts) == Set([10])
 
         sequence = "MAKRTGKR"
-        peptides = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test Set(peptides) == Set(["MAK", "R", "TGK", "R"])
+        @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with missed cleavages
-        peptides = digest_sequence(sequence, r"[KR]", 10, 1, 1)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 1)
         @test Set(peptides) == Set(["MAK", "MAKR", "R", "RTGK", "TGK", "TGKR", "R"])
+        @test Set(starts) == Set([1, 4, 5, 8])
         
         # Test with length constraints
-        peptides = digest_sequence(sequence, r"[KR]", 5, 3, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 5, 3, 0)
         @test Set(peptides) == Set(["MAK", "TGK"])
+        @test Set(starts) == Set([1, 5])
         
         # Test with regex that has overlap=true
         sequence = "MAKRRMAK"
-        peptides = digest_sequence(sequence, r"R", 10, 1, 0)
+        peptides, starts = digest_sequence(sequence, r"R", 10, 1, 0)
         @test Set(peptides) == Set(["MAKR","R","MAK"])
+        @test Set(starts) == Set([1, 5, 6])
         
         # Test with no matches
         sequence = "ACDEFGHIJ"
-        peptides = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test Set(peptides) == Set(["ACDEFGHIJ"])
+        @test Set(starts) == Set([1])
         
         # Test with empty sequence
         sequence = ""
-        peptides = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test isempty(peptides)
+        @test isempty(starts)
         
         # Test returned type is Vector{String}, not Vector{SubString}
         sequence = "MAKRTGKR"
-        peptides = digest_sequence(sequence, r"[KR]", 10, 1, 0)
+        peptides, starts = digest_sequence(sequence, r"[KR]", 10, 1, 0)
         @test eltype(peptides) === String
     end
     
@@ -66,30 +74,38 @@
         # Create test FASTA entries
         fasta_entries = [
             FastaEntry(
-                "P12345", 
-                "Test protein 1", 
-                "test", 
-                "MAKRTGKRPEPT", 
-                missing, 
-                missing, 
-                UInt8(0), 
-                UInt32(0), 
-                UInt32(0), 
-                UInt8(0), 
-                false
+                "P12345",
+                "Test protein 1",
+                "",
+                "",
+                "human",
+                "test",
+                "MAKRTGKRPEPT",
+                UInt32(1),
+                missing,
+                missing,
+                UInt8(0),
+                UInt32(0),
+                UInt32(0),
+                UInt8(0),
+                false,
             ),
             FastaEntry(
-                "P67890", 
-                "Test protein 2", 
-                "test", 
+                "P67890",
+                "Test protein 2",
+                "",
+                "",
+                "human",
+                "test",
                 "XBZMAKHUOPR", # Contains unusual AAs that should be filtered
-                missing, 
-                missing, 
-                UInt8(0), 
-                UInt32(0), 
-                UInt32(0), 
-                UInt8(0), 
-                false
+                UInt32(1),
+                missing,
+                missing,
+                UInt8(0),
+                UInt32(0),
+                UInt32(0),
+                UInt8(0),
+                false,
             )
         ]
         
@@ -166,9 +182,13 @@
         @test length(entries) == 2
         @test get_sequence(entries[1]) == "MAKRTGKRPEPT"
         @test get_sequence(entries[2]) == "ACDEFGHIJK"
+
+        # Without regex the entire header should be kept
+        @test get_description(entries[1]) == "sp|P12345|TEST_HUMAN Test protein 1"
+        @test get_description(entries[2]) == "P67890 Test protein 2"
         
-        # Check ID parsing (should extract P12345 from UniProt format)
-        @test get_id(entries[1]) == "P12345"
+        # Without regex everything up to the first space should be kept
+        @test get_id(entries[1]) == "sp|P12345|TEST_HUMAN"
         @test get_id(entries[2]) == "P67890"
         
         # Check proteome is set correctly
@@ -227,9 +247,9 @@
         
         # Test constructor from FastaEntry vector
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDE", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P2", "", "test", "ANOTHER", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
-            FastaEntry("P3", "", "test", "PEPTLDE", missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "ANOTHER", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false),
+            FastaEntry("P3", "", "", "", "human", "test", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(0), UInt32(0), UInt8(0), false)
         ]
         
         pss_from_entries = PeptideSequenceSet(entries)
@@ -266,8 +286,8 @@
     @testset "add_entrapment_sequences" begin
         # Create test entries
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDEK", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "", "test", "MAKEPROTEIN", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
         ]
         
         # Test with single entrapment sequence per target
@@ -299,8 +319,8 @@
     @testset "add_reverse_decoys" begin
         # Create test entries
         entries = [
-            FastaEntry("P1", "", "test", "PEPTIDEK", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "", "test", "MAKEPROTEIN", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
+            FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "", "", "", "human", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
         ]
         
         # Test basic reversal
@@ -331,10 +351,10 @@
     @testset "combine_shared_peptides" begin
         # Create test entries with shared sequences
         entries = [
-            FastaEntry("P1", "desc1", "human", "PEPTIDE", missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
-            FastaEntry("P2", "desc2", "human", "PEPTIDE", missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
-            FastaEntry("P3", "desc3", "mouse", "UNIQUE", missing, missing, UInt8(0), UInt32(3), UInt32(3), UInt8(0), false),
-            FastaEntry("P4", "desc4", "human", "PEPTLDE", missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
+            FastaEntry("P1", "desc1", "", "", "human", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
+            FastaEntry("P2", "desc2", "", "", "human", "human", "PEPTIDE", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false),
+            FastaEntry("P3", "desc3", "", "", "mouse", "mouse", "UNIQUE", UInt32(1), missing, missing, UInt8(0), UInt32(3), UInt32(3), UInt8(0), false),
+            FastaEntry("P4", "desc4", "", "", "human", "human", "PEPTLDE", UInt32(1), missing, missing, UInt8(0), UInt32(4), UInt32(4), UInt8(0), false)
         ]
         
         # Test combination

@@ -173,7 +173,8 @@ function BuildSpecLib(params_path::String)
                                         mz_to_ev_interp,
                                         prec_mz_min,
                                         prec_mz_max,
-                                        chronologer_in_path)
+                                        chronologer_in_path,
+                                        joinpath(lib_dir, "proteins_table.arrow"))
                 nothing
             end
             timings["Chronologer Preparation"] = chrono_prep_timing
@@ -292,6 +293,7 @@ function BuildSpecLib(params_path::String)
                 precursors_table[!, :prec_charge] = UInt8.(precursors_table[!, :prec_charge])
                 precursors_table[!, :mz] = Float32.(precursors_table[!, :mz])
                 precursors_table[!, :irt] = Float32.(precursors_table[!, :irt])
+                precursors_table[!, :start_idx] = UInt32.(precursors_table[!, :start_idx])
 
                 # Save processed precursor table
                 add_pair_indices!(precursors_table)
@@ -308,7 +310,7 @@ function BuildSpecLib(params_path::String)
 
         # Verify required files
         verify_timing = @timed begin
-            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow"]
+            required_files = ["fragments_table.arrow", "prec_to_frag.arrow", "precursors_table.arrow", "proteins_table.arrow"]
             if !all(isfile.(joinpath.(lib_dir, required_files)))
                 error("Missing required files in $lib_dir. Try running with predict_fragments=true")
             end

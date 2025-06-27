@@ -51,6 +51,3 @@ function get_file_size_mb(file_path::String)
     
     return filesize(file_path) / (1024 * 1024)
 end
-
-# Export essential utilities
-export ensure_directory_exists, get_file_size_mb

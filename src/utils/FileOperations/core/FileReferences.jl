@@ -280,10 +280,3 @@ Validate that a file reference has all required columns.
 function validate_schema(ref::FileReference, required_cols::Set{Symbol})
     validate_required_columns(schema(ref), required_cols)
 end
-
-# Export all public types and functions
-export FileReference, PSMFileReference, ProteinGroupFileReference, ProteinQuantFileReference, PairedSearchFiles,
-       file_path, schema, sorted_by, row_count, exists, n_protein_groups, n_experiments,
-       validate_exists, validate_schema,
-       create_psm_reference, create_protein_reference, create_protein_quant_reference, create_reference,
-       describe_reference

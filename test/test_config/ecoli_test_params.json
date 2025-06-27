@@ -114,6 +114,6 @@
         "write_decoys": false,
         "delete_temp": true
     },
-    "library_folder": "./data/ecoli_test/Prosit_ECOLI_500_600mz_101924.poin",
+    "library_folder": "./data/ecoli_test/Prosit_ECOLI_500_600mz_062625.poin",
     "ms_data_dir":"./data/ecoli_test/raw"
 }

@@ -161,5 +161,3 @@ function update_psms_with_scores(psm_ref::PSMFileReference,
     end
 end
 
-# Export protein inference functions
-export apply_protein_inference, update_psms_with_scores

@@ -40,6 +40,48 @@ function insert_at_indices(original::S, insertions::Vector{Tuple{String, UInt8}}
     # Join the array of characters back into a single string
     return join(char_array)
 end
+
+
+"""
+    _map_accessions(accession_str::AbstractString, mapping::Dict{String,String})
+
+Split a semicolon-delimited accession string and map each accession using
+`mapping`. Missing accessions are ignored.
+"""
+function _map_accessions(accession_str::AbstractString, mapping::Dict{String,String})
+    accs = split(accession_str, ';')
+    names = String[]
+    for acc in accs
+        if haskey(mapping, acc) && acc != ""
+            push!(names, mapping[acc])
+        end
+    end
+    return join(names, ';')
+end
+"""
+    _map_accession_vector(column::AbstractVector{<:Union{Missing, AbstractString}}, mapping::Dict{String,String})
+
+Return a vector where each element of `column` is mapped using `_map_accessions`.
+Missing values are propagated. Results are cached for unique accession strings
+to avoid redundant work.
+"""
+function _map_accession_vector(column::AbstractVector{T}, mapping::Dict{String,String}) where {T<:Union{Missing,AbstractString}}
+    cache = Dict{String,String}()
+    out = Vector{Union{Missing,String}}(undef, length(column))
+    for i in eachindex(column)
+        key = column[i]
+        if ismissing(key)
+            out[i] = missing
+            continue
+        end
+        mapped = get!(cache, key) do
+            _map_accessions(key, mapping)
+        end
+        out[i] = mapped
+    end
+    return out
+end
+
 function getModifiedSequence(
     sequence::S,
     isotope_mods::String,
@@ -86,7 +128,8 @@ end
 function writePrecursorCSV(
     long_precursors_path::String,
     file_names::Vector{String},
-    normalized::Bool;
+    normalized::Bool,
+    proteins::LibraryProteins;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
@@ -115,6 +158,8 @@ function writePrecursorCSV(
         safeRm(wide_precursors_arrow_path, nothing)
     end
     wide_columns = ["species"
+    "gene_names"
+    "protein_names"
     "inferred_protein_group"
     "accession_numbers"
     "sequence"
@@ -129,9 +174,16 @@ function writePrecursorCSV(
     "entrapment_group_id"
     ]
 
-    long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
+    long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
-    
+
+    accs = getAccession(proteins)
+    genes = getGeneName(proteins)
+    prots = getProteinName(proteins)
+    gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
+    prot_map = Dict(accs[i] => prots[i] for i in eachindex(accs))
+    precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
+    precursors_long[!, :protein_names] = _map_accession_vector(precursors_long.accession_numbers, prot_map)
     # Build rename pairs dynamically to avoid conflicts
     rename_pairs = Pair{Symbol,Symbol}[]
     push!(rename_pairs, :new_best_scan => :apex_scan)
@@ -147,6 +199,8 @@ function writePrecursorCSV(
     # order columns
     select!(precursors_long, [:file_name,
                              :species,
+                             :gene_names,
+                             :protein_names,
                              :inferred_protein_group,
                              :accession_numbers,
                              :sequence,
@@ -236,14 +290,15 @@ function writeProteinGroupsCSV(
     isotope_mods::AbstractVector{Union{Missing, String}},
     structural_mods::AbstractVector{Union{String,Missing}},
     precursor_charge::AbstractVector{UInt8},
-    file_names::Vector{String};
+    file_names::Vector{String},
+    proteins::LibraryProteins;
     write_csv::Bool = true,
     batch_size::Int64 = 2000000)
 
     function makeWideFormat(
         longdf::DataFrame)
         # First create a DataFrame with the non-abundance columns we want to keep
-        metadata_df = unique(longdf[:, [:species, :protein, :target, :entrap_id]])#, :n_peptides]])
+        metadata_df = unique(longdf[:, [:species, :gene_names, :protein_names, :protein, :target, :entrap_id]])#, :n_peptides]])
         
         # Create the abundance wide format
         abundance_df = unstack(longdf,
@@ -264,8 +319,31 @@ function writeProteinGroupsCSV(
     if isfile(wide_protein_groups_arrow)
         safeRm(wide_protein_groups_arrow, nothing)
     end
+
+    accs = getAccession(proteins)
+    genes = getGeneName(proteins)
+    prots = getProteinName(proteins)
+    gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
+    prot_map = Dict(accs[i] => prots[i] for i in eachindex(accs))
+    protein_groups_long[!, :gene_names] = _map_accession_vector(protein_groups_long.protein, gene_map)
+    protein_groups_long[!, :protein_names] = _map_accession_vector(protein_groups_long.protein, prot_map)
+
     # Update wide columns to include n_peptides
-    wide_columns = ["species", "protein", "target", "entrap_id"]
+    wide_columns = ["species", "gene_names", "protein_names", "protein", "target", "entrap_id"]
+
+    select!(protein_groups_long, [:file_name,
+                             :species,
+                             :gene_names,
+                             :protein_names,
+                             :protein,
+                             :target,
+                             :entrap_id,
+                             :peptides,
+                             :n_peptides,
+                             :global_qval,
+                             :qval,
+                             :pg_pep,
+                             :abundance])
 
     sorted_columns = vcat(wide_columns, file_names)
     open(long_protein_groups_path,"w") do io1

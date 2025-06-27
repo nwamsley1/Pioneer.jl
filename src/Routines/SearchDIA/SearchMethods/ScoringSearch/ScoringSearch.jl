@@ -26,11 +26,6 @@ struct ScoringSearch <: SearchMethod end
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
 
-# Export new types for use in other modules
-export ProteinKey, PeptideKey, ProteinFeatures, ProteinGroup, 
-       ProteinGroupBuilder, InferenceResult, FileMapping,
-       add_peptide!, finalize, to_protein_key, to_namedtuple, to_peptide_key
-
 #==========================================================
 Type Definitions 
 ==========================================================#
@@ -288,13 +283,14 @@ function summarize_results!(
             qvalue_filter_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
                 add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
+                add_pep_column(:pep, :prec_prob, :target;
+                               doSort=false,
+                               fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) |>
                 filter_by_multiple_thresholds([
                     (:global_qval, params.q_value_threshold),
                     (:qval, params.q_value_threshold)
-                ]) |>
-                add_pep_column(:pep, :prec_prob, :target;
-                               doSort=false,
-                               fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) 
+                ]) 
+                
             
             passing_refs = apply_pipeline_batch(
                 filtered_refs,

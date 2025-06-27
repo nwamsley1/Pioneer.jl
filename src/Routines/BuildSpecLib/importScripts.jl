@@ -98,6 +98,7 @@ function importScriptsSpecLib(files_loaded::Set{String} = Set{String}())
     safe_include!(files_loaded, joinpath(root_path, "fasta", "fasta_parser.jl"))
     safe_include!(files_loaded, joinpath(root_path, "fasta", "fasta_digest.jl"))
     safe_include!(files_loaded, joinpath(root_path, "fasta", "fasta_utils.jl"))
+    safe_include!(files_loaded, joinpath(root_path, "fasta", "fasta_protein_table.jl"))
     
     # Fragment handling
     safe_include!(files_loaded, joinpath(root_path, "fragments", "get_frag_bounds.jl"))
