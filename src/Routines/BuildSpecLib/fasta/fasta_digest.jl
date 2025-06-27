@@ -36,9 +36,10 @@ function digest_sequence(sequence::AbstractString,
                         regex::Regex,
                         max_length::Int,
                         min_length::Int,
-                        missed_cleavages::Int)::Vector{String}  # Return String not SubString
+                        missed_cleavages::Int)::Tuple{Vector{String}, Vector{UInt32}}
     
     function add_peptide!(peptides::Vector{SubString{String}},
+                        starts::Vector{UInt32},
                         n::Int,
                         sequence::AbstractString,
                         site::Int,
@@ -53,6 +54,7 @@ function digest_sequence(sequence::AbstractString,
                 ((site - previous_site) <= max_length)
                 # Convert SubString to String when adding to peptides
                 push!(peptides, String(@view sequence[previous_site+1:site]))
+                push!(starts, UInt32(previous_site + 1))
             end
         end
 
@@ -64,22 +66,23 @@ function digest_sequence(sequence::AbstractString,
     end
 
     peptides = Vector{SubString{String}}()
+    starts = Vector{UInt32}()
     previous_sites = zeros(Int, missed_cleavages + 1)
     previous_sites[1] = 0
     n = 1
 
     for site in eachmatch(regex, sequence, overlap = true)
-        n = add_peptide!(peptides, n, sequence, site.offset,
+        n = add_peptide!(peptides, starts, n, sequence, site.offset,
                         previous_sites, min_length, max_length,
                         missed_cleavages)
     end
 
     # Handle C-terminal peptides
-    n = add_peptide!(peptides, n, sequence, length(sequence),
+    n = add_peptide!(peptides, starts, n, sequence, length(sequence),
                     previous_sites, min_length, max_length,
                     missed_cleavages)
 
-    return peptides
+    return peptides, starts
 end
 
 """
@@ -146,9 +149,14 @@ function digest_fasta(fasta::Vector{FastaEntry},
     base_pep_id = one(UInt32)
     base_prec_id = one(UInt32)
     for entry in fasta
-        for peptide in digest_sequence(get_sequence(entry), regex,
-                                     max_length, min_length,
-                                     missed_cleavages)
+        peptides, starts = digest_sequence(
+            get_sequence(entry),
+            regex,
+            max_length,
+            min_length,
+            missed_cleavages,
+        )
+        for (peptide, start_idx) in zip(peptides, starts)
 
             if (occursin("[H", peptide)) | (occursin("U", peptide)) | (occursin("O", peptide)) |  (occursin("X", peptide)) | occursin("Z", peptide) | occursin("B", peptide)
                 continue
@@ -157,10 +165,14 @@ function digest_fasta(fasta::Vector{FastaEntry},
             push!(peptides_fasta, FastaEntry(
                 get_id(entry),
                 "", # Skip description to save memory
+                get_gene(entry),
+                get_protein(entry),
+                get_organism(entry),
                 proteome_id,
                 peptide,  # Now String instead of SubString
+                start_idx,
                 missing, #structural_mods 
-                missing, #istopic_mods 
+                missing, #isotopic_mods 
                 zero(UInt8),
                 base_pep_id,
                 base_prec_id,

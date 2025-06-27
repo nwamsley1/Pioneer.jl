@@ -93,6 +93,7 @@ function importScripts()
             "Counter.jl",
             "Ion.jl",
             "LibraryIon.jl",
+            "LibraryProteins.jl",
             "LibraryFragmentIndex.jl",                                                                    
             "IsotopeTraceType.jl",
             "MatchIon.jl",

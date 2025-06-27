@@ -68,6 +68,10 @@
          "/Users/n.t.wamsley/Projects/Pioneer.jl/data/fasta/keap1.fasta"
         ],
     "fasta_names": ["HUMAN"],
+    "fasta_header_regex_accessions": ["^\\w+\\|(\\w+(?:-\\d+)?)\\|"],
+    "fasta_header_regex_genes": [" GN=(\\S+)"],
+    "fasta_header_regex_proteins": ["^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+="],
+    "fasta_header_regex_organisms": [" OS=([^ ]+.*?) [^ ]+="],
     "out_dir": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS",
     "lib_name": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter",
     "new_lib_name": "/Users/n.t.wamsley/RIS_temp/PIONEER_PAPER/SPEC_LIBS/Keap1Altimeter",
