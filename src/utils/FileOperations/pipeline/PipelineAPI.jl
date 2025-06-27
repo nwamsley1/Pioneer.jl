@@ -53,5 +53,3 @@ import Base: |>
         vcat(pipeline.post_actions, op.post_action)
     )
 
-# Export pipeline types and composition operators
-export TransformPipeline, PipelineOperation, |>

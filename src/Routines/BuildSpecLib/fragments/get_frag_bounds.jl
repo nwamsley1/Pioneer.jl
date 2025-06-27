@@ -16,8 +16,8 @@ Outputs: FragBoundModel
 and the other to predict the low fragment m/z
 """
 function get_fragment_bounds(
-    center_mass::AbstractVector{Union{Missing, Float32}},
-    isolation_width::AbstractVector{Union{Missing, Float32}},
+    center_mass::AbstractVector{<:Union{Missing, Float32}},
+    isolation_width::AbstractVector{<:Union{Missing, Float32}},
     ms_order::AbstractVector{UInt8},
     low_frag_mass::AbstractVector{Float32},
     high_frag_mass::AbstractVector{Float32}
@@ -58,7 +58,8 @@ function get_fragment_bounds(
             prec_mz_min -= 1.0f0
             prec_mz_max += 1.0f0
             return (frag_bounds = frag_bounds, prec_mz_min = prec_mz_min, prec_mz_max = prec_mz_max)
-            catch
+            catch# e 
+                #throw(e)
                 @warn "failed to estimate fragbounds from the example raw file.
                 Using default values. Frag bounds: $default_frag_bounds, precursor bounds: $default_precursor_bounds"
             end

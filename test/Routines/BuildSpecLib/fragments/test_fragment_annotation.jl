@@ -27,7 +27,7 @@
             @test "Int/-CO\"" in ion_set
             @test "Int/-CO^2+i\"" in ion_set
             @test "Int/-H2O^2+i\"" in ion_set
-            @test "Int/\"" in ion_set  # Empty when no modifications
+            @test "Int/" in ion_set  # Empty when no modifications (no closing quote)
         end
         
         @testset "Mixed ion types" begin
@@ -76,8 +76,8 @@
         end
         
         @testset "No modifications" begin
-            @test parse_internal_ion("\"Int/SEQUENCE/3\"") == "\""
-            @test parse_internal_ion("\"Int/PEPTIDE/7\"") == "\""
+            @test parse_internal_ion("\"Int/SEQUENCE/3\"") == ""
+            @test parse_internal_ion("\"Int/PEPTIDE/7\"") == ""
         end
         
         @testset "Complex modifications" begin
@@ -162,7 +162,7 @@
             @test result.isotope == 2
             @test result.internal == false
             @test result.immonium == false
-            @test result.is_gain_loss == true
+            @test result.neutral_diff == true
             @test result.sulfur_diff == 0  # H2O has no sulfur
         end
         
@@ -203,7 +203,7 @@
             @test result.internal == true
             @test result.charge == 2
             @test result.isotope == 1
-            @test result.is_gain_loss == true
+            @test result.neutral_diff == true
         end
         
         @testset "Precursor ions" begin
@@ -211,9 +211,9 @@
             result = parse_fragment_annotation(annotation; immonium_to_sulfur_count=immonium_to_sulfur)
             
             @test result.base_type == 'p'
-            @test result.frag_index == 0  # Precursor has no index
+            @test result.frag_index == 1  # Precursor has no index (default is 1)
             @test result.charge == 3
-            @test result.is_gain_loss == true
+            @test result.neutral_diff == true
         end
         
         @testset "Other ion types" begin

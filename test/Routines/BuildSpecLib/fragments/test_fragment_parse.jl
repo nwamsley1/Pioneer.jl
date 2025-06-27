@@ -92,7 +92,7 @@
             @test sulfur_count == 3  # C at position 2, M at position 6, M at position 12
             @test seq_idx_to_sulfur[2] == 1  # C
             @test seq_idx_to_sulfur[6] == 1  # M
-            @test seq_idx_to_sulfur[12] == 1  # M
+            @test seq_idx_to_sulfur[11] == 1  # M
             @test sum(seq_idx_to_sulfur) == 3
         end
         

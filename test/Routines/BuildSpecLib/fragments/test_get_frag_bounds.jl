@@ -21,8 +21,8 @@
             
             # Test that we get a FragBoundModel
             @test frag_bounds isa FragBoundModel
-            @test frag_bounds.low_bound isa ImmutablePolynomial
-            @test frag_bounds.high_bound isa ImmutablePolynomial
+            @test frag_bounds.low_mass isa ImmutablePolynomial
+            @test frag_bounds.high_mass isa ImmutablePolynomial
             
             # Test precursor bounds
             # Min should be min(center - width/2) = min(499, 599, 698, 799, 898) = 499
@@ -105,7 +105,6 @@
                 lowMz = Float32[100.0, 110.0, 120.0],
                 highMz = Float32[1400.0, 1500.0, 1600.0]
             )
-            
             raw_file_path = joinpath(temp_dir, "test_ms_data.arrow")
             Arrow.write(raw_file_path, ms_data)
             
@@ -123,6 +122,7 @@
         end
         
         @testset "File not found - use defaults" begin
+            temp_dir = mktempdir()
             non_existent_path = joinpath(temp_dir, "non_existent.arrow")
             
             result = get_fragment_bounds(

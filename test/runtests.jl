@@ -101,7 +101,6 @@ if isdir(results_dir)
 end
 @testset "Pioneer.jl" begin
     println("dir ", @__DIR__)
-    #=
     @testset "process_test_speclib" begin 
         @test size(ParseSpecLib(joinpath(@__DIR__, "./../data/library_test/defaultParseEmpiricalLibParams2.json")).libdf, 1)==120
     end
@@ -123,6 +122,5 @@ end
     include("./UnitTests/BuildPionLibTest.jl")
 
     include("./utils/FileOperations/test_file_operations_suite.jl")
-    =#
     "./Routines/BuildSpecLib/fragments/test_fragments_suite.jl" |> include
 end

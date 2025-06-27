@@ -47,9 +47,6 @@ end
 include("../../src/utils/FileOperations/FileOperations.jl")
 include("../../src/utils/writeArrow.jl")
 
-export test_accuracy, benchmark_merge_strategies, run_all_tests, 
-       profile_memory_usage, test_file_handle_limits
-
 #==========================================================
 Test Data Utilities
 ==========================================================#
