@@ -184,6 +184,7 @@ function summarize_results!(
             precursors_long_path,
             sort(collect(getParsedFileNames(getMSData(search_context)))),
             params.run_to_run_normalization,
+            getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
         )
 
@@ -216,6 +217,7 @@ function summarize_results!(
             getStructuralMods(precursors),
             getCharge(precursors),
             sort(collect(values(getFileIdToName(getMSData(search_context))))),
+            getProteins(getSpecLib(search_context)),
             write_csv = params.write_csv
         )
 
