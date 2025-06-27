@@ -674,7 +674,6 @@ function process_final_psms!(
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
     accession_numbers = Vector{String}(undef, n)
-    protein_idx = Vector{UInt32}(undef, n)
     ms_file_idxs = Vector{UInt16}(undef, n)
     species = Vector{String}(undef, n)
     peak_area = Vector{Union{Missing, Float32}}(undef, n)
@@ -689,12 +688,9 @@ function process_final_psms!(
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         accession_numbers[i] = getAccessionNumbers(precursors)[pid]
-        protein_idx[i] = getProteinGroupId(precursors, accession_numbers[i])
     end
     psms[!, :accession_numbers] = accession_numbers
-    psms[!, :protein_idx] = protein_idx
     
-    #sort!(psms, [:protein_idx, :precursor_idx])
     #Critical to sort correctly for the batch-wise MaxLFQ algorithm. 
     #Otherwise could have different precursors for the same protein group 
     #split between two batches. 

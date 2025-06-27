@@ -157,7 +157,7 @@ function writePrecursorCSV(
     "entrapment_group_id"
     ]
 
-    long_columns_exclude = [:isotopes_captured, :scan_idx, :protein_idx, :weight, :ms_file_idx]
+    long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
     select!(precursors_long, Not(long_columns_exclude))
 
     accs = getAccession(proteins)
