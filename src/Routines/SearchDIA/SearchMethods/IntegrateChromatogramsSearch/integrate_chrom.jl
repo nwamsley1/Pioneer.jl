@@ -417,7 +417,13 @@ function integrate_chrom(chrom::SubDataFrame{DataFrame, DataFrames.Index, Vector
     end
 
     trapezoid_area = rt_norm * norm_factor * integrateTrapezoidal(state, avg_cycle_time)
-    num_points_integrated = (last(scan_range) - first(scan_range)) + 1
+
+    # Count points within the full width at 20% maximum of the smoothed signal
+    # Restrict evaluation to the scan range actually used for integration
+    min_abundance = 0.1f0 * norm_factor
+    scan_start = first(scan_range) + n_pad
+    scan_stop  = last(scan_range) + n_pad
+    num_points_integrated = count(i -> z[i] >= min_abundance, scan_start:scan_stop)
 
     #trapezoid_area = 0.0f0
     return trapezoid_area, chrom[!,:scan_idx][apex_scan], num_points_integrated
