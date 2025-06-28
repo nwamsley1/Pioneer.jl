@@ -205,6 +205,8 @@ function getProtAbundance(protein::String,
                             global_qvals::AbstractVector{Float32},
                             qvals::AbstractVector{Float32},
                             peps::AbstractVector{Float32},
+                            pg_scores::AbstractVector{Float32},
+                            global_pg_scores::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -214,7 +216,9 @@ function getProtAbundance(protein::String,
                             log2_abundance_out::Vector{Union{Missing, Float32}},
                             global_qval_out::Vector{Union{Missing, Float32}},
                             qval_out::Vector{Union{Missing, Float32}},
-                            pep_out::Vector{Union{Missing, Float32}}) where {T <: Real}
+                            pep_out::Vector{Union{Missing, Float32}},
+                            pg_score_out::Vector{Union{Missing, Float32}},
+                            global_pg_score_out::Vector{Union{Missing, Float32}}) where {T <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -237,6 +241,8 @@ function getProtAbundance(protein::String,
                             global_qvals::AbstractVector{Float32},
                             qvals::AbstractVector{Float32},
                             peps::AbstractVector{Float32},
+                            pg_scores::AbstractVector{Float32},
+                            global_pg_scores::AbstractVector{Float32},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}}, 
@@ -246,6 +252,8 @@ function getProtAbundance(protein::String,
                             global_qval_out::Vector{Union{Missing, Float32}}, 
                             qval_out::Vector{Union{Missing, Float32}}, 
                             pep_out::Vector{Union{Missing, Float32}},
+                            pg_score_out::Vector{Union{Missing, Float32}},
+                            global_pg_score_out::Vector{Union{Missing, Float32}},
                             experiments_out::Vector{Union{Missing, I}}, 
                             S::Matrix{Union{Missing, T}}) where {T<:Real,I<:Integer}
         
@@ -276,6 +284,8 @@ function getProtAbundance(protein::String,
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
             global_qval_out[row_idx + i] = global_qvals[i + 1]
             qval_out[row_idx + i] = qvals[i + 1]
+            pg_score_out[row_idx + i] = pg_scores[i + 1]
+            global_pg_score_out[row_idx + i] = global_pg_scores[i + 1]
             experiments_out[row_idx + i] = unique_experiments[i + 1]
             protein_out[row_idx + i] = protein
             pep_out[row_idx + i] = pep_val
@@ -320,6 +330,8 @@ function getProtAbundance(protein::String,
                    global_qvals,
                    qvals,
                    peps,
+                   pg_scores,
+                   global_pg_scores,
                    target_out,
                    entrap_id_out,
                    species_out,
@@ -329,6 +341,8 @@ function getProtAbundance(protein::String,
                    global_qval_out,
                    qval_out,
                    pep_out,
+                   pg_score_out,
+                   global_pg_score_out,
                    experiments_out,
                    S)
 
@@ -400,6 +414,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :global_qval => zeros(Union{Missing, Float32}, nrows),
             :qval => zeros(Union{Missing, Float32}, nrows),
             :pg_pep => zeros(Union{Missing, Float32}, nrows),
+            :pg_score => zeros(Union{Missing, Float32}, nrows),
+            :global_pg_score => zeros(Union{Missing, Float32}, nrows),
         )
         for i in range(1, nrows)
             out[:target][i] = missing
@@ -412,6 +428,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             out[:global_qval][i] = missing
             out[:qval][i] = missing
             out[:pg_pep][i] = missing
+            out[:pg_score][i] = missing
+            out[:global_pg_score][i] = missing
         end
 
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
@@ -427,6 +445,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 data[!,:global_qval_pg],
                                 data[!,:pg_qval],
                                 data[!,:pg_pep],
+                                data[!,:pg_score],
+                                data[!,:global_pg_score],
                                 out[:target],
                                 out[:entrap_id],
                                 out[:species],
@@ -436,7 +456,9 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:log2_abundance],
                                 out[:global_qval],
                                 out[:qval],
-                                out[:pg_pep]
+                                out[:pg_pep],
+                                out[:pg_score],
+                                out[:global_pg_score]
                             )
         end
         out = DataFrame(out)
@@ -464,7 +486,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:abundance]); 
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance]);
                 file=false)  # file=false creates stream format
             end
         else
@@ -475,7 +497,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                     [:file_name,
                     :target,
                     :entrap_id,
-                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:abundance])
+                    :species,:protein,:peptides,:n_peptides,:global_qval,:qval,:pg_pep,:pg_score,:global_pg_score,:abundance])
             )
         end
         n_writes += 1
