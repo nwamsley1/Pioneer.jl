@@ -56,7 +56,7 @@ function get_qvalues!(probs::AbstractVector{U}, labels::AbstractVector{Bool}, qv
     end
 
     targets = 0
-    decoys = 1 # pseudocount to guarantee finite sample control of the FDR
+    decoys = 0
     @inbounds @fastmath for i in order
             targets += labels[i]
             decoys += (1 - labels[i])

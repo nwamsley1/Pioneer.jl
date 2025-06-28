@@ -174,7 +174,6 @@ function get_qvalue_spline(
     bin_size = 0
     bin_idx = 0
     mean_prob, targets, decoys = 0.0f0, 0, 0
-    targets, decoys = 0, 0
     for i in range(1, Q)
         targets += psms_scores[!, :target][i]
         decoys += (1 - psms_scores[!, :target][i])
