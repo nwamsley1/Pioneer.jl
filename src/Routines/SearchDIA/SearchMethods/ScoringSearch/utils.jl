@@ -157,8 +157,14 @@ function get_qvalue_spline(
 
 
     psms_scores = DataFrame(Arrow.Table(merged_psms_path))
-    
+
     if use_unique
+        # select the columns needed to identify globally unique precursors or proteins
+        if score_col == :global_prob # precursors
+            select!(psms_scores, [:precursor_idx, :target, score_col])
+        elseif score_col == :global_pg_score # proteins
+            select!(psms_scores, [:protein_name, :target, :entrap_id, score_col])
+        end
         psms_scores = unique(psms_scores)
     end
 
