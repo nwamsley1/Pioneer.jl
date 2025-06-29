@@ -332,6 +332,15 @@ function summarize_results!(
         end
         @info "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
+        # Step 10.5: Build protein CV fold mapping from PSMs
+        @info "Step 10.5: Building protein CV fold mapping..."
+        step10_5_time = @elapsed begin
+            # Get PSM paths from passing_refs (these are the high-quality PSMs)
+            psm_paths = [file_path(ref) for ref in passing_refs]
+            protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, getPrecursors(getSpecLib(search_context)))
+        end
+        @info "Step 10.5 completed in $(round(step10_5_time, digits=2)) seconds (mapped $(length(protein_to_cv_fold)) proteins)"
+
         # Step 11: Perform protein probit regression
         @info "Step 11: Performing protein probit regression..."
         step11_time = @elapsed begin
@@ -341,7 +350,9 @@ function summarize_results!(
             perform_protein_probit_regression(
                 pg_refs,
                 params.max_psms_in_memory,
-                qc_folder
+                qc_folder,
+                getPrecursors(getSpecLib(search_context));
+                protein_to_cv_fold = protein_to_cv_fold
             )
         end
         @info "Step 11 completed in $(round(step11_time, digits=2)) seconds"
@@ -430,8 +441,8 @@ function summarize_results!(
         # Summary of all step times
         total_time = step1_time + step2_time + step3_time + step4_time + step5_time + 
                     step6_time + step7_time + step8_time + step9_time + step10_time + 
-                    step11_time + step12_time + step13_time + step14_time + step15_time + 
-                    step16_time + step17_time + step18_time + step19_time + step20_time
+                    step10_5_time + step11_time + step12_time + step13_time + step14_time + 
+                    step15_time + step16_time + step17_time + step18_time + step19_time + step20_time
         @info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
         @info "Breakdown: XGBoost($(round(step1_time, digits=1))s) + Best_Traces($(round(step2_time, digits=1))s) + Quant_Processing($(round(step3_time, digits=1))s) + Merging($(round(step4_time + step6_time + step14_time + step17_time, digits=1))s) + Q-values($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Protein_Inference($(round(step10_time, digits=1))s) + Probit_Regression($(round(step11_time, digits=1))s) + Other($(round(step3_time + step8_time + step9_time + step12_time + step13_time + step16_time + step19_time + step20_time, digits=1))s)"
 
