@@ -57,6 +57,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     min_peptides::Int64
     max_q_value_xgboost_rescore::Float32
     max_q_value_xgboost_mbr_rescore::Float32
+    min_PEP_neg_threshold_xgboost_rescore::Float32
+    max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
 
@@ -84,6 +86,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(protein_inference_params.min_peptides),
             Float32(ml_params.max_q_value_xgboost_rescore),
             Float32(ml_params.max_q_value_xgboost_mbr_rescore),
+            Float32(ml_params.min_PEP_neg_threshold_xgboost_rescore),
+            Float32(ml_params.max_MBR_false_transfer_rate),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type
         )
@@ -208,6 +212,9 @@ function summarize_results!(
                 params.match_between_runs,
                 params.max_q_value_xgboost_rescore,
                 params.max_q_value_xgboost_mbr_rescore,
+                params.min_PEP_neg_threshold_xgboost_rescore,
+                params.q_value_threshold,
+                params.max_MBR_false_transfer_rate,
                 params.max_psms_in_memory
             )
         end

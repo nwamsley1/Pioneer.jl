@@ -134,6 +134,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
 | `machine_learning.max_q_value_xgboost_rescore` | Float | q-value threshold for semi-supervised learning with XGBoost (default: 0.01) |
 | `machine_learning.max_q_value_xgboost_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with XGBoost (default: 0.20) |
+| `machine_learning.min_PEP_neg_threshold_xgboost_rescore` | Float | Minimum posterior error probabilility threshold for poor scoring targets to be relabeled as negative examples during semi-supervised learning with XGBoost (default: 0.20) |
+| `machine_learning.max_MBR_false_transfer_rate` | Float | False transfer rate threshold for match-between-runs (default: 0.01) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 
