@@ -308,29 +308,51 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            # update global prob
-            for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
-                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
-                prob = probs[i]
-                if haskey(prec_to_global_score, precursor_idx)
-                    prec_to_global_score[precursor_idx] = max(prob, prec_to_global_score[precursor_idx])
-                else
-                    insert!(prec_to_global_score, precursor_idx, prob)
+
+            if dropVectorCols ## final iteration
+                stage1_qvals = Vector{Float64}(undef, nrow(psms_subset))
+                get_qvalues!(psms_subset.prob_stage1, psms_subset.target, stage1_qvals)
+                transfer_mask = (stage1_qvals .> q_value_threshold) .& .!ismissing.(psms_subset.MBR_is_best_decoy)
+                bad_transfer = (psms_subset.target .& coalesce.(psms_subset.MBR_is_best_decoy, false)) .|
+                            (psms_subset.decoy .& .!coalesce.(psms_subset.MBR_is_best_decoy, true))
+                τ = get_ftr_threshold(psms_subset.prob, psms_subset.target, bad_transfer, max_ftr;  mask = transfer_mask)
+
+                psms_subset.MBR_transfer_candidate .= transfer_mask
+                psms_subset.passes_ftr = .!(transfer_mask .& (psms_subset.prob .< τ))
+
+                # update global prob
+                for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
+                    if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                    if !psms_subset.passes_ftr[i]: continue end
+                    prob = probs[i]
+                    if haskey(prec_to_global_score, precursor_idx)
+                        prec_to_global_score[precursor_idx] = max(prob, prec_to_global_score[precursor_idx])
+                    else
+                        insert!(prec_to_global_score, precursor_idx, prob)
+                    end
                 end
             end
         end
     
+
+        # Compute probs and features for next round
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
             probs = XGBoost.predict(bst, psms_subset[!,features])
 
+            if save_stage1_prob && !("prob_stage1" in names(psms_subset))
+                psms_subset.prob_stage1 = zeros(Float32, size(psms_subset, 1))
+            end
+
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
                 psms_subset[i,:prob] = probs[i]
-                #if save_stage1_prob
-                #    psms_subset[i,:prob_stage1] = probs[i]
-                #end
-                if match_between_runs
+                
+                if save_stage1_prob
+                    psms_subset[i,:prob_stage1] = probs[i]
+                end
+                    
+                if match_between_runs && !dropVectorCols
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
                         scores = prec_to_best_score_new[key]
@@ -369,7 +391,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             psms_subset.MBR_num_runs[i]             = length(scores.unique_passing_runs)
                             continue
                         end
-                        
+
                         best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(psms_subset.weights[i]))
                         best_iRTs_padded, iRTs_padded = pad_rt_equal_length(best_irts, psms_subset.irts[i])
 
@@ -383,23 +405,54 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            # update global prob
-            if !("global_prob" in names(psms_subset))
+            if dropVectorCols
+
+                # update global prob
                 psms_subset.global_prob = zeros(Float32, size(psms_subset, 1))
-                psms_subset.prec_prob = zeros(Float32, size(psms_subset, 1))
-            end
-
-            for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
-                if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
-                if haskey(prec_to_global_score, precursor_idx)
-                    psms_subset[i,:global_prob] = prec_to_global_score[precursor_idx]
+                for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
+                    if !test_fold_filter(psms_subset[i,:cv_fold], test_fold_idx)::Bool continue end
+                    if haskey(prec_to_global_score, precursor_idx)
+                        psms_subset[i,:global_prob] = prec_to_global_score[precursor_idx]
+                    end
                 end
+
+
+                # update prec prob
+                psms_subset.prec_prob = zeros(Float32, size(psms_subset, 1))
+                if match_between_runs 
+                    stage1_qvals = Vector{Float64}(undef, nrow(psms_subset))
+                    get_qvalues!(psms_subset.prob_stage1, psms_subset.target, stage1_qvals)
+                    transfer_mask = (stage1_qvals .> q_value_threshold) .& .!ismissing.(psms_subset.MBR_is_best_decoy)
+                    bad_transfer = (psms_subset.target .& coalesce.(psms_subset.MBR_is_best_decoy, false)) .|
+                                (psms_subset.decoy .& .!coalesce.(psms_subset.MBR_is_best_decoy, true))
+                    τ = get_ftr_threshold(psms_subset.prob, psms_subset.target, bad_transfer, max_ftr; mask = transfer_mask)
+
+                    psms_subset.MBR_transfer_candidate .= transfer_mask
+                    psms_subset.passes_ftr = .!(transfer_mask .& (psms_subset.prob .< τ))
+
+                    transform!(
+                        groupby(psms_subset, [:precursor_idx, :ms_file_idx]),
+                        [:prob, :passes_ftr] => ((p, f) ->
+                            # only keep p where f is true
+                            let pp = p[f]
+                                1.0f0 - 0.000001f0 - exp(sum(log1p.(-pp)))
+                            end
+                        ) => :prec_prob
+                    )
+
+                    if hasproperty(psms_subset, :prob_stage1)
+                        select!(psms_subset, Not(:prob_stage1))
+                    end
+
+                else
+                    transform!(
+                        groupby(psms_subset, [:precursor_idx]),
+                        :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob
+                    ) 
+                end
+
             end
 
-            transform!(
-                groupby(psms_subset, [:precursor_idx]),
-                :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob
-            )
 
             if dropVectorCols # last iteration
                 Arrow.write(file_path, dropVectorColumns!(psms_subset))
@@ -407,6 +460,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 Arrow.write(file_path, convert_subarrays(psms_subset))
             end
         end
+        
         return prec_to_best_score_new
     end
                     
@@ -512,69 +566,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 features,
                 match_between_runs;
                 dropVectorCols = (train_iter == length(iter_scheme)) && (test_fold_idx == unique_cv_folds[end]), # remove on last iteration
-                save_stage1_prob = (train_iter == length(iter_scheme) - 1)
+                save_stage1_prob = match_between_runs && (train_iter == length(iter_scheme) - 1)
             )
             update(pbar)
         end
     end
-
-    # sub_psms.MBR_best_irt_diff[i] = missing
-    # sub_psms.MBR_rv_coefficient[i] = missing
-    # sub_psms.MBR_is_best_decoy[i] = missing
-    # sub_psms.MBR_log2_weight_ratio[i] = missing
-    # sub_psms.MBR_log2_explained_ratio[i] = missing
-    # sub_psms.MBR_max_pair_prob[i] = missing
-
-
-
-    
-    # if match_between_runs
-    #     all_stage1_probs = Float32[]
-    #     all_final_probs = Float32[]
-    #     all_targets = Bool[]
-    #     all_decoys = Bool[]
-    #     all_best_decoy = Vector{Union{Missing,Bool}}()
-
-    #     for file_path in file_paths
-    #         df = DataFrame(Arrow.Table(file_path))
-    #         append!(all_stage1_probs, df.prob_stage1)
-    #         append!(all_final_probs, df.prob)
-    #         append!(all_targets, df.target)
-    #         append!(all_decoys, df.decoy)
-    #         append!(all_best_decoy, df.MBR_is_best_decoy)
-    #     end
-
-    #     stage1_qvals = Vector{Float64}(undef, length(all_stage1_probs))
-    #     get_qvalues!(all_stage1_probs, all_targets, stage1_qvals)
-    #     transfer_mask = (stage1_qvals .> q_value_threshold) .& .!ismissing.(all_best_decoy)
-    #     bad_transfer = (all_targets .& map(d -> !ismissing(d) && d, all_best_decoy)) .|
-    #                    (all_decoys .& map(d -> !ismissing(d) && !d, all_best_decoy))
-
-    #     τ = get_ftr_threshold(all_final_probs, all_targets, bad_transfer, max_ftr;
-    #                           mask = transfer_mask)
-
-    #     offset = 1
-    #     for file_path in file_paths
-    #         df = DataFrame(Arrow.Table(file_path))
-    #         n = nrow(df)
-    #         idxs = offset:(offset + n - 1)
-    #         cand = (stage1_qvals[idxs] .> q_value_threshold) .& .!ismissing.(df.MBR_is_best_decoy)
-    #         df.MBR_transfer_candidate .= cand
-    #         filter!(row -> !(row.MBR_transfer_candidate && row.prob < τ), df)
-
-    #         transform!(groupby(df, :precursor_idx),
-    #                    :prob => (p -> maximum(p)) => :global_prob)
-
-    #         transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
-    #                    :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob)
-
-    #         if hasproperty(df, :prob_stage1)
-    #             select!(df, Not(:prob_stage1))
-    #         end
-    #         Arrow.write(file_path, df)
-    #         offset += n
-    #     end
-    # end
 
     return models
 end
