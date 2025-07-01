@@ -461,7 +461,11 @@ function run_protein_efdr_analysis(protein_results_path::String;
     
     # Load data
     verbose && println("Loading protein data...")
-    protein_results = DataFrame(Arrow.Table(protein_results_path))
+    protein_results = DataFrame(Tables.columntable(Arrow.Table(protein_results_path)))
+    is_sorted = issorted(protein_results, [:pg_score, :entrap_id], rev = [true, false])
+    @info is_sorted ? "Protein results are sorted by pg_score and entrap_id" :
+        "Protein results are NOT sorted by pg_score and entrap_id, sorting now"
+    sort!(protein_results, [:pg_score, :entrap_id], rev = [true, false])
     
     verbose && println("Loaded $(nrow(protein_results)) protein results")
     
@@ -480,12 +484,12 @@ function run_protein_efdr_analysis(protein_results_path::String;
             filter!(x -> x.target, protein_results)
         end
     else
-        verbose && @warn "No 'target' column found. Assuming all rows are targets."
+        throw("No 'target' column found.")
     end
     
     # Count proteins with entrapment versions
     proteins_with_entrapment = 0
-    for protein_group in groupby(protein_results, :protein)
+    for protein_group in groupby(protein_results, [:species,:protein,:entrap_id,:file_name])
         unique_entrap_ids = unique(protein_group.entrap_id)
         if 0 in unique_entrap_ids && any(x -> x > 0, unique_entrap_ids)
             proteins_with_entrapment += 1

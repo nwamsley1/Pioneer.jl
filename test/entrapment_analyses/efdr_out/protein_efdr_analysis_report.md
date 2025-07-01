@@ -1,11 +1,11 @@
 # Protein-Level Empirical FDR Analysis Report
 
-Generated: 2025-07-01T13:05:39.481
+Generated: 2025-07-01T14:08:29.395
 
 ## Data Summary
 - Original protein results: 12115
 - Analyzed protein results: 12115
-- Proteins with entrapment pairs: 466
+- Unique proteins with entrapment versions: 107
 
 ### Entrapment Composition
 

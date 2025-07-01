@@ -55,16 +55,21 @@ function add_original_target_protein_scores!(protein_results::DataFrame; score_c
     # Build a nested dictionary mapping (file_identifier, protein_name) -> target_score
     # This handles both per-file and global analyses
     if file_col == :ms_file_idx
-        protein_to_target = Dictionary{Tuple{Int, String}, Float32}()
+        protein_to_target = Dictionary{Tuple{Int, String, String}, Float32}()
     else
-        protein_to_target = Dictionary{Tuple{String, String}, Float32}()
+        protein_to_target = Dictionary{Tuple{String, String, String}, Float32}()
     end
     
     # First pass: collect all target scores (entrap_id == 0)
     for row in eachrow(protein_results)
         if row.entrap_id == 0 && !ismissing(row[score_col])
-            key = (row[file_col], row.protein)
-            protein_to_target[key] = Float32(row[score_col])
+            key = (row[file_col], row.species, row.protein)
+            if haskey(protein_to_target, key)
+                error("Duplicate target protein found: protein '$(row.protein)' appears multiple times " *
+                      "with entrap_id=0 in file '$(row[file_col])'. Each protein should appear " *
+                      "at most once as a target (entrap_id=0) per file.")
+            end
+            insert!(protein_to_target, key, Float32(row[score_col]))
         end
     end
     
@@ -78,11 +83,15 @@ function add_original_target_protein_scores!(protein_results::DataFrame; score_c
                 push!(original_target_scores, Float32(row[score_col]))
             else
                 # Entrapment gets the target's score from same protein and file
-                key = (row[file_col], row.protein)
+                key = (row[file_col], row.species, row.protein)
                 if haskey(protein_to_target, key)
+                    @info "Found target protein for entrapment protein '$(row.protein)' " *
+                        "in file '$(row[file_col])'. Using score: $(protein_to_target[key])"
                     push!(original_target_scores, protein_to_target[key])
                 else
                     # No target found for this protein in this file
+                    @info "No target protein found for entrapment protein '$(row.protein)' " *
+                        "in file '$(row[file_col])'. Setting original target score to -1.0."
                     push!(original_target_scores, -1.0f0)
                 end
             end
@@ -130,7 +139,7 @@ global_df = create_global_protein_results_df(protein_results; score_col=:global_
 """
 function create_global_protein_results_df(protein_results::DataFrame; score_col::Symbol=:global_pg_score)
     # Check required columns
-    required_cols = [:protein, score_col]
+    required_cols = [:species,:protein,:file_name,score_col]
     missing_cols = [col for col in required_cols if !hasproperty(protein_results, col)]
     if !isempty(missing_cols)
         error("DataFrame missing required columns: $missing_cols")
@@ -149,7 +158,7 @@ function create_global_protein_results_df(protein_results::DataFrame; score_col:
     protein_results_copy = copy(protein_results)
     
     # Group by protein name
-    grouped = groupby(protein_results_copy, :protein)
+    grouped = groupby(protein_results_copy, [:species,:protein])
     
     # For each group, keep only the row with maximum score
     global_df = combine(grouped) do group

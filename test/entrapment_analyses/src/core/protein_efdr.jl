@@ -41,11 +41,13 @@ function add_protein_efdr_columns!(protein_results::DataFrame;
         error("DataFrame must have :entrap_id column")
     end
     
+
     # Extract entrapment labels directly
     entrap_labels = protein_results.entrap_id
     
     # Process each score/qval pair
     for (score_col, qval_col) in score_qval_pairs
+        sort!(protein_results, [score_col, :entrap_id], rev = [true, false])
         # Check columns exist
         if !hasproperty(protein_results, score_col)
             @warn "Column $score_col not found in DataFrame, skipping..."
