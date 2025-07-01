@@ -36,8 +36,8 @@ filtered_data = results_custom.filtered_data
 comparison_results = results_custom.comparison_results
 calibration_results = results_custom.calibration_results
 
-# Example 3: Working with the data directly
-println("\nExample of direct data manipulation...")
+# Example 3: Working with the data directly (handling global vs per-file scores)
+println("\nExample of direct data manipulation with separate global analysis...")
 
 using DataFrames, Arrow
 
@@ -56,16 +56,27 @@ assign_entrapment_pairs!(library_precursors)
 # Add entrap_pair_ids to results
 add_entrap_pair_ids!(prec_results, library_precursors)
 
-# Add original target scores for specific columns
-add_original_target_scores!(prec_results, library_precursors, [:global_prob, :prec_prob])
+# Create separate dataframe for global score analysis
+println("Creating global results dataframe...")
+global_results_df = create_global_results_df(prec_results; score_col=:global_prob)
+add_entrap_pair_ids!(global_results_df, library_precursors)
+println("Global dataframe has $(nrow(global_results_df)) unique precursors")
 
-# Calculate EFDR columns
+# Process per-file scores on original dataframe
+add_original_target_scores!(prec_results, library_precursors, [:prec_prob])
 add_efdr_columns!(prec_results, library_precursors;
+                 method_types = [CombinedEFDR, PairedEFDR],
+                 score_qval_pairs = [(:prec_prob, :qval)],
+                 r = 1.0)
+
+# Process global scores on global dataframe
+add_original_target_scores!(global_results_df, library_precursors, [:global_prob])
+add_efdr_columns!(global_results_df, library_precursors;
                  method_types = [CombinedEFDR, PairedEFDR],
                  score_qval_pairs = [(:global_prob, :global_qval)],
                  r = 1.0)
 
-println("EFDR columns added to dataframe!")
+println("EFDR columns added to both dataframes!")
 
 # Example 4: Plotting only
 println("\nExample of generating plots from existing data...")
@@ -75,5 +86,16 @@ save_efdr_plots(prec_results, "my_plots";
                score_qval_pairs = [(:global_prob, :global_qval)],
                method_types = [CombinedEFDR, PairedEFDR],
                formats = [:png])
+
+# Example 5: Saving results from both analyses
+println("\nExample of saving both per-file and global analysis results...")
+
+# Save per-file results
+Arrow.write("per_file_results_with_efdr.arrow", prec_results)
+
+# Save global results
+Arrow.write("global_results_with_efdr.arrow", global_results_df)
+
+println("Both dataframes saved!")
 
 println("\nAll examples completed!")

@@ -76,48 +76,156 @@ function run_efdr_analysis(prec_results_path::String, library_precursors_path::S
     # Add entrap_pair_ids to results
     add_entrap_pair_ids!(prec_results, library_precursors)
     
-    # Add original target scores
-    verbose && println("Adding original target scores...")
-    score_cols = [pair[1] for pair in score_qval_pairs]
-    add_original_target_scores!(prec_results, library_precursors, score_cols)
+    # Separate global and per-file analyses
+    verbose && println("Separating global and per-file analyses...")
+    global_scores = Symbol[]
+    perfile_scores = Symbol[]
     
-    # Calculate EFDR columns
-    verbose && println("Calculating EFDR columns...")
-    add_efdr_columns!(prec_results, library_precursors;
-                     method_types=method_types,
-                     score_qval_pairs=score_qval_pairs,
-                     r=r_lib)
+    # Identify which scores are global vs per-file based on column name
+    for (score_col, qval_col) in score_qval_pairs
+        if occursin("global", String(score_col))
+            push!(global_scores, score_col)
+        else
+            push!(perfile_scores, score_col)
+        end
+    end
+    
+    # Create global results dataframe if we have global scores
+    global_results_df = nothing
+    if !isempty(global_scores)
+        verbose && println("Creating global results dataframe...")
+        # Use the first global score for selection (typically global_prob)
+        global_results_df = create_global_results_df(prec_results; score_col=global_scores[1])
+        # Add entrap_pair_ids to global results
+        add_entrap_pair_ids!(global_results_df, library_precursors)
+        verbose && println("Global dataframe has $(nrow(global_results_df)) unique precursors")
+    end
+    
+    # Process per-file scores on original dataframe
+    if !isempty(perfile_scores)
+        verbose && println("Processing per-file scores...")
+        add_original_target_scores!(prec_results, library_precursors, perfile_scores)
+        
+        # Calculate EFDR for per-file scores
+        perfile_pairs = [(s, q) for (s, q) in score_qval_pairs if s in perfile_scores]
+        if !isempty(perfile_pairs)
+            add_efdr_columns!(prec_results, library_precursors;
+                             method_types=method_types,
+                             score_qval_pairs=perfile_pairs,
+                             r=r_lib)
+        end
+    end
+    
+    # Process global scores on global dataframe
+    if !isnothing(global_results_df) && !isempty(global_scores)
+        verbose && println("Processing global scores...")
+        add_original_target_scores!(global_results_df, library_precursors, global_scores)
+        
+        # Calculate EFDR for global scores
+        global_pairs = [(s, q) for (s, q) in score_qval_pairs if s in global_scores]
+        if !isempty(global_pairs)
+            add_efdr_columns!(global_results_df, library_precursors;
+                             method_types=method_types,
+                             score_qval_pairs=global_pairs,
+                             r=r_lib)
+        end
+    end
+    
+    # For downstream analysis, use the appropriate dataframe
+    # If we have both, we'll need to handle them separately
+    analysis_df = if !isnothing(global_results_df) && !isempty(perfile_scores)
+        # We have both - need to handle this case
+        # For now, prioritize the original dataframe and note this limitation
+        verbose && @warn "Both global and per-file scores detected. Comparison results will be generated separately."
+        prec_results
+    elseif !isnothing(global_results_df)
+        global_results_df
+    else
+        prec_results
+    end
     
     # Generate comparison results
     comparison_results = Dict{Tuple{Symbol,Symbol}, DataFrame}()
+    
+    # Process per-file comparisons
     for (score_col, qval_col) in score_qval_pairs
-        verbose && println("Comparing EFDR methods for $score_col/$qval_col...")
-        comparison_df = compare_efdr_methods(prec_results, qval_col, score_col, 
-                                           library_precursors)
-        comparison_results[(score_col, qval_col)] = comparison_df
+        if score_col in perfile_scores
+            verbose && println("Comparing EFDR methods for $score_col/$qval_col (per-file)...")
+            comparison_df = compare_efdr_methods(prec_results, qval_col, score_col, 
+                                               library_precursors)
+            comparison_results[(score_col, qval_col)] = comparison_df
+        end
+    end
+    
+    # Process global comparisons
+    if !isnothing(global_results_df)
+        for (score_col, qval_col) in score_qval_pairs
+            if score_col in global_scores
+                verbose && println("Comparing EFDR methods for $score_col/$qval_col (global)...")
+                comparison_df = compare_efdr_methods(global_results_df, qval_col, score_col, 
+                                                   library_precursors)
+                comparison_results[(score_col, qval_col)] = comparison_df
+            end
+        end
     end
     
     # Calculate calibration errors
     calibration_results = Dict{Symbol, Tuple{DataFrame, Float64}}()
+    
+    # Calibration for per-file scores
     for (score_col, qval_col) in score_qval_pairs
-        for method_type in method_types
-            method_name = method_type == CombinedEFDR ? "combined" : "paired"
-            efdr_col = Symbol(String(score_col) * "_" * method_name * "_efdr")
-            
-            verbose && println("Calculating calibration error for $efdr_col...")
-            cal_data, cal_error = calculate_efdr_calibration_error(
-                prec_results, qval_col, efdr_col, library_precursors
-            )
-            calibration_results[efdr_col] = (cal_data, cal_error)
+        if score_col in perfile_scores
+            for method_type in method_types
+                method_name = method_type == CombinedEFDR ? "combined" : "paired"
+                efdr_col = Symbol(String(score_col) * "_" * method_name * "_efdr")
+                
+                verbose && println("Calculating calibration error for $efdr_col (per-file)...")
+                cal_data, cal_error = calculate_efdr_calibration_error(
+                    prec_results, qval_col, efdr_col, library_precursors
+                )
+                calibration_results[efdr_col] = (cal_data, cal_error)
+            end
+        end
+    end
+    
+    # Calibration for global scores
+    if !isnothing(global_results_df)
+        for (score_col, qval_col) in score_qval_pairs
+            if score_col in global_scores
+                for method_type in method_types
+                    method_name = method_type == CombinedEFDR ? "combined" : "paired"
+                    efdr_col = Symbol(String(score_col) * "_" * method_name * "_efdr")
+                    
+                    verbose && println("Calculating calibration error for $efdr_col (global)...")
+                    cal_data, cal_error = calculate_efdr_calibration_error(
+                        global_results_df, qval_col, efdr_col, library_precursors
+                    )
+                    calibration_results[efdr_col] = (cal_data, cal_error)
+                end
+            end
         end
     end
     
     # Save plots
     verbose && println("Generating plots...")
-    save_efdr_plots(prec_results, output_dir;
-                   score_qval_pairs=score_qval_pairs,
-                   method_types=method_types,
-                   formats=plot_formats)
+    
+    # Generate plots for per-file scores
+    if !isempty(perfile_scores)
+        perfile_pairs = [(s, q) for (s, q) in score_qval_pairs if s in perfile_scores]
+        save_efdr_plots(prec_results, output_dir;
+                       score_qval_pairs=perfile_pairs,
+                       method_types=method_types,
+                       formats=plot_formats)
+    end
+    
+    # Generate plots for global scores
+    if !isnothing(global_results_df) && !isempty(global_scores)
+        global_pairs = [(s, q) for (s, q) in score_qval_pairs if s in global_scores]
+        save_efdr_plots(global_results_df, output_dir;
+                       score_qval_pairs=global_pairs,
+                       method_types=method_types,
+                       formats=plot_formats)
+    end
     
     # Add plot files to output list
     for (score_col, _) in score_qval_pairs
@@ -134,21 +242,51 @@ function run_efdr_analysis(prec_results_path::String, library_precursors_path::S
     # Generate markdown report
     verbose && println("Generating markdown report...")
     report_path = joinpath(output_dir, "efdr_analysis_report.md")
-    generate_markdown_report(prec_results, library_precursors, comparison_results, 
+    # Use analysis_df for report generation (could be either dataframe)
+    report_df = if !isnothing(global_results_df) && isempty(perfile_scores)
+        global_results_df
+    else
+        prec_results
+    end
+    generate_markdown_report(report_df, library_precursors, comparison_results, 
                            calibration_results, score_qval_pairs, method_types,
                            original_rows, output_dir, report_path)
     push!(output_files, report_path)
     
     # Save processed data
     verbose && println("Saving processed data...")
-    data_path = joinpath(output_dir, "prec_results_with_efdr.arrow")
-    Arrow.write(data_path, prec_results)
-    push!(output_files, data_path)
+    
+    # Save per-file results if we processed them
+    saved_dfs = Dict{String, DataFrame}()
+    if !isempty(perfile_scores)
+        data_path = joinpath(output_dir, "prec_results_with_efdr.arrow")
+        Arrow.write(data_path, prec_results)
+        push!(output_files, data_path)
+        saved_dfs["per_file"] = prec_results
+    end
+    
+    # Save global results if we processed them
+    if !isnothing(global_results_df) && !isempty(global_scores)
+        global_data_path = joinpath(output_dir, "global_results_with_efdr.arrow")
+        Arrow.write(global_data_path, global_results_df)
+        push!(output_files, global_data_path)
+        saved_dfs["global"] = global_results_df
+    end
     
     verbose && println("\nAnalysis complete! Output saved to: $output_dir")
     
+    # Return both dataframes if we have them
+    return_data = if length(saved_dfs) == 2
+        # Merge both dataframes or return separately
+        saved_dfs
+    elseif haskey(saved_dfs, "global")
+        saved_dfs["global"]
+    else
+        saved_dfs["per_file"]
+    end
+    
     return (
-        filtered_data = prec_results,
+        filtered_data = return_data,
         comparison_results = comparison_results,
         calibration_results = calibration_results,
         output_files = output_files

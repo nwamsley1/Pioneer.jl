@@ -8,6 +8,8 @@ using Dates
 using CSV
 using Plots
 using Statistics
+using ProgressBars
+using Dictionaries
 
 # Include all source files
 include("src/core/efdr_methods.jl")

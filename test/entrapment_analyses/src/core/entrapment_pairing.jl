@@ -41,6 +41,7 @@ For each group (defined by base_pep_id, prec_charge, is_decoy, mod_key):
 - Returns the dataframe with added 'entrap_pair_id' column
 """
 function assign_entrapment_pairs!(df::DataFrame)
+    
     # Initialize pair_id column if it doesn't exist
     if !hasproperty(df, :entrap_pair_id)
         df[!, :entrap_pair_id] = Vector{Union{Missing, UInt32}}(missing, nrow(df))
