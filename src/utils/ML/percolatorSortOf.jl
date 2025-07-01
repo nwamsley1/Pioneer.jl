@@ -44,8 +44,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     sort!(psms, [:pair_id, :isotopes_captured])
 
     #Final prob estimates
-    prob_estimates = zeros(Float32, size(psms, 1))
-    prob_estimates_stage1 = zeros(Float32, size(psms, 1))
+    prob_estimates = zeros(Float32, size(psms, 1))           # probabilities without MBR features
+    MBR_estimates  = zeros(Float32, size(psms, 1))           # probabilities with MBR features
     
 
     unique_cv_folds = unique(psms[!, :cv_fold])
@@ -116,7 +116,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                 end
                 # Keep track of the last non-MBR probabilites so we know which precursors are transfer candidates
                 if itr == mbr_start_iter - 1
-                    prob_estimates_stage1[test_fold_idxs] = test_fold_psms.prob
+                    prob_estimates[test_fold_idxs] = test_fold_psms.prob
                 end
             end
 
@@ -129,39 +129,22 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
-        prob_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+        MBR_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
         # Store models for this fold
         models[test_fold_idx] = fold_models
     end
     psms[!,:prob] = prob_estimates
-    
-    if match_between_runs
-        @. psms.prob = clamp(
-            psms.prob,
-            0f0,
-            max(prob_estimates_stage1, coalesce(psms.MBR_max_pair_prob, prob_estimates_stage1)
-            )
-        )
-        # Label transfer candidates using the probabilities prior to MBR features
-        stage1_qvals = zeros(Float64, length(prob_estimates_stage1))
-        get_qvalues!(prob_estimates_stage1, psms.target, stage1_qvals)
-        psms.MBR_transfer_candidate .= (stage1_qvals .> q_value_threshold) .& !ismissing(psms.MBR_is_best_decoy)
 
-        # Estimate FTR and filter by setting prob to 0
-        is_bad_transfer = (psms.target .& [(!ismissing(d) && d) for d in psms.MBR_is_best_decoy]) .| (psms.decoy .& [(!ismissing(d) && !d) for d in psms.MBR_is_best_decoy])
-        τ = get_ftr_threshold(psms.prob, psms.target, is_bad_transfer, max_ftr; mask=psms.MBR_transfer_candidate)
-        psms.prob[(psms.MBR_transfer_candidate .&& (psms.prob .< τ))] .= 0.0f0
+    if match_between_runs
+        psms[!, :MBR_prob] = MBR_estimates
+        @. psms.MBR_prob = clamp(
+            psms.MBR_prob,
+            0f0,
+            max(psms.prob, coalesce(psms.MBR_max_pair_prob, psms.prob))
+        )
     end
 
-    transform!(
-        groupby(psms, :precursor_idx),
-        :prob => (p -> maximum(p)) => :global_prob
-    )
 
-    transform!(
-        groupby(psms, [:precursor_idx, :ms_file_idx]),
-        :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob
-    )
 
     dropVectorColumns!(psms) # avoids writing issues
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
@@ -199,10 +182,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         models::Dictionary{UInt8,Booster},
         features::Vector{Symbol},
         match_between_runs::Bool;
-        dropVectorCols::Bool = false,
-        save_stage1_prob = false)
-
-        prec_to_global_score = Dictionary{UInt32, Float32}()
+        dropVectorCols::Bool = false)
     
         #Reset counts for new scores
         for (key, value) in pairs(prec_to_best_score_new)
@@ -311,35 +291,19 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
 
-            if dropVectorCols 
+            if dropVectorCols
                 if match_between_runs
-                     @. psms_subset.prob = clamp(
-                        psms_subset.prob,
+                    psms_subset.MBR_prob = probs
+                    @. psms_subset.MBR_prob = clamp(
+                        psms_subset.MBR_prob,
                         0f0,
-                        max(psms_subset.prob_stage1, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob_stage1)
-                        )
+                        max(psms_subset.prob, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob))
                     )
-                    stage1_qvals = Vector{Float64}(undef, nrow(psms_subset))
-                    get_qvalues!(psms_subset.prob_stage1, psms_subset.target, stage1_qvals)
-                    transfer_mask = (stage1_qvals .> q_value_threshold) .& .!ismissing.(psms_subset.MBR_is_best_decoy)
-                    bad_transfer = (psms_subset.target .& coalesce.(psms_subset.MBR_is_best_decoy, false)) .|
-                                (psms_subset.decoy .& .!coalesce.(psms_subset.MBR_is_best_decoy, true))
-                    τ = get_ftr_threshold(psms_subset.prob, psms_subset.target, bad_transfer, max_ftr;  mask = transfer_mask)
-                    psms_subset.MBR_transfer_candidate .= transfer_mask
-                    psms_subset.prob[(psms_subset.MBR_transfer_candidate .&& (psms_subset.prob .< τ))] .= 0.0f0
-                    #psms_subset.passes_ftr = .!(transfer_mask .& (psms_subset.prob .< τ))
+
+                else
+                    psms_subset.prob = probs
                 end
 
-                # update global prob
-                for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
-                    #if match_between_runs && !psms_subset.passes_ftr[i] continue end
-                    prob = probs[i]
-                    if haskey(prec_to_global_score, precursor_idx)
-                        prec_to_global_score[precursor_idx] = max(prob, prec_to_global_score[precursor_idx])
-                    else
-                        insert!(prec_to_global_score, precursor_idx, prob)
-                    end
-                end
             end
         end
     
@@ -356,16 +320,10 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            if save_stage1_prob
-                psms_subset.prob_stage1 = zeros(Float32, size(psms_subset, 1))
-            end
 
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 psms_subset[i,:prob] = probs[i]
                 
-                if save_stage1_prob
-                    psms_subset[i,:prob_stage1] = probs[i]
-                end
                     
                 if match_between_runs && !dropVectorCols
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
@@ -419,51 +377,20 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
             if dropVectorCols
-                # update global prob
-                psms_subset.global_prob = zeros(Float32, size(psms_subset, 1))
-                for (i, precursor_idx) in enumerate(psms_subset[!,:precursor_idx])
-                    if haskey(prec_to_global_score, precursor_idx)
-                        psms_subset[i,:global_prob] = prec_to_global_score[precursor_idx]
-                    end
-                end
-
-
-                # update prec prob
-                psms_subset.prec_prob = zeros(Float32, size(psms_subset, 1))
-
                 if match_between_runs
-                    @. psms_subset.prob = clamp(
-                        psms_subset.prob,
+                    psms_subset.MBR_prob = probs
+                    @. psms_subset.MBR_prob = clamp(
+                        psms_subset.MBR_prob,
                         0f0,
-                        max(psms_subset.prob_stage1, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob_stage1)
-                        )
+                        max(psms_subset.prob, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob))
                     )
-                    stage1_qvals = Vector{Float64}(undef, nrow(psms_subset))
-                    get_qvalues!(psms_subset.prob_stage1, psms_subset.target, stage1_qvals)
-                    transfer_mask = (stage1_qvals .> q_value_threshold) .& .!ismissing.(psms_subset.MBR_is_best_decoy)
-                    bad_transfer = (psms_subset.target .& coalesce.(psms_subset.MBR_is_best_decoy, false)) .|
-                                (psms_subset.decoy .& .!coalesce.(psms_subset.MBR_is_best_decoy, true))
-                    τ = get_ftr_threshold(psms_subset.prob, psms_subset.target, bad_transfer, max_ftr; mask = transfer_mask)
-
-                    psms_subset.MBR_transfer_candidate .= transfer_mask
-                    #psms_subset.passes_ftr = .!(transfer_mask .& (psms_subset.prob .< τ))
-                    #psms_subset.prob[.!psms_subset.passes_ftr] .= 0.0f0
-                    psms_subset.prob[(psms_subset.MBR_transfer_candidate .&& (psms_subset.prob .< τ))] .= 0.0f0
-
-                    select!(psms_subset, Not(:prob_stage1))
+                else
+                    psms_subset.prob = probs
                 end
 
-                transform!(
-                    groupby(psms_subset, [:precursor_idx, :ms_file_idx]),
-                    :prob => (p -> 1.0f0-0.000001f0-exp(sum(log1p.(-p)))) => :prec_prob
-                ) 
-
-            end
-
-
-            if dropVectorCols # last iteration
                 Arrow.write(file_path, dropVectorColumns!(psms_subset))
             else
+                psms_subset.prob = probs
                 Arrow.write(file_path, convert_subarrays(psms_subset))
             end
         end
@@ -567,8 +494,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             models_for_iter,
             features,
             match_between_runs;
-            dropVectorCols = (train_iter == length(iter_scheme)),
-            save_stage1_prob = (train_iter == length(iter_scheme)-1)
+            dropVectorCols = (train_iter == length(iter_scheme))
         )
         update(pbar)
     end
@@ -675,6 +601,7 @@ function initialize_prob_group_features!(
     psms[!, :q_value]   = zeros(Float64, n)
 
     if match_between_runs
+        psms[!, :MBR_prob]                    = zeros(Float32, n)
         psms[!, :MBR_max_pair_prob]             = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_best_irt_diff]             = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_log2_weight_ratio]         = Vector{Union{Missing, Float32}}(missing, n)

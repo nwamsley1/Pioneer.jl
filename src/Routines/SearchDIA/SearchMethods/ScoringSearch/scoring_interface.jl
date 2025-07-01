@@ -74,6 +74,92 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
     return acc_to_max_pg_score
 end
 
+"""
+    add_trace_qvalues(fdr_scale_factor::Float32)
+
+Add a column `:trace_qval` based on the `:prob` column using target/decoy q-values.
+"""
+function add_trace_qvalues(fdr_scale_factor::Float32)
+    op = function(df)
+        qvals = Vector{Float32}(undef, nrow(df))
+        get_qvalues!(df.prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
+        df[!, :trace_qval] = qvals
+        return df
+    end
+    return "add_trace_qvalues" => op
+end
+
+"""
+    label_transfer_candidates(threshold::Float32)
+
+Label MBR transfer candidates based on trace q-values and presence of a best decoy.
+"""
+function label_transfer_candidates(threshold::Float32)
+    op = function(df)
+        df[!, :MBR_transfer_candidate] = (df.trace_qval .> threshold) .& .!ismissing.(df.MBR_is_best_decoy)
+        return df
+    end
+    return "label_transfer_candidates" => op
+end
+
+"""
+    label_bad_transfers()
+
+Mark transfers that appear to come from the wrong class (target/decoy).
+"""
+function label_bad_transfers()
+    op = function(df)
+        mask = df.MBR_transfer_candidate
+        df[!, :MBR_bad_transfer] = mask .& ((df.target .& coalesce.(df.MBR_is_best_decoy, false)) .|
+                                           (df.decoy .& .!coalesce.(df.MBR_is_best_decoy, true)))
+        return df
+    end
+    return "label_bad_transfers" => op
+end
+
+"""
+    apply_ftr_threshold(max_ftr::Float32)
+
+Clamp `:MBR_prob` values based on the false transfer rate threshold.
+"""
+function apply_ftr_threshold(max_ftr::Float32)
+    op = function(df)
+        τ = get_ftr_threshold(df.MBR_prob, df.target, df.MBR_bad_transfer, max_ftr; mask=df.MBR_transfer_candidate)
+        mask = df.MBR_transfer_candidate .& (df.MBR_prob .< τ)
+        df.MBR_prob[mask] .= 0.0f0
+        return df
+    end
+    return "apply_ftr_threshold" => op
+end
+
+"""
+    add_prec_prob(prob_col::Symbol)
+
+Compute run-specific precursor probabilities from the given probability column.
+"""
+function add_prec_prob(prob_col::Symbol)
+    op = function(df)
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+                   prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
+        return df
+    end
+    return "add_prec_prob" => op
+end
+
+"""
+    add_global_prob(prob_col::Symbol)
+
+Compute experiment-wide precursor probabilities from the given probability column.
+"""
+function add_global_prob(prob_col::Symbol)
+    op = function(df)
+        transform!(groupby(df, :precursor_idx),
+                   prob_col => (p -> maximum(p)) => :global_prob)
+        return df
+    end
+    return "add_global_prob" => op
+end
+
 #==========================================================
 Reference-based Sort and Filter Functions
 ==========================================================#
