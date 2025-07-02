@@ -235,29 +235,11 @@ function summarize_results!(
 
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
 
-            qvals = Vector{Float32}(undef, nrow(merged_df))
-            get_qvalues!(merged_df.prob, merged_df.target, qvals;
-                         fdr_scale_factor=getLibraryFdrScaleFactor(search_context))
-            merged_df[!, :trace_qval] = qvals
-
             if params.match_between_runs
-                merged_df[!, :MBR_transfer_candidate] =
-                    (merged_df.trace_qval .> params.q_value_threshold) .&
-                    .!ismissing.(merged_df.MBR_is_best_decoy)
-                merged_df[!, :MBR_bad_transfer] = merged_df.MBR_transfer_candidate .&
-                    ((merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .|
-                     (merged_df.decoy .& .!coalesce.(merged_df.MBR_is_best_decoy, true)))
-
-                τ = get_ftr_threshold(
-                    merged_df.MBR_prob,
-                    merged_df.target,
-                    merged_df.MBR_bad_transfer,
-                    params.max_MBR_false_transfer_rate;
-                    mask = merged_df.MBR_transfer_candidate)
-                mask = merged_df.MBR_transfer_candidate .& (merged_df.MBR_prob .< τ)
-                merged_df.MBR_prob[mask] .= 0.0f0
-
-                prob_col = :MBR_prob
+                prob_col = apply_mbr_filter!(
+                    merged_df,
+                    params,
+                    getLibraryFdrScaleFactor(search_context))
             else
                 prob_col = :prob
             end
@@ -265,7 +247,8 @@ function summarize_results!(
             transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
                        prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
             transform!(groupby(merged_df, :precursor_idx),
-                       prob_col => (p -> maximum(p)) => :global_prob)
+                       :prec_prob => (p -> maximum(p)) => :global_prob)
+            prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO probably want this for getting best traces
 
             # Write updated data back to individual files
             for (idx, ref) in enumerate(second_pass_refs)

@@ -129,7 +129,11 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
         end
         # Make predictions on hold out data.
         test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
-        MBR_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+        if match_between_runs
+            MBR_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+        else
+            prob_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
+        end
         # Store models for this fold
         models[test_fold_idx] = fold_models
     end
@@ -143,9 +147,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             max(psms.prob, coalesce(psms.MBR_max_pair_prob, psms.prob))
         )
     end
-
-
-
+    
     dropVectorColumns!(psms) # avoids writing issues
     for (ms_file_idx, gpsms) in pairs(groupby(psms, :ms_file_idx))
         fpath = file_paths[ms_file_idx[:ms_file_idx]]
