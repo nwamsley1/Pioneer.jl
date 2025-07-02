@@ -57,8 +57,6 @@ function score_precursor_isotope_traces(
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32,
-    q_value_threshold::Float32,
-    max_MBR_false_transfer_rate::Float32,
     max_psms_in_memory::Int64
 )
     # Count total PSMs
@@ -74,9 +72,7 @@ function score_precursor_isotope_traces(
             match_between_runs,
             max_q_value_xgboost_rescore,
             max_q_value_xgboost_mbr_rescore,
-            min_PEP_neg_threshold_xgboost_rescore,
-            q_value_threshold,
-            max_MBR_false_transfer_rate
+            min_PEP_neg_threshold_xgboost_rescore
         )
     else
         # Use in-memory algorithm
@@ -88,9 +84,7 @@ function score_precursor_isotope_traces(
             match_between_runs,
             max_q_value_xgboost_rescore,
             max_q_value_xgboost_mbr_rescore,
-            min_PEP_neg_threshold_xgboost_rescore,
-            q_value_threshold,
-            max_MBR_false_transfer_rate
+            min_PEP_neg_threshold_xgboost_rescore
         )
     end
     
@@ -200,9 +194,7 @@ function score_precursor_isotope_traces_in_memory!(
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
-    q_value_threshold::Float32,
-    max_MBR_false_transfer_rate::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -282,8 +274,6 @@ function score_precursor_isotope_traces_in_memory!(
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,
-                                q_value_threshold = q_value_threshold,
-                                max_ftr = max_MBR_false_transfer_rate,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -338,8 +328,6 @@ function score_precursor_isotope_traces_in_memory!(
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,
-                                q_value_threshold = q_value_threshold,
-                                max_ftr = max_MBR_false_transfer_rate,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 1, 
@@ -374,9 +362,7 @@ function score_precursor_isotope_traces_out_of_memory!(
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
-    min_PEP_neg_threshold_xgboost_rescore::Float32,
-    q_value_threshold::Float32,
-    max_MBR_false_transfer_rate::Float32
+    min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -455,8 +441,6 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,
-                                q_value_threshold = q_value_threshold,
-                                max_ftr = max_MBR_false_transfer_rate,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -499,8 +483,6 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,
-                                q_value_threshold = q_value_threshold,
-                                max_ftr = max_MBR_false_transfer_rate,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 100, 

@@ -213,8 +213,6 @@ function summarize_results!(
                 params.max_q_value_xgboost_rescore,
                 params.max_q_value_xgboost_mbr_rescore,
                 params.min_PEP_neg_threshold_xgboost_rescore,
-                params.q_value_threshold,
-                params.max_MBR_false_transfer_rate,
                 params.max_psms_in_memory
             )
         end

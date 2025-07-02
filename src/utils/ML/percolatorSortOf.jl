@@ -15,56 +15,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-function train_booster(psms::AbstractDataFrame, features, num_round;
-                       colsample_bytree::Float64,
-                       colsample_bynode::Float64,
-                       eta::Float64,
-                       min_child_weight::Int,
-                       subsample::Float64,
-                       gamma::Int,
-                       max_depth::Int)
-    bst = xgboost(
-        (psms[!, features], psms[!, :target]),
-        num_round = num_round,
-        colsample_bytree = colsample_bytree,
-        colsample_bynode = colsample_bynode,
-        scale_pos_weight = sum(psms.decoy) / sum(psms.target),
-        gamma = gamma,
-        max_depth = max_depth,
-        eta = eta,
-        min_child_weight = min_child_weight,
-        subsample = subsample,
-        objective = "binary:logistic",
-        seed = rand(UInt32),
-        watchlist = (;),
-    )
-    bst.feature_names = string.(features)
-    return bst
-end
-
-function predict_fold!(bst::Booster, psms_train::AbstractDataFrame,
-                       test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = XGBoost.predict(bst, test_fold_psms[!, features])
-    psms_train[!, :prob] = XGBoost.predict(bst, psms_train[!, features])
-    get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
-end
-
-function update_mbr_features!(psms_train::AbstractDataFrame,
-                              test_fold_psms::AbstractDataFrame,
-                              prob_estimates::Vector{Float32},
-                              test_fold_idxs,
-                              itr::Int,
-                              mbr_start_iter::Int,
-                              max_q_value_xgboost_rescore::Float32)
-    if itr >= mbr_start_iter - 1
-        get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
-        summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
-        summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
-    end
-    if itr == mbr_start_iter - 1
-        prob_estimates[test_fold_idxs] = test_fold_psms.prob
-    end
-end
 function sort_of_percolator_in_memory!(psms::DataFrame, 
                   file_paths::Vector{String},
                   features::Vector{Symbol},
@@ -72,8 +22,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   max_q_value_xgboost_rescore::Float32 = 0.01f0,
                   max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                   min_PEP_neg_threshold_xgboost_rescore = 0.90f0,
-                  q_value_threshold::Float32 = 0.01f0,
-                  max_ftr::Float32 = 0.01f0,
                   colsample_bytree::Float64 = 0.5,
                   colsample_bynode::Float64 = 0.5,
                   eta::Float64 = 0.15,
@@ -86,7 +34,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     
     
     #Faster if sorted first
-    @info "sort time..."
     sort!(psms, [:pair_id, :isotopes_captured])
 
     prob_estimates = zeros(Float32, nrow(psms))
@@ -180,8 +127,6 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                     max_q_value_xgboost_rescore::Float32 = 0.01f0,
                     max_q_value_xgboost_mbr_rescore::Float32 = 0.20f0,
                     min_PEP_neg_threshold_xgboost_rescore::Float32 = 0.90f0,
-                    q_value_threshold::Float32 = 0.01f0,
-                    max_ftr::Float32 = 0.01f0,
                     colsample_bytree::Float64 = 0.5, 
                     colsample_bynode::Float64 = 0.5,
                     eta::Float64 = 0.15, 
@@ -278,7 +223,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             prec_to_best_score_new[key] = new_scores
                         end
 
-                        if qvals[i] <= q_value_threshold
+                        if qvals[i] <= max_q_value_xgboost_rescore
                             push!(scores.unique_passing_runs, psms_subset.ms_file_idx[i])
                         end
 
@@ -298,7 +243,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                 best_ms_file_idx_2              = zero(UInt32),
                                 is_best_decoy_1                 = psms_subset.decoy[i],
                                 is_best_decoy_2                 = false,
-                                unique_passing_runs             = ( qvals[i] <= q_value_threshold ?
+                                unique_passing_runs             = ( qvals[i] <= max_q_value_xgboost_rescore ?
                                                                     Set{UInt16}([psms_subset.ms_file_idx[i]]) :
                                                                     Set{UInt16}() )
                             ))
@@ -473,7 +418,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             psms_train[!,:prob] = XGBoost.predict(bst, psms_train[!, features])
             
             if match_between_runs
-                summarize_precursors!(psms_train, q_cutoff = q_value_threshold)
+                summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
             end
 
             update(pbar)
@@ -530,6 +475,57 @@ end
 
 
 
+
+function train_booster(psms::AbstractDataFrame, features, num_round;
+                       colsample_bytree::Float64,
+                       colsample_bynode::Float64,
+                       eta::Float64,
+                       min_child_weight::Int,
+                       subsample::Float64,
+                       gamma::Int,
+                       max_depth::Int)
+    bst = xgboost(
+        (psms[!, features], psms[!, :target]),
+        num_round = num_round,
+        colsample_bytree = colsample_bytree,
+        colsample_bynode = colsample_bynode,
+        scale_pos_weight = sum(psms.decoy) / sum(psms.target),
+        gamma = gamma,
+        max_depth = max_depth,
+        eta = eta,
+        min_child_weight = min_child_weight,
+        subsample = subsample,
+        objective = "binary:logistic",
+        seed = rand(UInt32),
+        watchlist = (;),
+    )
+    bst.feature_names = string.(features)
+    return bst
+end
+
+function predict_fold!(bst::Booster, psms_train::AbstractDataFrame,
+                       test_fold_psms::AbstractDataFrame, features)
+    test_fold_psms[!, :prob] = XGBoost.predict(bst, test_fold_psms[!, features])
+    psms_train[!, :prob] = XGBoost.predict(bst, psms_train[!, features])
+    get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+end
+
+function update_mbr_features!(psms_train::AbstractDataFrame,
+                              test_fold_psms::AbstractDataFrame,
+                              prob_estimates::Vector{Float32},
+                              test_fold_idxs,
+                              itr::Int,
+                              mbr_start_iter::Int,
+                              max_q_value_xgboost_rescore::Float32)
+    if itr >= mbr_start_iter - 1
+        get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
+        summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
+        summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
+    end
+    if itr == mbr_start_iter - 1
+        prob_estimates[test_fold_idxs] = test_fold_psms.prob
+    end
+end
 
 function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)   
     # Compute pair specific features that rely on decoys and chromatograms
