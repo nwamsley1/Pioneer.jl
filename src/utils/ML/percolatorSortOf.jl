@@ -96,12 +96,18 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     models = Dict{UInt8, Vector{Booster}}()
     mbr_start_iter = length(iter_scheme)
 
+    cv_fold_col = psms[!, :cv_fold]
+    fold_indices = Dict(fold => findall(==(fold), cv_fold_col) for fold in unique_cv_folds)
+    train_indices = Dict(fold => findall(!=(fold), cv_fold_col) for fold in unique_cv_folds)
+
     Random.seed!(1776)
     pbar = ProgressBar(total=length(unique_cv_folds) * length(iter_scheme))
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
-        psms_train = @view psms[findall(x -> x != test_fold_idx, psms[!, :cv_fold]), :]
-        fold_models = Vector{Booster}()
+        psms_train = @view psms[train_indices[test_fold_idx], :]
+        test_fold_idxs = fold_indices[test_fold_idx]
+        test_fold_psms = @view psms[test_fold_idxs, :]
+        fold_models = Vector{Booster}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
             psms_train_itr = get_training_data_for_iteration!(psms_train,
@@ -120,10 +126,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                subsample=subsample,
                                gamma=gamma,
                                max_depth=max_depth)
-            push!(fold_models, bst)
-
-            test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
-            test_fold_psms = @view psms[test_fold_idxs, :]
+            fold_models[itr] = bst
 
             predict_fold!(bst, psms_train, test_fold_psms, features)
 
@@ -140,7 +143,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
             end
         end
         # Make predictions on hold out data.
-        test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
         if match_between_runs
             MBR_estimates[test_fold_idxs] = psms[test_fold_idxs,:prob]
         else
