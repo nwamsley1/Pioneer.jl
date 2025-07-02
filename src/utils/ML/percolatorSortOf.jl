@@ -541,35 +541,39 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         # best precursor match that isn't itself. It's always one of the top 2.
 
         # single pass: record the best PSM index & prob per run
-        best_i = Dict{eltype(sub_psms.ms_file_idx), Int}()
-        best_p = Dict{eltype(sub_psms.ms_file_idx), eltype(sub_psms.prob)}()
+        offset = Int(minimum(sub_psms.ms_file_idx))
+        range_len = Int(maximum(sub_psms.ms_file_idx)) - offset + 1
+        best_i = zeros(Int, range_len)
+        best_p = fill(-Inf, range_len)
         for (i, run) in enumerate(sub_psms.ms_file_idx)
+            idx = Int(run) - offset + 1
             p = sub_psms.prob[i]
-            if !haskey(best_p, run) || p > best_p[run]
-                best_p[run] = p
-                best_i[run] = i
+            if p > best_p[idx]
+                best_p[idx] = p
+                best_i[idx] = i
             end
         end
 
         # if more than one run, find the global top-2 runs by their best-PSM prob
-        run_best_indices = Dict{eltype(sub_psms.ms_file_idx), Int}()
-        runs = collect(keys(best_i))
+        run_best_indices = zeros(Int, range_len)
+        runs = findall(!=(0), best_i)
         if length(runs) > 1
             # track top two runs (r1 > r2)
-            r1 = nothing; p1 = -Inf
-            r2 = nothing; p2 = -Inf
-            for (run, p) in best_p
+            r1 = 0; p1 = -Inf
+            r2 = 0; p2 = -Inf
+            for r in runs
+                p = best_p[r]
                 if p > p1
                     r2, p2 = r1, p1
-                    r1, p1 = run, p
+                    r1, p1 = r, p
                 elseif p > p2
-                    r2, p2 = run, p
+                    r2, p2 = r, p
                 end
             end
 
             # assign, for each run, the best index in “any other” run
-            for run in runs
-                run_best_indices[run] = (run == r1 ? best_i[r2] : best_i[r1])
+            for r in runs
+                run_best_indices[r] = (r == r1 ? best_i[r2] : best_i[r1])
             end
         end
 
@@ -577,7 +581,9 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
         for i in 1:nrow(sub_psms)
             sub_psms.MBR_num_runs[i] = length(unique(sub_psms.ms_file_idx[sub_psms.q_value .<= q_cutoff]))
 
-            if !haskey(run_best_indices, sub_psms.ms_file_idx[i])
+            idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
+            best_idx = run_best_indices[idx]
+            if best_idx == 0
                 sub_psms.MBR_best_irt_diff[i] = missing
                 sub_psms.MBR_rv_coefficient[i] = missing
                 sub_psms.MBR_is_best_decoy[i] = missing
@@ -587,7 +593,6 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
                 continue
             end
 
-            best_idx = run_best_indices[sub_psms.ms_file_idx[i]]
             best_log2_weights = log2.(sub_psms.weights[best_idx])
             best_iRTs = sub_psms.irts[best_idx]
             best_log2_weights_padded, weights_padded = pad_equal_length(best_log2_weights, log2.(sub_psms.weights[i]))
