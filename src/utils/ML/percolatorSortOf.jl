@@ -145,37 +145,13 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         match_between_runs::Bool;
         dropVectorCols::Bool = false)
     
-        #Reset counts for new scores
-        for (key, value) in pairs(prec_to_best_score_new)
-            prec_to_best_score_new[key] = (
-                best_prob_1 = zero(Float32),
-                best_prob_2 = zero(Float32),
-                best_log2_weights_1 = Vector{Float32}(),
-                best_log2_weights_2 = Vector{Float32}(),
-                best_irts_1 = Vector{Float32}(),
-                best_irts_2 = Vector{Float32}(),
-                best_weight_1 = zero(Float32),
-                best_weight_2 = zero(Float32),
-                best_log2_intensity_explained_1 = zero(Float32),
-                best_log2_intensity_explained_2 = zero(Float32),
-                best_ms_file_idx_1 = zero(UInt32),
-                best_ms_file_idx_2 = zero(UInt32),
-                is_best_decoy_1 = false,
-                is_best_decoy_2 = false,
-                unique_passing_runs = Set{UInt16}()
-            )
-        end
+        # Reset counts for new scores
+        reset_precursor_scores!(prec_to_best_score_new)
             
         for file_path in file_paths
             psms_subset = DataFrame(Arrow.Table(file_path))
             
-            probs = zeros(Float32, nrow(psms_subset))
-            for (fold_idx, bst) in pairs(models)
-                fold_rows = findall(x -> x == fold_idx, psms_subset[!, :cv_fold])
-                if !isempty(fold_rows)
-                    probs[fold_rows] = XGBoost.predict(bst, psms_subset[fold_rows, features])
-                end
-            end
+            probs = predict_cv_models(models, psms_subset, features)
             
             if match_between_runs
                 #Update maximum probabilities for tracked precursors 
@@ -254,13 +230,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
             if dropVectorCols
                 if match_between_runs
-                    psms_subset.MBR_prob = probs
-                    @. psms_subset.MBR_prob = clamp(
-                        psms_subset.MBR_prob,
-                        0f0,
-                        max(psms_subset.prob, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob))
-                    )
-
+                    clamp_mbr_probs!(psms_subset, probs)
                 else
                     psms_subset.prob = probs
                 end
@@ -272,15 +242,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         # Compute probs and features for next round
         for file_path in file_paths
             psms_subset = DataFrame(Tables.columntable(Arrow.Table(file_path)))
-            probs = zeros(Float32, nrow(psms_subset))
-
-            for (fold_idx, bst) in pairs(models)
-                fold_rows = findall(x -> x == fold_idx, psms_subset[!, :cv_fold])
-                if !isempty(fold_rows)
-                    probs[fold_rows] = XGBoost.predict(bst, psms_subset[fold_rows, features])
-                end
-            end
-
+            probs = predict_cv_models(models, psms_subset, features)
 
             for (i, pair_id) in enumerate(psms_subset[!,:pair_id])
                 psms_subset[i,:prob] = probs[i]
@@ -337,23 +299,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            if dropVectorCols
-                if match_between_runs
-                    psms_subset.MBR_prob = probs
-                    @. psms_subset.MBR_prob = clamp(
-                        psms_subset.MBR_prob,
-                        0f0,
-                        max(psms_subset.prob, coalesce(psms_subset.MBR_max_pair_prob, psms_subset.prob))
-                    )
-                else
-                    psms_subset.prob = probs
-                end
-
-                Arrow.write(file_path, dropVectorColumns!(psms_subset))
-            else
-                psms_subset.prob = probs
-                Arrow.write(file_path, convert_subarrays(psms_subset))
-            end
+            write_subset(file_path, psms_subset, probs, match_between_runs; dropVectors=dropVectorCols)
         end
         
         return prec_to_best_score_new
@@ -384,23 +330,14 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                                 itr >= length(iter_scheme))
             ###################
             #Train a model on the n-1 training folds.
-            _seed_ = rand(UInt32)
-            bst = xgboost((psms_train_itr[!,features], psms_train_itr[!,:target]), 
-                            num_round=num_round, 
-                            #monotone_constraints = monotone_constraints,
-                            colsample_bytree = colsample_bytree, 
-                            colsample_bynode = colsample_bynode,
-                            scale_pos_weight = sum(psms_train_itr.decoy) / sum(psms_train_itr.target),
-                            gamma = gamma, 
-                            max_depth=max_depth, 
-                            eta = eta, 
-                            min_child_weight = min_child_weight, 
-                            subsample = subsample, 
-                            objective="binary:logistic",
-                            seed = _seed_,
-                            #max_bin = 128,
-                            watchlist=(;)
-                            )
+            bst = train_booster(psms_train_itr, features, num_round;
+                               colsample_bytree=colsample_bytree,
+                               colsample_bynode=colsample_bynode,
+                               eta=eta,
+                               min_child_weight=min_child_weight,
+                               subsample=subsample,
+                               gamma=gamma,
+                               max_depth=max_depth)
             if !haskey(models, test_fold_idx)
                 insert!(
                     models,
@@ -721,6 +658,94 @@ function dropVectorColumns!(df)
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
 end
+
+
+"""
+    reset_precursor_scores!(dict)
+
+Set all values of `dict` to an empty precursor score tuple.  This helps reuse
+the same dictionary between iterations without reallocating memory.
+"""
+function reset_precursor_scores!(dict)
+    for key in keys(dict)
+        dict[key] = (
+            best_prob_1 = zero(Float32),
+            best_prob_2 = zero(Float32),
+            best_log2_weights_1 = Vector{Float32}(),
+            best_log2_weights_2 = Vector{Float32}(),
+            best_irts_1 = Vector{Float32}(),
+            best_irts_2 = Vector{Float32}(),
+            best_weight_1 = zero(Float32),
+            best_weight_2 = zero(Float32),
+            best_log2_intensity_explained_1 = zero(Float32),
+            best_log2_intensity_explained_2 = zero(Float32),
+            best_ms_file_idx_1 = zero(UInt32),
+            best_ms_file_idx_2 = zero(UInt32),
+            is_best_decoy_1 = false,
+            is_best_decoy_2 = false,
+            unique_passing_runs = Set{UInt16}(),
+        )
+    end
+    return dict
+end
+
+"""
+    predict_cv_models(models, df, features)
+
+Return a vector of probabilities for `df` using the cross validation `models`.
+"""
+function predict_cv_models(models::Dictionary{UInt8,Booster},
+                           df::AbstractDataFrame,
+                           features::Vector{Symbol})
+    probs = zeros(Float32, nrow(df))
+    for (fold_idx, bst) in pairs(models)
+        fold_rows = findall(==(fold_idx), df[!, :cv_fold])
+        if !isempty(fold_rows)
+            probs[fold_rows] = XGBoost.predict(bst, df[fold_rows, features])
+        end
+    end
+    return probs
+end
+
+"""
+    clamp_mbr_probs!(df, probs)
+
+Clamp probabilities for MBR search so they never exceed the current best
+probabilities for each PSM.
+"""
+function clamp_mbr_probs!(df::AbstractDataFrame, probs::AbstractVector{Float32})
+    df[!, :MBR_prob] = probs
+    @. df.MBR_prob = clamp(
+        df.MBR_prob,
+        0f0,
+        max(df.prob, coalesce(df.MBR_max_pair_prob, df.prob)),
+    )
+    return df
+end
+
+"""
+    write_subset(file_path, df, probs, match_between_runs; dropVectors=false)
+
+Write the updated subset to disk, optionally dropping vector columns.
+"""
+function write_subset(file_path::String,
+                      df::DataFrame,
+                      probs::AbstractVector{Float32},
+                      match_between_runs::Bool;
+                      dropVectors::Bool=false)
+    if dropVectors
+        if match_between_runs
+            clamp_mbr_probs!(df, probs)
+        else
+            df[!, :prob] = probs
+        end
+        Arrow.write(file_path, dropVectorColumns!(df))
+    else
+        df[!, :prob] = probs
+        Arrow.write(file_path, convert_subarrays(df))
+    end
+end
+
 
 
 function MBR_rv_coefficient(weights_A::AbstractVector{<:Real},
