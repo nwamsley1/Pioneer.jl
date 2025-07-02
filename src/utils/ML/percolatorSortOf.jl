@@ -15,6 +15,56 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+function train_booster(psms::AbstractDataFrame, features, num_round;
+                       colsample_bytree::Float64,
+                       colsample_bynode::Float64,
+                       eta::Float64,
+                       min_child_weight::Int,
+                       subsample::Float64,
+                       gamma::Int,
+                       max_depth::Int)
+    bst = xgboost(
+        (psms[!, features], psms[!, :target]),
+        num_round = num_round,
+        colsample_bytree = colsample_bytree,
+        colsample_bynode = colsample_bynode,
+        scale_pos_weight = sum(psms.decoy) / sum(psms.target),
+        gamma = gamma,
+        max_depth = max_depth,
+        eta = eta,
+        min_child_weight = min_child_weight,
+        subsample = subsample,
+        objective = "binary:logistic",
+        seed = rand(UInt32),
+        watchlist = (;),
+    )
+    bst.feature_names = string.(features)
+    return bst
+end
+
+function predict_fold!(bst::Booster, psms_train::AbstractDataFrame,
+                       test_fold_psms::AbstractDataFrame, features)
+    test_fold_psms[!, :prob] = XGBoost.predict(bst, test_fold_psms[!, features])
+    psms_train[!, :prob] = XGBoost.predict(bst, psms_train[!, features])
+    get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+end
+
+function update_mbr_features!(psms_train::AbstractDataFrame,
+                              test_fold_psms::AbstractDataFrame,
+                              prob_estimates::Vector{Float32},
+                              test_fold_idxs,
+                              itr::Int,
+                              mbr_start_iter::Int,
+                              max_q_value_xgboost_rescore::Float32)
+    if itr >= mbr_start_iter - 1
+        get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
+        summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
+        summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
+    end
+    if itr == mbr_start_iter - 1
+        prob_estimates[test_fold_idxs] = test_fold_psms.prob
+    end
+end
 function sort_of_percolator_in_memory!(psms::DataFrame, 
                   file_paths::Vector{String},
                   features::Vector{Symbol},
@@ -35,94 +85,56 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   print_importance::Bool = true)
     
     
-    # Helper functions for fold selection
-    selectTestFold(cv_fold::UInt8, test_fold::UInt8)::Bool = cv_fold == test_fold
-    excludeTestFold(cv_fold::UInt8, test_fold::UInt8)::Bool = cv_fold != test_fold
-
-    #Faster if sorted first 
+    #Faster if sorted first
     @info "sort time..."
     sort!(psms, [:pair_id, :isotopes_captured])
 
-    #Final prob estimates
-    prob_estimates = zeros(Float32, size(psms, 1))           # probabilities without MBR features
-    MBR_estimates  = zeros(Float32, size(psms, 1))           # probabilities with MBR features
-    
+    prob_estimates = zeros(Float32, nrow(psms))
+    MBR_estimates  = zeros(Float32, nrow(psms))
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     models = Dict{UInt8, Vector{Booster}}()
-    # Always doing MBR on the last iteration
     mbr_start_iter = length(iter_scheme)
-    
-    # Train models for each fold
+
     Random.seed!(1776)
-    pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
+    pbar = ProgressBar(total=length(unique_cv_folds) * length(iter_scheme))
     for test_fold_idx in unique_cv_folds
-        # Clear prob stats 
         initialize_prob_group_features!(psms, match_between_runs)
-        # Get training data
-        psms_train = @view(psms[findall(x -> x != test_fold_idx, psms[!, :cv_fold]), :])
-        # Train models for each iteration
+        psms_train = @view psms[findall(x -> x != test_fold_idx, psms[!, :cv_fold]), :]
         fold_models = Vector{Booster}()
 
         for (itr, num_round) in enumerate(iter_scheme)
+            psms_train_itr = get_training_data_for_iteration!(psms_train,
+                                                              itr,
+                                                              match_between_runs,
+                                                              max_q_value_xgboost_rescore,
+                                                              max_q_value_xgboost_mbr_rescore,
+                                                              min_PEP_neg_threshold_xgboost_rescore,
+                                                              itr >= mbr_start_iter)
 
-            psms_train_itr = get_training_data_for_iteration!(psms_train, 
-                                                                itr,
-                                                                match_between_runs, 
-                                                                max_q_value_xgboost_rescore,
-                                                                max_q_value_xgboost_mbr_rescore,
-                                                                min_PEP_neg_threshold_xgboost_rescore,
-                                                                itr >= mbr_start_iter)
-                                         
-            bst = xgboost(
-                (psms_train_itr[!, features], psms_train_itr[!, :target]),
-                num_round = num_round,
-                colsample_bytree = colsample_bytree,
-                colsample_bynode = colsample_bynode,
-                scale_pos_weight = sum(psms_train_itr.decoy) / sum(psms_train_itr.target),
-                gamma = gamma,
-                max_depth = max_depth,
-                eta = eta,
-                min_child_weight = min_child_weight,
-                subsample = subsample,
-                objective = "binary:logistic",
-                seed = rand(UInt32),
-                watchlist = (;)
-            )
-            # Store feature names and print importance if requested
-            bst.feature_names = string.(features)
-            #print_importance = true
-            if print_importance
-                println(collect(zip(importance(bst))))
-            end
-            
+            bst = train_booster(psms_train_itr, features, num_round;
+                               colsample_bytree=colsample_bytree,
+                               colsample_bynode=colsample_bynode,
+                               eta=eta,
+                               min_child_weight=min_child_weight,
+                               subsample=subsample,
+                               gamma=gamma,
+                               max_depth=max_depth)
             push!(fold_models, bst)
+
             test_fold_idxs = findall(x -> x == test_fold_idx, psms[!, :cv_fold])
-            test_fold_psms = @view(psms[test_fold_idxs,:])
+            test_fold_psms = @view psms[test_fold_idxs, :]
 
-            test_fold_psms[!,:prob] = XGBoost.predict(bst, test_fold_psms[!,features])
-            psms_train[!,:prob] =  XGBoost.predict(bst, psms_train[!, features])
-
-            # calculate training q-values to use for filtering the next iteration
-            get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
+            predict_fold!(bst, psms_train, test_fold_psms, features)
 
             if match_between_runs
-                # Compute the MBR features if we're going to use them on the next iteration
-                if itr >= mbr_start_iter - 1
-                    # calculate q-values on hold-out to properly summarize precursors
-                    get_qvalues!(test_fold_psms.prob, test_fold_psms.target, test_fold_psms.q_value)
-                    summarize_precursors!(test_fold_psms, q_cutoff = max_q_value_xgboost_rescore)
-                    summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
-                end
-                # Keep track of the last non-MBR probabilites so we know which precursors are transfer candidates
-                if itr == mbr_start_iter - 1
-                    prob_estimates[test_fold_idxs] = test_fold_psms.prob
-                end
+                update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
+                                     test_fold_idxs, itr, mbr_start_iter,
+                                     max_q_value_xgboost_rescore)
             end
 
             update(pbar)
 
-            # If we're not doing MBR, then skip the last iteration
             if (!match_between_runs) && itr == (mbr_start_iter - 1)
                 break
             end
