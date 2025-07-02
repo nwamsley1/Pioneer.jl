@@ -84,10 +84,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(ml_params.interpolation_points), # Using same value for protein groups
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
-            Float32(ml_params.max_q_value_xgboost_rescore),
+            Float32(global_params.scoring.q_value_threshold),
             Float32(ml_params.max_q_value_xgboost_mbr_rescore),
             Float32(ml_params.min_PEP_neg_threshold_xgboost_rescore),
-            Float32(ml_params.max_MBR_false_transfer_rate),
+            Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type
         )

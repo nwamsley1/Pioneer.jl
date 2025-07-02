@@ -39,7 +39,7 @@ Most parameters should not be changed, but the following may need adjustement.
 | `isotope_settings.combine_traces` | Boolean | Whether to combine precursor isotope traces in quantification. Experimental, so set to false (default: false) |
 | `isotope_settings.partial_capture` | Boolean | Whether to estimate the conditional fragment isotope distribution (true) or assume complete transmission the entire precursor isotopic envelope (default: true) |
 | `isotope_settings.min_fraction_transmitted` | Float | Minimum fraction of the precursor isotope distribution that must be isolated for scoring and quantitation (default: 0.25) |
-| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results (default: 0.01) |
+| `scoring.q_value_threshold` | Float | Global q-value threshold for filtering results. Also controls false transfer rate of MBR (default: 0.01) |
 | `normalization.n_rt_bins` | Int | Number of retention time bins for quant normalization (default: 100) |
 | `normalization.spline_n_knots` | Int | Number of knots in quant normalization spline (default: 7) |
 | `match_between_runs` | Boolean | Whether to attempt to transfer peptide identifications across runs. Turning this on will add additional features to the XGBoost model (default: true) |
@@ -132,10 +132,8 @@ Most parameters should not be changed, but the following may need adjustement.
 | `deconvolution.max_diff` | Float | Relative convergence threshold - maximum relative change in weights between iterations. Also used as relative tolerance for Newton's method (default: 0.01) |
 | `machine_learning.max_samples` | Int | Maximum number of samples for XGBoost training (default: 5000000) |
 | `machine_learning.min_trace_prob` | Float | Minimum trace probability threshold (default: 0.75) |
-| `machine_learning.max_q_value_xgboost_rescore` | Float | q-value threshold for semi-supervised learning with XGBoost (default: 0.01) |
 | `machine_learning.max_q_value_xgboost_mbr_rescore` | Float | q-value threshold for match-between-runs candidates during semi-supervised learning with XGBoost (default: 0.20) |
 | `machine_learning.min_PEP_neg_threshold_xgboost_rescore` | Float | Minimum posterior error probabilility threshold for poor scoring targets to be relabeled as negative examples during semi-supervised learning with XGBoost (default: 0.20) |
-| `machine_learning.max_MBR_false_transfer_rate` | Float | False transfer rate threshold for match-between-runs (default: 0.01) |
 | `machine_learning.spline_points` | Int | Number of points for probability spline (default: 500) |
 | `machine_learning.interpolation_points` | Int | Number of interpolation points (default: 10) |
 

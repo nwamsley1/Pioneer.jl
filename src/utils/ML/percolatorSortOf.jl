@@ -143,7 +143,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         models::Dictionary{UInt8,Booster},
         features::Vector{Symbol},
         match_between_runs::Bool;
-        dropVectorCols::Bool = false)
+        is_last_iteration::Bool = false)
     
         # Reset counts for new scores
         reset_precursor_scores!(prec_to_best_score_new)
@@ -153,7 +153,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             
             probs = predict_cv_models(models, psms_subset, features)
             
-            if match_between_runs
+            if match_between_runs && !is_last_iteration
                 #Update maximum probabilities for tracked precursors 
                 qvals = zeros(Float32, nrow(psms_subset))
                 get_qvalues!(probs, psms_subset.target, qvals)
@@ -228,7 +228,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             end
 
 
-            if dropVectorCols
+            if is_last_iteration
                 if match_between_runs
                     clamp_mbr_probs!(psms_subset, probs)
                 else
@@ -248,7 +248,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 psms_subset[i,:prob] = probs[i]
                 
                     
-                if match_between_runs && !dropVectorCols
+                if match_between_runs && !is_last_iteration
                     key = (pair_id = pair_id, isotopes = psms_subset[i,:isotopes_captured])
                     if haskey(prec_to_best_score_new, key)
                         scores = prec_to_best_score_new[key]
@@ -299,13 +299,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 end
             end
 
-            write_subset(file_path, psms_subset, probs, match_between_runs; dropVectors=dropVectorCols)
+            write_subset(file_path, psms_subset, probs, match_between_runs; dropVectors=is_last_iteration)
         end
         
         return prec_to_best_score_new
     end
-
-
 
 
     unique_cv_folds = unique(psms[!, :cv_fold])
@@ -362,6 +360,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
         end
     end
     
+    @info "Scoring precursors with trained models"
     pbar = ProgressBar(total=length(iter_scheme))
     prec_to_best_score = Dictionary{@NamedTuple{pair_id::UInt32,
                                                 isotopes::Tuple{Int8,Int8}},
@@ -392,7 +391,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             models_for_iter,
             features,
             match_between_runs;
-            dropVectorCols = (train_iter == length(iter_scheme))
+            is_last_iteration = (train_iter == length(iter_scheme))
         )
         update(pbar)
     end
