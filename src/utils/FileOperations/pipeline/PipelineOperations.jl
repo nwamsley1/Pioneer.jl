@@ -211,29 +211,70 @@ function filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = 
     return desc => op
 end
 
-"""
-Helper function to evaluate a single condition for a row.
-Handles different types automatically through multiple dispatch.
-"""
-function evaluate_condition(row, col::Symbol, threshold, comp_fn::Function)
-    val = row[col]
-    
-    # Handle missing values
-    ismissing(val) && return false
-    
-    # Handle string comparisons (case-insensitive for equality)
-    if val isa AbstractString && threshold isa AbstractString
-        if comp_fn === (==)
-            return lowercase(string(val)) == lowercase(string(threshold))
-        elseif comp_fn === (!=)
-            return lowercase(string(val)) != lowercase(string(threshold))
-        else
-            error("Comparison operator $comp_fn not supported for String columns")
+# Type-stable helper functions for AND logic
+function update_mask_and!(mask::BitVector, col::AbstractVector{T}, threshold::T, op::Function) where T
+    @inbounds for i in eachindex(mask, col)
+        mask[i] = mask[i] && op(col[i], threshold)
+    end
+end
+
+function update_mask_and!(mask::BitVector, col::AbstractVector{Union{Missing,T}}, threshold::T, op::Function) where T
+    @inbounds for i in eachindex(mask, col)
+        if mask[i]
+            val = col[i]
+            mask[i] = !ismissing(val) && op(val, threshold)
         end
     end
-    
-    # For all other types, use the comparison function directly
-    return comp_fn(val, threshold)
+end
+
+# String specialization for AND
+function update_mask_and!(mask::BitVector, col::AbstractVector{<:AbstractString}, threshold::AbstractString, op::Function)
+    if op === (==)
+        threshold_lower = lowercase(string(threshold))
+        @inbounds for i in eachindex(mask, col)
+            mask[i] = mask[i] && lowercase(string(col[i])) == threshold_lower
+        end
+    elseif op === (!=)
+        threshold_lower = lowercase(string(threshold))
+        @inbounds for i in eachindex(mask, col)
+            mask[i] = mask[i] && lowercase(string(col[i])) != threshold_lower
+        end
+    else
+        error("Comparison operator $op not supported for String columns")
+    end
+end
+
+# Type-stable helper functions for OR logic
+function update_mask_or!(mask::BitVector, col::AbstractVector{T}, threshold::T, op::Function) where T
+    @inbounds for i in eachindex(mask, col)
+        mask[i] = mask[i] || op(col[i], threshold)
+    end
+end
+
+function update_mask_or!(mask::BitVector, col::AbstractVector{Union{Missing,T}}, threshold::T, op::Function) where T
+    @inbounds for i in eachindex(mask, col)
+        if !mask[i]
+            val = col[i]
+            mask[i] = !ismissing(val) && op(val, threshold)
+        end
+    end
+end
+
+# String specialization for OR
+function update_mask_or!(mask::BitVector, col::AbstractVector{<:AbstractString}, threshold::AbstractString, op::Function)
+    if op === (==)
+        threshold_lower = lowercase(string(threshold))
+        @inbounds for i in eachindex(mask, col)
+            mask[i] = mask[i] || lowercase(string(col[i])) == threshold_lower
+        end
+    elseif op === (!=)
+        threshold_lower = lowercase(string(threshold))
+        @inbounds for i in eachindex(mask, col)
+            mask[i] = mask[i] || lowercase(string(col[i])) != threshold_lower
+        end
+    else
+        error("Comparison operator $op not supported for String columns")
+    end
 end
 
 """
@@ -290,24 +331,33 @@ function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Any}
     end
     
     op = function(df)
-        # Create predicate based on logic
-        if logic == :and
-            # AND logic - all conditions must be true
-            filter!(df) do row
-                all(conditions) do (col, threshold)
-                    evaluate_condition(row, col, threshold, comp_fn)
-                end
-            end
+        n_rows = nrow(df)
+        
+        # Pre-allocate mask based on logic
+        keep_mask = if logic == :and
+            trues(n_rows)
         elseif logic == :or
-            # OR logic - at least one condition must be true
-            filter!(df) do row
-                any(conditions) do (col, threshold)
-                    evaluate_condition(row, col, threshold, comp_fn)
-                end
-            end
+            falses(n_rows)
         else
             error("Unsupported logic: $logic. Use :and or :or")
         end
+        
+        # Process each condition column-wise for type stability
+        for (col, threshold) in conditions
+            col_data = df[!, col]
+            
+            # Type-stable column processing via multiple dispatch
+            if logic == :and
+                update_mask_and!(keep_mask, col_data, threshold, comp_fn)
+            else  # :or
+                update_mask_or!(keep_mask, col_data, threshold, comp_fn)
+            end
+        end
+        
+        # Apply mask efficiently
+        df_filtered = df[keep_mask, :]
+        empty!(df)
+        append!(df, df_filtered)
         
         return df
     end
