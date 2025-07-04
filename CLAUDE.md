@@ -303,12 +303,52 @@ diagnose_protein_scoring_issue(passing_psms_paths, passing_pg_paths, precursors)
 - Integration: `src/Routines/SearchDIA/SearchMethods/ScoringSearch/utils_protein_ml.jl`
 - Testing: `src/utils/ML/test_protein_scoring.jl`
 
+### EntrapmentAnalysis Module
+
+Located in `test/entrapment_analyses/`, this module implements empirical false discovery rate (EFDR) analysis using entrapment sequences for both precursor and protein-level data.
+
+**Key Features**:
+- Automated pairing of target and entrapment sequences
+- Combined and Paired EFDR calculation methods
+- Support for both precursor and protein-level analysis
+- Comprehensive visualization and reporting
+
+**Protein Analysis Workflow**:
+1. **Decoy Filtering**: Decoy proteins (target=false) filtered before analysis
+2. **Target-aware Pairing**: Proteins paired by name AND target/decoy status
+3. **Score Propagation**: Target scores mapped to entrapment proteins
+4. **Global Analysis**: Best score per protein across files
+5. **EFDR Calculation**: Direct operation on protein data
+
+**Usage**:
+```julia
+# Add to load path
+push!(LOAD_PATH, "test/entrapment_analyses")
+using EntrapmentAnalysis
+
+# Run protein EFDR analysis
+results = run_protein_efdr_analysis(
+    "protein_groups_long.arrow";
+    output_dir="protein_efdr_output",
+    score_qval_pairs=[(:global_pg_score, :global_qval), (:pg_score, :qval)]
+)
+```
+
+**Core Components**:
+- `protein_scoring.jl`: Protein scoring implementation
+- `protein_efdr.jl`: Protein-specific EFDR calculations
+- `protein_entrapment_pairing.jl`: Protein pairing logic (needs target/decoy update)
+- `api.jl`: Main API functions for analysis
+
+See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for detailed documentation.
+
 ### Module-Specific Documentation
 - SearchDIA module: See `src/Routines/SearchDIA/CLAUDE.md` for deep dive into search pipeline
 - SearchMethods: See `src/Routines/SearchDIA/SearchMethods/CLAUDE.md` for implementing search methods
 - SearchDIA Data Structures: See `src/Routines/SearchDIA/DataStructures_CLAUDE.md` for PSM types and scoring systems
 - Common Search Utilities: See `src/Routines/SearchDIA/CommonSearchUtils/CLAUDE.md` for core algorithms
 - Transition Selection: See `src/Routines/SearchDIA/CommonSearchUtils/selectTransitions/CLAUDE.md` for transition selection
+- EntrapmentAnalysis: See `test/entrapment_analyses/PROTEIN_ANALYSIS_WORKFLOW.md` for empirical FDR analysis with entrapment sequences
 
 ## Memories
 - remember me as memory update

@@ -392,6 +392,7 @@ function stream_sorted_merge(
     first_table = Arrow.Table(file_path(first(refs)))
     sort_types = tuple((eltype(Tables.getcolumn(first_table, key)) for key in sort_keys_tuple)...)
     
+
     # Dispatch to N-key implementation
     return _stream_sorted_merge_nkey_impl(
         refs, output_path, sort_keys_tuple, sort_types, reverse_vec, batch_size
@@ -413,7 +414,7 @@ function _stream_sorted_merge_nkey_impl(
     for ref in refs
         validate_exists(ref)
     end
-    
+
     # Validate that all files are sorted by the requested keys
     for ref in refs
         if !is_sorted_by(ref, sort_keys...)

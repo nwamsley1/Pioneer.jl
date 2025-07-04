@@ -673,11 +673,11 @@ function update_psms_with_probit_scores_refs(
             n_psms = nrow(psms_df)
             
             # Update pg_score column with probit scores
-            probit_pg_scores = Vector{Float32}(undef, n_psms)
-            global_pg_scores = Vector{Float32}(undef, n_psms)
-            pg_qvals = Vector{Float32}(undef, n_psms)
-            global_pg_qvals = Vector{Float32}(undef, n_psms)
-            pg_peps = Vector{Float32}(undef, n_psms)
+            probit_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
+            global_pg_scores = Vector{Union{Missing, Float32}}(undef, n_psms)
+            pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
+            global_pg_qvals = Vector{Union{Missing, Float32}}(undef, n_psms)
+            pg_peps = Vector{Union{Missing, Float32}}(undef, n_psms)
             
             for i in 1:n_psms
                 # Skip if missing inferred protein group
@@ -687,11 +687,12 @@ function update_psms_with_probit_scores_refs(
                 
                 # Skip if peptide didn't match to a distinct protein group
                 if psms_df[i,:use_for_protein_quant] == false
-                    probit_pg_scores[i] = 0.0f0
-                    global_pg_scores[i] = 0.0f0
-                    pg_qvals[i] = 1.0f0
-                    global_pg_qvals[i] = 1.0f0
-                    pg_peps[i] = 1.0f0
+                    #Should be able to make this 'missing' since that is more clear 
+                    probit_pg_scores[i] = missing
+                    global_pg_scores[i] =  missing
+                    pg_qvals[i] =  missing
+                    global_pg_qvals[i] =  missing
+                    pg_peps[i] =  missing
                     continue
                 end
                 
@@ -704,7 +705,13 @@ function update_psms_with_probit_scores_refs(
                 
                 # Get scores and PEP
                 if !haskey(pg_score_lookup, key)
-                    throw("Missing pg score lookup key!!!")
+                    #Should be able to make this 'missing' since that is more clear 
+                    probit_pg_scores[i] = missing
+                    global_pg_scores[i] = missing
+                    pg_qvals[i] =  missing
+                    global_pg_qvals[i] =  missing
+                    pg_peps[i] = missing
+                    continue
                 end
                 scores_tuple = pg_score_lookup[key]
                 probit_pg_scores[i] = scores_tuple[1]

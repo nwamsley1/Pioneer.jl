@@ -299,24 +299,45 @@ function summarize_results!(
             )
         end
         @info "Step 8 completed in $(round(step8_time, digits=2)) seconds"
+
+        @info "Step 9 Re-calculate Experiment-Wide Qvalue after filtering..."
+        step9_time = @elapsed begin
+        #Files should already be sorted from step 8. Not strictly necessary? 
+        sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
+
+        stream_sorted_merge(passing_refs, results.merged_quant_path, :prec_prob, :target;
+                            batch_size=10_000_000, reverse=[true,true])
+
+        results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
         
+        recalculate_experiment_wide_qvalue = TransformPipeline() |>
+            add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[])
+
+        passing_refs = apply_pipeline_batch(
+                passing_refs,
+                recalculate_experiment_wide_qvalue,
+                passing_psms_folder
+            )
+        end
+        @info "Step 9 completed in $(round(step9_time, digits=2)) seconds"
+
         # Update search context with passing PSM paths
         for (idx, ref) in enumerate(passing_refs)
             setPassingPsms!(getMSData(search_context), idx, file_path(ref))
         end
 
         # Step 9: Count protein peptides
-        @info "Step 9: Counting protein peptides for feature calculation..."
-        step9_time = @elapsed begin
+        @info "Step 10: Counting protein peptides for feature calculation..."
+        step10_time = @elapsed begin
             protein_to_possible_peptides = count_protein_peptides(
                 getPrecursors(getSpecLib(search_context))
             )
         end
-        @info "Step 9 completed in $(round(step9_time, digits=2)) seconds"
+        @info "Step 10 completed in $(round(step10_time, digits=2)) seconds"
 
-        # Step 10: Perform protein inference and initial scoring
-        @info "Step 10: Performing protein inference and initial scoring..."
-        step10_time = @elapsed begin
+        # Step 11: Perform protein inference and initial scoring
+        @info "Step 11: Performing protein inference and initial scoring..."
+        step11_time = @elapsed begin
             pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
                 passing_refs,
                 passing_proteins_folder,
@@ -330,20 +351,20 @@ function summarize_results!(
             
             isempty(paired_files) && error("No protein groups created during protein inference")
         end
-        @info "Step 10 completed in $(round(step10_time, digits=2)) seconds"
+        @info "Step 11 completed in $(round(step11_time, digits=2)) seconds"
 
         # Step 10.5: Build protein CV fold mapping from PSMs
-        @info "Step 10.5: Building protein CV fold mapping..."
-        step10_5_time = @elapsed begin
+        @info "Step 11.5: Building protein CV fold mapping..."
+        step11_5_time = @elapsed begin
             # Get PSM paths from passing_refs (these are the high-quality PSMs)
             psm_paths = [file_path(ref) for ref in passing_refs]
             protein_to_cv_fold = build_protein_cv_fold_mapping(psm_paths, getPrecursors(getSpecLib(search_context)))
         end
-        @info "Step 10.5 completed in $(round(step10_5_time, digits=2)) seconds (mapped $(length(protein_to_cv_fold)) proteins)"
+        @info "Step 11.5 completed in $(round(step11_5_time, digits=2)) seconds (mapped $(length(protein_to_cv_fold)) proteins)"
 
-        # Step 11: Perform protein probit regression
-        @info "Step 11: Performing protein probit regression..."
-        step11_time = @elapsed begin
+        # Step 12: Perform protein probit regression
+        @info "Step 12: Performing protein probit regression..."
+        step12_time = @elapsed begin
             qc_folder = joinpath(dirname(temp_folder), "qc_plots")
             !isdir(qc_folder) && mkdir(qc_folder)
             
@@ -355,80 +376,97 @@ function summarize_results!(
                 protein_to_cv_fold = protein_to_cv_fold
             )
         end
-        @info "Step 11 completed in $(round(step11_time, digits=2)) seconds"
-
-        # Step 12: Calculate global protein scores
-        @info "Step 12: Calculating global protein scores..."
-        step12_time = @elapsed begin
-            acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
-        end
         @info "Step 12 completed in $(round(step12_time, digits=2)) seconds"
 
-        # Step 13: Sort protein groups by global_pg_score
-        @info "Step 13: Sorting protein groups by global_pg_score..."
+        # Step 13: Calculate global protein scores
+        @info "Step 13: Calculating global protein scores..."
         step13_time = @elapsed begin
-            sort_file_by_keys!(pg_refs, :global_pg_score, :target; reverse=[true, true])
+            acc_to_max_pg_score = calculate_and_add_global_scores!(pg_refs)
         end
         @info "Step 13 completed in $(round(step13_time, digits=2)) seconds"
-        
-        # Step 14: Merge protein groups for global q-values
-        @info "Step 14: Merging protein groups for global q-value calculation..."
+
+        # Step 14: Sort protein groups by global_pg_score
+        @info "Step 14: Sorting protein groups by global_pg_score..."
         step14_time = @elapsed begin
+            sort_file_by_keys!(pg_refs, :global_pg_score, :target; reverse=[true, true])
+        end
+        @info "Step 14 completed in $(round(step14_time, digits=2)) seconds"
+        
+        # Step 15: Merge protein groups for global q-values
+        @info "Step 15: Merging protein groups for global q-value calculation..."
+        step15_time = @elapsed begin
             sorted_pg_scores_path = joinpath(temp_folder, "sorted_pg_scores.arrow")
             stream_sorted_merge(pg_refs, sorted_pg_scores_path, :global_pg_score, :target;
                                batch_size=1000000, reverse=[true,true])
         end
-        @info "Step 14 completed in $(round(step14_time, digits=2)) seconds"
-
-        # Step 15: Calculate global protein q-values
-        @info "Step 15: Calculating global protein q-values..."
-        step15_time = @elapsed begin
-            search_context.global_pg_score_to_qval[] = get_protein_global_qval_spline(sorted_pg_scores_path, params)
-        end
         @info "Step 15 completed in $(round(step15_time, digits=2)) seconds"
 
-        # Step 16: Sort protein groups by pg_score
-        @info "Step 16: Sorting protein groups by pg_score..."
+        # Step 16: Calculate global protein q-values
+        @info "Step 16: Calculating global protein q-values..."
         step16_time = @elapsed begin
-            sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
+            search_context.global_pg_score_to_qval[] = get_protein_global_qval_spline(sorted_pg_scores_path, params)
         end
         @info "Step 16 completed in $(round(step16_time, digits=2)) seconds"
-        
-        # Step 17: Merge protein groups for experiment-wide q-values
-        @info "Step 17: Merging protein groups for experiment-wide q-value calculation..."
+
+        # Step 17: Sort protein groups by pg_score
+        @info "Step 17: Sorting protein groups by pg_score..."
         step17_time = @elapsed begin
+            sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
+        end
+        @info "Step 17 completed in $(round(step17_time, digits=2)) seconds"
+        
+        # Step 18: Merge protein groups for experiment-wide q-values
+        @info "Step 18: Merging protein groups for experiment-wide q-value calculation..."
+        step18_time = @elapsed begin
             stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
                                batch_size=1000000, reverse=[true,true])
         end
-        @info "Step 17 completed in $(round(step17_time, digits=2)) seconds"
-
-        # Step 18: Calculate experiment-wide protein q-values
-        @info "Step 18: Calculating experiment-wide protein q-values..."
-        step18_time = @elapsed begin
-            search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
-        end
         @info "Step 18 completed in $(round(step18_time, digits=2)) seconds"
 
-        # Step 19: Add q-values to protein groups
-        @info "Step 19: Adding q-values and passing flags to protein groups..."
+        # Step 19: Calculate experiment-wide protein q-values
+        @info "Step 19: Calculating experiment-wide protein q-values..."
         step19_time = @elapsed begin
-            protein_qval_pipeline = TransformPipeline() |>
-                add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
-                add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-                add_column(:passes_qval, df -> 
-                    (df.global_pg_qval .<= params.q_value_threshold) .& 
-                    (df.pg_qval .<= params.q_value_threshold)) |>
-                add_pep_column(:pg_pep, :pg_score, :target;
-                            doSort=false,
-                            fdr_scale_factor=getLibraryFdrScaleFactor(search_context))
-
-            apply_pipeline!(pg_refs, protein_qval_pipeline)
+            search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
         end
         @info "Step 19 completed in $(round(step19_time, digits=2)) seconds"
 
-        # Step 20: Update PSMs with final protein scores
-        @info "Step 20: Updating PSMs with final protein scores..."
+        # Step 20: Add q-values to protein groups
+        @info "Step 20: Adding q-values and passing flags to protein groups..."
         step20_time = @elapsed begin
+            protein_qval_pipeline = TransformPipeline() |>
+                add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
+                add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
+                #add_column(:passes_qval, df -> 
+                #    (df.global_pg_qval .<= params.q_value_threshold) .& 
+                #    (df.pg_qval .<= params.q_value_threshold)) |> 
+                add_pep_column(:pg_pep, :pg_score, :target;
+                            doSort=false,
+                            fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) |>
+                filter_by_multiple_thresholds([
+                    (:global_pg_qval, params.q_value_threshold),
+                    (:pg_qval, params.q_value_threshold)
+                ]) 
+
+            apply_pipeline!(pg_refs, protein_qval_pipeline)
+        end
+        @info "Step 20 completed in $(round(step20_time, digits=2)) seconds"
+        sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
+        stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
+                    batch_size=1000000, reverse=[true,true])
+
+        search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
+
+        recalculate_experiment_wide_qvalue = TransformPipeline() |>
+            add_interpolated_column(:pg_qval, :pg_score, results.precursor_qval_interp[])
+
+        pg_refs = apply_pipeline_batch(
+                pg_refs,
+                recalculate_experiment_wide_qvalue,
+                passing_proteins_folder
+            )
+        # Step 21: Update PSMs with final protein scores
+        @info "Step 21: Updating PSMs with final protein scores..."
+        step21_time = @elapsed begin
             update_psms_with_probit_scores_refs(
                 paired_files,
                 acc_to_max_pg_score,
@@ -436,13 +474,13 @@ function summarize_results!(
                 search_context.global_pg_score_to_qval[]
             )
         end
-        @info "Step 20 completed in $(round(step20_time, digits=2)) seconds"
+        @info "Step 21 completed in $(round(step21_time, digits=2)) seconds"
 
         # Summary of all step times
         total_time = step1_time + step2_time + step3_time + step4_time + step5_time + 
                     step6_time + step7_time + step8_time + step9_time + step10_time + 
-                    step10_5_time + step11_time + step12_time + step13_time + step14_time + 
-                    step15_time + step16_time + step17_time + step18_time + step19_time + step20_time
+                    step11_5_time + step11_time + step12_time + step13_time + step14_time + 
+                    step15_time + step16_time + step17_time + step18_time + step19_time + step20_time + step20_time
         @info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
         @info "Breakdown: XGBoost($(round(step1_time, digits=1))s) + Best_Traces($(round(step2_time, digits=1))s) + Quant_Processing($(round(step3_time, digits=1))s) + Merging($(round(step4_time + step6_time + step14_time + step17_time, digits=1))s) + Q-values($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Protein_Inference($(round(step10_time, digits=1))s) + Probit_Regression($(round(step11_time, digits=1))s) + Other($(round(step3_time + step8_time + step9_time + step12_time + step13_time + step16_time + step19_time + step20_time, digits=1))s)"
 

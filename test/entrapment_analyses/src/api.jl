@@ -69,11 +69,12 @@ function run_efdr_analysis(prec_results_path::String, library_precursors_path::S
         library_precursors[!, :mod_key] = map(x -> getModKey(x), library_precursors.structural_mods)
     end
     
-    # Assign entrapment pairs
+    # Assign entrapment pairs (original target shares entrapment pair ID with it's child entrapment targets)
     verbose && println("Assigning entrapment pairs...")
     assign_entrapment_pairs!(library_precursors)
     
     # Add entrap_pair_ids to results
+    # An entrapment target in the 'prec_results' will have the same entrap_pair_id as its original target
     add_entrap_pair_ids!(prec_results, library_precursors)
     
     # Separate global and per-file analyses
@@ -97,7 +98,7 @@ function run_efdr_analysis(prec_results_path::String, library_precursors_path::S
         # Use the first global score for selection (typically global_prob)
         global_results_df = create_global_results_df(prec_results; score_col=global_scores[1])
         # Add entrap_pair_ids to global results
-        add_entrap_pair_ids!(global_results_df, library_precursors)
+        #add_entrap_pair_ids!(global_results_df, library_precursors)
         verbose && println("Global dataframe has $(nrow(global_results_df)) unique precursors")
     end
     
