@@ -554,11 +554,10 @@ function initialize_prob_group_features!(
     psms[!, :q_value]   = zeros(Float64, n)
 
     if match_between_runs
-        psms[!, :MBR_prob]                    = zeros(Float32, n)
+        psms[!, :MBR_prob]                      = zeros(Float32, n)
         psms[!, :MBR_max_pair_prob]             = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_best_irt_diff]             = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_log2_weight_ratio]         = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_log2_weight_ratio_min]     = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_log2_explained_ratio]      = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_rv_coefficient]            = Vector{Union{Missing, Float32}}(missing, n)
         psms[!, :MBR_num_runs]                  = zeros(Int32, n)
