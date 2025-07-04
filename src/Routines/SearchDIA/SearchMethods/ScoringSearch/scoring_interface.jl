@@ -32,23 +32,25 @@ Calculate global protein scores and add them to files via references.
 Returns the score dictionary for downstream use.
 """
 function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
-    # First pass: collect max scores
-    acc_to_max_pg_score = Dict{ProteinKey, Float32}()
-    
+    log_n_runs = max(1, floor(Int, log2(length(pg_refs))))
+    acc_to_scores = Dict{ProteinKey, Vector{Float32}}()
+
+    # First pass: collect scores per protein across all files
     for ref in pg_refs
-        process_with_memory_limit(ref, 
+        process_with_memory_limit(ref,
             batch -> begin
                 for row in eachrow(batch)
-                    key = ProteinKey(
-                        row.protein_name,
-                        row.target,
-                        row.entrap_id
-                    )
-                    old = get(acc_to_max_pg_score, key, -Inf32)
-                    acc_to_max_pg_score[key] = max(row.pg_score, old)
+                    key = ProteinKey(row.protein_name, row.target, row.entrap_id)
+                    push!(get!(acc_to_scores, key, Float32[]), row.pg_score)
                 end
             end
         )
+    end
+
+    # Compute global score using log-odds combination
+    acc_to_global_score = Dict{ProteinKey, Float32}()
+    for (key, scores) in acc_to_scores
+        acc_to_global_score[key] = logodds(scores, log_n_runs)
     end
     
     # Second pass: add global_pg_score column and sort
@@ -62,7 +64,7 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
                         batch.target[i],
                         batch.entrap_id[i]
                     )
-                    scores[i] = get(acc_to_max_pg_score, key, batch.pg_score[i])
+                    scores[i] = get(acc_to_global_score, key, batch.pg_score[i])
                 end
                 scores
             end,
@@ -71,7 +73,7 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
         )
     end
     
-    return acc_to_max_pg_score
+    return acc_to_global_score
 end
 
 """

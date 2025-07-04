@@ -79,7 +79,7 @@ The scoring search performs these steps:
 - `n_peptides`: Number of unique peptides
 - `peptide_coverage`: Fraction of possible peptides observed
 - `n_possible_peptides`: Total peptides in library
-- `global_pg_score`: Max score across all files
+- `global_pg_score`: Log-odds combination of scores across all files
 
 ## Memory Management
 
