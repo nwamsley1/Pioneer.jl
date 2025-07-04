@@ -147,14 +147,38 @@ function add_prec_prob(prob_col::Symbol)
 end
 
 """
+    logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
+
+Combine probabilities using a log-odds average. 
+The final value is converted back to a probability via the logistic function.
+"""
+function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
+    isempty(probs) && return 0.0f0
+    n = min(length(probs), top_n)
+    # Sort descending and select the top n probabilities
+    sorted = sort(probs; rev=true)
+    selected = sorted[1:n]
+    eps = 1f-6
+    # Convert to log-odds, clip to avoid Inf or negative contribution
+    logodds = log.(clamp.(selected, 0.5f0, 1 - eps) ./ (1 .- clamp.(selected, 0.5f0, 1 - eps)))
+    avg = sum(logodds) / n
+    return 1.0f0 / (1 + exp(-avg))
+end
+
+
+"""
     add_global_prob(prob_col::Symbol)
 
-Compute experiment-wide precursor probabilities from the given probability column.
+Compute experiment-wide precursor probabilities from the given probability column
+by averaging log-odds across **all** runs. Each precursor's probabilities are
+converted to log-odds, summed, divided by the total number of runs in the
+experiment, and then mapped back to probability space. This prevents saturation
+when many runs are present.
 """
-function add_global_prob(prob_col::Symbol)
+function add_global_prob(prob_col::Symbol; top_n::Int=1)
     op = function(df)
-        transform!(groupby(df, :precursor_idx),
-                   prob_col => (p -> maximum(p)) => :global_prob)
+            transform!(groupby(df, :precursor_idx),
+                   prob_col => (p -> logodds_weighted(p, top_n)) => :global_prob)
         return df
     end
     return "add_global_prob" => op
