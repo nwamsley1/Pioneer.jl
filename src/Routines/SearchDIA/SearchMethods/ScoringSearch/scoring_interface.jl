@@ -32,23 +32,25 @@ Calculate global protein scores and add them to files via references.
 Returns the score dictionary for downstream use.
 """
 function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
-    # First pass: collect max scores
-    acc_to_max_pg_score = Dict{ProteinKey, Float32}()
-    
+    log_n_runs = max(1, floor(Int, log2(length(pg_refs))))
+    acc_to_scores = Dict{ProteinKey, Vector{Float32}}()
+
+    # First pass: collect scores per protein across all files
     for ref in pg_refs
-        process_with_memory_limit(ref, 
+        process_with_memory_limit(ref,
             batch -> begin
                 for row in eachrow(batch)
-                    key = ProteinKey(
-                        row.protein_name,
-                        row.target,
-                        row.entrap_id
-                    )
-                    old = get(acc_to_max_pg_score, key, -Inf32)
-                    acc_to_max_pg_score[key] = max(row.pg_score, old)
+                    key = ProteinKey(row.protein_name, row.target, row.entrap_id)
+                    push!(get!(acc_to_scores, key, Float32[]), row.pg_score)
                 end
             end
         )
+    end
+
+    # Compute global score using log-odds combination
+    acc_to_global_score = Dict{ProteinKey, Float32}()
+    for (key, scores) in acc_to_scores
+        acc_to_global_score[key] = logodds(scores, log_n_runs)
     end
     
     # Second pass: add global_pg_score column and sort
@@ -62,7 +64,7 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
                         batch.target[i],
                         batch.entrap_id[i]
                     )
-                    scores[i] = get(acc_to_max_pg_score, key, batch.pg_score[i])
+                    scores[i] = get(acc_to_global_score, key, batch.pg_score[i])
                 end
                 scores
             end,
@@ -71,7 +73,117 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
         )
     end
     
-    return acc_to_max_pg_score
+    return acc_to_global_score
+end
+
+"""
+    add_trace_qvalues(fdr_scale_factor::Float32)
+
+Add a column `:trace_qval` based on the `:prob` column using target/decoy q-values.
+"""
+function add_trace_qvalues(fdr_scale_factor::Float32)
+    op = function(df)
+        qvals = Vector{Float32}(undef, nrow(df))
+        get_qvalues!(df.prob, df.target, qvals; fdr_scale_factor=fdr_scale_factor)
+        df[!, :trace_qval] = qvals
+        return df
+    end
+    return "add_trace_qvalues" => op
+end
+
+"""
+    label_transfer_candidates(threshold::Float32)
+
+Label MBR transfer candidates based on trace q-values and presence of a best decoy.
+"""
+function label_transfer_candidates(threshold::Float32)
+    op = function(df)
+        df[!, :MBR_transfer_candidate] = (df.trace_qval .> threshold) .& .!ismissing.(df.MBR_is_best_decoy)
+        return df
+    end
+    return "label_transfer_candidates" => op
+end
+
+"""
+    label_bad_transfers()
+
+Mark transfers that appear to come from the wrong class (target/decoy).
+"""
+function label_bad_transfers()
+    op = function(df)
+        mask = df.MBR_transfer_candidate
+        df[!, :MBR_bad_transfer] = mask .& ((df.target .& coalesce.(df.MBR_is_best_decoy, false)) .|
+                                           (df.decoy .& .!coalesce.(df.MBR_is_best_decoy, true)))
+        return df
+    end
+    return "label_bad_transfers" => op
+end
+
+"""
+    apply_ftr_threshold(max_ftr::Float32)
+
+Clamp `:MBR_prob` values based on the false transfer rate threshold.
+"""
+function apply_ftr_threshold(max_ftr::Float32)
+    op = function(df)
+        τ = get_ftr_threshold(df.MBR_prob, df.target, df.MBR_bad_transfer, max_ftr; mask=df.MBR_transfer_candidate)
+        mask = df.MBR_transfer_candidate .& (df.MBR_prob .< τ)
+        df.MBR_prob[mask] .= 0.0f0
+        return df
+    end
+    return "apply_ftr_threshold" => op
+end
+
+"""
+    add_prec_prob(prob_col::Symbol)
+
+Compute run-specific precursor probabilities from the given probability column.
+"""
+function add_prec_prob(prob_col::Symbol)
+    op = function(df)
+        transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
+                   prob_col => (p -> 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))) => :prec_prob)
+        return df
+    end
+    return "add_prec_prob" => op
+end
+
+"""
+    logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
+
+Combine probabilities using a log-odds average. 
+The final value is converted back to a probability via the logistic function.
+"""
+function logodds(probs::AbstractVector{T}, top_n::Int) where {T<:AbstractFloat}
+    isempty(probs) && return 0.0f0
+    n = min(length(probs), top_n)
+    # Sort descending and select the top n probabilities
+    sorted = sort(probs; rev=true)
+    selected = sorted[1:n]
+    eps = 1f-6
+    # Convert to log-odds, clip to avoid Inf or negative contribution
+    logodds = log.(clamp.(selected, 0.5f0, 1 - eps) ./ (1 .- clamp.(selected, 0.5f0, 1 - eps)))
+    avg = sum(logodds) / n
+    return 1.0f0 / (1 + exp(-avg))
+end
+
+
+"""
+    add_global_prob(prob_col::Symbol)
+
+Compute experiment-wide precursor probabilities from the given probability column
+by averaging log-odds across **all** runs. Each precursor's probabilities are
+converted to log-odds, summed, divided by the total number of runs in the
+experiment, and then mapped back to probability space. This prevents saturation
+when many runs are present.
+"""
+function add_global_prob(prob_col::Symbol; top_n::Int=1)
+    op = function(df)
+            transform!(groupby(df, :precursor_idx),
+                   prob_col => (p -> logodds_weighted(p, top_n)) => :global_prob)
+        return df
+    end
+    return "add_global_prob" => op
 end
 
 #==========================================================
@@ -113,6 +225,53 @@ end
 #==========================================================
 Scoring-Specific Pipeline Operations
 ==========================================================#
+
+function apply_mbr_filter!(
+    merged_df::DataFrame,
+    params,
+    fdr_scale_factor::Float32,
+)
+    n = nrow(merged_df)
+
+    # 1) compute trace_qval locally
+    trace_qval = Vector{Float32}(undef, n)
+    get_qvalues!(
+        merged_df.prob,
+        merged_df.target,
+        trace_qval;
+        fdr_scale_factor = fdr_scale_factor
+    )
+
+    # 2) build boolean masks locally
+    candidate_mask = 
+        (trace_qval .> params.q_value_threshold) .& 
+        .!ismissing.(merged_df.MBR_is_best_decoy)
+
+    bad_mask =
+        candidate_mask .& (
+        (merged_df.target .& coalesce.(merged_df.MBR_is_best_decoy, false)) .|
+        (merged_df.decoy  .& .!coalesce.(merged_df.MBR_is_best_decoy, true))
+        )
+
+    # 3) compute threshold using the local bad_mask
+    τ = get_ftr_threshold(
+        merged_df.MBR_prob,
+        merged_df.target,
+        bad_mask,
+        params.max_MBR_false_transfer_rate;
+        mask = candidate_mask
+    )
+
+    # 4) one fused pass to clamp probs
+    merged_df._filtered_prob = ifelse.(
+        candidate_mask .& (merged_df.MBR_prob .< τ),
+        0.0f0,
+        merged_df.MBR_prob
+    )
+
+    # if downstream code expects a Symbol for the prob-column
+    return :_filtered_prob
+end
 
 """
     add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::Set)

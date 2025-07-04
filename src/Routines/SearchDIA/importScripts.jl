@@ -129,6 +129,7 @@ function importScripts()
         joinpath(package_root, "src", "utils", "ML"),
         [
             "fdrUtilities.jl",
+            "ftrUtilities.jl",
             "percolatorSortOf.jl",
             "piecewiseLinearFunction.jl",
             "probitRegression.jl",
