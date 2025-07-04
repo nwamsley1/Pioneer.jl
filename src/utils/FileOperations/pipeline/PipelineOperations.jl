@@ -212,11 +212,42 @@ function filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = 
 end
 
 """
-    filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real}};
-                                 comparison::Symbol = :<=,
+Helper function to evaluate a single condition for a row.
+Handles different types automatically through multiple dispatch.
+"""
+function evaluate_condition(row, col::Symbol, threshold, comp_fn::Function)
+    val = row[col]
+    
+    # Handle missing values
+    ismissing(val) && return false
+    
+    # Handle string comparisons (case-insensitive for equality)
+    if val isa AbstractString && threshold isa AbstractString
+        if comp_fn === (==)
+            return lowercase(string(val)) == lowercase(string(threshold))
+        elseif comp_fn === (!=)
+            return lowercase(string(val)) != lowercase(string(threshold))
+        else
+            error("Comparison operator $comp_fn not supported for String columns")
+        end
+    end
+    
+    # For all other types, use the comparison function directly
+    return comp_fn(val, threshold)
+end
+
+"""
+    filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Any}};
+                                 comparison::Union{Symbol,Function} = <=,
                                  logic::Symbol = :and)
 
 Apply multiple threshold filters with specified logic (AND/OR).
+Uses DataFrames' efficient `filter!` function to avoid intermediate allocations.
+
+# Arguments
+- `conditions`: Vector of (column_name, threshold) tuples
+- `comparison`: Comparison operator (default: <=). Can be a Symbol or Function
+- `logic`: :and (all conditions must be true) or :or (at least one must be true)
 
 Example:
 ```julia
@@ -233,64 +264,51 @@ pipeline = TransformPipeline() |>
         (:score1, 0.95),
         (:score2, 0.90)
     ], logic = :or)
+
+# String comparisons
+pipeline |> filter_by_multiple_thresholds([
+    (:category, "protein"),
+    (:status, "valid")
+], comparison = ==)
 ```
 """
-function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Real}};
-                                     comparison::Symbol = :<=,
+function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Any}};
+                                     comparison::Union{Symbol,Function} = <=,
                                      logic::Symbol = :and)
     desc = "filter_by_multiple_thresholds($(length(conditions)) conditions, $logic)"
     
-    # Create comparison function
-    comp_fn = if comparison == :<=
-        (x, t) -> x <= t
-    elseif comparison == :<
-        (x, t) -> x < t
-    elseif comparison == :>=
-        (x, t) -> x >= t
-    elseif comparison == :>
-        (x, t) -> x > t
-    elseif comparison == :(==)
-        (x, t) -> x == t
-    elseif comparison == :(!=)
-        (x, t) -> x != t
+    # Convert symbol to function if needed
+    comp_fn = if comparison isa Symbol
+        # Use getfield to get the function from Base
+        if comparison in (:<=, :<, :>=, :>, :(==), :(!=))
+            getfield(Base, comparison)
+        else
+            error("Unsupported comparison symbol: $comparison")
+        end
     else
-        error("Unsupported comparison: $comparison")
+        comparison  # Already a function
     end
     
     op = function(df)
-        n_rows = nrow(df)
-        keep_mask = Vector{Bool}(undef, n_rows)
-        
+        # Create predicate based on logic
         if logic == :and
             # AND logic - all conditions must be true
-            fill!(keep_mask, true)  # Start with all true
-            for (col, threshold) in conditions
-                col_data = df[!, col]::AbstractVector{Float32}
-                for i in 1:n_rows
-                    if keep_mask[i]  # Only check if still true
-                        keep_mask[i] = comp_fn(col_data[i], threshold)
-                    end
+            filter!(df) do row
+                all(conditions) do (col, threshold)
+                    evaluate_condition(row, col, threshold, comp_fn)
                 end
             end
         elseif logic == :or
             # OR logic - at least one condition must be true
-            fill!(keep_mask, false)  # Start with all false
-            for (col, threshold) in conditions
-                col_data = df[!, col]::AbstractVector{Float32}
-                for i in 1:n_rows
-                    if !keep_mask[i]  # Only check if still false
-                        keep_mask[i] = comp_fn(col_data[i], threshold)
-                    end
+            filter!(df) do row
+                any(conditions) do (col, threshold)
+                    evaluate_condition(row, col, threshold, comp_fn)
                 end
             end
         else
             error("Unsupported logic: $logic. Use :and or :or")
         end
         
-        # Filter using the mask
-        df_filtered = df[keep_mask, :]
-        empty!(df)
-        append!(df, df_filtered)
         return df
     end
     
