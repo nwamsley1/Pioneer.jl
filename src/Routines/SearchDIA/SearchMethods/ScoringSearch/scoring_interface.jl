@@ -32,7 +32,7 @@ Calculate global protein scores and add them to files via references.
 Returns the score dictionary for downstream use.
 """
 function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileReference})
-    log_n_runs = max(1, floor(Int, log2(length(pg_refs))))
+    sqrt_n_runs = max(1, floor(Int, sqrt(length(pg_refs))))
     acc_to_scores = Dict{ProteinKey, Vector{Float32}}()
 
     # First pass: collect scores per protein across all files
@@ -50,7 +50,7 @@ function calculate_and_add_global_scores!(pg_refs::Vector{ProteinGroupFileRefere
     # Compute global score using log-odds combination
     acc_to_global_score = Dict{ProteinKey, Float32}()
     for (key, scores) in acc_to_scores
-        acc_to_global_score[key] = logodds(scores, log_n_runs)
+        acc_to_global_score[key] = logodds(scores, sqrt_n_runs)
     end
     
     # Second pass: add global_pg_score column and sort

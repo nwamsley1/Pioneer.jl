@@ -232,7 +232,7 @@ function summarize_results!(
                                reverse=[true, true])
 
             merged_df = DataFrame(Arrow.Table(merged_scores_path))
-            log_n_runs = floor(Int64, log2(length(getFilePaths(getMSData(search_context)))))
+            sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
 
             if params.match_between_runs
                 prob_col = apply_mbr_filter!(
@@ -250,7 +250,7 @@ function summarize_results!(
                            Float32(prob)
                        end) => :prec_prob)
             transform!(groupby(merged_df, :precursor_idx),
-                       :prec_prob => (p -> logodds(p, log_n_runs)) => :global_prob)
+                       :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
             prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
 
             # Write updated data back to individual files

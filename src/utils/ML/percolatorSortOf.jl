@@ -31,7 +31,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                   max_depth::Int = 10,
                   iter_scheme::Vector{Int} = [100, 200, 200],
                   print_importance::Bool = true)
-    
+
     
     #Faster if sorted first
     sort!(psms, [:pair_id, :isotopes_captured])
@@ -630,7 +630,7 @@ function get_training_data_for_iteration!(
             # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
             psms_train_itr = subset(
                 psms_train_itr,
-                [:target, :q_value] => ByRow((t,q) -> (!t) || (t && q <= max_q_value_xgboost_mbr_rescore))
+                [:target, :q_value, :MBR_is_best_decoy] => ByRow((t,q,MBR_d) -> (!t) || (t && !ismissing(MBR_d) && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
             )
         else
             # Take all decoys and targets passing q_thresh
