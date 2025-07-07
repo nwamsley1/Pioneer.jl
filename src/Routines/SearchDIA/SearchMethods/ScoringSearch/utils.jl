@@ -162,7 +162,7 @@ function get_pep_interpolation(
     get_PEP!(scores, targets, pep_vals; doSort=true,
              fdr_scale_factor=fdr_scale_factor)
 
-    order = sortperm(scores, rev=true)
+    order = sortperm(scores)
     sorted_scores = scores[order]
     sorted_pep = pep_vals[order]
 
