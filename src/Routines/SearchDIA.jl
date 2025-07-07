@@ -137,6 +137,31 @@ function SearchDIA(params_path::String)
                 @error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
                 return
             end
+
+            # Disable match-between-runs if only a single run is provided
+            if length(MS_TABLE_PATHS) == 1 && params.global_settings.match_between_runs
+                @warn "Only one run detected; disabling match_between_runs (MBR)."
+
+                params_dict = JSON.parse(params_string)
+                params_dict["global"]["match_between_runs"] = false
+                params_string = JSON.json(params_dict, 4)
+
+                updated_global = (; params.global_settings..., match_between_runs=false)
+                params = PioneerParameters(
+                    updated_global,
+                    params.parameter_tuning,
+                    params.first_search,
+                    params.quant_search,
+                    params.acquisition,
+                    params.rt_alignment,
+                    params.optimization,
+                    params.protein_inference,
+                    params.maxLFQ,
+                    params.output,
+                    params.paths,
+                )
+            end
+            
             nothing
         end
         timings["Parameter Loading"] = params_timing
