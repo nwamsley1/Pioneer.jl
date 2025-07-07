@@ -140,6 +140,53 @@ function get_pep_spline(
 end
 
 """
+    get_pep_interpolation(merged_psms_path::String, score_col::Symbol;
+                          fdr_scale_factor=1.0f0)
+
+Create an interpolation function mapping scores to posterior error probabilities.
+
+PEP values are estimated across all runs using `get_PEP!` and then fit with a
+linear interpolation.  The returned object can be used with
+`add_interpolated_column` to populate per-file PEP columns.
+"""
+function get_pep_interpolation(
+    merged_psms_path::String,
+    score_col::Symbol;
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    df = DataFrame(Arrow.Table(merged_psms_path))
+    scores = df[!, score_col]::Vector{Float32}
+    targets = df[!, :target]::Vector{Bool}
+
+    pep_vals = Vector{Float32}(undef, length(scores))
+    get_PEP!(scores, targets, pep_vals; doSort=true,
+             fdr_scale_factor=fdr_scale_factor)
+
+    order = sortperm(scores, rev=true)
+    sorted_scores = scores[order]
+    sorted_pep = pep_vals[order]
+
+    xs = Float32[]
+    ys = Float32[]
+    prev_x = NaN32
+    for (s, p) in zip(sorted_scores, sorted_pep)
+        if s != prev_x
+            push!(xs, s)
+            push!(ys, p)
+            prev_x = s
+        end
+    end
+
+    if length(xs) < 2
+        @warn "Insufficient unique points for PEP interpolation, using default"
+        xs = Float32[0.0, 1.0]
+        ys = Float32[1.0, 0.0]
+    end
+
+    return linear_interpolation(xs, ys; extrapolation_bc=Line())
+end
+
+"""
     get_qvalue_spline(merged_psms_path::String, score_col::Symbol;
                       min_pep_points_per_bin=1000, fdr_scale_factor=1.0f0) -> Interpolation
 
