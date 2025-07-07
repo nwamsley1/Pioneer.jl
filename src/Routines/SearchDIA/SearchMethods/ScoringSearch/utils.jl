@@ -155,8 +155,8 @@ function get_pep_interpolation(
     fdr_scale_factor::Float32 = 1.0f0,
 )
     df = DataFrame(Arrow.Table(merged_psms_path))
-    scores = df[!, score_col]::Vector{Float32}
-    targets = df[!, :target]::Vector{Bool}
+    scores = Vector{Float32}(df[!, score_col])
+    targets = Vector{Bool}(df[!, :target])
 
     pep_vals = Vector{Float32}(undef, length(scores))
     get_PEP!(scores, targets, pep_vals; doSort=true,
