@@ -155,27 +155,27 @@ function get_pep_interpolation(
     fdr_scale_factor::Float32 = 1.0f0,
 )
     df = DataFrame(Arrow.Table(merged_psms_path))
-    scores = Vector{Float32}(df[!, score_col])
+    scores  = Vector{Float32}(df[!, score_col])
     targets = Vector{Bool}(df[!, :target])
 
     pep_vals = Vector{Float32}(undef, length(scores))
     get_PEP!(scores, targets, pep_vals; doSort=true,
              fdr_scale_factor=fdr_scale_factor)
 
-    order = sortperm(scores)
-    sorted_scores = scores[order]
-    sorted_pep = pep_vals[order]
-
-    xs = Float32[]
-    ys = Float32[]
-    prev_x = NaN32
-    for (s, p) in zip(sorted_scores, sorted_pep)
-        if s != prev_x
-            push!(xs, s)
-            push!(ys, p)
-            prev_x = s
+    # Collapse redundant PEP values by taking the minimum score
+    pep_to_score = Dict{Float32, Float32}()
+    for (s, p) in zip(scores, pep_vals)
+        if haskey(pep_to_score, p)
+            pep_to_score[p] = min(pep_to_score[p], s)
+        else
+            pep_to_score[p] = s
         end
     end
+
+    # Sort the resulting pairs by score for interpolation
+    ordered = sort(collect(pep_to_score), by = last)
+    xs = Float32[last(pair) for pair in ordered]
+    ys = Float32[first(pair) for pair in ordered]
 
     if length(xs) < 2
         @warn "Insufficient unique points for PEP interpolation, using default"
