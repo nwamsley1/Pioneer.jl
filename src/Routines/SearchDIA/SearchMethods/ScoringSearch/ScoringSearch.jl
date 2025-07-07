@@ -38,6 +38,7 @@ struct ScoringSearchResults <: SearchResults
     best_traces::Dict{Int64, Float32}
     precursor_global_qval_interp::Base.Ref{Any} # Interpolation for global q-values
     precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
+    precursor_pep_interp::Base.Ref{Any}  # Interpolation for experiment-wide PEPs
     pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
     merged_quant_path::String # Path to merged quantification results
 end
@@ -105,6 +106,7 @@ function init_search_results(::ScoringSearchParameters, search_context::SearchCo
         Dict{Int64, Float32}(),  # best_traces
         Ref(undef),  # precursor_global_qval_interp
         Ref(undef),  # precursor_qval_interp
+        Ref(undef),  # precursor_pep_interp
         Ref(undef),  # pg_qval_interp
         joinpath(getDataOutDir(search_context), "merged_quant.arrow")
     )
@@ -163,6 +165,16 @@ function get_precursor_qval_spline(merged_path::String, params::ScoringSearchPar
 end
 
 """
+Create experiment-wide precursor PEP interpolation (all precursors).
+"""
+function get_precursor_pep_interpolation(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    return get_pep_interpolation(
+        merged_path, :prec_prob;
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+    )
+end
+
+"""
 Create global protein q-value spline (unique protein groups only).
 """
 function get_protein_global_qval_spline(merged_path::String, params::ScoringSearchParameters)
@@ -179,6 +191,15 @@ function get_protein_qval_spline(merged_path::String, params::ScoringSearchParam
     return get_qvalue_spline(
         merged_path, :pg_score, false;
         min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+    )
+end
+
+"""
+Create experiment-wide protein group PEP interpolation (all protein groups).
+"""
+function get_protein_pep_interpolation(merged_path::String, params::ScoringSearchParameters)
+    return get_pep_interpolation(
+        merged_path, :pg_score;
     )
 end
 
@@ -314,10 +335,11 @@ function summarize_results!(
         end
         @info "Step 7 completed in $(round(step7_time, digits=2)) seconds"
 
-        # Step 8: Calculate experiment-wide precursor q-values
-        @info "Step 8: Calculating experiment-wide precursor q-values..."
+        # Step 8: Calculate experiment-wide precursor q-values and PEPs
+        @info "Step 8: Calculating experiment-wide precursor q-values and PEPs..."
         step8_time = @elapsed begin
             results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+            results.precursor_pep_interp[]  = get_precursor_pep_interpolation(results.merged_quant_path, params, search_context)
         end
         @info "Step 8 completed in $(round(step8_time, digits=2)) seconds"
 
@@ -327,13 +349,11 @@ function summarize_results!(
             qvalue_filter_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
                 add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
-                add_pep_column(:pep, :prec_prob, :target;
-                               doSort=false,
-                               fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) |>
+                add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
                 filter_by_multiple_thresholds([
                     (:global_qval, params.q_value_threshold),
                     (:qval, params.q_value_threshold)
-                ]) 
+                ])
                 
             
             passing_refs = apply_pipeline_batch(
@@ -434,10 +454,11 @@ function summarize_results!(
         end
         @info "Step 18 completed in $(round(step18_time, digits=2)) seconds"
 
-        # Step 19: Calculate experiment-wide protein q-values
-        @info "Step 19: Calculating experiment-wide protein q-values..."
+        # Step 19: Calculate experiment-wide protein q-values and PEPs
+        @info "Step 19: Calculating experiment-wide protein q-values and PEPs..."
         step19_time = @elapsed begin
             search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
+            search_context.pg_score_to_pep[]  = get_protein_pep_interpolation(sorted_pg_scores_path, params)
         end
         @info "Step 19 completed in $(round(step19_time, digits=2)) seconds"
 
@@ -447,12 +468,11 @@ function summarize_results!(
             protein_qval_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
+                add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |> 
                 add_column(:passes_qval, df ->
                     (df.global_pg_qval .<= params.q_value_threshold) .&
-                    (df.pg_qval .<= params.q_value_threshold)) |>
-                add_pep_column(:pg_pep, :pg_score, :target;
-                            doSort=false,
-                            fdr_scale_factor=getLibraryFdrScaleFactor(search_context))
+                    (df.pg_qval .<= params.q_value_threshold))
+                
 
             apply_pipeline!(pg_refs, protein_qval_pipeline)
         end
