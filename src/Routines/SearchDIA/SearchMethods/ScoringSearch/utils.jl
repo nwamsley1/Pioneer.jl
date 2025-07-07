@@ -198,7 +198,7 @@ function get_pep_interpolation(
 
     Interpolations.deduplicate_knots!(xs)
 
-    return linear_interpolation(xs, ys; extrapolation_bc=Flat())
+    return linear_interpolation(xs, ys; extrapolation_bc=Interpolations.Flat())
 end
 
 """
