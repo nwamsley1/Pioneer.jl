@@ -842,7 +842,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
     X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
     y = sampled_protein_groups.target
     
@@ -914,7 +914,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_decoys = sum(.!all_protein_groups.target)
     @info "In memory probit regression analysis" n_targets=n_targets n_decoys=n_decoys total_protein_groups=nrow(all_protein_groups)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] # :log_binom_coeff] 
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
     

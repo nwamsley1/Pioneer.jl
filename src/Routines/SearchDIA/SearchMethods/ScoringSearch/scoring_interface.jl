@@ -321,6 +321,7 @@ function get_quant_necessary_columns()
         :rt,
         :irt_obs,
         :missed_cleavage,
+        :Mox,
         :isotopes_captured,
         :scan_idx,
         :entrapment_group_id,
