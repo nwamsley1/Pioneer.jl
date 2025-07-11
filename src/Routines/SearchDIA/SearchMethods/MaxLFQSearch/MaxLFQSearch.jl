@@ -255,6 +255,7 @@ function summarize_results!(
         if params.delete_temp
             @info "Removing temporary data..."
             temp_path = joinpath(getDataOutDir(search_context), "temp_data")
+            GC.gc()
             isdir(temp_path) && rm(temp_path; recursive=true, force=true)
         end
 

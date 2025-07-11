@@ -35,13 +35,13 @@ elseif Sys.iswindows()
     const PROCESS_MEMORY_COUNTERS = NTuple{11, UInt64}
 
     function peak_rss()::Int64
-        pmc   = zero(PROCESS_MEMORY_COUNTERS)
+        pmc   = Ref(ntuple(_ -> UInt64(0), 11))
         hProc = ccall(("GetCurrentProcess", "kernel32"), Ptr{Cvoid}, ())
         ok = ccall(("GetProcessMemoryInfo", "psapi"),
                    Int32,
                    (Ptr{Cvoid}, Ref{PROCESS_MEMORY_COUNTERS}, UInt32),
                    hProc, pmc, sizeof(pmc))
         ok == 0 && error("GetProcessMemoryInfo failed")
-        return Int64(pmc[3])    # WorkingSetSize (bytes)
+        return Int64(pmc[][3])    # WorkingSetSize (bytes)
     end
 end
