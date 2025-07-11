@@ -33,9 +33,9 @@ function check_params_bsp(json_string::String)
     end
 
     # Check top-level parameters
-    top_level_params = ["fasta_digest_params", "nce_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name", "predict_fragments"]
+    top_level_params = ["fasta_digest_params", "nce_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "max_koina_requests", "max_koina_batch", "match_lib_build_batch", "fasta_paths", "fasta_names", "out_dir", "lib_name", "new_lib_name", "out_name", "predict_fragments", "include_contaminants"]
     for param in top_level_params
-        check_param(params, param, param in ["predict_fragments"] ? Bool : Any)
+        check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
     end
 
     # Check fasta_digest_params
@@ -126,6 +126,17 @@ function check_params_bsp(json_string::String)
                 throw(InvalidParametersError("Length of $key must match fasta_paths", params))
             end
         end
+    end
+
+    # Add default contaminants fasta
+    if params["include_contaminants"]
+        contam_path = joinpath(pkgdir(Pioneer), "data", "contaminants.fasta.gz")
+        push!(params["fasta_paths"], contam_path)
+        push!(params["fasta_names"], "CONTAM")
+        push!(get!(params, "fasta_header_regex_accessions", String[]), "^\\w+\\|(\\w+(?:-\\d+)?)\\|")
+        push!(get!(params, "fasta_header_regex_genes", String[]), " GN=(\\S+)")
+        push!(get!(params, "fasta_header_regex_proteins", String[]), "^\\w+\\|\\w+?:-\\d+?\\|[^ ]+ (.*?) [^ ]+=")
+        push!(get!(params, "fasta_header_regex_organisms", String[]), " OS=([^ ]+.*?) [^ ]+=")
     end
     
     # If all checks pass, return the validated parameters

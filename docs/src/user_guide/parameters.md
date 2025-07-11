@@ -241,6 +241,7 @@ Most parameters should not be changed, but the following may need adjustement.
 |-----------|------|-------------|
 | `fasta_paths` | [String] | List of FASTA file paths |
 | `fasta_names` | [String] | Names for each FASTA file |
+| `include_contaminants` | Boolean | Append a contaminants FASTA to the build (default: true) |
 | `out_dir` | String | Output directory path |
 | `lib_name` | String | Base name for library files |
 | `new_lib_name` | String | Name for updated library files |
