@@ -38,6 +38,7 @@ struct ScoringSearchResults <: SearchResults
     best_traces::Dict{Int64, Float32}
     precursor_global_qval_interp::Base.Ref{Any} # Interpolation for global q-values
     precursor_qval_interp::Base.Ref{Any} # Interpolation for run-specific q-values
+    precursor_pep_interp::Base.Ref{Any}  # Interpolation for experiment-wide PEPs
     pg_qval_interp::Base.Ref{Any}       # Protein group q-value interpolation
     merged_quant_path::String # Path to merged quantification results
 end
@@ -57,6 +58,8 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
     min_peptides::Int64
     max_q_value_xgboost_rescore::Float32
     max_q_value_xgboost_mbr_rescore::Float32
+    min_PEP_neg_threshold_xgboost_rescore::Float32
+    max_MBR_false_transfer_rate::Float32
     q_value_threshold::Float32
     isotope_tracetype::I
 
@@ -82,8 +85,10 @@ struct ScoringSearchParameters{I<:IsotopeTraceType} <: SearchParameters
             Int64(ml_params.interpolation_points), # Using same value for protein groups
             Bool(global_params.match_between_runs),
             Int64(protein_inference_params.min_peptides),
-            Float32(ml_params.max_q_value_xgboost_rescore),
+            Float32(global_params.scoring.q_value_threshold),
             Float32(ml_params.max_q_value_xgboost_mbr_rescore),
+            Float32(ml_params.min_PEP_neg_threshold_xgboost_rescore),
+            Float32(global_params.scoring.q_value_threshold),
             Float32(global_params.scoring.q_value_threshold),
             isotope_trace_type
         )
@@ -101,6 +106,7 @@ function init_search_results(::ScoringSearchParameters, search_context::SearchCo
         Dict{Int64, Float32}(),  # best_traces
         Ref(undef),  # precursor_global_qval_interp
         Ref(undef),  # precursor_qval_interp
+        Ref(undef),  # precursor_pep_interp
         Ref(undef),  # pg_qval_interp
         joinpath(getDataOutDir(search_context), "merged_quant.arrow")
     )
@@ -159,6 +165,16 @@ function get_precursor_qval_spline(merged_path::String, params::ScoringSearchPar
 end
 
 """
+Create experiment-wide precursor PEP interpolation (all precursors).
+"""
+function get_precursor_pep_interpolation(merged_path::String, params::ScoringSearchParameters, search_context::SearchContext)
+    return get_pep_interpolation(
+        merged_path, :prec_prob;
+        fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+    )
+end
+
+"""
 Create global protein q-value spline (unique protein groups only).
 """
 function get_protein_global_qval_spline(merged_path::String, params::ScoringSearchParameters)
@@ -175,6 +191,15 @@ function get_protein_qval_spline(merged_path::String, params::ScoringSearchParam
     return get_qvalue_spline(
         merged_path, :pg_score, false;
         min_pep_points_per_bin = params.pg_q_value_interpolation_points_per_bin
+    )
+end
+
+"""
+Create experiment-wide protein group PEP interpolation (all protein groups).
+"""
+function get_protein_pep_interpolation(merged_path::String, params::ScoringSearchParameters)
+    return get_pep_interpolation(
+        merged_path, :pg_score;
     )
 end
 
@@ -208,28 +233,68 @@ function summarize_results!(
                 params.match_between_runs,
                 params.max_q_value_xgboost_rescore,
                 params.max_q_value_xgboost_mbr_rescore,
+                params.min_PEP_neg_threshold_xgboost_rescore,
                 params.max_psms_in_memory
             )
         end
         @info "Step 1 completed in $(round(step1_time, digits=2)) seconds"
 
-        # Step 2: Find Best Isotope Traces
-        @info "Step 2: Finding best isotope traces..."
+        # Create references for second pass PSMs
+        second_pass_paths = getSecondPassPsms(getMSData(search_context))
+        second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
+
+        # Step 2: Compute precursor probabilities and FTR filtering
+        @info "Step 2: Computing precursor probabilities..."
         step2_time = @elapsed begin
+            # Merge all second pass PSMs for experiment-wide calculations
+            merged_scores_path = joinpath(temp_folder, "merged_trace_scores.arrow")
+            sort_file_by_keys!(second_pass_refs, :prob, :target; reverse=[true, true])
+            stream_sorted_merge(second_pass_refs, merged_scores_path, :prob, :target;
+                               reverse=[true, true])
+
+            merged_df = DataFrame(Arrow.Table(merged_scores_path))
+            sqrt_n_runs = floor(Int64, sqrt(length(getFilePaths(getMSData(search_context)))))
+
+            if params.match_between_runs
+                prob_col = apply_mbr_filter!(
+                    merged_df,
+                    params,
+                    getLibraryFdrScaleFactor(search_context))
+            else
+                prob_col = :prob
+            end
+
+            transform!(groupby(merged_df, [:precursor_idx, :ms_file_idx]),
+                       prob_col => (p -> begin
+                           prob = 1.0f0 - 0.000001f0 - exp(sum(log1p.(-p)))
+                           prob = clamp(prob, eps(Float32), 1.0f0 - eps(Float32))
+                           Float32(prob)
+                       end) => :prec_prob)
+            transform!(groupby(merged_df, :precursor_idx),
+                       :prec_prob => (p -> logodds(p, sqrt_n_runs)) => :global_prob)
+            prob_col == :_filtered_prob && select!(merged_df, Not(:_filtered_prob)) # drop temp trace prob TODO maybe we want this for getting best traces
+
+            # Write updated data back to individual files
+            for (idx, ref) in enumerate(second_pass_refs)
+                sub_df = merged_df[merged_df.ms_file_idx .== idx, :]
+                write_arrow_file(ref, sub_df)
+            end
+        end
+        @info "Step 2 completed in $(round(step2_time, digits=2)) seconds"
+
+        # Step 3: Find Best Isotope Traces
+        @info "Step 3: Finding best isotope traces..."
+        step3_time = @elapsed begin
             best_traces = get_best_traces(
                 getSecondPassPsms(getMSData(search_context)),
                 params.min_best_trace_prob
             )
         end
-        @info "Step 2 completed in $(round(step2_time, digits=2)) seconds"
+        @info "Step 3 completed in $(round(step3_time, digits=2)) seconds"
 
-        # Create references for second pass PSMs
-        second_pass_paths = getSecondPassPsms(getMSData(search_context))
-        second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
-
-        # Step 3: Process Quantification Results
-        @info "Step 3: Processing quantification results..."
-        step3_time = @elapsed begin
+        # Step 4: Process Quantification Results
+        @info "Step 4: Processing quantification results..."
+        step4_time = @elapsed begin
             necessary_cols = get_quant_necessary_columns()
             
             quant_processing_pipeline = TransformPipeline() |>
@@ -244,52 +309,51 @@ function summarize_results!(
             
             filtered_refs = second_pass_refs
         end
-        @info "Step 3 completed in $(round(step3_time, digits=2)) seconds"
+        @info "Step 4 completed in $(round(step4_time, digits=2)) seconds"
 
-        # Step 4: Merge PSMs by global_prob for global q-values
-        @info "Step 4: Merging PSM scores by global_prob..."
-        step4_time = @elapsed begin
+        # Step 5: Merge PSMs by global_prob for global q-values
+        @info "Step 5: Merging PSM scores by global_prob..."
+        step5_time = @elapsed begin
             stream_sorted_merge(filtered_refs, results.merged_quant_path, :global_prob, :target;
                                batch_size=10_000_000, reverse=[true,true])
         end
-        @info "Step 4 completed in $(round(step4_time, digits=2)) seconds"
-
-        # Step 5: Calculate global precursor q-values
-        @info "Step 5: Calculating global precursor q-values..."
-        step5_time = @elapsed begin
-            results.precursor_global_qval_interp[] = get_precursor_global_qval_spline(results.merged_quant_path, params, search_context)
-        end
         @info "Step 5 completed in $(round(step5_time, digits=2)) seconds"
 
-        # Step 6: Merge PSMs by prec_prob for experiment-wide q-values
-        @info "Step 6: Re-sorting and merging PSMs by prec_prob..."
+        # Step 6: Calculate global precursor q-values
+        @info "Step 6: Calculating global precursor q-values..."
         step6_time = @elapsed begin
+            results.precursor_global_qval_interp[] = get_precursor_global_qval_spline(results.merged_quant_path, params, search_context)
+        end
+        @info "Step 6 completed in $(round(step6_time, digits=2)) seconds"
+
+        # Step 7: Merge PSMs by prec_prob for experiment-wide q-values
+        @info "Step 7: Re-sorting and merging PSMs by prec_prob..."
+        step7_time = @elapsed begin
             sort_file_by_keys!(filtered_refs, :prec_prob, :target; reverse=[true,true])
             stream_sorted_merge(filtered_refs, results.merged_quant_path, :prec_prob, :target;
                                batch_size=10_000_000, reverse=[true,true])
         end
-        @info "Step 6 completed in $(round(step6_time, digits=2)) seconds"
-
-        # Step 7: Calculate experiment-wide precursor q-values
-        @info "Step 7: Calculating experiment-wide precursor q-values..."
-        step7_time = @elapsed begin
-            results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
-        end
         @info "Step 7 completed in $(round(step7_time, digits=2)) seconds"
 
-        # Step 8: Filter PSMs by q-value thresholds
-        @info "Step 8: Filtering PSMs by q-value thresholds..."
+        # Step 8: Calculate experiment-wide precursor q-values and PEPs
+        @info "Step 8: Calculating experiment-wide precursor q-values and PEPs..."
         step8_time = @elapsed begin
+            results.precursor_qval_interp[] = get_precursor_qval_spline(results.merged_quant_path, params, search_context)
+            results.precursor_pep_interp[]  = get_precursor_pep_interpolation(results.merged_quant_path, params, search_context)
+        end
+        @info "Step 8 completed in $(round(step8_time, digits=2)) seconds"
+
+        # Step 9: Filter PSMs by q-value thresholds
+        @info "Step 9: Filtering PSMs by q-value thresholds..."
+        step9_time = @elapsed begin
             qvalue_filter_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_qval, :global_prob, results.precursor_global_qval_interp[]) |>
                 add_interpolated_column(:qval, :prec_prob, results.precursor_qval_interp[]) |>
-                add_pep_column(:pep, :prec_prob, :target;
-                               doSort=false,
-                               fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) |>
+                add_interpolated_column(:pep, :prec_prob, results.precursor_pep_interp[]) |>
                 filter_by_multiple_thresholds([
                     (:global_qval, params.q_value_threshold),
                     (:qval, params.q_value_threshold)
-                ]) 
+                ])
                 
             
             passing_refs = apply_pipeline_batch(
@@ -298,10 +362,11 @@ function summarize_results!(
                 passing_psms_folder
             )
         end
-        @info "Step 8 completed in $(round(step8_time, digits=2)) seconds"
 
-        @info "Step 9 Re-calculate Experiment-Wide Qvalue after filtering..."
-        step9_time = @elapsed begin
+        @info "Step 9 completed in $(round(step8_time, digits=2)) seconds"
+
+        @info "Step 10 Re-calculate Experiment-Wide Qvalue after filtering..."
+        step10_time = @elapsed begin
         #Files should already be sorted from step 8. Not strictly necessary? 
         sort_file_by_keys!(passing_refs, :prec_prob, :target; reverse=[true,true])
 
@@ -326,7 +391,7 @@ function summarize_results!(
             setPassingPsms!(getMSData(search_context), idx, file_path(ref))
         end
 
-        # Step 9: Count protein peptides
+        # Step 10: Count protein peptides
         @info "Step 10: Counting protein peptides for feature calculation..."
         step10_time = @elapsed begin
             protein_to_possible_peptides = count_protein_peptides(
@@ -352,7 +417,6 @@ function summarize_results!(
             isempty(paired_files) && error("No protein groups created during protein inference")
         end
         @info "Step 11 completed in $(round(step11_time, digits=2)) seconds"
-
         # Step 10.5: Build protein CV fold mapping from PSMs
         @info "Step 11.5: Building protein CV fold mapping..."
         step11_5_time = @elapsed begin
@@ -423,14 +487,14 @@ function summarize_results!(
         end
         @info "Step 18 completed in $(round(step18_time, digits=2)) seconds"
 
-        # Step 19: Calculate experiment-wide protein q-values
-        @info "Step 19: Calculating experiment-wide protein q-values..."
+        # Step 19: Calculate experiment-wide protein q-values and PEPs
+        @info "Step 19: Calculating experiment-wide protein q-values and PEPs..."
         step19_time = @elapsed begin
             search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
+            search_context.pg_score_to_pep[]  = get_protein_pep_interpolation(sorted_pg_scores_path, params)
         end
         @info "Step 19 completed in $(round(step19_time, digits=2)) seconds"
-
-        # Step 20: Add q-values to protein groups
+        # Step 20: Add q-values and passing flags to protein groups
         @info "Step 20: Adding q-values and passing flags to protein groups..."
         step20_time = @elapsed begin
             protein_qval_pipeline = TransformPipeline() |>
@@ -441,7 +505,6 @@ function summarize_results!(
                     (:global_pg_qval, params.q_value_threshold),
                     (:pg_qval, params.q_value_threshold)
                 ]) 
-
             apply_pipeline!(pg_refs, protein_qval_pipeline)
         end
         @info "Step 20 completed in $(round(step20_time, digits=2)) seconds"
@@ -472,12 +535,14 @@ function summarize_results!(
         @info "Step 21 completed in $(round(step21_time, digits=2)) seconds"
 
         # Summary of all step times
-        total_time = step1_time + step2_time + step3_time + step4_time + step5_time + 
-                    step6_time + step7_time + step8_time + step9_time + step10_time + 
-                    step11_5_time + step11_time + step12_time + step13_time + step14_time + 
-                    step15_time + step16_time + step17_time + step18_time + step19_time + step20_time + step20_time
+        total_time = step1_time + step2_time + step3_time + step4_time + step5_time +
+                    step6_time + step7_time + step8_time + step9_time + step10_time +
+                    step11_time + step12_time + step13_time + step14_time + step15_time +
+                    step16_time + step17_time + step18_time + step19_time + step20_time +
+                    step21_time
+    
         @info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
-        @info "Breakdown: XGBoost($(round(step1_time, digits=1))s) + Best_Traces($(round(step2_time, digits=1))s) + Quant_Processing($(round(step3_time, digits=1))s) + Merging($(round(step4_time + step6_time + step14_time + step17_time, digits=1))s) + Q-values($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Protein_Inference($(round(step10_time, digits=1))s) + Probit_Regression($(round(step11_time, digits=1))s) + Other($(round(step3_time + step8_time + step9_time + step12_time + step13_time + step16_time + step19_time + step20_time, digits=1))s)"
+        @info "Breakdown: XGBoost($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"
 
         best_traces = nothing # Free memory
     catch e

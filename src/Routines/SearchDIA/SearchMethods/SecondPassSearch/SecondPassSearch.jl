@@ -378,7 +378,7 @@ function process_search_results!(
         )
 
         # Initialize probability scores (will be calculated later)
-        initialize_group_features!(psms, params.match_between_runs)
+        initialize_prob_group_features!(psms, params.match_between_runs)
         
         # Save processed results
         temp_path = joinpath(

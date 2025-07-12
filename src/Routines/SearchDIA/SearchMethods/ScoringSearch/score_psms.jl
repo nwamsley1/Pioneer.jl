@@ -26,6 +26,9 @@ PSM sampling and scoring
                                   match_between_runs::Bool,
                                   max_q_value_xgboost_rescore::Float32,
                                   max_q_value_xgboost_mbr_rescore::Float32,
+                                  min_PEP_neg_threshold_xgboost_rescore::Float32,
+                                  q_value_threshold::Float32,
+                                  max_MBR_false_transfer_rate::Float32,
                                   max_psms_in_memory::Int64)
 
 Main entry point for PSM scoring. Automatically chooses between in-memory and out-of-memory
@@ -38,6 +41,9 @@ processing based on data size.
 - `match_between_runs`: Whether to perform match between runs
 - `max_q_value_xgboost_rescore`: Max q-value for XGBoost rescoring
 - `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
+- `min_PEP_neg_threshold_xgboost_rescore`: Min PEP for negative relabeling
+- `q_value_threshold`: Max q-value for final output
+- `max_MBR_false_transfer_rate`: Max FTR for MBR
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
 
 # Returns
@@ -50,6 +56,7 @@ function score_precursor_isotope_traces(
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
     max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32,
     max_psms_in_memory::Int64
 )
     # Count total PSMs
@@ -64,7 +71,8 @@ function score_precursor_isotope_traces(
             precursors,
             match_between_runs,
             max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore
+            max_q_value_xgboost_mbr_rescore,
+            min_PEP_neg_threshold_xgboost_rescore
         )
     else
         # Use in-memory algorithm
@@ -75,7 +83,8 @@ function score_precursor_isotope_traces(
             precursors,
             match_between_runs,
             max_q_value_xgboost_rescore,
-            max_q_value_xgboost_mbr_rescore
+            max_q_value_xgboost_mbr_rescore,
+            min_PEP_neg_threshold_xgboost_rescore
         )
     end
     
@@ -184,7 +193,8 @@ function score_precursor_isotope_traces_in_memory!(
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -242,12 +252,12 @@ function score_precursor_isotope_traces_in_memory!(
         features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
-                :max_prob, 
-                :mean_prob, 
-                :min_prob,
-                :rv_coefficient,
-                :best_irt_diff,
-                :num_runs
+                :MBR_rv_coefficient,
+                :MBR_best_irt_diff,
+                :MBR_num_runs,
+                :MBR_max_pair_prob,
+                :MBR_log2_weight_ratio,
+                :MBR_log2_explained_ratio
                 ])
         end
 
@@ -263,6 +273,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 match_between_runs;
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
+                                min_PEP_neg_threshold_xgboost_rescore,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -270,7 +281,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 subsample = 0.25, 
                                 max_depth = 10,
                                 eta = 0.05, 
-                                iter_scheme = [100, 100, 200],
+                                iter_scheme = [100, 200, 200],
                                 print_importance = false);
         return models;#best_psms
     else
@@ -316,6 +327,7 @@ function score_precursor_isotope_traces_in_memory!(
                                 match_between_runs;
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
+                                min_PEP_neg_threshold_xgboost_rescore,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 1, 
@@ -349,7 +361,8 @@ function score_precursor_isotope_traces_out_of_memory!(
     precursors::LibraryPrecursors,
     match_between_runs::Bool,
     max_q_value_xgboost_rescore::Float32,
-    max_q_value_xgboost_mbr_rescore::Float32
+    max_q_value_xgboost_mbr_rescore::Float32,
+    min_PEP_neg_threshold_xgboost_rescore::Float32
 )
     if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
@@ -407,12 +420,12 @@ function score_precursor_isotope_traces_out_of_memory!(
         features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
             append!(features, [
-                :max_prob, 
-                :mean_prob, 
-                :min_prob,
-                :rv_coefficient,
-                :best_irt_diff,
-                :num_runs,
+                :MBR_rv_coefficient,
+                :MBR_best_irt_diff,
+                :MBR_num_runs,
+                :MBR_max_pair_prob,
+                :MBR_log2_weight_ratio,
+                :MBR_log2_explained_ratio
                 ])
         end
 
@@ -427,6 +440,7 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 match_between_runs;
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
+                                min_PEP_neg_threshold_xgboost_rescore,
                                 colsample_bytree = 0.5, 
                                 colsample_bynode = 0.5,
                                 min_child_weight = 5, 
@@ -434,7 +448,7 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 subsample = 0.25, 
                                 max_depth = 10,
                                 eta = 0.05, 
-                                iter_scheme = [100, 100, 200],
+                                iter_scheme = [100, 200, 200],
                                 print_importance = false);
         return models;#best_psms
     else
@@ -468,6 +482,7 @@ function score_precursor_isotope_traces_out_of_memory!(
                                 match_between_runs,
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
+                                min_PEP_neg_threshold_xgboost_rescore,
                                 colsample_bytree = 1.0, 
                                 colsample_bynode = 1.0,
                                 min_child_weight = 100, 

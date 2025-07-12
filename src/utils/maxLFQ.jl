@@ -279,16 +279,33 @@ function getProtAbundance(protein::String,
         end
 
 
-        pep_val = peps[1]
+        # Map experiment → metrics using the first occurrence for each experiment
+        pep_map = Dict{UInt32, Float32}()
+        score_map = Dict{UInt32, Float32}()
+        global_score_map = Dict{UInt32, Float32}()
+        qval_map = Dict{UInt32, Float32}()
+        global_qval_map = Dict{UInt32, Float32}()
+        for j in eachindex(experiments)
+            exp = UInt32(experiments[j])
+            if !haskey(pep_map, exp)
+                pep_map[exp] = peps[j]
+                score_map[exp] = pg_scores[j]
+                global_score_map[exp] = global_pg_scores[j]
+                qval_map[exp] = qvals[j]
+                global_qval_map[exp] = global_qvals[j]
+            end
+        end
+
         for i in range(0, N-1)
+            exp = UInt32(unique_experiments[i + 1])
             log2_abundance_out[row_idx + i] = log2_abundances[i + 1]
-            global_qval_out[row_idx + i] = global_qvals[i + 1]
-            qval_out[row_idx + i] = qvals[i + 1]
-            pg_score_out[row_idx + i] = pg_scores[i + 1]
-            global_pg_score_out[row_idx + i] = global_pg_scores[i + 1]
-            experiments_out[row_idx + i] = unique_experiments[i + 1]
+            global_qval_out[row_idx + i] = global_qval_map[exp]
+            qval_out[row_idx + i] = qval_map[exp]
+            pg_score_out[row_idx + i] = score_map[exp]
+            global_pg_score_out[row_idx + i] = global_score_map[exp]
+            experiments_out[row_idx + i] = exp
             protein_out[row_idx + i] = protein
-            pep_out[row_idx + i] = pep_val
+            pep_out[row_idx + i] = pep_map[exp]
             species_out[row_idx + i] = species
             target_out[row_idx + i] = target
             entrap_id_out[row_idx + i] = entrap_id
