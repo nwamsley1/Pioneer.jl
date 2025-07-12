@@ -436,12 +436,7 @@ function summarize_results!(
             protein_qval_pipeline = TransformPipeline() |>
                 add_interpolated_column(:global_pg_qval, :global_pg_score, search_context.global_pg_score_to_qval[]) |>
                 add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[]) |>
-                #add_column(:passes_qval, df -> 
-                #    (df.global_pg_qval .<= params.q_value_threshold) .& 
-                #    (df.pg_qval .<= params.q_value_threshold)) |> 
-                add_pep_column(:pg_pep, :pg_score, :target;
-                            doSort=false,
-                            fdr_scale_factor=getLibraryFdrScaleFactor(search_context)) |>
+                add_interpolated_column(:pg_pep, :pg_score, search_context.pg_score_to_pep[]) |> 
                 filter_by_multiple_thresholds([
                     (:global_pg_qval, params.q_value_threshold),
                     (:pg_qval, params.q_value_threshold)
