@@ -246,10 +246,11 @@ function group_psms_by_protein(df::DataFrame)
             entrap_id = UInt8[],
             n_peptides = Int64[],
             peptide_list = String[],
-            pg_score = Float32[]
+            pg_score = Float32[],
+            any_common_peps = Bool[]
         )
     end
-    
+
     # Group by protein
     grouped = groupby(df, [:inferred_protein_group, :target, :entrap_id])
     
@@ -273,12 +274,19 @@ function group_psms_by_protein(df::DataFrame)
                 end
             end
             pg_score = -sum(log.(1.0f0 .- unique_pep_probs))
-        end
+        end        
+
+        has_common = any(
+            (gdf.use_for_protein_quant .== true) .&
+            (gdf.missed_cleavage .== 0) .&
+            (gdf.Mox .== 0)
+        )
         
         DataFrame(
             n_peptides = n_peptides,
             peptide_list = join(quant_peptides, ";"),
-            pg_score = pg_score
+            pg_score = pg_score,
+            any_common_peps = has_common
         )
     end
     

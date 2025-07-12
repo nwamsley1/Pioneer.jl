@@ -140,6 +140,68 @@ function get_pep_spline(
 end
 
 """
+    get_pep_interpolation(merged_psms_path::String, score_col::Symbol;
+                          fdr_scale_factor=1.0f0)
+
+Create an interpolation function mapping scores to posterior error probabilities.
+
+PEP values are estimated across all runs using `get_PEP!` and then fit with a
+linear interpolation.  The returned object can be used with
+`add_interpolated_column` to populate per-file PEP columns.
+"""
+function get_pep_interpolation(
+    merged_psms_path::String,
+    score_col::Symbol;
+    fdr_scale_factor::Float32 = 1.0f0,
+)
+    df = DataFrame(Arrow.Table(merged_psms_path))
+    scores  = Vector{Float32}(df[!, score_col])
+    targets = Vector{Bool}(df[!, :target])
+
+    pep_vals = Vector{Float32}(undef, length(scores))
+    get_PEP!(scores, targets, pep_vals; doSort=true,
+             fdr_scale_factor=fdr_scale_factor)
+
+    # Collapse redundant PEP values by taking the minimum score for each PEP
+    pep_to_score = Dict{Float32, Float32}()
+    order = sortperm(scores)
+    for idx in order
+        p = pep_vals[idx]
+        s = scores[idx]
+        if !haskey(pep_to_score, p)
+            pep_to_score[p] = s
+        end
+    end
+
+    # Sort the resulting pairs by score for interpolation
+    ordered = sort(collect(pep_to_score), by = last)
+    xs_tmp = Float32[last(pair) for pair in ordered]
+    ys_tmp = Float32[first(pair) for pair in ordered]
+
+    # Remove duplicate knot values explicitly
+    xs = Float32[]
+    ys = Float32[]
+    prev_x = NaN32
+    for (x, y) in zip(xs_tmp, ys_tmp)
+        if x != prev_x && !isnan(x)
+            push!(xs, x)
+            push!(ys, clamp(y, 0.0f0, 1.0f0))
+            prev_x = x
+        end
+    end
+
+    if length(xs) < 2
+        @warn "Insufficient unique points for PEP interpolation, using default"
+        xs = Float32[0.0, 1.0]
+        ys = Float32[1.0, 0.0]
+    end
+
+    Interpolations.deduplicate_knots!(xs)
+
+    return linear_interpolation(xs, ys; extrapolation_bc=Interpolations.Flat())
+end
+
+"""
     get_qvalue_spline(merged_psms_path::String, score_col::Symbol;
                       min_pep_points_per_bin=1000, fdr_scale_factor=1.0f0) -> Interpolation
 
@@ -780,7 +842,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff]
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
     X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
     y = sampled_protein_groups.target
     
@@ -852,7 +914,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     n_decoys = sum(.!all_protein_groups.target)
     @info "In memory probit regression analysis" n_targets=n_targets n_decoys=n_decoys total_protein_groups=nrow(all_protein_groups)
     # Define features to use
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides] # :log_binom_coeff] 
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
     
