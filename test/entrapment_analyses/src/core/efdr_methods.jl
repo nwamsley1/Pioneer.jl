@@ -63,7 +63,7 @@ Calculate empirical FDR using the data stored in the method struct.
 """
 function calculate_efdr(method::CombinedEFDR)
     # Sort by q-value (ascending) first, then by score (descending) to break ties
-    sort_indices = sortperm(collect(zip(method.qval, -method.score)))
+    sort_indices = sortperm(collect(zip(-method.score, method.qval)))
     
     entrapment_fdr = zeros(eltype(method.qval), length(method.qval))
     Nτ = 0
@@ -91,11 +91,16 @@ end
 
 function calculate_efdr(method::PairedEFDR)
     # Sort by q-value (ascending) first, then by score (descending) to break ties
-    sort_indices = sortperm(collect(zip(method.qval, -method.score)))
+    sort_indices = sortperm(collect(zip(-method.score, method.qval)))
     
     entrapment_fdr = zeros(eltype(method.qval), length(method.qval))
+
+    total_ops = sum(1:length(sort_indices)) # Total operations for progress tracking
+    pb = ProgressBar(total=total_ops)
+    completed_ops = 0
+    last_update = 0
     #Seems quadratic 
-    for i in range(1,length(sort_indices))#(sort_idx, i) in enumerate(sort_indices)
+    for i in range(1,length(sort_indices))
         Nτ = 0
         Nϵ = 0
         Nϵsτ = 0
@@ -104,17 +109,22 @@ function calculate_efdr(method::PairedEFDR)
         for j in 1:i
             # Determine if this is a target or entrapment
             is_original_target = method.entrapment_label[sort_indices[j]] == 0
-            t = method.original_target_score[sort_indices[j]]
-            e = method.score[sort_indices[j]]
             if is_original_target
                 Nτ += 1
             else
+                t = method.original_target_score[sort_indices[j]]
+                e = method.score[sort_indices[j]]
                 Nϵ += 1
                 if (e >= s) & (t < s)
                     Nϵsτ += 1
                 elseif  (e > t) & (t >= s)
                     Nϵτs += 1
                 end
+            end
+            completed_ops += 1
+            if completed_ops % 1000 == 0
+                update(pb, completed_ops-last_update)
+                last_update = completed_ops
             end
         end
         # Determine if this is a target or entrapment

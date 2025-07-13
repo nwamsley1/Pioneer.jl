@@ -40,6 +40,7 @@ For entrapment sequences (entrapment_group_id>0): gets the score of the target i
 """
 function add_original_target_scores!(prec_results::DataFrame, library_precursors::DataFrame; score_col=:score)
     # Check for required columns
+    print("test!")
     if !hasproperty(prec_results, :entrap_pair_id)
         error("DataFrame must have :entrap_pair_id column. Run add_entrap_pair_ids! first.")
     end
@@ -56,47 +57,58 @@ function add_original_target_scores!(prec_results::DataFrame, library_precursors
     # Create the original_target column name
     original_target_col = Symbol(String(score_col) * "_original_target")
     
-    # Build a dictionary mapping pair_id to target row indices and scores
-    pair_to_target = Dict{UInt32, Tuple{Int,Float64}}()
-    
+    # Build a nested dictionary mapping ms_file_idx -> pair_id -> target info
+    # This handles both per-file (ms_file_idx > 0) and global (ms_file_idx = 0) analyses
+    pair_to_target = Dictionary{Int, Dictionary{UInt32, @NamedTuple{target_row::UInt32,target_score::Float32}}}()
+    #@info "ms_file_idx values in prec_results: $(unique(prec_results.ms_file_idx))"
+    @info "prec_results pair id 942181 " prec_results[prec_results[!,:entrap_pair_id].==942181,:]
     for (idx, row) in enumerate(eachrow(prec_results))
         if !ismissing(row.entrap_pair_id) && !ismissing(row[score_col])
             pair_id = row.entrap_pair_id
             precursor_idx = row.precursor_idx
+            ms_file_idx = row.ms_file_idx 
             entrap_group = library_precursors.entrapment_group_id[precursor_idx]
             
-            # If this is a target (group 0), store its score for the pair
+            # If this is an original target (group 0), store its score for the pair
             if entrap_group == 0
-                pair_to_target[pair_id] = (idx, Float64(row[score_col]))
+                # Initialize inner dictionary if it doesn't exist
+                if !haskey(pair_to_target, ms_file_idx)
+                    insert!(pair_to_target, ms_file_idx, Dictionary{UInt32, @NamedTuple{target_row::UInt32,target_score::Float32}}())
+                end
+                insert!(
+                    pair_to_target[ms_file_idx], pair_id, 
+                    (target_row = UInt32(idx), target_score = row[score_col])
+                )
             end
         end
     end
     
     # Assign original target scores
-    original_target_scores = zeros(Float64, nrow(prec_results))
-    
+    original_target_scores = zeros(Float32, nrow(prec_results))
+
     for (idx, row) in enumerate(eachrow(prec_results))
         if !ismissing(row.entrap_pair_id) && !ismissing(row[score_col])
             pair_id = row.entrap_pair_id
             precursor_idx = row.precursor_idx
+            ms_file_idx = row.ms_file_idx 
             entrap_group = library_precursors.entrapment_group_id[precursor_idx]
             
             if entrap_group == 0
                 # Target gets its own score
-                original_target_scores[idx] = Float64(row[score_col])
+                original_target_scores[idx] = row[score_col]
             else
                 # Entrapment gets the target's score from its pair
-                if haskey(pair_to_target, pair_id)
-                    _, target_score = pair_to_target[pair_id]
+                if haskey(pair_to_target, ms_file_idx) && haskey(pair_to_target[ms_file_idx], pair_id)
+                    # Original target complement found in the data
+                    _, target_score = pair_to_target[ms_file_idx][pair_id]
                     original_target_scores[idx] = target_score
                 else
-                    # No target found in pair, default to 0.0
-                    original_target_scores[idx] = 0.0
+                    # Complement target wasn't observed in the data so its score is set to -1.0
+                    original_target_scores[idx] = -1.0
                 end
             end
         end
     end
-    
     prec_results[!, original_target_col] = original_target_scores
     return nothing
 end
@@ -111,4 +123,59 @@ function add_original_target_scores!(prec_results::DataFrame, library_precursors
         add_original_target_scores!(prec_results, library_precursors; score_col=score_col)
     end
     return nothing
+end
+
+"""
+    create_global_results_df(prec_results::DataFrame; score_col::Symbol=:global_prob)
+
+Create a dataframe for global score analysis by selecting the best scoring row for each precursor.
+
+# Arguments
+- `prec_results::DataFrame`: Original precursor results with multiple files
+- `score_col::Symbol`: Column name to use for selecting best score (default: :global_prob)
+
+# Returns
+- DataFrame with one row per precursor (best scoring across all files)
+- All rows have ms_file_idx set to 0 to indicate global analysis
+
+# Example
+```julia
+global_df = create_global_results_df(prec_results; score_col=:global_prob)
+```
+"""
+function create_global_results_df(prec_results::DataFrame; score_col::Symbol=:global_prob)
+    # Check required columns
+    required_cols = [:precursor_idx, :ms_file_idx, score_col]
+    missing_cols = [col for col in required_cols if !hasproperty(prec_results, col)]
+    if !isempty(missing_cols)
+        error("DataFrame missing required columns: $missing_cols")
+    end
+    
+    # Create a deep copy to avoid aliasing issues
+    prec_results_copy = copy(prec_results)
+    
+    # Group by precursor_idx
+    grouped = groupby(prec_results_copy, :precursor_idx)
+    
+    # For each group, keep only the row with maximum score
+    global_df = combine(grouped) do group
+        # Handle missing scores by filtering them out first
+        valid_rows = group[.!ismissing.(group[!, score_col]), :]
+        
+        if nrow(valid_rows) == 0
+            # If all scores are missing, return empty dataframe with same schema
+            return similar(group, 0)
+        end
+        
+        # Find row with maximum score
+        best_idx = argmax(valid_rows[!, score_col])
+        return valid_rows[best_idx:best_idx, :]
+    end
+    
+    # Set all ms_file_idx to 0 to indicate global analysis
+    if nrow(global_df) > 0
+        global_df[!, :ms_file_idx] .= 0
+    end
+    
+    return global_df
 end

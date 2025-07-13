@@ -1,11 +1,11 @@
 # Empirical FDR Analysis Report
 
-Generated: 2025-06-28T13:43:51.977
+Generated: 2025-07-01T12:06:04.455
 
 ## Data Summary
 
-- Original precursor results: 129406
-- Analyzed precursor results: 129406
+- Original precursor results: 124737
+- Analyzed precursor results: 124737
 - Library precursors: 3509386
 
 ### Library Composition
@@ -19,8 +19,8 @@ Generated: 2025-06-28T13:43:51.977
 
 | Entrapment Group | Count | Percentage |
 |-----------------|-------|------------|
-| Target (0) | 128630 | 99.40% |
-| Entrapment (1) | 776 | 0.60% |
+| Target (0) | 123959 | 99.38% |
+| Entrapment (1) | 778 | 0.62% |
 
 ## EFDR Method Comparison
 
@@ -28,19 +28,19 @@ Generated: 2025-06-28T13:43:51.977
 
 | Threshold | Q-val IDs | Actual FDR | Combined IDs | Combined EFDR | Paired IDs | Paired EFDR |
 |-----------|-----------|------------|--------------|---------------|------------|-------------|
-| 0.001 | 98162 | 0.0009 | 98162 | 0.0017 | 98162 | 0.0015 |
-| 0.010 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0105 |
-| 0.050 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0105 |
-| 0.100 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0105 |
+| 0.001 | 36236 | 0.0011 | 36236 | 0.0022 | 36236 | 0.0019 |
+| 0.010 | 46206 | 0.0068 | 46206 | 0.0135 | 46206 | 0.0114 |
+| 0.050 | 48849 | 0.0117 | 48849 | 0.0233 | 48849 | 0.0195 |
+| 0.100 | 48849 | 0.0117 | 48849 | 0.0233 | 48849 | 0.0195 |
 
 ### prec_prob / qval
 
 | Threshold | Q-val IDs | Actual FDR | Combined IDs | Combined EFDR | Paired IDs | Paired EFDR |
 |-----------|-----------|------------|--------------|---------------|------------|-------------|
-| 0.001 | 36463 | 0.0010 | 36463 | 0.0021 | 36463 | 0.0020 |
-| 0.010 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0106 |
-| 0.050 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0106 |
-| 0.100 | 129406 | 0.0060 | 129406 | 0.0120 | 129406 | 0.0106 |
+| 0.001 | 92668 | 0.0009 | 92668 | 0.0017 | 92668 | 0.0016 |
+| 0.010 | 124737 | 0.0062 | 124737 | 0.0125 | 124737 | 0.0110 |
+| 0.050 | 124737 | 0.0062 | 124737 | 0.0125 | 124737 | 0.0110 |
+| 0.100 | 124737 | 0.0062 | 124737 | 0.0125 | 124737 | 0.0110 |
 
 ## Calibration Analysis
 
@@ -48,10 +48,10 @@ Mean absolute calibration errors:
 
 | Method | Mean Calibration Error |
 |--------|----------------------|
-| global_prob_combined_efdr | 0.0006 |
-| global_prob_paired_efdr | 0.0004 |
-| prec_prob_combined_efdr | 0.0013 |
-| prec_prob_paired_efdr | 0.0010 |
+| global_prob_combined_efdr | 0.0009 |
+| prec_prob_combined_efdr | 0.0007 |
+| global_prob_paired_efdr | 0.0005 |
+| prec_prob_paired_efdr | 0.0006 |
 
 ## Plots
 

@@ -317,7 +317,7 @@ function add_mods(
                     get_charge(fasta_peptide),
                     get_base_pep_id(fasta_peptide),
                     zero(UInt32),
-                    get_entrapment_group_id(fasta_peptide),
+                    get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide),
                 ))
         end
@@ -371,7 +371,7 @@ function add_charge(
                     charge,
                     get_base_pep_id(fasta_peptide),
                     base_prec_id,
-                    get_entrapment_group_id(fasta_peptide),
+                    get_entrapment_pair_id(fasta_peptide),
                     is_decoy(fasta_peptide)
                 ))
             base_prec_id += one(UInt32)
@@ -533,7 +533,7 @@ function build_fasta_df(fasta_peptides::Vector{FastaEntry};
         #Get unique combinations of variable mods from 0-max_var_mods
         accession_id = get_id(peptide)
         decoy = is_decoy(peptide) 
-        entrapment_group_id = get_entrapment_group_id(peptide)
+        entrapment_group_id = get_entrapment_pair_id(peptide)
         NCE = nce
         if dynamic_nce
             NCE = adjustNCE(NCE, default_charge, get_charge(peptide), charge_facs)
