@@ -402,7 +402,7 @@ function summarize_results!(
 
         # Step 12: Perform protein inference and initial scoring
         @info "Step 12: Performing protein inference and initial scoring..."
-        step11_time = @elapsed begin
+        step12_time = @elapsed begin
             pg_refs, psm_to_pg_mapping = perform_protein_inference_pipeline(
                 passing_refs,
                 passing_proteins_folder,
@@ -474,7 +474,7 @@ function summarize_results!(
 
         # Step 19: Sort protein groups by pg_score
         @info "Step 19: Sorting protein groups by pg_score..."
-        step17_time = @elapsed begin
+        step19_time = @elapsed begin
             sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
         end
         @info "Step 19 completed in $(round(step19_time, digits=2)) seconds"
@@ -489,11 +489,11 @@ function summarize_results!(
 
         # Step 21: Calculate experiment-wide protein q-values and PEPs
         @info "Step 21: Calculating experiment-wide protein q-values and PEPs..."
-        step19_time = @elapsed begin
+        step21_time = @elapsed begin
             search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
             search_context.pg_score_to_pep[]  = get_protein_pep_interpolation(sorted_pg_scores_path, params)
         end
-        @info "Step 21 completed in $(round(step19_time, digits=2)) seconds"
+        @info "Step 21 completed in $(round(step21_time, digits=2)) seconds"
         # Step 22: Add q-values and passing flags to protein groups
         @info "Step 22: Adding q-values and passing flags to protein groups..."
         step22_time = @elapsed begin
@@ -539,7 +539,7 @@ function summarize_results!(
                     step6_time + step7_time + step8_time + step9_time + step10_time +
                     step11_time + step12_time + step13_time + step14_time + step15_time +
                     step16_time + step17_time + step18_time + step19_time + step20_time +
-                    step21_time + setp22_time + step23_time
+                    step21_time + step22_time + step23_time
     
         @info "ScoringSearch completed - Total time: $(round(total_time, digits=2)) seconds"
         @info "Breakdown: XGBoost($(round(step1_time, digits=1))s) + Preprocess($(round(step2_time, digits=1))s) + Best_Traces($(round(step3_time, digits=1))s) + Quant_Processing($(round(step4_time, digits=1))s) + Merging($(round(step5_time + step7_time + step15_time + step18_time, digits=1))s) + Q-values($(round(step6_time + step8_time + step16_time + step19_time, digits=1))s) + Protein_Inference($(round(step11_time, digits=1))s) + Probit_Regression($(round(step12_time, digits=1))s) + Other($(round(step4_time + step9_time + step13_time + step14_time + step17_time + step20_time + step21_time, digits=1))s)"

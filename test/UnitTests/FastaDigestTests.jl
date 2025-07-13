@@ -129,7 +129,7 @@
         @test get_charge(first_peptide) == 0
         @test get_base_pep_id(first_peptide) == 1
         @test get_base_prec_id(first_peptide) == 1
-        @test get_entrapment_group_id(first_peptide) == 0
+        @test get_entrapment_pair_id(first_peptide) == 0
         @test is_decoy(first_peptide) == false
         
         # Test base_pep_id and base_prec_id increment
@@ -200,7 +200,7 @@
         @test all(e -> get_charge(e) == 0, entries)
         @test all(e -> get_base_pep_id(e) == 0, entries)
         @test all(e -> get_base_prec_id(e) == 0, entries)
-        @test all(e -> get_entrapment_group_id(e) == 0, entries)
+        @test all(e -> get_entrapment_pair_id(e) == 0, entries)
         @test all(e -> !is_decoy(e), entries)
         
         # Test compressed file parsing
@@ -296,12 +296,12 @@
         @test length(result) == 4  # 2 original + 2 entrapment
         
         # Identify entrapment sequences
-        entrapment = filter(e -> get_entrapment_group_id(e) > 0, result)
+        entrapment = filter(e -> get_entrapment_pair_id(e) > 0, result)
         @test length(entrapment) == 2
         
         # Check properties
         for e in entrapment
-            @test get_entrapment_group_id(e) == 1
+            @test get_entrapment_pair_id(e) == 1
             @test !is_decoy(e)
             @test endswith(get_sequence(e), get_sequence(entries[get_base_pep_id(e)])[end])
         end
@@ -312,7 +312,7 @@
         @test length(result) == 8  # 2 original + 6 entrapment
         
         # Count by entrapment group
-        entrapment_groups = [filter(e -> get_entrapment_group_id(e) == i, result) for i in 1:3]
+        entrapment_groups = [filter(e -> get_entrapment_pair_id(e) == i, result) for i in 1:3]
         @test all(length.(entrapment_groups) .== 2)
     end
     
@@ -344,7 +344,7 @@
             # Check metadata preserved
             @test get_base_pep_id(decoy) == get_base_pep_id(entries[i])
             @test get_base_prec_id(decoy) == get_base_prec_id(entries[i])
-            @test get_entrapment_group_id(decoy) == get_entrapment_group_id(entries[i])
+            @test get_entrapment_pair_id(decoy) == get_entrapment_pair_id(entries[i])
         end
     end
     

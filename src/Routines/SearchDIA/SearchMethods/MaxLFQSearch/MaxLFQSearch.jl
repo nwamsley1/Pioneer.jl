@@ -216,8 +216,7 @@ function summarize_results!(
             precursor_quant_col,
             collect(getFileIdToName(getMSData(search_context))),
             params.q_value_threshold,
-            batch_size = params.batch_size,
-            min_peptides = params.min_peptides
+            batch_size = params.batch_size
         )
         
         # Create FileReference for output metadata tracking
