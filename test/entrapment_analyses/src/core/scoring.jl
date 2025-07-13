@@ -40,6 +40,7 @@ For entrapment sequences (entrapment_group_id>0): gets the score of the target i
 """
 function add_original_target_scores!(prec_results::DataFrame, library_precursors::DataFrame; score_col=:score)
     # Check for required columns
+    print("test!")
     if !hasproperty(prec_results, :entrap_pair_id)
         error("DataFrame must have :entrap_pair_id column. Run add_entrap_pair_ids! first.")
     end
@@ -59,7 +60,8 @@ function add_original_target_scores!(prec_results::DataFrame, library_precursors
     # Build a nested dictionary mapping ms_file_idx -> pair_id -> target info
     # This handles both per-file (ms_file_idx > 0) and global (ms_file_idx = 0) analyses
     pair_to_target = Dictionary{Int, Dictionary{UInt32, @NamedTuple{target_row::UInt32,target_score::Float32}}}()
-
+    #@info "ms_file_idx values in prec_results: $(unique(prec_results.ms_file_idx))"
+    @info "prec_results pair id 942181 " prec_results[prec_results[!,:entrap_pair_id].==942181,:]
     for (idx, row) in enumerate(eachrow(prec_results))
         if !ismissing(row.entrap_pair_id) && !ismissing(row[score_col])
             pair_id = row.entrap_pair_id

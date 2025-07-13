@@ -294,7 +294,12 @@ function add_best_trace_indicator(isotope_type::IsotopeTraceType, best_traces::S
         else
             # Group-based operation for combined traces
             transform!(groupby(df, :precursor_idx),
-                      :prob => (p -> p .== maximum(p)) => :best_trace)
+                      :prob => (p -> begin
+                          best_idx = argmax(p)
+                          result = falses(length(p))
+                          result[best_idx] = true
+                          result
+                      end) => :best_trace)
         end
         return df
     end

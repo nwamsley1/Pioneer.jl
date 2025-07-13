@@ -229,7 +229,6 @@ function add_entrapment_sequences(
                         get_charge(target_entry),
                         get_base_pep_id(target_entry),
                         base_prec_id,
-                        get_original_target_id(target_entry),
                         entrapment_group_id,
                         false
                     )
@@ -460,8 +459,7 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                 get_charge(target_entry),
                 get_base_pep_id(target_entry),
                 get_base_prec_id(target_entry),
-                get_entrapment_group_id(target_entry),
-                get_original_target_id(target_entry),
+                get_entrapment_pair_id(target_entry),
                 true  # This is a decoy sequence
             )
             
@@ -545,7 +543,7 @@ function combine_shared_peptides(peptides::Vector{FastaEntry})
                                                         #get_base_pep_id(fasta_entry),
                                                         base_pep_id,
                                                         get_base_prec_id(fasta_entry),
-                                                        get_entrapment_group_id(fasta_entry), 
+                                                        get_entrapment_pair_id(fasta_entry), 
                                                         is_decoy(fasta_entry)
                                                         )
             base_pep_id += one(UInt32)

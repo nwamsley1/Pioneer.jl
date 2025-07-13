@@ -34,9 +34,9 @@ function get_best_traces(
     second_pass_psms_paths::Vector{String},
     min_prob::Float32 = 0.75f0
 )
-    start_time = time()
-    initial_memory = Base.gc_live_bytes() / 1024^2  # MB
-    
+
+    #The sum of scores for a given precursor trace (precursor_idx and isotopes_captured) accross the 
+    #entire experiment (all runs)!
     psms_trace_scores = Dictionary{
             @NamedTuple{precursor_idx::UInt32, isotopes_captured::Tuple{Int8, Int8}}, Float32}()
 
@@ -45,9 +45,11 @@ function get_best_traces(
     files_processed = 0
     
     for (file_idx, file_path) in enumerate(second_pass_psms_paths)
+
         if splitext(file_path)[end] != ".arrow"
             continue
         end
+        
         row_score = zero(Float32)
         psms_table = Arrow.Table(file_path)
         n_rows = length(psms_table[1])
@@ -70,11 +72,13 @@ function get_best_traces(
         end
     end
 
+    #Convert the dictionary to a DataFrame 
     psms_trace_df = DataFrame(
-    (precursor_idx = [key[:precursor_idx] for key in keys(psms_trace_scores)],
-    isotopes_captured = [key[:isotopes_captured] for key in keys(psms_trace_scores)],
-    score = [val for val in values(psms_trace_scores)])
-    );
+        (precursor_idx = [key[:precursor_idx] for key in keys(psms_trace_scores)],
+        isotopes_captured = [key[:isotopes_captured] for key in keys(psms_trace_scores)],
+        score = [val for val in values(psms_trace_scores)])
+        );
+    #Now retain only the very best trace!
     psms_trace_df[!,:best_trace] .= false;
     gpsms = groupby(psms_trace_df,:precursor_idx)
     for (precursor_idx, psms) in pairs(gpsms)
