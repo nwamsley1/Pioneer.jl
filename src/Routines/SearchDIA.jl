@@ -243,7 +243,7 @@ function print_performance_report(timings, ms_table_paths, search_context, print
     println_func(repeat("-", 90))
 
     # Calculate totals
-    peak_memory = 0.0#peak_rss()
+    peak_memory = peak_rss()
     total_time = 0.0
     total_memory = 0
     total_gc = 0.0

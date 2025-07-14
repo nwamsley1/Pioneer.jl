@@ -63,6 +63,7 @@
     "max_koina_requests":24,
     "max_koina_batch": 1000,
     "match_lib_build_batch": 100000,
+    "include_contaminants": true,
     "fasta_paths":
         [
          "/Users/n.t.wamsley/Projects/Pioneer.jl/data/fasta/keap1.fasta"
