@@ -81,7 +81,7 @@ function parse_fasta(
             identifier
         else
             m = match(accession_regex, identifier)
-            m === nothing ? header : String(first(m.captures))
+            m === nothing ? identifier : String(first(m.captures))
         end
 
         gene = if gene_regex === nothing
