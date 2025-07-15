@@ -1742,15 +1742,15 @@ function perform_probit_analysis_multifold(
     models = Dict{UInt8, Vector{Float64}}()
 
     # Determine positive training examples using 1% FDR on pg_score
-    #n_proteins = nrow(all_protein_groups)
-    #qvals = Vector{Float32}(undef, n_proteins)
-    #get_qvalues!(all_protein_groups.pg_score, all_protein_groups.target, qvals)
-    #passing_mask = (qvals .<= 0.01f0) .& all_protein_groups.target
-    #train_mask_FDR = passing_mask .| .!all_protein_groups.target
+    n_proteins = nrow(all_protein_groups)
+    qvals = Vector{Float32}(undef, n_proteins)
+    get_qvalues!(all_protein_groups.pg_score, all_protein_groups.target, qvals)
+    passing_mask = (qvals .<= 0.01f0) .& all_protein_groups.target
+    train_mask_FDR = passing_mask .| .!all_protein_groups.target
 
     for test_fold in unique_cv_folds
         # Get training data (all folds except test_fold)
-        train_mask = (all_protein_groups.cv_fold .!= test_fold) #.& train_mask_FDR
+        train_mask = (all_protein_groups.cv_fold .!= test_fold) .& train_mask_FDR
         
         # Check if we have sufficient data
         n_train_targets = sum(all_protein_groups[train_mask, :target])
