@@ -494,6 +494,7 @@ function summarize_results!(
             search_context.pg_score_to_pep[]  = get_protein_pep_interpolation(sorted_pg_scores_path, params)
         end
         @info "Step 21 completed in $(round(step21_time, digits=2)) seconds"
+
         # Step 22: Add q-values and passing flags to protein groups
         @info "Step 22: Adding q-values and passing flags to protein groups..."
         step22_time = @elapsed begin
@@ -507,6 +508,7 @@ function summarize_results!(
                 ]) 
             apply_pipeline!(pg_refs, protein_qval_pipeline)
         end
+
         @info "Step 22 completed in $(round(step22_time, digits=2)) seconds"
         sort_file_by_keys!(pg_refs, :pg_score, :target; reverse=[true, true])
         stream_sorted_merge(pg_refs, sorted_pg_scores_path, :pg_score, :target;
@@ -515,13 +517,14 @@ function summarize_results!(
         search_context.pg_score_to_qval[] = get_protein_qval_spline(sorted_pg_scores_path, params)
 
         recalculate_experiment_wide_qvalue = TransformPipeline() |>
-            add_interpolated_column(:pg_qval, :pg_score, results.precursor_qval_interp[])
+            add_interpolated_column(:pg_qval, :pg_score, search_context.pg_score_to_qval[])
 
         pg_refs = apply_pipeline_batch(
                 pg_refs,
                 recalculate_experiment_wide_qvalue,
                 passing_proteins_folder
             )
+
         # Step 23: Update PSMs with final protein scores
         @info "Step 23: Updating PSMs with final protein scores..."
         step23_time = @elapsed begin

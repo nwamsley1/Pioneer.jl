@@ -28,7 +28,7 @@
             entrapment_group_id = UInt8[0, 0, 0, 1],
             precursor_idx = UInt32[1, 2, 3, 4],
             pg_qval = Float32[0.01, 0.02, 0.05, 0.03],
-            global_qval_pg = Float32[0.01, 0.02, 0.05, 0.03],
+            qlobal_pg_qval = Float32[0.01, 0.02, 0.05, 0.03],
             use_for_protein_quant = Bool[true, true, true, false],
             peak_area = Float32[1000.0, 2000.0, 1500.0, 800.0]
         )
@@ -57,7 +57,7 @@
             :entrapment_group_id,
             :precursor_idx,
             :pg_qval,
-            :global_qval_pg,
+            :qlobal_pg_qval,
             :use_for_protein_quant,
             :peak_area
         ]
@@ -68,7 +68,7 @@
             entrapment_group_id = UInt8[0, 0],
             precursor_idx = UInt32[1, 2],
             pg_qval = Float32[0.01, 0.02],
-            global_qval_pg = Float32[0.01, 0.02],
+            qlobal_pg_qval = Float32[0.01, 0.02],
             use_for_protein_quant = Bool[true, true],
             peak_area = Float32[1000.0, 2000.0]
         )
@@ -139,7 +139,7 @@
             pg_score = Float32[2.1, 2.1, 1.5],
             global_pg_score = Float32[2.5, 2.5, 1.8],
             pg_qval = Float32[0.01, 0.01, 0.02],
-            global_qval_pg = Float32[0.005, 0.005, 0.015],
+            qlobal_pg_qval = Float32[0.005, 0.005, 0.015],
             use_for_protein_quant = Bool[true, true, true]
         )
         
@@ -256,7 +256,7 @@
             entrapment_group_id = UInt8[0, 0, 0],
             precursor_idx = UInt32[1, 2, 3],
             pg_qval = Float32[0.01, 0.02, 0.05],
-            global_qval_pg = Float32[0.01, 0.02, 0.05],
+            qlobal_pg_qval = Float32[0.01, 0.02, 0.05],
             use_for_protein_quant = Bool[true, true, true],
             peak_area = Float32[1000.0, 2000.0, 1500.0]
         )

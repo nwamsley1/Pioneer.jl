@@ -235,7 +235,7 @@ function get_qvalue_spline(
     end
 
     Q = size(psms_scores, 1)
-    M = ceil(Int, Q / min_pep_points_per_bin)
+    M = ceil(Int, (Q - 1) / min_pep_points_per_bin) + 1
     bin_qval, bin_mean_prob = Vector{Float32}(undef, M), Vector{Float32}(undef, M)
     bin_size = 0
     bin_idx = 0
@@ -251,7 +251,7 @@ function get_qvalue_spline(
         targets -= psms_scores[!, :target][i]
         decoys -= (1 - psms_scores[!, :target][i])
         mean_prob += psms_scores[!, score_col][i]
-        if bin_size == min_pep_points_per_bin
+        if bin_idx == 0 || bin_size == min_pep_points_per_bin
             bin_idx += 1
             # Apply FDR scale factor to correct for library target/decoy ratio
             qval = (decoys * fdr_scale_factor) / max(targets, 1)
@@ -802,7 +802,7 @@ function update_psms_with_probit_scores_refs(
             psms_df[!, :pg_score] = probit_pg_scores
             psms_df[!, :global_pg_score] = global_pg_scores
             psms_df[!, :pg_qval] = pg_qvals
-            psms_df[!, :global_qval_pg] = global_pg_qvals
+            psms_df[!, :qlobal_pg_qval] = global_pg_qvals
             psms_df[!, :pg_pep] = pg_peps
             
             total_psms_updated += n_psms
@@ -941,7 +941,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
-    
+
     # Fit probit model
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
@@ -1736,14 +1736,21 @@ function perform_probit_analysis_multifold(
     @info "Protein group distribution across folds" fold_counts
     
     # 4. Define features (same as original)
-    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides]
+    feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
     
     # 5. Train probit model for each fold
     models = Dict{UInt8, Vector{Float64}}()
-    
+
+    # Determine positive training examples using 1% FDR on pg_score
+    #n_proteins = nrow(all_protein_groups)
+    #qvals = Vector{Float32}(undef, n_proteins)
+    #get_qvalues!(all_protein_groups.pg_score, all_protein_groups.target, qvals)
+    #passing_mask = (qvals .<= 0.01f0) .& all_protein_groups.target
+    #train_mask_FDR = passing_mask .| .!all_protein_groups.target
+
     for test_fold in unique_cv_folds
         # Get training data (all folds except test_fold)
-        train_mask = all_protein_groups.cv_fold .!= test_fold
+        train_mask = (all_protein_groups.cv_fold .!= test_fold) #.& train_mask_FDR
         
         # Check if we have sufficient data
         n_train_targets = sum(all_protein_groups[train_mask, :target])
@@ -1765,7 +1772,7 @@ function perform_probit_analysis_multifold(
     end
     
     # 6. Apply models to their respective test folds
-    all_protein_groups[!, :old_pg_score] = all_protein_groups[!, :pg_score]  # Save for comparison
+    all_protein_groups[!, :old_pg_score] = copy(all_protein_groups[!, :pg_score])  # Save for comparison
     
     for test_fold in unique_cv_folds
         if !haskey(models, test_fold)

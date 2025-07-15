@@ -137,7 +137,7 @@ function update_psms_with_scores(psm_ref::PSMFileReference,
         batch.pg_score = Vector{Float32}(undef, nrow(batch))
         batch.global_pg_score = Vector{Float32}(undef, nrow(batch))
         batch.pg_qval = Vector{Float32}(undef, nrow(batch))
-        batch.global_qval_pg = Vector{Float32}(undef, nrow(batch))
+        batch.qlobal_pg_qval = Vector{Float32}(undef, nrow(batch))
         
         # Update scores
         for i in 1:nrow(batch)
@@ -150,7 +150,7 @@ function update_psms_with_scores(psm_ref::PSMFileReference,
                 batch.pg_score[i] = scores.pg_score
                 batch.global_pg_score[i] = scores.global_pg_score
                 batch.pg_qval[i] = scores.pg_qval
-                batch.global_qval_pg[i] = scores.global_pg_qval
+                batch.qlobal_pg_qval[i] = scores.global_pg_qval
             else
                 # This should not happen if protein inference was done correctly
                 error("Missing protein scores for: $key")
