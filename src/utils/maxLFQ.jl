@@ -202,11 +202,11 @@ function getProtAbundance(protein::String,
                             experiments::AbstractVector{UInt16}, 
                             use_for_quant::AbstractVector{Bool},
                             abundance::AbstractVector{Union{T, Missing}},
-                            global_qvals::AbstractVector{Union{Float32,Missing}},
-                            qvals::AbstractVector{Union{Float32,Missing}},
-                            peps::AbstractVector{Union{Float32,Missing}},
-                            pg_scores::AbstractVector{Union{Float32,Missing}},
-                            global_pg_scores::AbstractVector{Union{Float32,Missing}},
+                            global_qvals::AbstractVector{Union{F,Missing}},
+                            qvals::AbstractVector{Union{F,Missing}},
+                            peps::AbstractVector{Union{F,Missing}},
+                            pg_scores::AbstractVector{Union{F,Missing}},
+                            global_pg_scores::AbstractVector{Union{F,Missing}},
                             target_out::Vector{Union{Missing, Bool}},
                             entrap_id_out::Vector{Union{Missing, UInt8}},
                             species_out::Vector{Union{Missing, String}},
@@ -218,7 +218,7 @@ function getProtAbundance(protein::String,
                             qval_out::Vector{Union{Missing, Float32}},
                             pep_out::Vector{Union{Missing, Float32}},
                             pg_score_out::Vector{Union{Missing, Float32}},
-                            global_pg_score_out::Vector{Union{Missing, Float32}}) where {T <: Real}
+                            global_pg_score_out::Vector{Union{Missing, Float32}}) where {T <: Real, F <: Real}
 
     unique_experiments = unique(experiments)
     unique_peptides = unique(peptides)
@@ -380,7 +380,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
     preprocessing_pipeline = TransformPipeline() |>
         filter_by_multiple_thresholds([
             (:pg_qval, q_value_threshold),
-            (:global_qval_pg, q_value_threshold)
+            (:qlobal_pg_qval, q_value_threshold)
         ]) |>
         filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
     
@@ -458,7 +458,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 data[!,:ms_file_idx], 
                                 data[!,:use_for_protein_quant],
                                 data[!,quant_col],
-                                data[!,:global_qval_pg],
+                                data[!,:qlobal_pg_qval],
                                 data[!,:pg_qval],
                                 data[!,:pg_pep],
                                 data[!,:pg_score],

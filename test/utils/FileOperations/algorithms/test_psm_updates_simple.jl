@@ -61,7 +61,7 @@
         @test hasproperty(result_df, :pg_score)
         @test hasproperty(result_df, :global_pg_score)
         @test hasproperty(result_df, :pg_qval)
-        @test hasproperty(result_df, :global_qval_pg)
+        @test hasproperty(result_df, :qlobal_pg_qval)
         @test nrow(result_df) == 4
         
         # Verify protein scores were applied correctly

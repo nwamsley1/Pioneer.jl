@@ -39,7 +39,7 @@ function validate_maxlfq_input(ref::PSMFileReference)
     # Check required columns for MaxLFQ
     required_columns = Set([
         :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx,
-        :pg_qval, :global_qval_pg, :use_for_protein_quant, :peak_area
+        :pg_qval, :qlobal_pg_qval, :use_for_protein_quant, :peak_area
     ])
     
     validate_required_columns(schema(ref), required_columns)
