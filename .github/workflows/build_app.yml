@@ -35,7 +35,6 @@ jobs:
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
-          arch: x64
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
