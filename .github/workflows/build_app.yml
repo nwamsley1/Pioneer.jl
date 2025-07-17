@@ -17,27 +17,94 @@ jobs:
             runner: macos-latest
             arch: x64
             identifier: macos-x64
-          - os: macos
-            runner: macos-latest
-            arch: arm64
-            identifier: macos-arm64
-          - os: windows
-            runner: windows-latest
-            arch: x64
-            identifier: windows-x64
-          - os: linux
-            runner: ubuntu-latest
-            arch: x64
-            identifier: linux-x64
+          #- os: macos
+          #  runner: macos-latest
+          #  arch: arm64
+          #  identifier: macos-arm64
+          #- os: windows
+          #  runner: windows-latest
+          #  arch: x64
+          #  identifier: windows-x64
+          #- os: linux
+          #  runner: ubuntu-latest
+          #  arch: x64
+          #  identifier: linux-x64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
+      
+      - name: Install the Apple certificate and provisioning profile
+        if: matrix.os == 'macos'
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          INSTALLER_CERT_BASE64: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARIZE_APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
+          NOTARIZE_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
+          NOTARIZE_TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+        run: |
+          # create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          INSTALLER_CERT_PATH=$RUNNER_TEMP/installer_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          
+
+          # import certificate and provisioning profile from secrets
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          echo -n "$INSTALLER_CERT_BASE64" | base64 --decode -o $INSTALLER_CERT_PATH
+
+          # create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # import certificate to keychain
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import $INSTALLER_CERT_PATH -P "$INSTALLER_CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          
+          # login keychain so signing tools can locate the certificate
+          security list-keychains -d user -s $KEYCHAIN_PATH login.keychain
+
+          # apply provisioning profile
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+
+      - uses: apple-actions/import-codesign-certs@v2
+        if: matrix.os == 'macos'
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERT_P12 }}
+          p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          keychain: signing_temp
+
+      - uses: apple-actions/import-codesign-certs@v2
+        if: matrix.os == 'macos'
+        with:
+          p12-file-base64: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          keychain: signing_temp
+          create-keychain: false
+
+      - name: List codesigning identities
+        if: matrix.os == 'macos'
+        run: 
+          security find-identity -v -p codesigning
+          security find-identity -v -p basic
+
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+          
       - name: Compile application
         run: |
           julia --project=. -e '
@@ -48,27 +115,31 @@ jobs:
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
         run: |
-          security create-keychain -p "$APPLE_KEYCHAIN_PASS" build.keychain
-          security import <(echo "$APPLE_CERT_BASE64" | base64 --decode) -k build.keychain -P "$APPLE_CERT_PASS" -T /usr/bin/codesign
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import <(echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode) -k build.keychain -P "$BUILD_CERTIFICATE_BASE64" -T /usr/bin/codesign
           security list-keychains -s build.keychain
-          security unlock-keychain -p "$APPLE_KEYCHAIN_PASS" build.keychain
-          codesign --deep --force --options runtime --sign "$APPLE_CERT_ID" build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app
-          pkgbuild --root build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app --identifier com.example.pioneer --install-location /Applications/Pioneer.app --sign "$APPLE_CERT_ID" Pioneer.pkg
-          productbuild --package Pioneer.pkg --sign "$APPLE_INSTALL_CERT_ID" PioneerInstaller.pkg
-          xcrun notarytool submit PioneerInstaller.pkg --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD" --wait
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          codesign --deep --force --options runtime --sign "$BUILD_CERTIFICATE_BASE64" build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app
+          pkgbuild --root build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app --identifier com.example.pioneer --install-location /Applications/Pioneer.app --sign "$BUILD_CERTIFICATE_BASE64" Pioneer.pkg
+          productbuild --package Pioneer.pkg --sign "$INSTALLER_CERT_BASE64" PioneerInstaller.pkg
+          xcrun notarytool submit PioneerInstaller.pkg --apple-id "$NOTARIZE_APPLE_ID" --team-id "$NOTARIZE_TEAM_ID" --password "$NOTARIZE_PASSWORD" --wait
           xcrun stapler staple PioneerInstaller.pkg
+      
+      
       - name: Package Windows MSI
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           &"${env:WIX}\bin\candle.exe" installer.wxs
           &"${env:WIX}\bin\light.exe" installer.wixobj -o PioneerInstaller.msi
+      
       - name: Package Linux .deb
         if: matrix.os == 'linux'
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
           dpkg-deb --build deb PioneerInstaller.deb
+      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
