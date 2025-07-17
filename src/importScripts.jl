@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 function importScripts()
-    package_root = dirname(dirname(dirname(@__DIR__)))
+    package_root = dirname(@__DIR__)
     
     # Simple safe import system without world age issues
     files_loaded = Set{String}()
@@ -188,7 +188,110 @@ function importScripts()
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "LibrarySearch.jl"))
+
+
+
+
+    # BuildSpecLib
+    root_path = joinpath(package_root, "src", "Routines", "BuildSpecLib")
     
+    # Include KoinaStructs directory
+    safe_include_directory!(joinpath(package_root, "src", "structs", "KoinaStructs"))
+    
+    # Include FileOperations (only if not already loaded)
+    fileops_path = joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl")
+    safe_include!(fileops_path)
+    
+    # FASTA processing
+    safe_include!(joinpath(root_path, "structs", "mods.jl"))
+    safe_include!(joinpath(root_path, "fasta", "fasta_parser.jl"))
+    safe_include!(joinpath(root_path, "fasta", "fasta_digest.jl"))
+    safe_include!(joinpath(root_path, "fasta", "fasta_utils.jl"))
+    safe_include!(joinpath(root_path, "fasta", "fasta_protein_table.jl"))
+    
+    # Fragment handling
+    safe_include!(joinpath(root_path, "fragments", "get_frag_bounds.jl"))
+    safe_include!(joinpath(root_path, "fragments", "fragment_parse.jl"))
+    safe_include!(joinpath(root_path, "fragments", "fragment_index.jl"))
+    safe_include!(joinpath(root_path, "fragments", "fragment_annotation.jl"))
+    safe_include!(joinpath(root_path, "fragments", "fragment_predict.jl"))
+    
+    # Koina integration
+    safe_include!(joinpath(root_path, "koina", "koina_api.jl"))
+    safe_include!(joinpath(root_path, "koina", "koina_batch_prep.jl"))
+    safe_include!(joinpath(root_path, "koina", "koina_batch_parse.jl"))
+    
+    # Utilities
+    safe_include!(joinpath(root_path, "utils", "io.jl"))
+    safe_include!(joinpath(root_path, "utils", "estimate_collision_ev.jl"))
+    safe_include!(joinpath(root_path, "utils", "math.jl"))
+    safe_include!(joinpath(root_path, "utils", "get_mz.jl"))
+    safe_include!(joinpath(root_path, "utils", "parse_isotope_mods.jl"))
+    safe_include!(joinpath(root_path, "utils", "check_params.jl"))
+    
+    # Structs 
+    safe_include!(joinpath(root_path, "structs", "EmpiricalLibrary.jl"))
+    safe_include!(joinpath(root_path, "utils", "parse_mods.jl"))
+    
+    # Library building
+    safe_include!(joinpath(root_path, "build", "build_poin_lib.jl"))
+    
+    # Chronologer Methods
+    safe_include!(joinpath(root_path, "chronologer", "chronologer_prep.jl"))
+    safe_include!(joinpath(root_path, "chronologer", "chronologer_predict.jl"))
+    safe_include!(joinpath(root_path, "chronologer", "chronologer_parse.jl"))
+    
+    # Profiling
+    safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
+
+    #importSpecLibScripts()
 
     return files_loaded
+end
+
+function importSpecLibScripts()
+    include("types.jl")
+    include("constants.jl")
+    include("../../structs/Ion.jl")
+    include("../../structs/LibraryIon.jl")
+    include("../../structs/LibraryFragmentIndex.jl")
+    # FASTA processing
+    include("fasta/fasta_types.jl")
+    include("fasta/fasta_parser.jl") 
+    include("fasta/fasta_digest.jl")
+    include("fasta/fasta_utils.jl")
+    # Fragment handling
+    include("fragments/fragment_types.jl")
+    include("fragments/get_frag_bounds.jl")
+    include("fragments/fragment_parse.jl")
+    include("fragments/fragment_index.jl")
+    include("fragments/fragment_annotation.jl")
+    include("fragments/fragment_predict.jl")
+
+    # Koina integration
+    include("koina/koina_types.jl")
+    include("koina/koina_api.jl")
+    include("koina/koina_batch_prep.jl")
+    include("koina/koina_batch_parse.jl")
+
+    # Utilities
+    include("utils/io.jl")
+    include("utils/estimate_collision_ev.jl")
+    include("utils/math.jl")
+    include("utils/modifications.jl")
+    include("utils/get_mz.jl")
+    include("utils/parse_isotope_mods.jl")
+    include("utils/check_params.jl")
+
+    # Library building
+    include("build/build_types.jl")
+    include("build/build_lib.jl")
+    include("build/build_index.jl")
+    include("build/build_poin_lib.jl")
+
+
+    include("chronologer/chronologer_types.jl")
+    include("chronologer/chronologer_prep.jl")
+    include("chronologer/chronologer_predict.jl")
+    include("chronologer/chronologer_parse.jl")
 end

@@ -15,6 +15,17 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_SearchDIA()::Cint
+    try
+        SearchDIA(ARGS[1])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 """
     SearchDIA(params_path::String)
 

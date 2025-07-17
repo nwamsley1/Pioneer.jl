@@ -15,6 +15,19 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_convertMzML()::Cint
+    try
+        convertMzML(ARGS[1], # input data path
+                    skip_scan_header = length(ARGS) >= 2 ? parse(Bool, ARGS[2]) : true # skip scan header
+        )
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 struct PioneerScanElement
     mz_array::Vector{Union{Missing, Float32}}
     intensity_array::Vector{Union{Missing, Float32}}
