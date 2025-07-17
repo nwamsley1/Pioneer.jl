@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Pioneer" Language="1033" Version="1.0.0" Manufacturer="Pioneer" UpgradeCode="12345678-1234-1234-1234-123456789ABC">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MediaTemplate />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLDIR" Name="Pioneer">
+          <Component Id="PioneerBinaries" Guid="12345678-1234-1234-1234-123456789ABD">
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\SearchDIA.exe" />
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\BuildSpecLib.exe" />
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\GetSearchParams.exe" />
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\GetBuildLibParams.exe" />
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\convertMzML.exe" />
+            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\ParseSpecLib.exe" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+    <Feature Id="DefaultFeature" Level="1">
+      <ComponentRef Id="PioneerBinaries" />
+    </Feature>
+  </Product>
+</Wix>
