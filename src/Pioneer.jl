@@ -50,7 +50,7 @@ using HTTP
 Random.seed!(1776);
 
 #Import Pioneer Files 
-include(joinpath(@__DIR__, "Routines","SearchDIA","importScripts.jl"))
+include("importScripts.jl")
 files_loaded = importScripts()
 
 """
@@ -71,9 +71,7 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
     Line{Nothing}                           # Extrapolation
 }
 
-
-include(joinpath(@__DIR__, "Routines","BuildSpecLib","importScripts.jl"))
-importScriptsSpecLib(files_loaded)
+#importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
