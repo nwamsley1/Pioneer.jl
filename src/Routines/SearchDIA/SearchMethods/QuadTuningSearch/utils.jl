@@ -256,8 +256,7 @@ function collect_psms(
                 quad_psms[!,:weight],
                 quad_psms[!,:charge],
                 params
-            ),:
-        ]
+            ),:]
         
         processed_psms = process_quad_results(
             quad_psms,
