@@ -1,0 +1,81 @@
+name: Build App
+on:
+  push:
+    branches:
+      - main
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            runner: macos-latest
+            arch: x64
+            identifier: macos-x64
+          - os: macos
+            runner: macos-latest
+            arch: arm64
+            identifier: macos-arm64
+          - os: windows
+            runner: windows-latest
+            arch: x64
+            identifier: windows-x64
+          - os: linux
+            runner: ubuntu-latest
+            arch: x64
+            identifier: linux-x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11'
+          arch: x64
+      - name: Install dependencies
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+      - name: Compile application
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+            create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", incremental=false, force=true,
+              executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
+          '
+      - name: Codesign and package macOS app
+        if: matrix.os == 'macos'
+        run: |
+          security create-keychain -p "$APPLE_KEYCHAIN_PASS" build.keychain
+          security import <(echo "$APPLE_CERT_BASE64" | base64 --decode) -k build.keychain -P "$APPLE_CERT_PASS" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASS" build.keychain
+          codesign --deep --force --options runtime --sign "$APPLE_CERT_ID" build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app
+          pkgbuild --root build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app --identifier com.example.pioneer --install-location /Applications/Pioneer.app --sign "$APPLE_CERT_ID" Pioneer.pkg
+          productbuild --package Pioneer.pkg --sign "$APPLE_INSTALL_CERT_ID" PioneerInstaller.pkg
+          xcrun notarytool submit PioneerInstaller.pkg --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD" --wait
+          xcrun stapler staple PioneerInstaller.pkg
+      - name: Package Windows MSI
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          &"${env:WIX}\bin\candle.exe" installer.wxs
+          &"${env:WIX}\bin\light.exe" installer.wixobj -o PioneerInstaller.msi
+      - name: Package Linux .deb
+        if: matrix.os == 'linux'
+        run: |
+          mkdir -p deb/usr/local/Pioneer
+          cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
+          dpkg-deb --build deb PioneerInstaller.deb
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pioneer-${{ matrix.identifier }}
+          path: |
+            PioneerInstaller.pkg
+            PioneerInstaller.msi
+            PioneerInstaller.deb
+
