@@ -16,6 +16,18 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # src/ParseSpecLib.jl
+
+# Entry point for PackageCompiler
+function main_ParseSpecLib()::Cint
+    try
+        ParseSpecLib(ARGS[1])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 """
     nestedLibrarySort!(spec_lib::BasicEmpiricalLibrary; rt_bin_tol::Float64=0.1)
 

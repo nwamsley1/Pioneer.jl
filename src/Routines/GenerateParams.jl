@@ -15,6 +15,36 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_GetSearchParams()::Cint
+    try
+        GetSearchParams(ARGS[1], # library path
+                        ARGS[2], # MS data path
+                        ARGS[3], # results path
+                        params_path = length(ARGS) >= 4 ? ARGS[4] : missing # params json output path
+        )
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
+
+# Entry point for PackageCompiler
+function main_GetBuildLibParams()::Cint
+    try
+        GetBuildLibParams(ARGS[1], # library output path
+                          ARGS[2], # library name
+                          ARGS[3], # fasta path
+                          params_path = length(ARGS) >= 4 ? ARGS[4] : missing # params json output path
+        )
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
 
 """
     getSearchParams(template_path::String, lib_path::String, ms_data_path::String, results_path::String)

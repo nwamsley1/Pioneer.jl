@@ -17,6 +17,17 @@
 
 # src/BuildSpecLib.jl
 
+# Entry point for PackageCompiler
+function main_BuildSpecLib()::Cint
+    try
+        BuildSpecLib(ARGS[1])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 """
     BuildSpecLib(params_path::String)
 
