@@ -46,12 +46,6 @@ using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
-#Set Seed 
-Random.seed!(1776);
-
-#Import Pioneer Files 
-include("importScripts.jl")
-files_loaded = importScripts()
 
 """
 Type alias for m/z to eV interpolation functions.
@@ -70,6 +64,13 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
     Gridded{Linear{Throw{OnGrid}}},         # Method
     Line{Nothing}                           # Extrapolation
 }
+
+#Set Seed 
+Random.seed!(1776);
+
+#Import Pioneer Files 
+include("importScripts.jl")
+files_loaded = importScripts()
 
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
