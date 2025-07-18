@@ -115,23 +115,46 @@ jobs:
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
         env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERT_P12 }}
-          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          INSTALLER_CERT_BASE64: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
-          INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          NOTARIZE_APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
-          NOTARIZE_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
-          NOTARIZE_TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+          PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
         run: |
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import <(echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode) -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security list-keychains -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          codesign --deep --force --options runtime --sign "$BUILD_CERTIFICATE_BASE64" build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app
-          pkgbuild --root build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app --identifier com.example.pioneer --install-location /Applications/Pioneer.app --sign "$BUILD_CERTIFICATE_BASE64" Pioneer.pkg
-          productbuild --package Pioneer.pkg --sign "$INSTALLER_CERT_BASE64" PioneerInstaller.pkg
-          xcrun notarytool submit PioneerInstaller.pkg --apple-id "$NOTARIZE_APPLE_ID" --team-id "$NOTARIZE_TEAM_ID" --password "$NOTARIZE_PASSWORD" --wait
+          APP_PATH="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app"
+          echo "Codesigning $APP_PATH"
+          codesign --deep --force --options runtime --timestamp \
+            --entitlements src/build/entitlements.plist \
+            --sign "$CODESIGN_IDENTITY" "$APP_PATH"
+          pkgbuild --root "$APP_PATH" \
+            --identifier com.example.pioneer \
+            --install-location /Applications/Pioneer.app \
+            PioneerUnsigned.pkg
+          productsign --sign "$PKG_SIGN_IDENTITY" \
+            PioneerUnsigned.pkg PioneerInstaller.pkg
+
+      - name: Notarize macOS package
+        if: matrix.os == 'macos'
+        env:
+          AC_USERNAME: ${{ secrets.NOTARIZE_APPLE_ID }}
+          AC_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
+          TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials notary-profile \
+            --apple-id "$AC_USERNAME" \
+            --team-id "$TEAM_ID" \
+            --password "$AC_PASSWORD"
+          result=$(xcrun notarytool submit PioneerInstaller.pkg \
+            --keychain-profile notary-profile --wait --output-format json)
+          echo "$result"
+          status=$(echo "$result" | grep -o '"status" *: *"[^" ]*"' | head -n1 | sed 's/.*"status" *: *"\([^"]*\)"/\1/')
+          subid=$(echo "$result" | grep -o '"id" *: *"[^" ]*"' | head -n1 | sed 's/.*"id" *: *"\([^"]*\)"/\1/')
+          if [ "$status" != "Accepted" ]; then
+            echo "Notarization failed with status $status"
+            xcrun notarytool log "$subid" --keychain-profile notary-profile
+            exit 1
+          fi
+
+      - name: Staple notarization ticket
+        if: matrix.os == 'macos'
+        run: |
           xcrun stapler staple PioneerInstaller.pkg
       
       
