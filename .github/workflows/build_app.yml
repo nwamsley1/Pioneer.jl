@@ -21,10 +21,10 @@ jobs:
           #  runner: macos-latest
           #  arch: arm64
           #  identifier: macos-arm64
-          - os: windows
-            runner: windows-latest
-            arch: x64
-            identifier: windows-x64
+          #- os: windows
+          #  runner: windows-latest
+          #  arch: x64
+          #  identifier: windows-x64
           #- os: linux
           #  runner: ubuntu-latest
           #  arch: x64
@@ -118,17 +118,31 @@ jobs:
           CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.PKG_SIGN_IDENTITY }}
         run: |
-          APP_PATH="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/Pioneer.app"
-          echo "Codesigning $APP_PATH"
-          codesign --deep --force --options runtime --timestamp \
-            --entitlements src/build/entitlements.plist \
-            --sign "$CODESIGN_IDENTITY" "$APP_PATH"
-          pkgbuild --root "$APP_PATH" \
+          APPNAME="Pioneer"
+          DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
+          PKGROOT="pkgroot"
+          VERSION=$(grep -m1 '^version' Project.toml | awk -F'"' '{print $2}')
+
+          rm -rf "$PKGROOT"
+          mkdir -p "$PKGROOT/usr/local/$APPNAME"
+          cp -R "$DIST"/* "$PKGROOT/usr/local/$APPNAME/"
+
+          echo "Codesigning binaries"
+          while IFS= read -r -d '' file; do
+            if file "$file" | grep -q 'Mach-O'; then
+              codesign --verbose=4 --force --options runtime --timestamp \
+                --entitlements src/build/entitlements.plist \
+                --sign "$CODESIGN_IDENTITY" "$file"
+            fi
+          done < <(find "$PKGROOT/usr/local/$APPNAME" -type f -print0)
+
+          pkgbuild --root "$PKGROOT" \
             --identifier com.example.pioneer \
-            --install-location /Applications/Pioneer.app \
-            PioneerUnsigned.pkg
+            --version "$VERSION" \
+            --install-location / PioneerUnsigned.pkg
           productsign --sign "$PKG_SIGN_IDENTITY" \
             PioneerUnsigned.pkg PioneerInstaller.pkg
+          rm PioneerUnsigned.pkg
 
       - name: Notarize macOS package
         if: matrix.os == 'macos'
