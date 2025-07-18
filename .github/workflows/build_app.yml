@@ -139,7 +139,7 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          &"${env:WIX}\bin\candle.exe" installer.wxs
+          &"${env:WIX}\bin\candle.exe" src\build\windows\installer.wxs
           &"${env:WIX}\bin\light.exe" installer.wixobj -o PioneerInstaller.msi
       
       - name: Package Linux .deb
