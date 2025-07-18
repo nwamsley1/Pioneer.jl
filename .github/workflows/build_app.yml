@@ -127,6 +127,9 @@ jobs:
           mkdir -p "$PKGROOT/usr/local/$APPNAME"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APPNAME/"
 
+          # ensure files are writable so codesign can modify them
+          find "$PKGROOT/usr/local/$APPNAME" -type f -exec chmod u+w {} +
+
           echo "Codesigning binaries"
           while IFS= read -r -d '' file; do
             if file "$file" | grep -q 'Mach-O'; then
