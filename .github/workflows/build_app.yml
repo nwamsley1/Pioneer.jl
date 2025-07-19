@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - os: macos
-            runner: macos-latest
+            runner: macos-13
             arch: x64
             identifier: macos-x64
           #- os: macos
@@ -101,17 +101,13 @@ jobs:
           keychain: signing_temp
           create-keychain: false
 
-      - name: List codesigning identities
-        if: matrix.os == 'macos'
-        run: 
-          security find-identity -v -p codesigning
-          security find-identity -v -p basic
-
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
           
       - name: Compile application
+        env:
+          JULIA_NUM_THREADS: auto
         run: |
           julia --project=. -e '
             using PackageCompiler;
@@ -119,27 +115,6 @@ jobs:
               executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
           '
       
-      #- name: Ensure executables default to all CPU threads
-      #  if: matrix.os != 'windows'
-      #  run: |
-      #    for f in build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/*; do
-      #      sed -i.bak $'2i\\
-      #      export JULIA_NUM_THREADS=${JULIA_NUM_THREADS:-auto}' "$f"
-      #      rm "$f.bak"
-      #    done
-      
-      - name: Ensure executables default to all CPU threads (Windows)
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
-          Get-ChildItem $binDir -Filter *.bat | ForEach-Object {
-            $file = $_.FullName
-            $content = Get-Content $file
-            $header = 'IF NOT DEFINED JULIA_NUM_THREADS SET JULIA_NUM_THREADS=auto'
-            Set-Content -Path $file -Value ($header + "`r`n" + ($content -join "`r`n"))
-          }
-
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
         env:
@@ -153,9 +128,18 @@ jobs:
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APPNAME"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APPNAME/"
+          
           # bundle assets used at runtime
           mkdir -p "$PKGROOT/usr/local/$APPNAME/data"
           cp -R data/IsotopeSplines "$PKGROOT/usr/local/$APPNAME/data/"
+
+          # expose executables on PATH
+          mkdir -p "$PKGROOT/usr/local/bin"
+          for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
+            [ -f "$f" ] || continue
+            ln -sf "../$APPNAME/bin/$(basename "$f")" "$PKGROOT/usr/local/bin/$(basename "$f")"
+          done
+
           # ensure CLI wrappers set a writable depot path
           for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
             [ -f "$f" ] || continue
@@ -167,6 +151,7 @@ jobs:
               fi
             fi
           done
+          
           # ensure files are writable so codesign can modify them
           find "$PKGROOT/usr/local/$APPNAME" -type f -exec chmod u+w {} +
           echo "Codesigning binaries"
@@ -178,7 +163,7 @@ jobs:
             fi
           done < <(find "$PKGROOT/usr/local/$APPNAME" -type f -print0)
           pkgbuild --root "$PKGROOT" \
-            --identifier com.example.pioneer \
+            --identifier edu.washu.goldfarblab.pioneer \
             --version "$VERSION" \
             --install-location / PioneerUnsigned.pkg
           productsign --sign "$PKG_SIGN_IDENTITY" \
@@ -229,6 +214,12 @@ jobs:
           # bundle assets used at runtime
           mkdir -p deb/usr/local/Pioneer/data
           cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
+
+          mkdir -p deb/usr/local/bin
+          for f in deb/usr/local/Pioneer/bin/*; do
+            [ -f "$f" ] || continue
+            ln -sf ../Pioneer/bin/$(basename "$f") deb/usr/local/bin/$(basename "$f")
+          done
           
           for f in deb/usr/local/Pioneer/bin/*; do
             [ -f "$f" ] || continue
@@ -243,6 +234,14 @@ jobs:
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
