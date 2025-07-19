@@ -119,14 +119,14 @@ jobs:
               executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
           '
       
-      - name: Ensure executables default to all CPU threads
-        if: matrix.os != 'windows'
-        run: |
-          for f in build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/*; do
-            sed -i.bak $'2i\\
-            export JULIA_NUM_THREADS=${JULIA_NUM_THREADS:-auto}' "$f"
-            rm "$f.bak"
-          done
+      #- name: Ensure executables default to all CPU threads
+      #  if: matrix.os != 'windows'
+      #  run: |
+      #    for f in build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/*; do
+      #      sed -i.bak $'2i\\
+      #      export JULIA_NUM_THREADS=${JULIA_NUM_THREADS:-auto}' "$f"
+      #      rm "$f.bak"
+      #    done
       
       - name: Ensure executables default to all CPU threads (Windows)
         if: matrix.os == 'windows'
