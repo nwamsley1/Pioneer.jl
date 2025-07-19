@@ -40,7 +40,12 @@ jobs:
 
       - name: Determine tag version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
       
       - name: Install the Apple certificate and provisioning profile
         if: matrix.os == 'macos'
@@ -241,6 +246,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
           files: |
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
