@@ -275,7 +275,8 @@ function process_file!(
         ppm_errs = nothing
         prev_mass_err = 0.0f0
         init_mass_tol = getFragTolPpm(params)
-        for i in range(0, 1)
+        n_attempts = 0
+        while n_attempts < 5
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
@@ -290,21 +291,32 @@ function process_file!(
             fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
             mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
             #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
+            #Need to be able to search again with only the topN abundant fragments in each scan if the presearch
+            #without the RT filter is not specific enough to select a large majority of true positives on its own 
+            @info "TESt (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) = $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)) \n"
             if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
                 prev_mass_err = getMassOffset(mass_err_model)
+                @warn "Mass error offset is too large: $(getMassOffset(mass_err_model)). Retrying with updated estimate. \n"
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
             #The estimated mass error is almost as wide as the initial guess. Need to research with a wider initial mass tolerance 
-            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (2*init_mass_tol)*0.8 
+            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (init_mass_tol) 
+                init_mass_tol *= 1.5
                 results.mass_err_model[] =  MassErrorModel(
                                                 0.0f0, 
-                                                (getFragTolPpm(params)*1.5, getFragTolPpm(params))
+                                                (Float32(init_mass_tol), Float32(init_mass_tol))
                                             )
+                @warn "Mass error model is too wide: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)). Retrying with wider initial mass tolerance: $init_mass_tol ppm \n"
             else
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
                 break
             end
+            n_attempts += 1
         end
-
+        if n_attempts > 5
+            @warn "Failed to converge mass error model after 5 attempts for file $ms_file_idx. Using last estimate ", results.mass_err_model[]
+            setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
+            return results
+        end
         append!(results.ppm_errs, ppm_errs)
     catch e
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)

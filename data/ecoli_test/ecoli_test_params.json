@@ -26,7 +26,7 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "tol_ppm": 20.0,
+            "tol_ppm": 5.0,
             "min_score": 22,
             "min_spectral_contrast": 0.9,
             "relative_improvement_threshold": 1.25,
