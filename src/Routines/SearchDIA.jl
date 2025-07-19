@@ -37,7 +37,7 @@ function asset_path(parts...)
     if ispath(compile_dir)
         return compile_dir
     end
-    exe_dir = abspath(dirname(PROGRAM_FILE))
+    exe_dir = abspath(dirname(Base.realpath(PROGRAM_FILE)))
     return joinpath(exe_dir, "..", "data", parts...)
 end
 
