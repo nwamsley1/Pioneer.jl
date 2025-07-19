@@ -1,14 +1,16 @@
 name: Build App
 on:
   push:
-    branches:
-      - main
     tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
+    env:
+      JULIA_NUM_THREADS: auto
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +37,10 @@ jobs:
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
+
+      - name: Determine tag version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
       
       - name: Install the Apple certificate and provisioning profile
         if: matrix.os == 'macos'
@@ -112,6 +118,28 @@ jobs:
             create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", incremental=false, force=true,
               executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
           '
+      
+      - name: Ensure executables default to all CPU threads
+        if: matrix.os != 'windows'
+        run: |
+          for f in build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/*; do
+            sed -i.bak $'2i\\
+            export JULIA_NUM_THREADS=${JULIA_NUM_THREADS:-auto}' "$f"
+            rm "$f.bak"
+          done
+      
+      - name: Ensure executables default to all CPU threads (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
+          Get-ChildItem $binDir -Filter *.bat | ForEach-Object {
+            $file = $_.FullName
+            $content = Get-Content $file
+            $header = 'IF NOT DEFINED JULIA_NUM_THREADS SET JULIA_NUM_THREADS=auto'
+            Set-Content -Path $file -Value ($header + "`r`n" + ($content -join "`r`n"))
+          }
+
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
         env:
@@ -122,30 +150,41 @@ jobs:
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
           VERSION=$(grep -m1 '^version' Project.toml | awk -F'"' '{print $2}')
-
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APPNAME"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APPNAME/"
-
+          # bundle assets used at runtime
+          mkdir -p "$PKGROOT/usr/local/$APPNAME/data"
+          cp -R data/IsotopeSplines "$PKGROOT/usr/local/$APPNAME/data/"
+          # ensure CLI wrappers set a writable depot path
+          for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
+            [ -f "$f" ] || continue
+            if head -n1 "$f" | grep -q "^#!"; then
+              if [[ "$(uname)" == "Darwin" ]]; then
+                sed -i '' '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
+              else
+                sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
+              fi
+            fi
+          done
           # ensure files are writable so codesign can modify them
           find "$PKGROOT/usr/local/$APPNAME" -type f -exec chmod u+w {} +
-
           echo "Codesigning binaries"
           while IFS= read -r -d '' file; do
             if file "$file" | grep -q 'Mach-O'; then
-              codesign --verbose=4 --force --options runtime --timestamp \
-                --entitlements src/build/entitlements.plist \
+              codesign --deep --verbose=4 --force --options runtime --timestamp \
+                --entitlements src/build/windows/entitlements.plist \
                 --sign "$CODESIGN_IDENTITY" "$file"
             fi
           done < <(find "$PKGROOT/usr/local/$APPNAME" -type f -print0)
-
           pkgbuild --root "$PKGROOT" \
             --identifier com.example.pioneer \
             --version "$VERSION" \
             --install-location / PioneerUnsigned.pkg
           productsign --sign "$PKG_SIGN_IDENTITY" \
-            PioneerUnsigned.pkg PioneerInstaller.pkg
+            PioneerUnsigned.pkg Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
           rm PioneerUnsigned.pkg
+
 
       - name: Notarize macOS package
         if: matrix.os == 'macos'
@@ -158,7 +197,7 @@ jobs:
             --apple-id "$AC_USERNAME" \
             --team-id "$TEAM_ID" \
             --password "$AC_PASSWORD"
-          result=$(xcrun notarytool submit PioneerInstaller.pkg \
+          result=$(xcrun notarytool submit Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg \
             --keychain-profile notary-profile --wait --output-format json)
           echo "$result"
           status=$(echo "$result" | grep -o '"status" *: *"[^" ]*"' | head -n1 | sed 's/.*"status" *: *"\([^"]*\)"/\1/')
@@ -172,7 +211,7 @@ jobs:
       - name: Staple notarization ticket
         if: matrix.os == 'macos'
         run: |
-          xcrun stapler staple PioneerInstaller.pkg
+          xcrun stapler staple Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
       
       
       - name: Package Windows MSI
@@ -180,21 +219,31 @@ jobs:
         shell: pwsh
         run: |
           &"${env:WIX}\bin\candle.exe" src\build\windows\installer.wxs
-          &"${env:WIX}\bin\light.exe" installer.wixobj -o PioneerInstaller.msi
+          &"${env:WIX}\bin\light.exe" installer.wixobj -o Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
       
       - name: Package Linux .deb
         if: matrix.os == 'linux'
         run: |
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
-          dpkg-deb --build deb PioneerInstaller.deb
+          # bundle assets used at runtime
+          mkdir -p deb/usr/local/Pioneer/data
+          cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
+          
+          for f in deb/usr/local/Pioneer/bin/*; do
+            [ -f "$f" ] || continue
+            if head -n1 "$f" | grep -q "^#!"; then
+              sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
+            fi
+          done
+          dpkg-deb --build deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: |
-            PioneerInstaller.pkg
-            PioneerInstaller.msi
-            PioneerInstaller.deb
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 
