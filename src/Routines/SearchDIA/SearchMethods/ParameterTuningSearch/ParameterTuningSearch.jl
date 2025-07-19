@@ -274,6 +274,7 @@ function process_file!(
             (getFragTolPpm(params), getFragTolPpm(params)))
         ppm_errs = nothing
         prev_mass_err = 0.0f0
+        init_mass_tol = getFragTolPpm(params)
         for i in range(0, 1)
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
@@ -292,6 +293,12 @@ function process_file!(
             if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
                 prev_mass_err = getMassOffset(mass_err_model)
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
+            #The estimated mass error is almost as wide as the initial guess. Need to research with a wider initial mass tolerance 
+            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (2*init_mass_tol)*0.8 
+                results.mass_err_model[] =  MassErrorModel(
+                                                0.0f0, 
+                                                (getFragTolPpm(params)*1.5, getFragTolPpm(params))
+                                            )
             else
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
                 break
