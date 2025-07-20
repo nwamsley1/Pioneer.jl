@@ -39,8 +39,13 @@ julia --threads 15 --gcthreads 7,1
 If Pioneer has already been installed, then open the REPL and enter the following command.
 ```@julia
 julia> using Pioneer
-```  
-The Pioneer.jl package exports four methods, `GetBuildLibParams`, `BuildSpecLib`, `GetSearchParams`, and `SearchDIA`. The first two methods build the in silico spectral libraries. The later two search DIA experiments given a spectral library and MS data files. 
+```
+The Pioneer.jl package exports several methods for programmatic use. When installed as an application it also provides a single `pioneer` command with subcommands `buildspeclib`, `parsespeclib`, `searchdia`, `getbuildlibparams`, `getsearchparams`, and `convertmzml`.
+
+From the command line the syntax is:
+```bash
+pioneer <subcommand> [arguments]
+```
 
 ## Spectral Library Building
 Pioneer.jl includes two methods for building spectral libraries. These are `GetBuildLibParams` and `BuildSpecLib`.
