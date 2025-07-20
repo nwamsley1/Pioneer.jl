@@ -39,16 +39,15 @@ function asset_path(parts...)
     end
     exe = PROGRAM_FILE
     if !isabspath(exe)
-        exe = something(Sys.which(exe), exe)
+        exe_full = Sys.which(exe)
+        exe = exe_full !== nothing ? exe_full : exe
     end
-    exe_dir = try
-        dirname(realpath(exe))
-    catch
-        abspath(dirname(exe))
-    end
-    exe_dir = abspath(dirname(realpath(PROGRAM_FILE)))
+    exe_dir = abspath(dirname(realpath(exe)))
     println("ISO PATH:", joinpath(exe_dir, "..", "data", parts...))
     return joinpath(exe_dir, "..", "data", parts...)
+
+
+    
 end
 
 """
