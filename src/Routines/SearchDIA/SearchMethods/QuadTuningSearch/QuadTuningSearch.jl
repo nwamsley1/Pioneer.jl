@@ -313,16 +313,16 @@ function summarize_results!(
 
     qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_models"), join=true) if endswith(x, ".pdf")]
     if !isempty(qmp)
-        merge_pdfs(qmp, 
-                  models_path, 
-                  cleanup=true)
+        merge_pdfs_safe(qmp,
+                        models_path,
+                        cleanup=true)
     end
 
     qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_data"), join=true) if endswith(x, ".pdf")]
     if !isempty(qmp)
-        merge_pdfs(qmp, 
-                  data_path, 
-                  cleanup=true)
+        merge_pdfs_safe(qmp,
+                        data_path,
+                        cleanup=true)
     end
 
     reset_precursor_arrays!(search_context)

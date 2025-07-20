@@ -373,9 +373,9 @@ function summarize_results!(
     if endswith(x, ".pdf")]
     
     if !isempty(rt_plots)
-        merge_pdfs(rt_plots, 
-                    output_path, 
-                  cleanup=true)
+        merge_pdfs_safe(rt_plots,
+                        output_path,
+                        cleanup=true)
     end
     
     # Merge mass error plots
@@ -392,9 +392,9 @@ function summarize_results!(
                     if endswith(x, ".pdf")]
 
     if !isempty(mass_plots)
-        merge_pdfs(mass_plots, 
-                  output_path, 
-                  cleanup=true)
+        merge_pdfs_safe(mass_plots,
+                        output_path,
+                        cleanup=true)
     end
 
     @info "QC plot merging complete"

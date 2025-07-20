@@ -280,9 +280,9 @@ function summarize_results!(
             @warn "Could not clear existing file: $e"
         end
         if !isempty(results.nce_plot_dir)
-            merge_pdfs([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
-                    output_path, 
-                    cleanup=true)
+            merge_pdfs_safe([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
+                            output_path,
+                            cleanup=true)
         end
     catch
         nothing

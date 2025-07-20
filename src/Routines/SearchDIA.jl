@@ -37,7 +37,15 @@ function asset_path(parts...)
     if ispath(compile_dir)
         return compile_dir
     end
-    exe_dir = abspath(dirname(PROGRAM_FILE))
+    exe = PROGRAM_FILE
+    if !isabspath(exe)
+        exe = something(Sys.which(exe), exe)
+    end
+    exe_dir = try
+        dirname(realpath(exe))
+    catch
+        abspath(dirname(exe))
+    end
     return joinpath(exe_dir, "..", "data", parts...)
 end
 
@@ -216,10 +224,12 @@ function SearchDIA(params_path::String)
                 parseIsoXML(isotope_spline_path()),
                 ArrowTableReference(MS_TABLE_PATHS),
                 Threads.nthreads(),
-                250000 # Default temp array batch size 
+                250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
-           
+            # Ensure temporary files are written to the results directory
+            ENV["TMPDIR"] = params.paths[:results]
+
             write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
             nothing
         end
