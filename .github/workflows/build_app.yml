@@ -138,13 +138,6 @@ jobs:
           mkdir -p "$PKGROOT/usr/local/$APPNAME/data"
           cp -R data/IsotopeSplines "$PKGROOT/usr/local/$APPNAME/data/"
 
-          # expose executables on PATH
-          mkdir -p "$PKGROOT/usr/local/bin"
-          for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
-            [ -f "$f" ] || continue
-            ln -sf "../$APPNAME/bin/$(basename "$f")" "$PKGROOT/usr/local/bin/$(basename "$f")"
-          done
-
           # ensure CLI wrappers set a writable depot path
           for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
             [ -f "$f" ] || continue

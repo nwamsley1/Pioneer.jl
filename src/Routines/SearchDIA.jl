@@ -220,6 +220,9 @@ function SearchDIA(params_path::String)
                 250000 # Default temp array batch size 
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+
+            # Ensure temporary files are written to the results directory
+            ENV["TMPDIR"] = params.paths[:results]
            
             write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
             nothing
