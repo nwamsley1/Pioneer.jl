@@ -12,7 +12,7 @@ If `cleanup` is true, the source files will be removed after merging.
 function merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
     ensure_directory_exists(dest)
     pdfunite = something(Sys.which("pdfunite"), "pdfunite")
-    tmp_path, io = mktemp(dir=dirname(dest))
+    tmp_path, io = mktemp(dirname(dest))
     close(io)
     try
         run(`$pdfunite $(files...) $tmp_path`)
