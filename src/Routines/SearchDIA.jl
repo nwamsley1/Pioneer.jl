@@ -46,6 +46,8 @@ function asset_path(parts...)
     catch
         abspath(dirname(exe))
     end
+    exe_dir = abspath(dirname(realpath(PROGRAM_FILE)))
+    println("ISO PATH:", joinpath(exe_dir, "..", "data", parts...))
     return joinpath(exe_dir, "..", "data", parts...)
 end
 
@@ -227,6 +229,7 @@ function SearchDIA(params_path::String)
                 250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+
             # Ensure temporary files are written to the results directory
             ENV["TMPDIR"] = params.paths[:results]
 

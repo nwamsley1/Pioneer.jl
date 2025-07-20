@@ -117,7 +117,7 @@ jobs:
           julia --project=. -e '
             using PackageCompiler;
             create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", incremental=false, force=true,
-              executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
+              executables=["pioneer" => "main_pioneer"]);
           '
       
       - name: Codesign and package macOS app
@@ -137,13 +137,6 @@ jobs:
           # bundle assets used at runtime
           mkdir -p "$PKGROOT/usr/local/$APPNAME/data"
           cp -R data/IsotopeSplines "$PKGROOT/usr/local/$APPNAME/data/"
-
-          # expose executables on PATH
-          mkdir -p "$PKGROOT/usr/local/bin"
-          for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
-            [ -f "$f" ] || continue
-            ln -sf "../$APPNAME/bin/$(basename "$f")" "$PKGROOT/usr/local/bin/$(basename "$f")"
-          done
 
           # ensure CLI wrappers set a writable depot path
           for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
