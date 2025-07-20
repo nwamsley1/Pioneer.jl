@@ -15,7 +15,8 @@ function merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=fals
     tmp_path, io = mktemp(dirname(dest))
     close(io)
     try
-        run(`$pdfunite $(files...) $tmp_path`)
+        cmd = Cmd([pdfunite; files; tmp_path])
+        run(cmd)
         mv(tmp_path, dest; force=true)
     finally
         isfile(tmp_path) && rm(tmp_path, force=true)
