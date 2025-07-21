@@ -101,8 +101,8 @@
     "maxLFQ": {"run_to_run_normalization": true},
     "output": {"write_csv": false, "write_decoys": false, "delete_temp": true, "plots_per_page": 12},
     "paths": {
-        "library": "./data/precompile/ecoli_small_prosit.poin",
-        "ms_data": "./data/ecoli_test/raw",
+        "library": "./temp/zenodo/yeast.poin",
+        "ms_data": "./temp/zenodo",
         "results": "./data/precompile/ecoli_prosit_results"
     }
 }

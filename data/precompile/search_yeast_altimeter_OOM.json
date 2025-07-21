@@ -89,7 +89,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psms_in_memory": 100,
+            "max_psms_in_memory": 1000,
             "min_trace_prob": 0.75,
             "max_q_value_xgboost_mbr_rescore": 0.20,
             "min_PEP_neg_threshold_xgboost_rescore": 0.90,
@@ -101,8 +101,8 @@
     "maxLFQ": {"run_to_run_normalization": true},
     "output": {"write_csv": false, "write_decoys": false, "delete_temp": true, "plots_per_page": 12},
     "paths": {
-        "library": "./data/precompile/ecoli_small_prosit.poin",
-        "ms_data": "./data/ecoli_test/raw",
+        "library": "./temp/zenodo/yeast.poin",
+        "ms_data": "./temp/zenodo",
         "results": "./data/precompile/ecoli_prosit_results"
     }
 }
