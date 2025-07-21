@@ -12,7 +12,7 @@
         "huber_override": {"override_huber_delta_fit": false, "huber_delta": 1500.0},
         "ms1_scoring": true,
         "ms1_quant": false,
-        "match_between_runs": false
+        "match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -89,7 +89,7 @@
             "max_diff": 0.01
         },
         "machine_learning": {
-            "max_psms_in_memory": 100,
+            "max_psms_in_memory": 1000000,
             "min_trace_prob": 0.75,
             "max_q_value_xgboost_mbr_rescore": 0.20,
             "min_PEP_neg_threshold_xgboost_rescore": 0.90,
@@ -98,7 +98,7 @@
         }
     },
     "proteinInference": {"min_peptides": 1},
-    "maxLFQ": {"run_to_run_normalization": false},
+    "maxLFQ": {"run_to_run_normalization": true},
     "output": {"write_csv": false, "write_decoys": false, "delete_temp": true, "plots_per_page": 12},
     "paths": {
         "library": "./data/precompile/ecoli_small_prosit.poin",

@@ -19,7 +19,10 @@ ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 
 # Build a tiny Prosit library and search it with low memory thresholds
 BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
-#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_OOM.json"))
+#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_MBR.json"))
+#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_MS1.json"))
 
 # TODO
 # Build a tiny Altimeter library
