@@ -46,6 +46,19 @@ function main_GetBuildLibParams()::Cint
     return 0
 end
 
+# Entry point for PackageCompiler
+function main_GetParseSpecLibParams()::Cint
+    try
+        GetParseSpecLibParams(ARGS[1], ARGS[2];
+            params_path = length(ARGS) >= 3 ? ARGS[3] : missing)
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
+
 """
     getSearchParams(template_path::String, lib_path::String, ms_data_path::String, results_path::String)
 
@@ -177,5 +190,51 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
         JSON.print(io, config, 4)  # indent with 4 spaces for readability
     end
     
+    return output_path
+end
+
+
+"""
+    GetParseSpecLibParams(input_lib_path::String, output_lib_path::String)
+
+Create a new parameter file for `ParseSpecLib` with updated input and output paths.
+Uses a default template from `data/example_config/defaultParseSpecLibParams.json`.
+
+Arguments:
+- input_lib_path: Path to the empirical library TSV file
+- output_lib_path: Path where the processed library will be written
+- params_path: Optional path to folder or JSON file where the parameters will be
+  saved. Defaults to `parsespeclib_params.json` in the working directory.
+
+Returns:
+- String: Path to the newly created parameters file
+"""
+function GetParseSpecLibParams(input_lib_path::String, output_lib_path::String; params_path::Union{String, Missing}=missing)
+    GC.gc()
+
+    if ismissing(params_path)
+        output_path = joinpath(pwd(), "parsespeclib_params.json")
+    else
+        params_path = expanduser(params_path)
+        name, ext = splitext(params_path)
+        if isempty(ext)
+            mkpath(params_path)
+            output_path = joinpath(params_path, "parsespeclib_params.json")
+        else
+            output_path = params_path
+        end
+    end
+
+    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultParseEmpiricalLibParams.json"), String)
+    config = JSON.parse(config_text, dicttype=OrderedDict)
+
+    config["library_params"]["input_lib_path"] = input_lib_path
+    config["library_params"]["output_lib_path"] = output_lib_path
+
+    @info "Writing default parameters .json to: $output_path"
+    open(output_path, "w") do io
+        JSON.print(io, config, 4)
+    end
+
     return output_path
 end

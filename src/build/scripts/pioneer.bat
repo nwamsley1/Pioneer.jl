@@ -5,7 +5,7 @@ if "%JULIA_NUM_THREADS%"=="" set JULIA_NUM_THREADS=auto
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict parse-empirical search-config predict-config convert-mzml
+set VALID_COMMANDS=search predict empirical search-config predict-config empirical-config convert-mzml
 
 :parse_args
 if "%~1"=="" goto check_subcommand
@@ -77,9 +77,10 @@ echo.
 echo Subcommands:
 echo   search             Perform DIA search analysis
 echo   predict            Predict spectral library
-echo   parse-empirical    Parse empirical spectral library
+echo   empirical          Parse spectral library
 echo   search-config      Generate search parameter template
 echo   predict-config     Generate library build parameter template
+echo   empirical-config   Generate parse parameter template
 echo   convert-mzml       Convert mzML files
 echo.
 echo Examples:
@@ -102,7 +103,8 @@ if "%SUBCOMMAND%"=="" (
 rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
 if /I "%SUBCOMMAND%"=="predict" set SUBCOMMAND=BuildSpecLib
-if /I "%SUBCOMMAND%"=="parse-empirical" set SUBCOMMAND=ParseSpecLib
+if /I "%SUBCOMMAND%"=="empirical" set SUBCOMMAND=ParseSpecLib
+if /I "%SUBCOMMAND%"=="empirical-config" set SUBCOMMAND=GetParseSpecLibParams
 if /I "%SUBCOMMAND%"=="search-config" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="predict-config" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML

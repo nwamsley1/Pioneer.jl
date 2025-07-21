@@ -124,6 +124,7 @@ jobs:
                 "BuildSpecLib" => "main_BuildSpecLib",
                 "GetSearchParams" => "main_GetSearchParams",
                 "GetBuildLibParams" => "main_GetBuildLibParams",
+                "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
                 "convertMzML" => "main_convertMzML",
                 "ParseSpecLib" => "main_ParseSpecLib",
               ],

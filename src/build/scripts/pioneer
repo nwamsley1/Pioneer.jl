@@ -6,7 +6,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams convertMzML ParseSpecLib"
+VALID_COMMANDS="SearchDIA convertMzML ParseSpecLib search predict empirical search-config predict-config empirical-config convert-mzml
 
 # Parse command line arguments for thread override
 SUBCOMMAND=""
@@ -40,9 +40,10 @@ while [[ $# -gt 0 ]]; do
             echo "Subcommands:"
             echo "  search             Perform DIA search analysis"
             echo "  predict            Predict spectral library"
-            echo "  parse-empirical    Parse empirical spectral library"
+            echo "  empirical          Parse spectral library"
             echo "  search-config      Generate search parameter template"
             echo "  predict-config     Generate library build parameter template"
+            echo "  empirical-config   Generate parse parameter template"
             echo "  convert-mzml       Convert mzML files"
             
             echo ""
@@ -98,7 +99,11 @@ case "$SUBCOMMAND" in
         SUBCOMMAND="BuildSpecLib"
         ;;
     parse-empirical)
+    empirical)
         SUBCOMMAND="ParseSpecLib"
+        ;;
+    empirical-config)
+        SUBCOMMAND="GetParseSpecLibParams"
         ;;
     search-config)
         SUBCOMMAND="GetSearchParams"
