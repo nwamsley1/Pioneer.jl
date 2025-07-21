@@ -3,40 +3,53 @@ using Pioneer
 root = joinpath(@__DIR__)
 data_dir = joinpath(root, "..", "..", "data")
 
-# Generate library build parameters using bundled test FASTA
-GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+##########################################
+# Generate params
+##########################################
 
-# Generate search parameters using bundled ecoli test data
+# search
 GetSearchParams(
     joinpath(data_dir, "ecoli_test", "altimeter_ecoli.poin"),
     joinpath(data_dir, "ecoli_test", "raw"),
     mktempdir(),
 )
+# predict
+GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+# empirical
+GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
 
-# Parse example empirical library to compile parsing code
+
+##########################################
+# Empirical libraries
+##########################################
 ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 
 
+##########################################
+# Predict libraries
+##########################################
+
 # Build a tiny Prosit library and search it with low memory thresholds
 BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
-SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
-SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_OOM.json"))
-#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_MBR.json"))
-#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit_MS1.json"))
-
 # TODO
 # Build a tiny Altimeter library
 #BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 
-# Execute a small Altimeter search
-SearchDIA(joinpath(data_dir, "ecoli_test", "ecoli_test_params.json"))
+
+##########################################
+# Search
+##########################################
+
+# prosit
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+# altimeter + MBR
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))
+# altimeter + MBR + OOM
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))
 
 
 
-# TODO quant MS1
-
-
-
-
-
+##########################################
+# ConvertMzML
+##########################################
 #convertMzML("data/mzML/")

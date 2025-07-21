@@ -11,8 +11,8 @@
         "normalization": {"n_rt_bins": 100, "spline_n_knots": 7},
         "huber_override": {"override_huber_delta_fit": false, "huber_delta": 1500.0},
         "ms1_scoring": true,
-        "ms1_quant": false,
-        "match_between_runs": false
+        "ms1_quant": true,
+        "match_between_runs": true
     },
     "parameter_tuning": {
         "fragment_settings": {
@@ -98,7 +98,7 @@
         }
     },
     "proteinInference": {"min_peptides": 1},
-    "maxLFQ": {"run_to_run_normalization": false},
+    "maxLFQ": {"run_to_run_normalization": true},
     "output": {"write_csv": false, "write_decoys": false, "delete_temp": true, "plots_per_page": 12},
     "paths": {
         "library": "./data/precompile/ecoli_small_prosit.poin",
