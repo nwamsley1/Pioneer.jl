@@ -114,9 +114,22 @@ jobs:
         run: |
           julia --project=. -e '
             using PackageCompiler;
-            create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", incremental=false, force=true,
-              executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
-          '
+            create_app(
+              ".",
+              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false,
+              force=true,
+              executables=[
+                "SearchDIA" => "main_SearchDIA",
+                "BuildSpecLib" => "main_BuildSpecLib",
+                "GetSearchParams" => "main_GetSearchParams",
+                "GetBuildLibParams" => "main_GetBuildLibParams",
+                "convertMzML" => "main_convertMzML",
+                "ParseSpecLib" => "main_ParseSpecLib",
+              ],
+              precompile_execution_file="build/snoopfile.jl",
+            );
+            '
       
       - name: Add wrapper scripts
         run: |
