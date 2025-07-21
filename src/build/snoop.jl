@@ -14,7 +14,7 @@ GetSearchParams(
 )
 
 # Parse example empirical library to compile parsing code
-ParseSpecLib(joinpath(data_dir, "library_test", "defaultParseEmpiricalLibParams2.json"))
+ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 
 
 # Build a tiny Prosit library and search it with low memory thresholds
