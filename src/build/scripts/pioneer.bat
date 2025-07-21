@@ -95,13 +95,14 @@ exit /b 0
 if "%SUBCOMMAND%"=="" (
     echo Error: Subcommand required
     echo Valid subcommands: %VALID_COMMANDS%
-    echo Use --help for usage information
+    echo Use --help for usage information"
     exit /b 1
 )
 
 :run_pioneer
+rem The executables are in the bin\ subdirectory
 if "%SUBCOMMAND_ARGS%"=="" (
-    "%~dp0%SUBCOMMAND%.exe"
+    "%~dp0bin\%SUBCOMMAND%.exe"
 ) else (
-    "%~dp0%SUBCOMMAND%.exe" %SUBCOMMAND_ARGS%
+    "%~dp0bin\%SUBCOMMAND%.exe" %SUBCOMMAND_ARGS%
 )

@@ -171,6 +171,11 @@ jobs:
                 --sign "$CODESIGN_IDENTITY" "$file"
             fi
           done < <(find "$PKGROOT/usr/local/$APPNAME" -type f -print0)
+
+          mkdir -p "$PKGROOT/usr/local/bin"
+          # Create symlink in /usr/local/bin for PATH access
+          ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
+
           pkgbuild --root "$PKGROOT" \
             --identifier edu.washu.goldfarblab.pioneer \
             --version "$VERSION" \

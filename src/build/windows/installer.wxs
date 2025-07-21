@@ -1,19 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="Pioneer" Language="1033" Version="1.0.0" Manufacturer="Pioneer" UpgradeCode="12345678-1234-1234-1234-123456789ABC">
-    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+  <Product Id="*" 
+           Name="Pioneer" 
+           Language="1033" 
+           Version="1.0.0.0" 
+           Manufacturer="edu.washu.goldfarblab" 
+           UpgradeCode="P12345678-1234-1234-1234-123456789ABC">
+    
+    <Package InstallerVersion="200" 
+             Compressed="yes" 
+             InstallScope="perMachine" />
+    
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
     <MediaTemplate />
+    
+    <Feature Id="ProductFeature" Title="Pioneer" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+    
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLDIR" Name="Pioneer">
-          <Component Id="PioneerBinaries" Guid="12345678-1234-1234-1234-123456789ABD">
-            <File Source="build\\Pioneer_windows-x64\\Applications\\Pioneer\\bin\\pioneer.exe" />
-          </Component>
-        </Directory>
+        <Directory Id="INSTALLFOLDER" Name="Pioneer" />
       </Directory>
     </Directory>
-    <Feature Id="DefaultFeature" Level="1">
-      <ComponentRef Id="PioneerBinaries" />
-    </Feature>
+    
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="PioneerWrapper" Guid="12345678-1234-1234-1234-123456789ABD">
+        <File Source="pioneer.bat" KeyPath="yes" />
+        <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+      </Component>
+      
+      <Component Id="PioneerBinaries" Guid="12345678-1234-1234-1234-123456789ABD">
+        <File Source="bin\SearchDIA.exe" />
+        <File Source="bin\BuildSpecLib.exe" />
+        <File Source="bin\GetSearchParams.exe" />
+        <File Source="bin\GetBuildLibParams.exe" />
+        <File Source="bin\convertMzML.exe" />
+        <File Source="bin\ParseSpecLib.exe" />
+        <!-- Add other files as needed -->
+      </Component>
+    </ComponentGroup>
   </Product>
 </Wix>

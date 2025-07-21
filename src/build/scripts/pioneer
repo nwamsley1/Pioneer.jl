@@ -89,4 +89,5 @@ if [[ -z "$SUBCOMMAND" ]]; then
 fi
 
 # Call the actual Pioneer executable with subcommand and its arguments
-exec "$(dirname "$0")/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
+# The executables are in the bin/ subdirectory
+exec "$(dirname "$0")/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
