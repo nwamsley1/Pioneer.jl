@@ -39,7 +39,7 @@
         "include_immonium": false,
         "include_neutral_diff": true,
         "instrument_type": "NONE",
-        "prediction_model": "prosit_2020_hcd"
+        "prediction_model": "altimeter"
     },
     "variable_mods": {
         "pattern": ["M"],
