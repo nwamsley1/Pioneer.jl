@@ -109,6 +109,10 @@ jobs:
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+
+      - name: Install PDF utilities
+        if: matrix.os == 'macos'
+        run: brew install poppler
           
       - name: Compile application
         run: |
