@@ -88,6 +88,15 @@ if [[ -z "$SUBCOMMAND" ]]; then
     exit 1
 fi
 
+# Resolve the actual script location, handling symlinks
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
 # Call the actual Pioneer executable with subcommand and its arguments
-# The executables are in the bin/ subdirectory
-exec "$(dirname "$0")/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
+# The executables are in the bin/ subdirectory relative to the script location
+exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
