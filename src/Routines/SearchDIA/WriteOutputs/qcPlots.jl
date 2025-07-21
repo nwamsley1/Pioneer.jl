@@ -582,7 +582,7 @@ function qcPlots(
     end
     plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
     if length(plots_to_merge)>1
-        merge_pdfs(plots_to_merge, 
-                    output_path, cleanup=true)
+        merge_pdfs_safe(plots_to_merge,
+                        output_path, cleanup=true)
     end
 end

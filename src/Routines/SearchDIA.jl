@@ -27,6 +27,36 @@ function main_SearchDIA()::Cint
 end
 
 """
+    asset_path(parts...)
+    Return the path to a bundled asset. The function first checks the
+    compile-time `data/` directory and falls back to a path relative to the
+    installed executable.
+"""
+function asset_path(parts...)
+    compile_dir = joinpath(@__DIR__, "..", "..", "data", parts...)
+    if ispath(compile_dir)
+        return compile_dir
+    end
+    exe = PROGRAM_FILE
+    if !isabspath(exe)
+        exe_full = Sys.which(exe)
+        exe = exe_full !== nothing ? exe_full : exe
+    end
+    exe_dir = abspath(dirname(realpath(exe)))
+    println("ISO PATH:", joinpath(exe_dir, "..", "data", parts...))
+    return joinpath(exe_dir, "..", "data", parts...)
+
+
+    
+end
+
+"""
+    Locate the isotope spline XML file bundled with the application.
+"""
+isotope_spline_path() = asset_path("IsotopeSplines", "IsotopeSplines_10kDa_21isotopes-1.xml")
+
+
+"""
     SearchDIA(params_path::String)
 
 Main entry point for the DIA (Data-Independent Acquisition) search workflow.
@@ -192,13 +222,16 @@ function SearchDIA(params_path::String)
             # Load isotope splines and initialize search context
             SEARCH_CONTEXT = initSearchContext(
                 SPEC_LIB,
-                parseIsoXML(joinpath(@__DIR__,"../../data/IsotopeSplines/IsotopeSplines_10kDa_21isotopes-1.xml")),
+                parseIsoXML(isotope_spline_path()),
                 ArrowTableReference(MS_TABLE_PATHS),
                 Threads.nthreads(),
-                250000 # Default temp array batch size 
+                250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
-           
+
+            # Ensure temporary files are written to the results directory
+            ENV["TMPDIR"] = params.paths[:results]
+
             write( joinpath(normpath(params.paths[:results]), "config.json"), params_string)
             nothing
         end

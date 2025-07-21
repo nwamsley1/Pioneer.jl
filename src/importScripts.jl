@@ -151,7 +151,8 @@ function importScripts()
             "writeArrow.jl",
             "safeFileOps.jl",
             "proteinInference.jl",
-            "profile.jl"
+            "profile.jl",
+            "pdfUtils.jl"
         ]
     )
 
@@ -243,6 +244,7 @@ function importScripts()
     
     # Profiling
     safe_include!(joinpath(package_root, "src", "utils", "profile.jl"))
+    safe_include!(joinpath(package_root, "src", "utils", "pdfUtils.jl"))
 
     #importSpecLibScripts()
 
