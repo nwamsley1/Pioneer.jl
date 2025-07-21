@@ -5,7 +5,7 @@ if "%JULIA_NUM_THREADS%"=="" set JULIA_NUM_THREADS=auto
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams convertMzML ParseSpecLib
+set VALID_COMMANDS=search predict parse-empirical search-config predict-config convert-mzml
 
 :parse_args
 if "%~1"=="" goto check_subcommand
@@ -75,17 +75,17 @@ echo   --threads=N        Alternative syntax for setting threads
 echo   --help, -h         Show this help message
 echo.
 echo Subcommands:
-echo   SearchDIA          Perform DIA search analysis
-echo   BuildSpecLib       Build spectral library
-echo   GetSearchParams    Generate search parameter template
-echo   GetBuildLibParams  Generate library build parameter template
-echo   convertMzML        Convert mzML files
-echo   ParseSpecLib       Parse spectral library
+echo   search             Perform DIA search analysis
+echo   predict            Predict spectral library
+echo   parse-empirical    Parse empirical spectral library
+echo   search-config      Generate search parameter template
+echo   predict-config     Generate library build parameter template
+echo   convert-mzml       Convert mzML files
 echo.
 echo Examples:
-echo   pioneer SearchDIA config.json                    # Use auto threading
-echo   pioneer --threads=8 SearchDIA config.json        # Use 8 threads
-echo   pioneer --threads 4 BuildSpecLib config.json     # Use 4 threads
+echo   pioneer search config.json                    # Use auto threading
+echo   pioneer --threads=8 search config.json        # Use 8 threads
+echo   pioneer --threads 4 predict config.json       # Use 4 threads
 echo.
 echo For subcommand-specific help:
 echo   pioneer ^<subcommand^> --help
@@ -98,6 +98,15 @@ if "%SUBCOMMAND%"=="" (
     echo Use --help for usage information"
     exit /b 1
 )
+
+rem Map aliases to canonical executable names
+if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
+if /I "%SUBCOMMAND%"=="predict" set SUBCOMMAND=BuildSpecLib
+if /I "%SUBCOMMAND%"=="parse-empirical" set SUBCOMMAND=ParseSpecLib
+if /I "%SUBCOMMAND%"=="search-config" set SUBCOMMAND=GetSearchParams
+if /I "%SUBCOMMAND%"=="predict-config" set SUBCOMMAND=GetBuildLibParams
+if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
+
 
 :run_pioneer
 rem The executables are in the bin\ subdirectory
