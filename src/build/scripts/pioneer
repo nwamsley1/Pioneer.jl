@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# Set default threads to auto if not specified
+if [ -z "$JULIA_NUM_THREADS" ]; then
+    export JULIA_NUM_THREADS=auto
+fi
+
+# Valid subcommands
+VALID_COMMANDS="SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams convertMzML ParseSpecLib"
+
+# Parse command line arguments for thread override
+SUBCOMMAND=""
+SUBCOMMAND_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --threads)
+            if [[ -n "$2" && "$2" != --* ]]; then
+                export JULIA_NUM_THREADS="$2"
+                shift 2
+            else
+                echo "Error: --threads requires a value"
+                exit 1
+            fi
+            ;;
+        --threads=*)
+            export JULIA_NUM_THREADS="${1#*=}"
+            shift
+            ;;
+        --help|-h)
+            echo "Pioneer - Mass Spectrometry Data Analysis"
+            echo ""
+            echo "Usage: pioneer [options] <subcommand> [subcommand-args...]"
+            echo ""
+            echo "Options:"
+            echo "  --threads N        Set number of Julia threads (default: auto)"
+            echo "  --threads=N        Alternative syntax for setting threads"
+            echo "  --help, -h         Show this help message"
+            echo ""
+            echo "Subcommands:"
+            echo "  SearchDIA          Perform DIA search analysis"
+            echo "  BuildSpecLib       Build spectral library"
+            echo "  GetSearchParams    Generate search parameter template"
+            echo "  GetBuildLibParams  Generate library build parameter template"
+            echo "  convertMzML        Convert mzML files"
+            echo "  ParseSpecLib       Parse spectral library"
+            echo ""
+            echo "Examples:"
+            echo "  pioneer SearchDIA config.json                    # Use auto threading"
+            echo "  pioneer --threads=8 SearchDIA config.json        # Use 8 threads"
+            echo "  pioneer --threads 4 BuildSpecLib config.json     # Use 4 threads"
+            echo ""
+            echo "For subcommand-specific help:"
+            echo "  pioneer <subcommand> --help"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            # First non-option argument should be the subcommand
+            if [[ -z "$SUBCOMMAND" ]]; then
+                # Check if it's a valid subcommand
+                if [[ " $VALID_COMMANDS " =~ " $1 " ]]; then
+                    SUBCOMMAND="$1"
+                else
+                    echo "Error: Unknown subcommand '$1'"
+                    echo "Valid subcommands: $VALID_COMMANDS"
+                    echo "Use --help for usage information"
+                    exit 1
+                fi
+            else
+                # All remaining arguments go to the subcommand
+                SUBCOMMAND_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if subcommand was provided
+if [[ -z "$SUBCOMMAND" ]]; then
+    echo "Error: Subcommand required"
+    echo "Valid subcommands: $VALID_COMMANDS"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# Call the actual Pioneer executable with subcommand and its arguments
+exec "$(dirname "$0")/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"

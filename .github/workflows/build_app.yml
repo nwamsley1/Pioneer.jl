@@ -111,14 +111,25 @@ jobs:
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
           
       - name: Compile application
-        env:
-          JULIA_NUM_THREADS: auto
         run: |
           julia --project=. -e '
             using PackageCompiler;
             create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", incremental=false, force=true,
-              executables=["pioneer" => "main_pioneer"]);
+              executables=["SearchDIA" => "main_SearchDIA", "BuildSpecLib" => "main_BuildSpecLib", "GetSearchParams" => "main_GetSearchParams", "GetBuildLibParams" => "main_GetBuildLibParams", "convertMzML" => "main_convertMzML", "ParseSpecLib" => "main_ParseSpecLib"]);
           '
+      
+      - name: Add wrapper scripts
+        run: |
+          if [ "${{ matrix.os }}" = "macos" ] || [ "${{ matrix.os }}" = "linux" ]; then
+            # Copy and make executable the shell wrapper
+            cp src/build/scripts/pioneer build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+            chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
+          fi
+          
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            # Copy the batch wrapper
+            cp src/build/scripts/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          fi
       
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
