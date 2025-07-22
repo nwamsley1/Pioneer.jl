@@ -40,6 +40,7 @@ jobs:
 
       - name: Determine tag version
         id: get_version
+        shell: bash
         run: |
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
