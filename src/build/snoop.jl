@@ -52,4 +52,4 @@ SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))
 ##########################################
 # ConvertMzML
 ##########################################
-convertMzML(joinpath(data_dir, "precompile", "convert_test.mzML"))
+convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
