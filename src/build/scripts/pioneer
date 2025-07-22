@@ -6,7 +6,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="SearchDIA convertMzML ParseSpecLib search predict empirical search-config predict-config empirical-config convert-mzml
+VALID_COMMANDS="search predict empirical search-config predict-config empirical-config convert-mzml"
 
 # Parse command line arguments for thread override
 SUBCOMMAND=""
