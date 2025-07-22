@@ -123,10 +123,9 @@ jobs:
 
       - name: Install PDF utilities (Windows)
         if: matrix.os == 'windows'
-        shell: pwsh
+        shell: bash
         run: 
-            choco install poppler -y
-            & "$env:ChocolateyInstall\bin\refreshenv.cmd"
+            bash src/build/scripts/install_poppler_windows.sh
 
       - name: Download precompile data
         shell: bash
