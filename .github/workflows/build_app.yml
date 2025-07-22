@@ -120,10 +120,10 @@ jobs:
         run: |
           mkdir -p temp/zenodo
           cd temp/zenodo
-          wget -nv --content-disposition https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
+          curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
           unzip yeast.poin.zip
-          wget -nv --content-disposition https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -O yeast_1.arrow
-          wget -nv --content-disposition https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -O yeast_2.arrow
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -O yeast_1.arrow
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -O yeast_2.arrow
           cd ../../
           
       - name: Compile application
