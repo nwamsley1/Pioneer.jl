@@ -27,10 +27,10 @@ jobs:
             runner: windows-latest
             arch: x64
             identifier: windows-x64
-          #- os: linux
-          #  runner: ubuntu-latest
-          #  arch: x64
-          #  identifier: linux-x64
+          - os: linux
+            runner: ubuntu-latest
+            arch: x64
+            identifier: linux-x64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Julia
