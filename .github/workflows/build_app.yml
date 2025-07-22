@@ -116,6 +116,7 @@ jobs:
         run: brew install poppler
 
       - name: Download precompile data
+        shell: bash
         run: |
           mkdir -p temp/zenodo
           cd temp/zenodo
@@ -148,6 +149,7 @@ jobs:
             '
       
       - name: Add wrapper scripts
+        shell: bash
         run: |
           if [ "${{ matrix.os }}" = "macos" ] || [ "${{ matrix.os }}" = "linux" ]; then
             # Copy and make executable the shell wrapper
