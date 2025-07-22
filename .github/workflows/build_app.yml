@@ -111,9 +111,20 @@ jobs:
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
 
-      - name: Install PDF utilities
+      - name: Install PDF utilities (mac)
         if: matrix.os == 'macos'
         run: brew install poppler
+
+      - name: Install PDF utilities (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+      - name: Install PDF utilities (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: choco install poppler -y
 
       - name: Download precompile data
         shell: bash
