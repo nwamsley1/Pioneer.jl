@@ -11,7 +11,7 @@
         "normalization": {"n_rt_bins": 100, "spline_n_knots": 7},
         "huber_override": {"override_huber_delta_fit": false, "huber_delta": 1500.0},
         "ms1_scoring": true,
-        "ms1_quant": true,
+        "ms1_quant": false,
         "match_between_runs": true
     },
     "parameter_tuning": {
@@ -72,7 +72,7 @@
     },
     "acquisition": {
         "nce": 25,
-        "quad_transmission": {"fit_from_data": false, "overhang": 0.25, "smoothness": 5.0}
+        "quad_transmission": {"fit_from_data": true, "overhang": 0.25, "smoothness": 5.0}
     },
     "rt_alignment": {"n_bins": 200, "bandwidth": 0.25, "sigma_tolerance": 4, "min_probability": 0.95},
     "optimization": {

@@ -16,7 +16,7 @@ GetSearchParams(
 # predict
 GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
 # empirical
-GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+GetParseSpecLibParams( "test_lib", mktempdir())
 
 
 ##########################################
