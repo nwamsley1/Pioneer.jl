@@ -8,8 +8,16 @@ asset_url=$(echo "$release_json" | grep browser_download_url | grep x86_64.zip |
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
-curl -L "$asset_url" -o "$workdir/poppler.zip"
-unzip -q "$workdir/poppler.zip" -d "$workdir"
+curl -Lf --retry 3 --retry-delay 2 "$asset_url" -o "$workdir/poppler.zip"
+
+if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$workdir/poppler.zip" -d "$workdir"
+elif command -v 7z >/dev/null 2>&1; then
+    7z x "$workdir/poppler.zip" -o"$workdir" >/dev/null
+else
+    echo "No unzip utility found" >&2
+    exit 1
+fi
 
 bindir=$(find "$workdir" -path '*pdfunite.exe' -exec dirname {} \; | head -n 1)
 
