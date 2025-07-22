@@ -43,9 +43,9 @@ BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 # prosit
 SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
 # altimeter + MBR
-SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 # altimeter + MBR + OOM
-SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))
 
 
 
