@@ -48,9 +48,9 @@ while [[ $# -gt 0 ]]; do
             
             echo ""
             echo "Examples:"
-            echo "  pioneer search config.json"                    # Use auto threading
-            echo "  pioneer --threads=8 search config.json"        # Use 8 threads
-            echo "  pioneer --threads 4 predict config.json"       # Use 4 threads
+            echo "  pioneer search config.json                    # Use auto threading"
+            echo "  pioneer --threads=8 search config.json        # Use 8 threads"
+            echo "  pioneer --threads 4 predict config.json       # Use 4 threads"
             echo ""
             echo "For subcommand-specific help:"
             echo "  pioneer <subcommand> --help"
@@ -98,7 +98,6 @@ case "$SUBCOMMAND" in
     predict)
         SUBCOMMAND="BuildSpecLib"
         ;;
-    parse-empirical)
     empirical)
         SUBCOMMAND="ParseSpecLib"
         ;;
