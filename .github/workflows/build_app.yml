@@ -15,18 +15,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos
-            runner: macos-13
-            arch: x64
-            identifier: macos-x64
+          #- os: macos
+          #  runner: macos-13
+          #  arch: x64
+          #  identifier: macos-x64
           #- os: macos
           #  runner: macos-latest
           #  arch: arm64
           #  identifier: macos-arm64
-          #- os: windows
-          #  runner: windows-latest
-          #  arch: x64
-          #  identifier: windows-x64
+          - os: windows
+            runner: windows-latest
+            arch: x64
+            identifier: windows-x64
           #- os: linux
           #  runner: ubuntu-latest
           #  arch: x64
@@ -245,8 +245,47 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          &"${env:WIX}\bin\candle.exe" src\build\windows\installer.wxs
-          &"${env:WIX}\bin\light.exe" installer.wixobj -o Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            $longPath = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+            subst P: $longPath
+            $pioneerRoot = "P:\"
+            
+            try {
+              # Copy any additional resources needed
+              if (Test-Path "data\IsotopeSplines") {
+                $dataDir = "$pioneerRoot\data"
+                New-Item -ItemType Directory -Force -Path $dataDir
+                Copy-Item -Recurse "data\IsotopeSplines" "$dataDir\"
+              }
+              # Determine platform for WiX
+              $platform = if ("${{ matrix.arch }}" -eq "x64") { "x64" } else { "x86" }
+              # Generate component list for all files
+              & heat.exe dir $pioneerRoot `
+                -cg ProductComponents `
+                -dr INSTALLFOLDER `
+                -gg `
+                -scom `
+                -sreg `
+                -sfrag `
+                -srd `
+                -var var.SourceDir `
+                -out components.wxs
+              # Compile WiX sources
+              & candle.exe `
+                -dSourceDir=$pioneerRoot `
+                -dProductVersion=${{ steps.get_version.outputs.VERSION }} `
+                -dPlatform=$platform `
+                -arch ${{ matrix.arch }} `
+                -ext WixUIExtension `
+                src\build\windows\installer.wxs components.wxs
+              # Link to create MSI
+              & light.exe `
+                -ext WixUIExtension `
+                -cultures:en-us `
+                -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
+                installer.wixobj components.wixobj
+            } finally {
+              subst P: /D
+            }
       
       - name: Package Linux .deb
         if: matrix.os == 'linux'
