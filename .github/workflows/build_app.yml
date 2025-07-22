@@ -126,7 +126,7 @@ jobs:
         shell: pwsh
         run: 
             choco install poppler -y
-            refreshenv
+            & "$env:ChocolateyInstall\bin\refreshenv.cmd"
 
       - name: Download precompile data
         shell: bash
