@@ -61,12 +61,13 @@ function partitionScansToThreads(spectra::AbstractArray,
     spectra_count = length(spectra_ids)
     scans_per_thread = spectra_count÷n_threads + n_threads + 1
     thread_tasks = [[0, zeros(Int64, scans_per_thread)] for _ in range(1, n_threads)]
+    println(n_threads, " ", spectra_count, " ", scans_per_thread, "\n\n")
     for (thread_id, task) in enumerate(thread_tasks)
         task[1] = thread_id
         n = 1
         for i in range(1, length(task[2]))
             id = n_threads*(i - 1)*10 + thread_id*10 - 10 + 1
-            for j in id:(id + 10 - 1)
+            for j in range(id, id + 10 - 1)
                 if j <= length(spectra_ids)
                     task[2][n] = spectra_ids[j]
                     n += 1
@@ -100,7 +101,7 @@ function partitionScansToThreadsMS1(spectra::AbstractArray,
         n = 1
         for i in range(1, length(task[2]))
             id = n_threads*(i - 1)*10 + thread_id*10 - 10 + 1
-            for j in id:(id + 10 - 1)
+            for j in range(id, id + 10 - 1)
                 if j <= length(spectra_ids)
                     task[2][n] = spectra_ids[j]
                     n += 1
