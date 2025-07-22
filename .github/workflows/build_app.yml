@@ -27,10 +27,10 @@ jobs:
             runner: windows-latest
             arch: x64
             identifier: windows-x64
-          #- os: linux
-          #  runner: ubuntu-latest
-          #  arch: x64
-          #  identifier: linux-x64
+          - os: linux
+            runner: ubuntu-latest
+            arch: x64
+            identifier: linux-x64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Julia
@@ -124,7 +124,9 @@ jobs:
       - name: Install PDF utilities (Windows)
         if: matrix.os == 'windows'
         shell: pwsh
-        run: choco install poppler -y
+        run: 
+            choco install poppler -y
+            refreshenv
 
       - name: Download precompile data
         shell: bash
@@ -138,6 +140,7 @@ jobs:
           cd ../../
           
       - name: Compile application
+        if: matrix.os != 'linux'
         run: |
           julia --project=. -e '
             using PackageCompiler;
@@ -158,6 +161,52 @@ jobs:
               precompile_execution_file="src/build/snoop.jl",
             );
             '
+
+      - name: Compile application (Linux - Memory Optimized)
+        if: matrix.os == 'linux'
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+            
+            # Create the final directory structure
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib")
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share")
+            
+            # Build executables one at a time to reduce memory usage
+            executables = [
+              "SearchDIA" => "main_SearchDIA",
+              "BuildSpecLib" => "main_BuildSpecLib",
+              "GetSearchParams" => "main_GetSearchParams",
+              "GetBuildLibParams" => "main_GetBuildLibParams",
+              "convertMzML" => "main_convertMzML",
+              "ParseSpecLib" => "main_ParseSpecLib"
+            ]
+            
+            # First executable creates the base structure
+            first_exe, first_main = first(executables)
+            create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", 
+              incremental=false, force=true,
+              executables=[first_exe => first_main],
+              cpu_target="generic");
+            
+            # Build remaining executables one at a time
+            for (exe, main) in executables[2:end]
+              println("Building $exe...")
+              create_app(".", "build/temp_$exe/", 
+                incremental=false, force=true,
+                executables=[exe => main],
+                cpu_target="generic");
+              
+              # Copy just the executable
+              cp("build/temp_$exe/bin/$exe", 
+                 "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/$exe",
+                 force=true)
+              
+              # Clean up temp directory to save space
+              rm("build/temp_$exe", recursive=true)
+            end
+          '
       
       - name: Add wrapper scripts
         shell: bash
