@@ -47,8 +47,6 @@ using Dates
 using InlineStrings
 using HTTP
 
-default(show=false) # visually silence Plots.jl
-ENV["GKSwstype"] = "nul"  # visually silence Plots.jl
 gr() # set GR as plotting backend
 
 """

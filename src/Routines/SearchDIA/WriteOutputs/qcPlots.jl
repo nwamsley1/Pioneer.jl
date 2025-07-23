@@ -103,7 +103,7 @@ function qcPlots(
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             try
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-            Plots.plot!(p, 
+            plot!(p, 
                     collect(sampled_range),
                     sorted_precursor_abundances,
                     #ylim = (0, log2(maximum(sorted_precursor_abundances))),
@@ -376,7 +376,7 @@ function qcPlots(
             ms1_scans = getMsOrders(ms_table).==1
 
             
-            Plots.plot!(p, 
+            plot!(p, 
             [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
             [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
@@ -417,7 +417,7 @@ function qcPlots(
 
             irt_range = LinRange(0, 35, 250)
             irt_rt = iRT_RT[key]
-            Plots.plot!(p, 
+            plot!(p, 
                     irt_range,
                     irt_rt.(irt_range),
                     xlabel = "iRT",
@@ -455,7 +455,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
-            Plots.boxplot!(p, 
+            boxplot!(p, 
             [short_fname],
             gpsms[(file_name = parsed_fname,)][!,:error_norm],
             subplot = 1,
@@ -544,13 +544,13 @@ function qcPlots(
         f_out::String = "./test.pdf"
         )
 
-        p = Plots.plot(title = title,
+        p = plot(title = title,
                         legend=:none, layout = (1, 1))
 
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             psms =  gpsms[(file_name = parsed_fname,)]
-            Plots.boxplot!(p, 
+            boxplot!(p, 
             [short_fname],
             psms[psms[!,:points_above_FWHM_01].>1,:FWHM],
             subplot = 1,

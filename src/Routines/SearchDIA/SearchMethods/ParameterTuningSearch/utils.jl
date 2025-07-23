@@ -694,7 +694,7 @@ function generate_rt_plot(
     title::String
 )
     n = length(results.rt)
-    p = Plots.plot(
+    p = plot(
         results.rt,
         results.irt,
         seriestype=:scatter,
@@ -707,7 +707,7 @@ function generate_rt_plot(
     )
     
     pbins = LinRange(minimum(results.rt), maximum(results.rt), 100)
-    Plots.plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
+    plot!(pbins, getRtToIrtModel(results).(pbins), lw=3, label=nothing)
     return p
 end
 

@@ -2,18 +2,20 @@ module PDFGenerator
     import GR
 
     function create_multipage_pdf(plots::Vector, dest::String)
-        GR.beginprint(dest)
-        try
-            for p in plots
-                # Suppress all display output
-                redirect_stdout(devnull) do
-                    redirect_stderr(devnull) do
-                        display(p)
+        withenv("GKSwstype" => "100") do
+            GR.beginprint(dest)
+            try
+                for p in plots
+                    # Suppress all display output
+                    redirect_stdout(devnull) do
+                        redirect_stderr(devnull) do
+                            display(p)
+                        end
                     end
                 end
+            finally
+                GR.endprint()
             end
-        finally
-            GR.endprint()
         end
     end
 end
