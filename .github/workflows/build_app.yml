@@ -15,14 +15,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          #- os: macos
-          #  runner: macos-13
-          #  arch: x64
-          #  identifier: macos-x64
-          #- os: macos
-          #  runner: macos-latest
-          #  arch: arm64
-          #  identifier: macos-arm64
+          - os: macos
+            runner: macos-13
+            arch: x64
+            identifier: macos-x64
+          - os: macos
+            runner: macos-latest
+            arch: arm64
+            identifier: macos-arm64
           - os: windows
             runner: windows-latest
             arch: x64
@@ -111,35 +111,35 @@ jobs:
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
 
-      - name: Install PDF utilities (mac)
-        if: matrix.os == 'macos'
-        run: brew install poppler
+      # - name: Install PDF utilities (mac)
+      #   if: matrix.os == 'macos'
+      #   run: brew install poppler
 
-      - name: Install PDF utilities (Linux)
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
+      # - name: Install PDF utilities (Linux)
+      #   if: matrix.os == 'linux'
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y poppler-utils
 
-      - name: Install PDF utilities (Windows)
-        if: matrix.os == 'windows'
-        shell: bash
-        run: |
-          # Download and extract the latest Poppler release for Windows
-          release_json=$(curl -s https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest)
-          asset_url=$(echo "$release_json" | grep browser_download_url | head -n 1 | cut -d '"' -f 4)
+      # - name: Install PDF utilities (Windows)
+      #   if: matrix.os == 'windows'
+      #   shell: bash
+      #   run: |
+      #     # Download and extract the latest Poppler release for Windows
+      #     release_json=$(curl -s https://api.github.com/repos/oschwartz10612/poppler-windows/releases/latest)
+      #     asset_url=$(echo "$release_json" | grep browser_download_url | head -n 1 | cut -d '"' -f 4)
 
-          workdir=$(mktemp -d)
-          trap 'rm -rf "$workdir"' EXIT
+      #     workdir=$(mktemp -d)
+      #     trap 'rm -rf "$workdir"' EXIT
 
-          curl -Lf --retry 3 --retry-delay 2 "$asset_url" -o "$workdir/poppler.zip"
+      #     curl -Lf --retry 3 --retry-delay 2 "$asset_url" -o "$workdir/poppler.zip"
 
-          unzip -q "$workdir/poppler.zip" -d "$workdir"
+      #     unzip -q "$workdir/poppler.zip" -d "$workdir"
 
-          bindir=$(find "$workdir" -name 'pdfunite.exe' -exec dirname {} \; | head -n 1)
+      #     bindir=$(find "$workdir" -name 'pdfunite.exe' -exec dirname {} \; | head -n 1)
           
-          # Add Poppler bin directory to PATH for subsequent steps
-          echo "$bindir" >> "$GITHUB_PATH"
+      #     # Add Poppler bin directory to PATH for subsequent steps
+      #     echo "$bindir" >> "$GITHUB_PATH"
 
       - name: Download precompile data
         shell: bash
