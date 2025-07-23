@@ -737,10 +737,10 @@ function write_subset(file_path::String,
         else
             df[!, :prob] = probs
         end
-        Arrow.write(file_path, dropVectorColumns!(df))
+        writeArrow(file_path, dropVectorColumns!(df))
     else
         df[!, :prob] = probs
-        Arrow.write(file_path, convert_subarrays(df))
+        writeArrow(file_path, convert_subarrays(df))
     end
 end
 

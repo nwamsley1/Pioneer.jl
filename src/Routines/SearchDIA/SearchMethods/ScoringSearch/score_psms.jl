@@ -364,7 +364,7 @@ function score_precursor_isotope_traces_out_of_memory!(
     max_q_value_xgboost_mbr_rescore::Float32,
     min_PEP_neg_threshold_xgboost_rescore::Float32
 )
-    if size(best_psms, 1) > 10
+    if size(best_psms, 1) > 100000
         file_paths = [fpath for fpath in file_paths if endswith(fpath,".arrow")]
         features = [ 
             :missed_cleavage,

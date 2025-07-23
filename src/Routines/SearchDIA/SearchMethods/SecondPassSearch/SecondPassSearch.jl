@@ -386,7 +386,6 @@ function process_search_results!(
             "second_pass_psms",
             getParsedFileName(search_context, ms_file_idx) * ".arrow"
         )
-        @info "Writing second pass PSMs" path=temp_path rows=size(psms,1)
         writeArrow(temp_path, psms)
         setSecondPassPsms!(getMSData(search_context), ms_file_idx, temp_path)
     catch e
