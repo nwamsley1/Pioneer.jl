@@ -34,7 +34,7 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, PDFmerger, Profile, ProgressBars, Pkg, Printf
+using Plots, PrettyPrinting, Polynomials, Profile, ProgressBars, Pkg, Printf
 using Tables, Test
 using StatsPlots, SentinelArrays
 using Random

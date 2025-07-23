@@ -63,6 +63,7 @@ Holds NCE models and associated PSM data for each file.
 struct NceTuningSearchResults <: SearchResults
     nce_models::Dict{Int64, NceModel}
     nce_psms::DataFrame
+    nce_plots::Vector{Plots.Plot}
     nce_plot_dir::String
 end
 
@@ -148,6 +149,7 @@ function init_search_results(
     return NceTuningSearchResults(
         Dict{Int64, NceModel}(),
         DataFrame(),
+        Plots.Plot[],
         nce_model_plots_path
     )
 end
@@ -232,8 +234,7 @@ function process_file!(
                                 :left, 
                                 8))])
         end
-        # Save the plot
-        savefig(p, joinpath(results.nce_plot_dir, "nce_model_"*"$fname"*".pdf"))  
+        push!(results.nce_plots, p)
         results.nce_models[ms_file_idx] = nce_model
         append!(results.nce_psms, processed_psms)
 
@@ -279,10 +280,9 @@ function summarize_results!(
         catch e
             @warn "Could not clear existing file: $e"
         end
-        if !isempty(results.nce_plot_dir)
-            merge_pdfs_safe([x for x in readdir(results.nce_plot_dir, join=true) if endswith(x, ".pdf")],
-                            output_path,
-                            cleanup=true)
+        if !isempty(results.nce_plots)
+            save_multipage_pdf(results.nce_plots, output_path)
+            empty!(results.nce_plots)
         end
     catch
         nothing
@@ -297,6 +297,7 @@ Reset results containers.
 function reset_results!(results::NceTuningSearchResults)
     empty!(results.nce_models)
     empty!(results.nce_psms)
+    empty!(results.nce_plots)
 end
 
 #==========================================================

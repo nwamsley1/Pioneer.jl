@@ -73,6 +73,8 @@ struct ParameterTuningSearchResults <: SearchResults
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
+    rt_plots::Vector{Plots.Plot}
+    mass_plots::Vector{Plots.Plot}
     qc_plots_folder_path::String
 end
 
@@ -200,6 +202,8 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
+        Plots.Plot[],
+        Plots.Plot[],
         qc_dir
     )
 end
@@ -323,13 +327,11 @@ function process_search_results!(
     mass_error_folder = getMassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
-    # Generate and save RT alignment plot
-    rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
-    generate_rt_plot(results, rt_plot_path, parsed_fname)
-    
-    # Generate and save mass error plot
-    mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
-    generate_mass_error_plot(results, parsed_fname, mass_plot_path)
+    # Generate RT alignment plot
+    push!(results.rt_plots, generate_rt_plot(results, parsed_fname))
+
+    # Generate mass error plot
+    push!(results.mass_plots, generate_mass_error_plot(results, parsed_fname))
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
@@ -345,6 +347,8 @@ function reset_results!(ptsr::ParameterTuningSearchResults)
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
     resize!(ptsr.ppm_errs, 0)
+    empty!(ptsr.rt_plots)
+    empty!(ptsr.mass_plots)
 end
 
 
@@ -357,7 +361,7 @@ function summarize_results!(
     search_context::SearchContext
 ) where {P<:ParameterTuningSearchParameters}
     
-    @info "Merging QC plots..."
+    @info "Writing QC plots..."
     
     # Merge RT alignment plots
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
@@ -369,13 +373,9 @@ function summarize_results!(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
-    if endswith(x, ".pdf")]
-    
-    if !isempty(rt_plots)
-        merge_pdfs_safe(rt_plots,
-                        output_path,
-                        cleanup=true)
+    if !isempty(results.rt_plots)
+        save_multipage_pdf(results.rt_plots, output_path)
+        empty!(results.rt_plots)
     end
     
     # Merge mass error plots
@@ -388,16 +388,12 @@ function summarize_results!(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
-                    if endswith(x, ".pdf")]
-
-    if !isempty(mass_plots)
-        merge_pdfs_safe(mass_plots,
-                        output_path,
-                        cleanup=true)
+    if !isempty(results.mass_plots)
+        save_multipage_pdf(results.mass_plots, output_path)
+        empty!(results.mass_plots)
     end
 
-    @info "QC plot merging complete"
+    @info "QC plot writing complete"
 end
 
 

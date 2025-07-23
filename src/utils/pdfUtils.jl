@@ -37,3 +37,22 @@ function merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=fals
     return dest
 end
 
+
+"""
+    save_multipage_pdf(plots::Vector{Plots.Plot}, dest::String)
+
+Create a multi-page PDF at `dest` containing each plot in `plots`.
+"""
+function save_multipage_pdf(plots::Vector{Plots.Plot}, dest::String)
+    ensure_directory_exists(dest)
+    GR.beginprint(dest)
+    try
+        for p in plots
+            display(p)
+            GR.showpage()
+        end
+    finally
+        GR.endprint()
+    end
+    return dest
+end

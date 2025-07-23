@@ -75,6 +75,7 @@ struct FirstPassSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     ms1_mass_err_model::Base.Ref{<:MassErrorModel}
     ms1_ppm_errs::Vector{Float32}
+    ms1_mass_plots::Vector{Plots.Plot}
     qc_plots_folder_path::String
 end
 
@@ -187,6 +188,7 @@ function init_search_results(
         Base.Ref{DataFrame}(),
         Base.Ref{MassErrorModel}(),
         Vector{Float32}(),
+        Plots.Plot[],
         qc_dir
     )
 end
@@ -443,9 +445,8 @@ function process_search_results!(
     #MS1 mass tolerance 
     ms1_mass_error_folder = getMs1MassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    # Generate and save mass error plot
-    mass_plot_path = joinpath(ms1_mass_error_folder, parsed_fname*".pdf")
-    generate_ms1_mass_error_plot(results, parsed_fname, mass_plot_path)
+    # Generate mass error plot
+    push!(results.ms1_mass_plots, generate_ms1_mass_error_plot(results, parsed_fname))
     # Update models in search context
     setMs1MassErrorModel!(search_context, ms_file_idx, getMs1MassErrorModel(results))
 end
@@ -456,6 +457,7 @@ No cleanup needed between files.
 function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
     resize!(results.ms1_ppm_errs, 0)
+    empty!(results.ms1_mass_plots)
     return nothing
 end
 
@@ -543,15 +545,10 @@ function summarize_results!(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    mass_plots = [joinpath(ms1_mass_error_folder, x) for x in readdir(ms1_mass_error_folder) 
-                    if endswith(x, ".pdf")]
 
-    if !isempty(mass_plots)
-        merge_pdfs_safe(mass_plots,
-                        output_path,
-                        cleanup=true)
+    if !isempty(results.ms1_mass_plots)
+        save_multipage_pdf(results.ms1_mass_plots, output_path)
+        empty!(results.ms1_mass_plots)
     end
-
-        
 end
 
