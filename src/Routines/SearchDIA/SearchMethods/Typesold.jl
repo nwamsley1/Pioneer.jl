@@ -32,7 +32,7 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, PDFmerger, ProgressBars, Pkg
+using Plots, PrettyPrinting, Polynomials, ProgressBars, Pkg
 using Tables, Test
 using StatsPlots
 using Random
