@@ -457,7 +457,6 @@ No cleanup needed between files.
 function reset_results!(results::FirstPassSearchResults)
     empty!(results.psms[])
     resize!(results.ms1_ppm_errs, 0)
-    empty!(results.ms1_mass_plots)
     return nothing
 end
 

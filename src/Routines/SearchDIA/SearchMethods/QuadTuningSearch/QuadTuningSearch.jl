@@ -333,7 +333,5 @@ function reset_results!(results::QuadTuningSearchResults)
     for r in results.tuning_results
         empty!(r)
     end
-    empty!(results.quad_model_plots)
-    empty!(results.quad_data_plots)
     return nothing
 end

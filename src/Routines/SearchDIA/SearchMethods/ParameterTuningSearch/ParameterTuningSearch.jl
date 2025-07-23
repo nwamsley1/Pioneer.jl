@@ -323,20 +323,18 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
     try
-    rt_alignment_folder = getRtAlignPlotFolder(search_context)
-    mass_error_folder = getMassErrPlotFolder(search_context)
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    
-    # Generate RT alignment plot
-    push!(results.rt_plots, generate_rt_plot(results, parsed_fname))
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        
+        # Generate RT alignment plot
+        push!(results.rt_plots, generate_rt_plot(results, parsed_fname))
 
-    # Generate mass error plot
-    push!(results.mass_plots, generate_mass_error_plot(results, parsed_fname))
-    
-    # Update models in search context
-    setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-    
-    setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
+        # Generate mass error plot
+        push!(results.mass_plots, generate_mass_error_plot(results, parsed_fname))
+        
+        # Update models in search context
+        setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
+        
+        setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
     catch
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         nothing
@@ -347,8 +345,6 @@ function reset_results!(ptsr::ParameterTuningSearchResults)
     resize!(ptsr.irt, 0)
     resize!(ptsr.rt, 0)
     resize!(ptsr.ppm_errs, 0)
-    empty!(ptsr.rt_plots)
-    empty!(ptsr.mass_plots)
 end
 
 

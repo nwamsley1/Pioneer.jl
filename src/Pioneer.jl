@@ -47,6 +47,10 @@ using Dates
 using InlineStrings
 using HTTP
 
+default(show=false) # visually silence Plots.jl
+ENV["GKSwstype"] = "nul"  # visually silence Plots.jl
+gr() # set GR as plotting backend
+
 """
 Type alias for m/z to eV interpolation functions.
 Uses GriddedInterpolation with linear interpolation and line extrapolation.

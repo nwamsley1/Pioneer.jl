@@ -1,59 +1,25 @@
-# Utility functions for working with PDFs
-using GR
+module PDFGenerator
+    import GR
 
-"""
-    merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
-
-Merge `files` into a single PDF at `dest` using the `pdfunite` tool. All
-temporary files are created inside `dest`'s directory so write
-permissions are respected on read-only installations.
-
-If `cleanup` is true, the source files will be removed after merging.
-"""
-function merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
-    ensure_directory_exists(dest)
-    isempty(files) && error("No files provided for PDF merge")
-
-    if length(files) == 1
-        cp(files[1], dest; force=true)
-        cleanup && safeRm(files[1], nothing)
-        return dest
-    end
-    
-    pdfunite = something(Sys.which("pdfunite"), "pdfunite")
-    tmp_path, io = mktemp(dirname(dest))
-    close(io)
-    try
-        cmd = Cmd([pdfunite; files; tmp_path])
-        run(cmd)
-        mv(tmp_path, dest; force=true)
-    finally
-        isfile(tmp_path) && rm(tmp_path, force=true)
-    end
-    if cleanup
-        for f in files
-            safeRm(f, nothing)
+    function create_multipage_pdf(plots::Vector, dest::String)
+        GR.beginprint(dest)
+        try
+            for p in plots
+                # Suppress all display output
+                redirect_stdout(devnull) do
+                    redirect_stderr(devnull) do
+                        display(p)
+                    end
+                end
+            end
+        finally
+            GR.endprint()
         end
     end
-    return dest
 end
 
-
-"""
-    save_multipage_pdf(plots::Vector{Plots.Plot}, dest::String)
-
-Create a multi-page PDF at `dest` containing each plot in `plots`.
-"""
 function save_multipage_pdf(plots::Vector{Plots.Plot}, dest::String)
     ensure_directory_exists(dest)
-    GR.beginprint(dest)
-    try
-        for p in plots
-            display(p)
-            GR.showpage()
-        end
-    finally
-        GR.endprint()
-    end
+    PDFGenerator.create_multipage_pdf(plots, dest)
     return dest
 end

@@ -114,7 +114,7 @@ function qcPlots(
                 continue
             end
         end
-        savefig(p, f_out); return p
+        return p
     end
 
     for n in 1:n_qc_plots
@@ -188,7 +188,7 @@ function qcPlots(
             xrotation = 45,
         )
         
-        savefig(p, f_out); return p
+        return p
     end
 
     # Create multiple plots with chunking
@@ -275,7 +275,7 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out); return p
+        return p
     end
 
 
@@ -339,7 +339,7 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out); return p
+        return p
     end
 
     for n in 1:n_qc_plots
@@ -385,7 +385,7 @@ function qcPlots(
                     alpha = 0.3
                     )
         end
-        savefig(p, f_out); return p
+        return p
     end
 
     for n in 1:n_qc_plots
@@ -427,7 +427,7 @@ function qcPlots(
                     lw = 3
                     )
         end
-        savefig(p, f_out); return p
+        return p
     end
 #=
     for n in 1:n_qc_plots
@@ -468,7 +468,7 @@ function qcPlots(
             )
         end
 
-        savefig(p, f_out); return p
+        return p
     end
 
     #=
@@ -513,7 +513,7 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out); return p
+        return p
     end
 
 
@@ -564,7 +564,7 @@ function qcPlots(
             )
         end
 
-        savefig(p, f_out); return p
+        return p
     end
 
     #=

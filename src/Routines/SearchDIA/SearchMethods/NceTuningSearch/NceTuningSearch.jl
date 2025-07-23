@@ -297,7 +297,6 @@ Reset results containers.
 function reset_results!(results::NceTuningSearchResults)
     empty!(results.nce_models)
     empty!(results.nce_psms)
-    empty!(results.nce_plots)
 end
 
 #==========================================================
