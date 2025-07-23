@@ -1,4 +1,5 @@
 # Utility functions for working with PDFs
+using GR
 
 """
     merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
