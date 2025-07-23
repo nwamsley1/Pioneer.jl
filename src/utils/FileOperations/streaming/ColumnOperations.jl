@@ -67,7 +67,7 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
                     if i == max_retries
                         # If all retries failed, try Windows-specific deletion
                         try
-                            win_path = replace(abspath(fpath), "/" => "\\")
+                             win_path = replace(abspath(target_path), "/" => "\\")
                             cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
                             run(cmd_del)
                         catch
