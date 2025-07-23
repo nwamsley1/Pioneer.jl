@@ -15,22 +15,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos
-            runner: macos-13
-            arch: x64
-            identifier: macos-x64
-          - os: macos
-            runner: macos-latest
-            arch: arm64
-            identifier: macos-arm64
+         # - os: macos
+         #   runner: macos-13
+         #   arch: x64
+         #   identifier: macos-x64
+         # - os: macos
+         #   runner: macos-latest
+         #   arch: arm64
+         #   identifier: macos-arm64
           - os: windows
             runner: windows-latest
             arch: x64
             identifier: windows-x64
-          - os: linux
-            runner: ubuntu-latest
-            arch: x64
-            identifier: linux-x64
+          #- os: linux
+          #  runner: ubuntu-latest
+          #  arch: x64
+          #  identifier: linux-x64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Julia
