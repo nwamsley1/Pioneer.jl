@@ -328,10 +328,10 @@ jobs:
                 -sreg `
                 -sfrag `
                 -srd `
-                -var var.SourceDir `
+                -var var.pioneerRoot `
                 -out components.wxs
               # Compile WiX sources
-              candle.exe -dSourceDir=$pioneerRoot "-dProductVersion=${{ steps.get_version.outputs.VERSION }}" -dPlatform=$platform -arch ${{ matrix.arch }} -ext WixUIExtension src\build\windows\installer.wxs components.wxs
+              candle.exe -dpioneerRoot=$pioneerRoot "-dProductVersion=${{ steps.get_version.outputs.VERSION }}" -dPlatform=$platform -arch ${{ matrix.arch }} -ext WixUIExtension src\build\windows\installer.wxs components.wxs
               # Link to create MSI
               & light.exe -ext WixUIExtension -cultures:en-us -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" installer.wixobj components.wixobj
             } finally {
