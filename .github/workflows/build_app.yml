@@ -17,7 +17,6 @@ on:
           - linux
 jobs:
   build:
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.os == matrix.os
     runs-on: ${{ matrix.runner }}
     env:
       JULIA_NUM_THREADS: auto
@@ -42,6 +41,12 @@ jobs:
             arch: x64
             identifier: linux-x64
     steps:
+      # Skip if this matrix OS isn’t the one selected via workflow_dispatch
+      - name: Check target
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.os != matrix.os
+        run: |
+          echo "Skipping ${{ matrix.os }} build"
+          exit 0
       - uses: actions/checkout@v4
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
