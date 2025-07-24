@@ -315,6 +315,25 @@ jobs:
             Copy-Item -Recurse "data\IsotopeSplines" "$dataDir\"
           }
           
+          # Remove problematic artifacts with long paths before packaging
+          $artifactDir = "$pioneerRoot\share\julia\artifacts"
+          if (Test-Path $artifactDir) {
+            # Remove Qt-related artifacts that have very long paths
+            Get-ChildItem -Path $artifactDir -Recurse -Directory |
+              Where-Object { 
+                $_.FullName -like "*QtQuick*" -or 
+                $_.FullName -like "*Qt6*" -or 
+                $_.Name -eq "include" -or
+                $_.Name -eq "test" -or
+                $_.Name -eq ".qt" -or
+                $_.FullName.Length -gt 200
+              } |
+              ForEach-Object { 
+                Write-Host "Removing long path: $($_.FullName)"
+                Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue 
+              }
+          }
+          
           # Determine platform for WiX
           $platform = if ("${{ matrix.arch }}" -eq "x64") { "x64" } else { "x86" }
           
