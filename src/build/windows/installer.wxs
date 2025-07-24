@@ -50,7 +50,6 @@
     
     <!-- Product information -->
     <Property Id="ARPCOMMENTS" Value="Pioneer command-line tools for data-independent acquisition (DIA) proteomics analysis" />
-    <Property Id="ARPNOMODIFY" Value="1" />
   </Product>
   
 </Wix>
