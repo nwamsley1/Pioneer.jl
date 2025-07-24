@@ -314,6 +314,9 @@ jobs:
             New-Item -ItemType Directory -Force -Path $dataDir
             Copy-Item -Recurse "data\IsotopeSplines" "$dataDir\"
           }
+
+          # Include license for installer
+          Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
           
           # Remove problematic artifacts with long paths before packaging
           $artifactDir = "$pioneerRoot\share\julia\artifacts"

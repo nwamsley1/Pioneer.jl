@@ -12,6 +12,9 @@
     
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- Display the project license during installation -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.SourceDir)\LICENSE.rtf" />
     
     <!-- Single feature containing all components -->
     <Feature Id="ProductFeature" Title="Pioneer CLI Tools" Level="1">

@@ -3,6 +3,17 @@ setlocal enabledelayedexpansion
 
 if "%JULIA_NUM_THREADS%"=="" set JULIA_NUM_THREADS=auto
 
+rem Ensure scratch spaces are in a user-writable location
+if "%JULIA_DEPOT_PATH%"=="" (
+    if defined LOCALAPPDATA (
+        set "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
+    ) else (
+        set "JULIA_DEPOT_PATH=%USERPROFILE%\.julia"
+    )
+)
+
+set SCRIPT_DIR=%~dp0
+
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
 set VALID_COMMANDS=search predict empirical search-config predict-config empirical-config convert-mzml
@@ -96,7 +107,7 @@ exit /b 0
 if "%SUBCOMMAND%"=="" (
     echo Error: Subcommand required
     echo Valid subcommands: %VALID_COMMANDS%
-    echo Use --help for usage information"
+    echo Use --help for usage information
     exit /b 1
 )
 
@@ -112,8 +123,9 @@ if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 
 :run_pioneer
 rem The executables are in the bin\ subdirectory
+set "EXEC=%SCRIPT_DIR%bin\%SUBCOMMAND%.exe"
 if "%SUBCOMMAND_ARGS%"=="" (
-    "%~dp0bin\%SUBCOMMAND%.exe"
+    "%EXEC%"
 ) else (
-    "%~dp0bin\%SUBCOMMAND%.exe" %SUBCOMMAND_ARGS%
+    "%EXEC%" %SUBCOMMAND_ARGS%
 )
