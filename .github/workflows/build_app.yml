@@ -13,11 +13,11 @@ on:
         type: choice
         options:
           - windows
-          - macos (x64)
-          - macos (arm64)
+          - macos
           - linux
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.os == matrix.os
     runs-on: ${{ matrix.runner }}
     env:
       JULIA_NUM_THREADS: auto
