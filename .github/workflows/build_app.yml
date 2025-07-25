@@ -237,9 +237,7 @@ jobs:
             IF NOT DEFINED JULIA_DEPOT_PATH (
                 SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
                 IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
-            )
-
-            '@
+            )'@
             
             Set-Content -Path $file -Value $newContent -NoNewline
           }
@@ -253,9 +251,7 @@ jobs:
             IF NOT DEFINED JULIA_DEPOT_PATH (
                 SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
                 IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
-            )
-
-            '@
+            )'@
             Set-Content -Path $wrapperPath -Value $newContent -NoNewline
           }
       
