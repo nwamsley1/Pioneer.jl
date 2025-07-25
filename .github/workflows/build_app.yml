@@ -219,6 +219,45 @@ jobs:
             # Copy the batch wrapper
             cp src/build/scripts/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           fi
+
+      - name: Configure Windows executables for user depot
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
+          
+          # Update all batch files to use a writable depot location
+          Get-ChildItem $binDir -Filter *.bat | ForEach-Object {
+            $file = $_.FullName
+            $content = Get-Content $file -Raw
+            
+            # Find where Julia is called and insert depot path setting before it
+            $newContent = $content -replace '(@echo off\r?\n)', @'
+            @echo off
+            IF NOT DEFINED JULIA_DEPOT_PATH (
+                SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
+                IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
+            )
+
+            '@
+            
+            Set-Content -Path $file -Value $newContent -NoNewline
+          }
+          
+          # Also update the pioneer.bat wrapper if it exists
+          $wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
+          if (Test-Path $wrapperPath) {
+            $content = Get-Content $wrapperPath -Raw
+            $newContent = $content -replace '(@echo off\r?\n)', @'
+            @echo off
+            IF NOT DEFINED JULIA_DEPOT_PATH (
+                SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
+                IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
+            )
+
+            '@
+            Set-Content -Path $wrapperPath -Value $newContent -NoNewline
+          }
       
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
