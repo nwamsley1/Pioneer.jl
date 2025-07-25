@@ -137,9 +137,61 @@ jobs:
           curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -o yeast_1.arrow
           curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
           cd ../../
+
+      - name: Create main function wrappers
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          # Create wrapper files that initialize depot before running
+          for main in SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams GetParseSpecLibParams convertMzML ParseSpecLib; do
+            cat > src/main_${main}_wrapper.jl << 'EOF'
+            # Initialize depot path for Windows
+            if Sys.iswindows()
+                exe_path = unsafe_string(Base.JLOptions().julia_bin)
+                if occursin("Program Files", exe_path) && !haskey(ENV, "JULIA_DEPOT_PATH")
+                    local_appdata = get(ENV, "LOCALAPPDATA", "")
+                    if !isempty(local_appdata)
+                        depot_path = joinpath(local_appdata, "Pioneer", "julia")
+                        ENV["JULIA_DEPOT_PATH"] = depot_path
+                        mkpath(depot_path)
+                        empty!(DEPOT_PATH)
+                        push!(DEPOT_PATH, depot_path)
+                    end
+                end
+            end
+
+            # Load and run the actual main function
+            include("main_${main}.jl")
+            main_${main}()
+            EOF
+          done
+      
+      - name: Compile application
+        if: matrix.os == 'windows'
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+            
+            create_app(
+              ".",
+              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false,
+              force=true,
+              executables=[
+                "SearchDIA" => "main_SearchDIA_wrapper",
+                "BuildSpecLib" => "main_BuildSpecLib_wrapper",
+                "GetSearchParams" => "main_GetSearchParams_wrapper",
+                "GetBuildLibParams" => "main_GetBuildLibParams_wrapper",
+                "GetParseSpecLibParams" => "main_GetParseSpecLibParams_wrapper",
+                "convertMzML" => "main_convertMzML_wrapper",
+                "ParseSpecLib" => "main_ParseSpecLib_wrapper",
+              ],
+              precompile_execution_file="src/build/snoop.jl",
+            );
+            '
           
       - name: Compile application
-        if: matrix.os != 'linux'
+        if: matrix.os == 'macos'
         run: |
           julia --project=. -e '
             using PackageCompiler;
