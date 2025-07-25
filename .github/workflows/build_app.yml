@@ -226,42 +226,64 @@ jobs:
         shell: pwsh
         run: |
           $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
-
-          # pre-build our depot-path bootstrap as a single string:
-          $depotBlock = @(
-            'IF NOT DEFINED JULIA_DEPOT_PATH ('
-            '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
-            '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
-            ')'
-          ) -join "`r`n"
-
-          Get-ChildItem $binDir -Filter *.bat -File | ForEach-Object {
-            $file    = $_.FullName
-            $content = Get-Content $file -Raw
-
-            # insert our block immediately after the first "@echo off␤"
-            $newContent = $content -replace '(@echo off\r?\n)', {
-              param($m)
-              # $m.Groups[1].Value is the original "@echo off\r\n" match:
-              $m.Groups[1].Value + $depotBlock + "`r`n"
-            }
-
-            # write it back in OEM/ASCII so you don’t get a BOM or UTF-16 header
-            Set-Content -Path $file -Value $newContent -Encoding OEM
+          
+          # First, let's see what the batch files look like
+          Write-Host "Current batch file structure:"
+          $sampleBat = Get-ChildItem $binDir -Filter *.bat | Select-Object -First 1
+          if ($sampleBat) {
+            Write-Host "Sample: $($sampleBat.FullName)"
+            Get-Content $sampleBat.FullName | Write-Host
           }
           
-          # Also update the pioneer.bat wrapper if it exists
-          #$wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
-          #if (Test-Path $wrapperPath) {
-          #  $content = Get-Content $wrapperPath -Raw
-          #  $newContent = $content -replace '(@echo off\r?\n)', @'
-          #  @echo off
-          #  IF NOT DEFINED JULIA_DEPOT_PATH (
-          #      SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
-          #      IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
-          #  )'@
-          #  Set-Content -Path $wrapperPath -Value $newContent -NoNewline
-          #}
+          # Update each batch file
+          Get-ChildItem $binDir -Filter *.bat -File | ForEach-Object {
+            $file = $_.FullName
+            $lines = Get-Content $file
+            
+            # Create new content with depot path setting
+            $newLines = @()
+            $newLines += '@echo off'
+            $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
+            $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
+            $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
+            $newLines += ')'
+            
+            # Add remaining lines except the first @echo off
+            $skipFirst = $true
+            foreach ($line in $lines) {
+              if ($skipFirst -and $line -match '^@echo off') {
+                $skipFirst = $false
+                continue
+              }
+              $newLines += $line
+            }
+            
+            # Write back
+            Set-Content -Path $file -Value $newLines -Encoding ASCII
+          }
+          
+          # Also update the main pioneer.bat wrapper
+          $wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
+          if (Test-Path $wrapperPath) {
+            $lines = Get-Content $wrapperPath
+            $newLines = @()
+            $newLines += '@echo off'
+            $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
+            $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
+            $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
+            $newLines += ')'
+            
+            $skipFirst = $true
+            foreach ($line in $lines) {
+              if ($skipFirst -and $line -match '^@echo off') {
+                $skipFirst = $false
+                continue
+              }
+              $newLines += $line
+            }
+            
+            Set-Content -Path $wrapperPath -Value $newLines -Encoding ASCII
+          }
       
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
