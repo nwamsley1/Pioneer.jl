@@ -129,6 +129,7 @@ jobs:
       - name: Download precompile data
         shell: bash
         run: |
+          exit 0
           mkdir -p temp/zenodo
           cd temp/zenodo
           curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
@@ -225,35 +226,42 @@ jobs:
         shell: pwsh
         run: |
           $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
-          
-          # Update all batch files to use a writable depot location
-          Get-ChildItem $binDir -Filter *.bat | ForEach-Object {
-            $file = $_.FullName
+
+          # pre-build our depot-path bootstrap as a single string:
+          $depotBlock = @(
+            'IF NOT DEFINED JULIA_DEPOT_PATH ('
+            '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
+            '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
+            ')'
+          ) -join "`r`n"
+
+          Get-ChildItem $binDir -Filter *.bat -File | ForEach-Object {
+            $file    = $_.FullName
             $content = Get-Content $file -Raw
-            
-            # Find where Julia is called and insert depot path setting before it
-            $newContent = $content -replace '(@echo off\r?\n)', @'
-            @echo off
-            IF NOT DEFINED JULIA_DEPOT_PATH (
-                SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
-                IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
-            )'@
-            
-            Set-Content -Path $file -Value $newContent -NoNewline
+
+            # insert our block immediately after the first "@echo off␤"
+            $newContent = $content -replace '(@echo off\r?\n)', {
+              param($m)
+              # $m.Groups[1].Value is the original "@echo off\r\n" match:
+              $m.Groups[1].Value + $depotBlock + "`r`n"
+            }
+
+            # write it back in OEM/ASCII so you don’t get a BOM or UTF-16 header
+            Set-Content -Path $file -Value $newContent -Encoding OEM
           }
           
           # Also update the pioneer.bat wrapper if it exists
-          $wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
-          if (Test-Path $wrapperPath) {
-            $content = Get-Content $wrapperPath -Raw
-            $newContent = $content -replace '(@echo off\r?\n)', @'
-            @echo off
-            IF NOT DEFINED JULIA_DEPOT_PATH (
-                SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
-                IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
-            )'@
-            Set-Content -Path $wrapperPath -Value $newContent -NoNewline
-          }
+          #$wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
+          #if (Test-Path $wrapperPath) {
+          #  $content = Get-Content $wrapperPath -Raw
+          #  $newContent = $content -replace '(@echo off\r?\n)', @'
+          #  @echo off
+          #  IF NOT DEFINED JULIA_DEPOT_PATH (
+          #      SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
+          #      IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"
+          #  )'@
+          #  Set-Content -Path $wrapperPath -Value $newContent -NoNewline
+          #}
       
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'
