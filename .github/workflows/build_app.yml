@@ -168,26 +168,29 @@ jobs:
         run: |
           # Create wrapper files that initialize depot before running
           for main in SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams GetParseSpecLibParams convertMzML ParseSpecLib; do
-            cat > src/main_${main}_wrapper.jl << 'EOF'
-            # Initialize depot path for Windows
-            if Sys.iswindows()
-                exe_path = unsafe_string(Base.JLOptions().julia_bin)
-                if occursin("Program Files", exe_path) && !haskey(ENV, "JULIA_DEPOT_PATH")
-                    local_appdata = get(ENV, "LOCALAPPDATA", "")
-                    if !isempty(local_appdata)
-                        depot_path = joinpath(local_appdata, "Pioneer", "julia")
-                        ENV["JULIA_DEPOT_PATH"] = depot_path
-                        mkpath(depot_path)
-                        empty!(DEPOT_PATH)
-                        push!(DEPOT_PATH, depot_path)
-                    end
-                end
-            end
-
-            # Load and run the actual main function
-            include("main_${main}.jl")
-            main_${main}()
-            EOF
+            cat > src/main_${main}_wrapper.jl <<'ENDOFFILE'
+          # Initialize depot path for Windows
+          if Sys.iswindows()
+              exe_path = unsafe_string(Base.JLOptions().julia_bin)
+              if occursin("Program Files", exe_path) && !haskey(ENV, "JULIA_DEPOT_PATH")
+                  local_appdata = get(ENV, "LOCALAPPDATA", "")
+                  if !isempty(local_appdata)
+                      depot_path = joinpath(local_appdata, "Pioneer", "julia")
+                      ENV["JULIA_DEPOT_PATH"] = depot_path
+                      mkpath(depot_path)
+                      empty!(DEPOT_PATH)
+                      push!(DEPOT_PATH, depot_path)
+                  end
+              end
+          end
+          
+          # Load and run the actual main function
+          include("main_PLACEHOLDER.jl")
+          main_PLACEHOLDER()
+          ENDOFFILE
+            
+            # Replace placeholder with actual function name
+            sed -i "s/PLACEHOLDER/${main}/g" src/main_${main}_wrapper.jl
           done
           
       - name: Compile application
