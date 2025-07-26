@@ -21,13 +21,25 @@
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="EnvironmentPath" />
     </Feature>
-    
-    <!-- Directory structure -->
+
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLFOLDER" Name="Pioneer" />
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Pioneer">
+          <Directory Id="ScratchSpacesDir" Name="share\julia\scratchspaces" />
+        </Directory>
       </Directory>
     </Directory>
+
+    <Component Id="ScratchSpacesPermissions" Guid="PUT-ANOTHER-GUID-HERE" Directory="ScratchSpacesDir">
+      <CreateFolder>
+        <util:PermissionEx User="Users" 
+                           GenericAll="no" 
+                           Modify="yes"
+                           Inheritance="containerInherit,objectInherit"
+                           AppliesTo="ThisFolderSubdirsAndFiles" />
+      </CreateFolder>
+      <RemoveFile Id="RemoveScratchSpaces" Name="*" On="uninstall" />
+    </Component>
     
     <!-- Add installation directory to PATH -->
     <DirectoryRef Id="INSTALLFOLDER">
