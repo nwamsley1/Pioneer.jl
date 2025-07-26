@@ -83,8 +83,6 @@ function importScripts()
         end
         return successful_count
     end
-
-    safe_include!(joinpath(package_root, "src", "build", "init_depot.jl"))
     
     # Include files using the safe import system
     include_files!(
