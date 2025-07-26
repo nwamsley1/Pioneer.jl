@@ -146,22 +146,37 @@ jobs:
           # Create wrapper files that initialize depot before running
           for main in SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams GetParseSpecLibParams convertMzML ParseSpecLib; do
             cat > src/main_${main}_wrapper.jl <<'ENDOFFILE'
-          # Initialize depot path for Windows
+          # Initialize depot path very early for Windows
           if Sys.iswindows()
-              exe_path = unsafe_string(Base.JLOptions().julia_bin)
-              if occursin("Program Files", exe_path) && !haskey(ENV, "JULIA_DEPOT_PATH")
+              # Get the depot path from environment or use default
+              depot_path = get(ENV, "JULIA_DEPOT_PATH", "")
+              
+              # If not set or set to a Program Files location, redirect to user directory
+              if isempty(depot_path) || occursin("Program Files", depot_path)
                   local_appdata = get(ENV, "LOCALAPPDATA", "")
                   if !isempty(local_appdata)
                       depot_path = joinpath(local_appdata, "Pioneer", "julia")
                       ENV["JULIA_DEPOT_PATH"] = depot_path
+                      
+                      # Ensure directories exist
                       mkpath(depot_path)
+                      mkpath(joinpath(depot_path, "packages"))
+                      mkpath(joinpath(depot_path, "scratchspaces"))
+                      mkpath(joinpath(depot_path, "compiled"))
+                      
+                      # Force Julia to use new depot by clearing and resetting DEPOT_PATH
+                      # This must happen before any packages are loaded
                       empty!(DEPOT_PATH)
                       push!(DEPOT_PATH, depot_path)
+                      
+                      # Set additional environment variables that packages might check
+                      ENV["JULIA_PKG_DIR"] = depot_path
+                      ENV["JULIA_PKGDIR"] = depot_path
                   end
               end
           end
           
-          # Load and run the actual main function
+          # Now it's safe to load packages and run the main function
           include("main_PLACEHOLDER.jl")
           main_PLACEHOLDER()
           ENDOFFILE
@@ -169,20 +184,19 @@ jobs:
             # Replace placeholder with actual function name
             sed -i "s/PLACEHOLDER/${main}/g" src/main_${main}_wrapper.jl
           done
+          
+          # Verify wrapper files were created
+          echo "Created wrapper files:"
+          ls -la src/main_*_wrapper.jl
+          echo "Sample wrapper content:"
+          head -20 src/main_SearchDIA_wrapper.jl
 
           
       - name: Compile application
         if: matrix.os == 'windows'
         run: |
-          # Set a temporary depot path for compilation to avoid permission issues
-          $env:JULIA_DEPOT_PATH = "$env:TEMP\julia_depot"
-          New-Item -ItemType Directory -Force -Path $env:JULIA_DEPOT_PATH
-          
           julia --project=. -e '
             using PackageCompiler;
-            
-            # Set depot for build process
-            ENV["JULIA_DEPOT_PATH"] = ENV["TEMP"] * "\\julia_depot"
             
             create_app(
               ".",
