@@ -138,88 +138,9 @@ jobs:
           curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
           cd ../../
       
-
-      - name: Create main function wrappers
-        if: matrix.os == 'windows'
-        shell: bash
-        run: |
-          # Create wrapper files that initialize depot before running
-          for main in SearchDIA BuildSpecLib GetSearchParams GetBuildLibParams GetParseSpecLibParams convertMzML ParseSpecLib; do
-            cat > src/main_${main}_wrapper.jl <<'ENDOFFILE'
-          # Initialize depot path very early for Windows
-          if Sys.iswindows()
-              # Get the depot path from environment or use default
-              depot_path = get(ENV, "JULIA_DEPOT_PATH", "")
-              
-              # If not set or set to a Program Files location, redirect to user directory
-              if isempty(depot_path) || occursin("Program Files", depot_path)
-                  local_appdata = get(ENV, "LOCALAPPDATA", "")
-                  if !isempty(local_appdata)
-                      depot_path = joinpath(local_appdata, "Pioneer", "julia")
-                      ENV["JULIA_DEPOT_PATH"] = depot_path
-                      
-                      # Ensure directories exist
-                      mkpath(depot_path)
-                      mkpath(joinpath(depot_path, "packages"))
-                      mkpath(joinpath(depot_path, "scratchspaces"))
-                      mkpath(joinpath(depot_path, "compiled"))
-                      
-                      # Force Julia to use new depot by clearing and resetting DEPOT_PATH
-                      # This must happen before any packages are loaded
-                      empty!(DEPOT_PATH)
-                      push!(DEPOT_PATH, depot_path)
-                      
-                      # Set additional environment variables that packages might check
-                      ENV["JULIA_PKG_DIR"] = depot_path
-                      ENV["JULIA_PKGDIR"] = depot_path
-                  end
-              end
-          end
-          
-          # Now it's safe to load packages and run the main function
-          include("main_PLACEHOLDER.jl")
-          main_PLACEHOLDER()
-          ENDOFFILE
-            
-            # Replace placeholder with actual function name
-            sed -i "s/PLACEHOLDER/${main}/g" src/main_${main}_wrapper.jl
-          done
-          
-          # Verify wrapper files were created
-          echo "Created wrapper files:"
-          ls -la src/main_*_wrapper.jl
-          echo "Sample wrapper content:"
-          head -20 src/main_SearchDIA_wrapper.jl
-
           
       - name: Compile application
-        if: matrix.os == 'windows'
-        run: |
-          julia --project=. -e '
-            using PackageCompiler;
-            
-            create_app(
-              ".",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false,
-              force=true,
-              executables=[
-                "SearchDIA" => "main_SearchDIA_wrapper",
-                "BuildSpecLib" => "main_BuildSpecLib_wrapper",
-                "GetSearchParams" => "main_GetSearchParams_wrapper",
-                "GetBuildLibParams" => "main_GetBuildLibParams_wrapper",
-                "GetParseSpecLibParams" => "main_GetParseSpecLibParams_wrapper",
-                "convertMzML" => "main_convertMzML_wrapper",
-                "ParseSpecLib" => "main_ParseSpecLib_wrapper",
-              ],
-              precompile_execution_file="src/build/snoop.jl",
-            );
-            '
-      
-      
-          
-      - name: Compile application
-        if: matrix.os == 'macos'
+        if: matrix.os != 'linux'
         run: |
           julia --project=. -e '
             using PackageCompiler;
@@ -301,69 +222,69 @@ jobs:
             cp src/build/scripts/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           fi
 
-      - name: Configure Windows executables for user depot
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
+      # - name: Configure Windows executables for user depot
+      #   if: matrix.os == 'windows'
+      #   shell: pwsh
+      #   run: |
+      #     $binDir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin"
           
-          # First, let's see what the batch files look like
-          Write-Host "Current batch file structure:"
-          $sampleBat = Get-ChildItem $binDir -Filter *.bat | Select-Object -First 1
-          if ($sampleBat) {
-            Write-Host "Sample: $($sampleBat.FullName)"
-            Get-Content $sampleBat.FullName | Write-Host
-          }
+      #     # First, let's see what the batch files look like
+      #     Write-Host "Current batch file structure:"
+      #     $sampleBat = Get-ChildItem $binDir -Filter *.bat | Select-Object -First 1
+      #     if ($sampleBat) {
+      #       Write-Host "Sample: $($sampleBat.FullName)"
+      #       Get-Content $sampleBat.FullName | Write-Host
+      #     }
           
-          # Update each batch file
-          Get-ChildItem $binDir -Filter *.bat -File | ForEach-Object {
-            $file = $_.FullName
-            $lines = Get-Content $file
+      #     # Update each batch file
+      #     Get-ChildItem $binDir -Filter *.bat -File | ForEach-Object {
+      #       $file = $_.FullName
+      #       $lines = Get-Content $file
             
-            # Create new content with depot path setting
-            $newLines = @()
-            $newLines += '@echo off'
-            $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
-            $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
-            $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
-            $newLines += ')'
+      #       # Create new content with depot path setting
+      #       $newLines = @()
+      #       $newLines += '@echo off'
+      #       $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
+      #       $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
+      #       $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
+      #       $newLines += ')'
             
-            # Add remaining lines except the first @echo off
-            $skipFirst = $true
-            foreach ($line in $lines) {
-              if ($skipFirst -and $line -match '^@echo off') {
-                $skipFirst = $false
-                continue
-              }
-              $newLines += $line
-            }
+      #       # Add remaining lines except the first @echo off
+      #       $skipFirst = $true
+      #       foreach ($line in $lines) {
+      #         if ($skipFirst -and $line -match '^@echo off') {
+      #           $skipFirst = $false
+      #           continue
+      #         }
+      #         $newLines += $line
+      #       }
             
-            # Write back
-            Set-Content -Path $file -Value $newLines -Encoding ASCII
-          }
+      #       # Write back
+      #       Set-Content -Path $file -Value $newLines -Encoding ASCII
+      #     }
           
-          # Also update the main pioneer.bat wrapper
-          $wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
-          if (Test-Path $wrapperPath) {
-            $lines = Get-Content $wrapperPath
-            $newLines = @()
-            $newLines += '@echo off'
-            $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
-            $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
-            $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
-            $newLines += ')'
+      #     # Also update the main pioneer.bat wrapper
+      #     $wrapperPath = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer.bat"
+      #     if (Test-Path $wrapperPath) {
+      #       $lines = Get-Content $wrapperPath
+      #       $newLines = @()
+      #       $newLines += '@echo off'
+      #       $newLines += 'IF NOT DEFINED JULIA_DEPOT_PATH ('
+      #       $newLines += '    SET "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"'
+      #       $newLines += '    IF NOT EXIST "%LOCALAPPDATA%\Pioneer\julia" mkdir "%LOCALAPPDATA%\Pioneer\julia"'
+      #       $newLines += ')'
             
-            $skipFirst = $true
-            foreach ($line in $lines) {
-              if ($skipFirst -and $line -match '^@echo off') {
-                $skipFirst = $false
-                continue
-              }
-              $newLines += $line
-            }
+      #       $skipFirst = $true
+      #       foreach ($line in $lines) {
+      #         if ($skipFirst -and $line -match '^@echo off') {
+      #           $skipFirst = $false
+      #           continue
+      #         }
+      #         $newLines += $line
+      #       }
             
-            Set-Content -Path $wrapperPath -Value $newLines -Encoding ASCII
-          }
+      #       Set-Content -Path $wrapperPath -Value $newLines -Encoding ASCII
+      #     }
       
       - name: Codesign and package macOS app
         if: matrix.os == 'macos'

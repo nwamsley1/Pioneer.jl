@@ -125,7 +125,7 @@ if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 rem The executables are in the bin\ subdirectory
 set "EXEC=%SCRIPT_DIR%bin\%SUBCOMMAND%.exe"
 if "%SUBCOMMAND_ARGS%"=="" (
-    "%EXEC%"
+    "%EXEC%" --julia-args="--depots=%JULIA_DEPOT_PATH%"
 ) else (
-    "%EXEC%" %SUBCOMMAND_ARGS%
+    "%EXEC%" --julia-args="--depots=%JULIA_DEPOT_PATH%" %SUBCOMMAND_ARGS%
 )
