@@ -361,11 +361,13 @@ jobs:
             -dPlatform="$platform" `
             -arch ${{ matrix.arch }} `
             -ext WixUIExtension `
+            -ext WixUtilExtension `
             src\build\windows\installer.wxs components.wxs
           
           # Link to create MSI
           & light.exe `
             -ext WixUIExtension `
+            -ext WixUtilExtension `
             -cultures:en-us `
             -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
