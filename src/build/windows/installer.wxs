@@ -40,11 +40,9 @@
 
     <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Directory="ScratchDir">
       <CreateFolder>
-        <util:PermissionEx User="Users" 
-                           GenericAll="no" 
-                           Modify="yes"
-                           Inheritance="containerInherit,objectInherit"
-                           AppliesTo="ThisFolderSubdirsAndFiles" />
+        <util:PermissionEx 
+            User="Users" 
+            GenericAll="yes" />
       </CreateFolder>
       <RemoveFile Id="RemoveScratchSpaces" Name="*" On="uninstall" />
     </Component>
