@@ -38,7 +38,7 @@
       </Directory>
     </Directory>
 
-    <Component Id="JuliaDirPermissions" Guid="db93e87c-29a4-43ce-87d4-46910c0a8772" Win64="yes" Directory="ScratchDir">
+    <Component Id="JuliaDirPermissions" Guid="db93e87c-29a4-43ce-87d4-46910c0a8772" Win64="yes" Directory="JuliaDir">
       <CreateFolder>
         <util:PermissionEx 
             User="Users" 
