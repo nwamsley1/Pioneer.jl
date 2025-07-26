@@ -24,7 +24,7 @@
     <Feature Id="ProductFeature" Title="Pioneer CLI Tools" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="EnvironmentPath" />
-      <ComponentRef Id="ScratchSpacesPermissions" />
+      <ComponentRef Id="JuliaDirPermissions" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -32,21 +32,18 @@
         <Directory Id="INSTALLFOLDER" Name="Pioneer">
           <Directory Id="ShareDir" Name="share">
             <Directory Id="JuliaDir" Name="julia">
-              <Directory Id="ScratchDir" Name="scratchspaces">
-              </Directory>
             </Directory>
           </Directory>
         </Directory>
       </Directory>
     </Directory>
 
-    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Win64="yes" Directory="ScratchDir">
+    <Component Id="JuliaDirPermissions" Guid="db93e87c-29a4-43ce-87d4-46910c0a8772" Win64="yes" Directory="ScratchDir">
       <CreateFolder>
         <util:PermissionEx 
             User="Users" 
             GenericAll="yes" />
       </CreateFolder>
-      <RemoveFile Id="RemoveScratchSpaces" Name="*" On="uninstall" />
     </Component>
     
     <!-- Add installation directory to PATH -->
