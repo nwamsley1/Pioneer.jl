@@ -174,8 +174,15 @@ jobs:
       - name: Compile application
         if: matrix.os == 'windows'
         run: |
+          # Set a temporary depot path for compilation to avoid permission issues
+          $env:JULIA_DEPOT_PATH = "$env:TEMP\julia_depot"
+          New-Item -ItemType Directory -Force -Path $env:JULIA_DEPOT_PATH
+          
           julia --project=. -e '
             using PackageCompiler;
+            
+            # Set depot for build process
+            ENV["JULIA_DEPOT_PATH"] = ENV["TEMP"] * "\\julia_depot"
             
             create_app(
               ".",
