@@ -23,6 +23,7 @@
     <Feature Id="ProductFeature" Title="Pioneer CLI Tools" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="EnvironmentPath" />
+      <ComponentRef Id="ScratchSpacesPermissions" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -38,7 +39,7 @@
       </Directory>
     </Directory>
 
-    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Directory="ScratchDir">
+    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Win64="yes" Directory="ScratchDir">
       <CreateFolder>
         <util:PermissionEx 
             User="Users" 
@@ -49,7 +50,7 @@
     
     <!-- Add installation directory to PATH -->
     <DirectoryRef Id="INSTALLFOLDER">
-      <Component Id="EnvironmentPath" Guid="53903eaf-c9de-4d7f-ac6f-9307b1dbec5e">
+      <Component Id="EnvironmentPath" Guid="53903eaf-c9de-4d7f-ac6f-9307b1dbec5e" Win64="yes">
         <Environment Id="PATH" 
                      Name="PATH" 
                      Value="[INSTALLFOLDER]" 
