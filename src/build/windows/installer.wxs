@@ -28,12 +28,17 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFilesFolder">
         <Directory Id="INSTALLFOLDER" Name="Pioneer">
-          <Directory Id="ScratchSpacesDir" Name="share\julia\scratchspaces" />
+          <Directory Id="ShareDir" Name="share">
+            <Directory Id="JuliaDir" Name="julia">
+              <Directory Id="ScratchDir" Name="scratchspaces">
+              </Directory>
+            </Directory>
+          </Directory>
         </Directory>
       </Directory>
     </Directory>
 
-    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Directory="ScratchSpacesDir">
+    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Directory="ScratchDir">
       <CreateFolder>
         <util:PermissionEx User="Users" 
                            GenericAll="no" 
