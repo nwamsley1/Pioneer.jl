@@ -30,7 +30,7 @@
       </Directory>
     </Directory>
 
-    <Component Id="ScratchSpacesPermissions" Guid="PUT-ANOTHER-GUID-HERE" Directory="ScratchSpacesDir">
+    <Component Id="ScratchSpacesPermissions" Guid="313d2b67-fef5-4bd6-a26c-f2f90e7fdd89" Directory="ScratchSpacesDir">
       <CreateFolder>
         <util:PermissionEx User="Users" 
                            GenericAll="no" 
