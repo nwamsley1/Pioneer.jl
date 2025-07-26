@@ -346,6 +346,7 @@ jobs:
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
             -dr INSTALLFOLDER `
+            -platform x64 `
             -gg `
             -scom `
             -sreg `
