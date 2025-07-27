@@ -72,7 +72,7 @@ Random.seed!(1776);
 
 #Import Pioneer Files 
 include("importScripts.jl")
-files_loaded = importScripts()
+const _scripts_loaded = Ref(false)
 
 #importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
@@ -124,7 +124,12 @@ const KOINA_URLS = Dict(
     "altimeter" => "http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer",
 )
 
-
+function __init__()
+    if !_scripts_loaded[]
+        importScripts()
+        _scripts_loaded[] = true
+    end
+end
 
 export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
 end
