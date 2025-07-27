@@ -382,18 +382,18 @@ jobs:
           mkdir -p deb/usr/local/Pioneer/data
           cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
 
-          mkdir -p deb/usr/local/bin
-          for f in deb/usr/local/Pioneer/bin/*; do
-            [ -f "$f" ] || continue
-            ln -sf ../Pioneer/bin/$(basename "$f") deb/usr/local/bin/$(basename "$f")
-          done
+          #mkdir -p deb/usr/local/bin
+          #for f in deb/usr/local/Pioneer/bin/*; do
+          #  [ -f "$f" ] || continue
+          #  ln -sf ../Pioneer/bin/$(basename "$f") deb/usr/local/bin/$(basename "$f")
+          #done
           
-          for f in deb/usr/local/Pioneer/bin/*; do
-            [ -f "$f" ] || continue
-            if head -n1 "$f" | grep -q "^#!"; then
-              sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
-            fi
-          done
+          #for f in deb/usr/local/Pioneer/bin/*; do
+          #  [ -f "$f" ] || continue
+          #  if head -n1 "$f" | grep -q "^#!"; then
+          #    sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
+          #  fi
+          #done
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
