@@ -3,15 +3,6 @@ setlocal enabledelayedexpansion
 
 if "%JULIA_NUM_THREADS%"=="" set JULIA_NUM_THREADS=auto
 
-rem Ensure scratch spaces are in a user-writable location
-if "%JULIA_DEPOT_PATH%"=="" (
-    if defined LOCALAPPDATA (
-        set "JULIA_DEPOT_PATH=%LOCALAPPDATA%\Pioneer\julia"
-    ) else (
-        set "JULIA_DEPOT_PATH=%USERPROFILE%\.julia"
-    )
-)
-
 set SCRIPT_DIR=%~dp0
 
 set SUBCOMMAND=
@@ -125,7 +116,7 @@ if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 rem The executables are in the bin\ subdirectory
 set "EXEC=%SCRIPT_DIR%bin\%SUBCOMMAND%.exe"
 if "%SUBCOMMAND_ARGS%"=="" (
-    "%EXEC%" --julia-args="--depots=%JULIA_DEPOT_PATH%"
+    "%EXEC%"
 ) else (
-    "%EXEC%" --julia-args="--depots=%JULIA_DEPOT_PATH%" %SUBCOMMAND_ARGS%
+    "%EXEC%" %SUBCOMMAND_ARGS%
 )
