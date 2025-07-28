@@ -424,6 +424,7 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
                        subsample::Float64,
                        gamma::Int,
                        max_depth::Int)
+
     #X = Matrix{Float32}(psms[:, features])
     #y = Int.(psms[:, :target])
     config = EvoTreeClassifier(
@@ -675,6 +676,7 @@ function replace_missing_with_median!(df::AbstractDataFrame, features)
                 end
             end
         end
+        disallowmissing!(df, feat)
     end
     return df
 end
