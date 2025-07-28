@@ -48,6 +48,8 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     train_indices = Dict(fold => findall(!=(fold), cv_fold_col) for fold in unique_cv_folds)
 
     Random.seed!(1776)
+    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+
     pbar = ProgressBar(total=length(unique_cv_folds) * length(iter_scheme))
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
@@ -66,7 +68,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                               min_PEP_neg_threshold_xgboost_rescore,
                                                               itr >= mbr_start_iter)
 
-            bst = train_booster(psms_train_itr, features, num_round;
+            train_feats = itr < mbr_start_iter ? non_mbr_features : features
+            
+            bst = train_booster(psms_train_itr, train_feats, num_round;
                                colsample_bytree=colsample_bytree,
                                colsample_bynode=colsample_bynode,
                                eta=eta,
@@ -76,16 +80,12 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                max_depth=max_depth)
             fold_models[itr] = bst
 
-            predict_fold!(bst, psms_train, test_fold_psms, features)
+            predict_fold!(bst, psms_train, test_fold_psms, train_feats)
 
             if match_between_runs
                 update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
                                      test_fold_idxs, itr, mbr_start_iter,
                                      max_q_value_xgboost_rescore)
-            end
-
-            if itr < length(iter_scheme)
-                replace_missing_with_median!(psms, features)
             end
 
             update(pbar)
@@ -317,6 +317,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     models = Dictionary{UInt8, Vector{EvoTrees.EvoTree}}()
     pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
     Random.seed!(1776);
+    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         #Clear prob stats 
         initialize_prob_group_features!(psms, match_between_runs)
@@ -334,7 +336,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                                 itr >= length(iter_scheme))
             ###################
             #Train a model on the n-1 training folds.
-            bst = train_booster(psms_train_itr, features, num_round;
+            train_feats = itr < length(iter_scheme) ? non_mbr_features : features
+            bst = train_booster(psms_train_itr, train_feats, num_round;
                                colsample_bytree=colsample_bytree,
                                colsample_bynode=colsample_bynode,
                                eta=eta,
@@ -659,35 +662,35 @@ function dropVectorColumns!(df)
 end
 
 function replace_missing_with_median!(df::AbstractDataFrame, features)
-    # Iterate over a copy of the feature list since new indicator columns may be
-    # appended to `features` during iteration.
     for feat in copy(features)
-        col = df[!, feat]
-        miss_col = Symbol(feat, "_ismissing")
-        miss_inds = findall(x -> ismissing(x) || (x isa AbstractFloat && isnan(x)), col)
-        miss_ct = length(miss_inds)
-        if miss_ct > 0
-            nan_ct  = eltype(col) <: AbstractFloat ? count(isnan, col) : 0
-            @info "Replacing missing/NaN values" column=feat miss=miss_ct nan=nan_ct
+        col = df[!, feat]                           # get the column vector
+        miss_mask = ismissing.(col)                 # 1 pass: pure Bool mask of missings
 
-            # Add indicator column capturing which rows were missing/NaN.
-            if !(miss_col in names(df))
-                df[!, miss_col] = falses(nrow(df))
-                push!(features, miss_col)
-            end
-            df[miss_inds, miss_col] .= true
-
-            vals = [v for v in skipmissing(col) if !(v isa AbstractFloat && isnan(v))]
-            fill_val = isempty(vals) ? zero(Base.nonmissingtype(eltype(col))) : median(vals)
-            for i in miss_inds
-                df[i, feat] = fill_val
-            end
+        # if nothing missing, just disallow and skip
+        if !any(miss_mask)
+            disallowmissing!(df, feat)
+            continue
         end
+
+        # 2) indicator column
+        miss_col = Symbol(feat, "_ismissing")
+        df[!, miss_col] = miss_mask
+        if miss_col ∉ features
+            push!(features, miss_col)
+        end
+
+        # 3) compute median and fill in place
+        #    collect only the non-missing values
+        med = median(collect(skipmissing(col)))
+        T0  = nonmissingtype(eltype(col))
+        fill_val = T0 <: AbstractFloat ? convert(T0, med) : round(T0, med)
+
+        col[miss_mask] .= fill_val                 # fill the missings
+
         disallowmissing!(df, feat)
     end
     return df
 end
-
 
 """
     reset_precursor_scores!(dict)

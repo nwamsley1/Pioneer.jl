@@ -414,6 +414,11 @@ function computeFittedMetricsFor(w::Vector{T}, H::SparseArray{Ti,T}, r::Vector{T
     spectral_contrast = dot_product/(sqrt(h2_sum)*sqrt(x2_sum))
 
     scribe_score = -log2(scribe_score / N)
+    if isnan(scribe_score)
+        scribe_score = zero(T)
+    end
+
+
     gof   = -log2(sum_of_residuals/sum_of_fitted_peaks)
     max_matched_residual = -log2(max_matched_residual/sum_of_fitted_peaks_matched)
     max_unmatched_residual = -log2(max_unmatched_residual/sum_of_fitted_peaks + 1e-10)
