@@ -26,6 +26,7 @@ Most parameters should not be changed, but the following may need adjustement.
 * `acquisition.quad_transmission.fit_from_data`: Estimate the quad transmission function from the data. Otherwise defaults to symmetric, smooth function. 
 
 * `optimization.machine_learning.max_samples`: This is the maximum number of PSMs to use for training the EvoTrees model. These PSMs need to comfortably fit in memory in addition to the spectral library. As a rule of thumb, 7M rows is about 1GB. At the default maximum of 50M rows, the PSMs table will consume 7GB of memory.
+* During EvoTrees training, any missing feature values are replaced with the column median. If a column is entirely missing, the values are filled with zero of the appropriate type.
 
 * `global.isotope_settings.combine_traces`: Some precursors may be split accross different acquisition windows. Pioneer refers to these as seperate isotope traces. When set to true, Pioneer does not distinguish between a precursor's isotope traces. They are combined for scoring and quantitation. With a clever acquisition scheme this can increase the number of data points accross chromatographic peaks. This is recomended only for acquisition windows 2-4 m/z. It should also be combined with `aquisition.quad_transmission.fit_from_data` = true. 
 

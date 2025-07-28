@@ -657,8 +657,13 @@ function replace_missing_with_median!(df::AbstractDataFrame, features)
     for feat in features
         col = df[!, feat]
         if any(ismissing, col)
-            med = median(skipmissing(col))
-            df[ismissing.(col), feat] .= med
+            if all(ismissing, col)
+                fill_val = zero(Base.nonmissingtype(eltype(col)))
+                df[!, feat] .= fill_val
+            else
+                med = median(skipmissing(col))
+                df[ismissing.(col), feat] .= med
+            end
         end
     end
     return df
