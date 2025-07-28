@@ -39,7 +39,7 @@ using Tables, Test
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
-using EvoTrees
+using EvoTrees, MLJModelInterface
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf

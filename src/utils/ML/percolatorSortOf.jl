@@ -40,7 +40,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     MBR_estimates  = zeros(Float32, nrow(psms))
 
     unique_cv_folds = unique(psms[!, :cv_fold])
-    models = Dict{UInt8, Vector{EvoTreeClassifier}}()
+    models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
     mbr_start_iter = length(iter_scheme)
 
     cv_fold_col = psms[!, :cv_fold]
@@ -52,9 +52,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
         psms_train = @view psms[train_indices[test_fold_idx], :]
+        replace_missing_with_median!(psms, features)
         test_fold_idxs = fold_indices[test_fold_idx]
         test_fold_psms = @view psms[test_fold_idxs, :]
-        fold_models = Vector{EvoTreeClassifier}(undef, length(iter_scheme))
+        fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
             psms_train_itr = get_training_data_for_iteration!(psms_train,
@@ -81,6 +82,10 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                 update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
                                      test_fold_idxs, itr, mbr_start_iter,
                                      max_q_value_xgboost_rescore)
+            end
+
+            if itr < length(iter_scheme)
+                replace_missing_with_median!(psms, features)
             end
 
             update(pbar)
@@ -140,7 +145,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     function getBestScorePerPrec!(
         prec_to_best_score_new::Dictionary,
         file_paths::Vector{String},
-        models::Dictionary{UInt8,EvoTreeClassifier},
+        models::Dictionary{UInt8,EvoTrees.EvoTree},
         features::Vector{Symbol},
         match_between_runs::Bool;
         is_last_iteration::Bool = false)
@@ -308,7 +313,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    models = Dictionary{UInt8, Vector{EvoTreeClassifier}}()
+    models = Dictionary{UInt8, Vector{EvoTrees.EvoTree}}()
     pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
     Random.seed!(1776);
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
@@ -340,7 +345,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 insert!(
                     models,
                     test_fold_idx,
-                    Vector{EvoTreeClassifier}([bst])
+                    Vector{EvoTrees.EvoTree}([bst])
                 )
             else
                 push!(models[test_fold_idx], bst)
@@ -380,7 +385,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                 unique_passing_runs::Set{UInt16}}}()
 
     for (train_iter, num_round) in enumerate(iter_scheme)
-        models_for_iter = Dictionary{UInt8,EvoTreeClassifier}()
+        models_for_iter = Dictionary{UInt8,EvoTrees.EvoTree}()
         for test_fold_idx in unique_cv_folds
             insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
         end
@@ -419,19 +424,20 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
                        subsample::Float64,
                        gamma::Int,
                        max_depth::Int)
-    replace_missing_with_median!(psms, features)
-    X = Matrix{Float32}(psms[:, features])
-    y = Float32.(psms[:, :target])
-    model = EvoTreeClassifier(
+    #X = Matrix{Float32}(psms[:, features])
+    #y = Int.(psms[:, :target])
+    config = EvoTreeClassifier(
         nrounds = num_round,
         max_depth = max_depth,
         min_weight = min_child_weight,
         rowsample = subsample,
         colsample = colsample_bytree,
-        learning_rate = eta,
+        eta = eta,
         gamma = gamma
     )
-    fit!(model, X, y)
+    #model = EvoTrees.fit(config, x_train = X, y_train = y)
+    model = MLJModelInterface.fit(config, psms; target_name = :target, feature_names = features)
+    println(eltype(model),"\n\n")
     return model
 end
 
@@ -656,13 +662,17 @@ end
 function replace_missing_with_median!(df::AbstractDataFrame, features)
     for feat in features
         col = df[!, feat]
-        if any(ismissing, col)
-            if all(ismissing, col)
-                fill_val = zero(Base.nonmissingtype(eltype(col)))
-                df[!, feat] .= fill_val
-            else
-                med = median(skipmissing(col))
-                df[ismissing.(col), feat] .= med
+        miss_ct = count(ismissing, col)
+        nan_ct  = eltype(col) <: AbstractFloat ? count(isnan, col) : 0
+        if miss_ct > 0 || nan_ct > 0
+            @info "Replacing missing/NaN values" column=feat miss=miss_ct nan=nan_ct
+            vals = [v for v in skipmissing(col) if !(v isa AbstractFloat && isnan(v))]
+            fill_val = isempty(vals) ? zero(Base.nonmissingtype(eltype(col))) : median(vals)
+            for i in eachindex(col)
+                val = col[i]
+                if ismissing(val) || (val isa AbstractFloat && isnan(val))
+                    df[i, feat] = fill_val
+                end
             end
         end
     end
@@ -704,7 +714,7 @@ end
 
 Return a vector of probabilities for `df` using the cross validation `models`.
 """
-function predict_cv_models(models::Dictionary{UInt8,EvoTreeClassifier},
+function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
                            df::AbstractDataFrame,
                            features::Vector{Symbol})
     probs = zeros(Float32, nrow(df))
