@@ -355,7 +355,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             print_importance ? println(collect(zip(feature_importance(bst)))[1:30]) : nothing
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)[:, 2] 
+            psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)
             
             if match_between_runs
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
@@ -426,9 +426,8 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
                        gamma::Int,
                        max_depth::Int)
 
-    #X = Matrix{Float32}(psms[:, features])
-    #y = Int.(psms[:, :target])
-    config = EvoTreeClassifier(
+    config = EvoTreeRegressor(
+        loss=:logloss,
         nrounds = num_round,
         max_depth = max_depth,
         min_weight = min_child_weight,
@@ -437,15 +436,14 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         eta = eta,
         gamma = gamma
     )
-    #model = EvoTrees.fit(config, x_train = X, y_train = y)
     model = fit(config, psms; target_name = :target, feature_names = features)
     return model
 end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
                        test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)[:, 2] 
-    psms_train[!, :prob] = predict(bst, psms_train)[:, 2] 
+    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)
+    psms_train[!, :prob] = predict(bst, psms_train)
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
@@ -732,7 +730,7 @@ function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = predict(bst, df[fold_rows, :])[:, 2] 
+            probs[fold_rows] = predict(bst, df[fold_rows, :])
         end
     end
     return probs
