@@ -37,7 +37,7 @@ using Tables, Test
 using StatsPlots
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics
-using XGBoost
+using EvoTrees
 using KernelDensity
 using FastGaussQuadrature
 include("structs/Ion.jl")

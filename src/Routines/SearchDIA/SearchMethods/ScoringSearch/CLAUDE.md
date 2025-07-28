@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## ScoringSearch Overview
 
-ScoringSearch is the 7th stage in the Pioneer DIA search pipeline. It performs XGBoost-based PSM rescoring, FDR control, and protein group analysis with optional ML-enhanced protein scoring.
+ScoringSearch is the 7th stage in the Pioneer DIA search pipeline. It performs EvoTrees-based PSM rescoring, FDR control, and protein group analysis with optional ML-enhanced protein scoring.
 
 ## Module Structure
 
 ```
 ScoringSearch/
 ├── ScoringSearch.jl              # Main search method implementation
-├── score_psms.jl                 # XGBoost model training and PSM scoring
+├── score_psms.jl                 # EvoTrees model training and PSM scoring
 ├── utils.jl                      # Protein group analysis and helper functions (legacy)
 ├── utils_protein_ml.jl           # ML-enhanced protein scoring (when enabled)
 ├── protein_inference_pipeline.jl # Modern composable protein inference pipeline
@@ -24,7 +24,7 @@ ScoringSearch/
 
 The scoring search performs these steps:
 
-1. **XGBoost Model Training**: Trains CV models on second pass PSMs
+1. **EvoTrees Model Training**: Trains CV models on second pass PSMs
 2. **PSM Rescoring**: Applies models to score all PSMs
 3. **Best Trace Selection**: Identifies optimal isotope traces
 4. **Q-value Calculation**: Computes FDR at PSM and protein levels
@@ -34,7 +34,7 @@ The scoring search performs these steps:
 
 ### PSM Scoring (score_psms.jl)
 
-- Implements cross-validation XGBoost training
+- Implements cross-validation EvoTrees training
 - Features include spectral scores, RT errors, mass errors
 - Handles both in-memory and out-of-memory training
 - Maintains CV fold consistency for downstream analysis
@@ -97,7 +97,7 @@ When enabled via parameters:
 }
 ```
 
-Uses XGBoost with top N precursor scores as features, implemented in `utils_protein_ml.jl`.
+Uses EvoTrees with top N precursor scores as features, implemented in `utils_protein_ml.jl`.
 
 ## Common Issues and Solutions
 

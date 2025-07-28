@@ -34,7 +34,7 @@ using Tables, Test
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics
-using XGBoost
+using EvoTrees
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
