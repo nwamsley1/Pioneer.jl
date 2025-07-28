@@ -282,12 +282,12 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
                             MBR_is_best_decoy                   = scores.is_best_decoy_2
                         else
-                            psms_subset.MBR_best_irt_diff[i]        = missing
-                            psms_subset.MBR_rv_coefficient[i]       = missing
-                            psms_subset.MBR_is_best_decoy[i]        = missing
-                            psms_subset.MBR_max_pair_prob[i]        = missing
-                            psms_subset.MBR_log2_weight_ratio[i]    = missing
-                            psms_subset.MBR_log2_explained_ratio[i] = missing
+                            psms_subset.MBR_best_irt_diff[i]        = 0.0f0 #missing
+                            psms_subset.MBR_rv_coefficient[i]       = 0.0f0 #missing
+                            psms_subset.MBR_is_best_decoy[i]        = 0.0f0 #missing
+                            psms_subset.MBR_max_pair_prob[i]        = 0.0f0 #missing
+                            psms_subset.MBR_log2_weight_ratio[i]    = 0.0f0 #missing
+                            psms_subset.MBR_log2_explained_ratio[i] = 0.0f0 #missing
                             continue
                         end
 
@@ -354,7 +354,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
             print_importance ? println(collect(zip(feature_importance(bst)))[1:30]) : nothing
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = EvoTrees.predict(bst, Matrix{Float32}(psms_train[:, features]))
+            psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)[:, 2] 
             
             if match_between_runs
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
@@ -437,15 +437,14 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
         gamma = gamma
     )
     #model = EvoTrees.fit(config, x_train = X, y_train = y)
-    model = MLJModelInterface.fit(config, psms; target_name = :target, feature_names = features)
-    println(eltype(model),"\n\n")
+    model = fit(config, psms; target_name = :target, feature_names = features)
     return model
 end
 
 function predict_fold!(bst, psms_train::AbstractDataFrame,
                        test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = EvoTrees.predict(bst, Matrix{Float32}(test_fold_psms[:, features]))
-    psms_train[!, :prob] = EvoTrees.predict(bst, Matrix{Float32}(psms_train[:, features]))
+    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)[:, 2] 
+    psms_train[!, :prob] = predict(bst, psms_train)[:, 2] 
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
@@ -466,7 +465,7 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
     end
 end
 
-function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)   
+function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)
     # Compute pair specific features that rely on decoys and chromatograms
     pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
     Threads.@threads for idx in eachindex(pair_groups)
@@ -519,12 +518,12 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
             best_idx = run_best_indices[idx]
             if best_idx == 0
-                sub_psms.MBR_best_irt_diff[i] = missing
-                sub_psms.MBR_rv_coefficient[i] = missing
-                sub_psms.MBR_is_best_decoy[i] = missing
-                sub_psms.MBR_log2_weight_ratio[i] = missing
-                sub_psms.MBR_log2_explained_ratio[i] = missing
-                sub_psms.MBR_max_pair_prob[i] = missing
+                sub_psms.MBR_best_irt_diff[i] = 0.0f0 #missing
+                sub_psms.MBR_rv_coefficient[i] = 0.0f0 #missing
+                sub_psms.MBR_is_best_decoy[i] = 0.0f0 #missing
+                sub_psms.MBR_log2_weight_ratio[i] = 0.0f0 #missing
+                sub_psms.MBR_log2_explained_ratio[i] = 0.0f0 #missing
+                sub_psms.MBR_max_pair_prob[i] = 0.0f0 #missing
                 continue
             end
 
@@ -723,7 +722,7 @@ function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = EvoTrees.predict(bst, Matrix{Float32}(df[fold_rows, features]))
+            probs[fold_rows] = predict(bst, df[fold_rows, :])[:, 2] 
         end
     end
     return probs

@@ -39,7 +39,8 @@ using Tables, Test
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
-using EvoTrees, MLJModelInterface
+using EvoTrees
+using MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
