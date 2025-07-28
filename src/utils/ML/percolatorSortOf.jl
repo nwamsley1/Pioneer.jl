@@ -282,12 +282,13 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
                             MBR_is_best_decoy                   = scores.is_best_decoy_2
                         else
-                            psms_subset.MBR_best_irt_diff[i]        = 0.0f0 #missing
-                            psms_subset.MBR_rv_coefficient[i]       = 0.0f0 #missing
-                            psms_subset.MBR_is_best_decoy[i]        = 0.0f0 #missing
-                            psms_subset.MBR_max_pair_prob[i]        = 0.0f0 #missing
-                            psms_subset.MBR_log2_weight_ratio[i]    = 0.0f0 #missing
-                            psms_subset.MBR_log2_explained_ratio[i] = 0.0f0 #missing
+                            psms_subset.MBR_best_irt_diff[i]        = -1.0f0
+                            psms_subset.MBR_rv_coefficient[i]       = -1.0f0
+                            psms_subset.MBR_is_best_decoy[i]        = false
+                            psms_subset.MBR_max_pair_prob[i]        = -1.0f0
+                            psms_subset.MBR_log2_weight_ratio[i]    = -1.0f0
+                            psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
+                            psms_subset.sub_psms.MBR_is_missing[i]  = true
                             continue
                         end
 
@@ -518,12 +519,13 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
             best_idx = run_best_indices[idx]
             if best_idx == 0
-                sub_psms.MBR_best_irt_diff[i] = 0.0f0 #missing
-                sub_psms.MBR_rv_coefficient[i] = 0.0f0 #missing
-                sub_psms.MBR_is_best_decoy[i] = 0.0f0 #missing
-                sub_psms.MBR_log2_weight_ratio[i] = 0.0f0 #missing
-                sub_psms.MBR_log2_explained_ratio[i] = 0.0f0 #missing
-                sub_psms.MBR_max_pair_prob[i] = 0.0f0 #missing
+                sub_psms.MBR_best_irt_diff[i]           = -1.0f0
+                sub_psms.MBR_rv_coefficient[i]          = -1.0f0
+                sub_psms.MBR_is_best_decoy[i]           = false
+                sub_psms.MBR_log2_weight_ratio[i]       = -1.0f0
+                sub_psms.MBR_log2_explained_ratio[i]    = -1.0f0
+                sub_psms.MBR_max_pair_prob[i]           = -1.0f0
+                sub_psms.MBR_is_missing[i]              = true
                 continue
             end
 
@@ -557,16 +559,15 @@ function initialize_prob_group_features!(
 
     if match_between_runs
         psms[!, :MBR_prob]                      = zeros(Float32, n)
-        psms[!, :MBR_max_pair_prob]             = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_best_irt_diff]             = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_log2_weight_ratio]         = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_log2_explained_ratio]      = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_rv_coefficient]            = Vector{Union{Missing, Float32}}(missing, n)
+        psms[!, :MBR_max_pair_prob]             = zeros(Float32, n)
+        psms[!, :MBR_best_irt_diff]             = zeros(Float32, n)
+        psms[!, :MBR_log2_weight_ratio]         = zeros(Float32, n)
+        psms[!, :MBR_log2_explained_ratio]      = zeros(Float32, n)
+        psms[!, :MBR_rv_coefficient]            = zeros(Float32, n)
+        psms[!, :MBR_is_best_decoy]             = trues(n)
         psms[!, :MBR_num_runs]                  = zeros(Int32, n)
-        psms[!, :MBR_is_best_decoy]             = Vector{Union{Missing, Bool}}(missing, n)
         psms[!, :MBR_transfer_candidate]        = falses(n)
-        allowmissing!(psms, [:MBR_max_pair_prob, :MBR_rv_coefficient,
-                              :MBR_best_irt_diff, :MBR_is_best_decoy, :MBR_log2_weight_ratio])
+        psms[!, :MBR_is_missing]                = falses(n)
     end
 
     return psms
@@ -620,8 +621,8 @@ function get_training_data_for_iteration!(
             # and the best precursor can't be a decoy
             psms_train_mbr = subset(
                 psms_train_itr,
-                [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob] => ByRow((d, mp, p) ->
-                    (!ismissing(d) && !d && !ismissing(mp) && !ismissing(p) && mp >= max_prob_threshold && p < max_prob_threshold)
+                [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob, :MBR_is_missing] => ByRow((d, mp, p, im) ->
+                    (!im && !d && mp >= max_prob_threshold && p < max_prob_threshold)
                 );
                 view = true
             )
@@ -632,7 +633,7 @@ function get_training_data_for_iteration!(
             # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
             psms_train_itr = subset(
                 psms_train_itr,
-                [:target, :q_value, :MBR_is_best_decoy] => ByRow((t,q,MBR_d) -> (!t) || (t && !ismissing(MBR_d) && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
+                [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
             )
         else
             # Take all decoys and targets passing q_thresh
@@ -660,19 +661,28 @@ function dropVectorColumns!(df)
 end
 
 function replace_missing_with_median!(df::AbstractDataFrame, features)
-    for feat in features
+    # Iterate over a copy of the feature list since new indicator columns may be
+    # appended to `features` during iteration.
+    for feat in copy(features)
         col = df[!, feat]
-        miss_ct = count(ismissing, col)
-        nan_ct  = eltype(col) <: AbstractFloat ? count(isnan, col) : 0
-        if miss_ct > 0 || nan_ct > 0
+        miss_col = Symbol(feat, "_ismissing")
+        miss_inds = findall(x -> ismissing(x) || (x isa AbstractFloat && isnan(x)), col)
+        miss_ct = length(miss_inds)
+        if miss_ct > 0
+            nan_ct  = eltype(col) <: AbstractFloat ? count(isnan, col) : 0
             @info "Replacing missing/NaN values" column=feat miss=miss_ct nan=nan_ct
+
+            # Add indicator column capturing which rows were missing/NaN.
+            if !(miss_col in names(df))
+                df[!, miss_col] = falses(nrow(df))
+                push!(features, miss_col)
+            end
+            df[miss_inds, miss_col] .= true
+
             vals = [v for v in skipmissing(col) if !(v isa AbstractFloat && isnan(v))]
             fill_val = isempty(vals) ? zero(Base.nonmissingtype(eltype(col))) : median(vals)
-            for i in eachindex(col)
-                val = col[i]
-                if ismissing(val) || (val isa AbstractFloat && isnan(val))
-                    df[i, feat] = fill_val
-                end
+            for i in miss_inds
+                df[i, feat] = fill_val
             end
         end
         disallowmissing!(df, feat)

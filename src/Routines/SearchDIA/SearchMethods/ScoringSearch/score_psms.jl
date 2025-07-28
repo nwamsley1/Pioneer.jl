@@ -426,7 +426,8 @@ function score_precursor_isotope_traces_out_of_memory!(
                 :MBR_num_runs,
                 :MBR_max_pair_prob,
                 :MBR_log2_weight_ratio,
-                :MBR_log2_explained_ratio
+                :MBR_log2_explained_ratio,
+                :MBR_is_missing
                 ])
         end
 
