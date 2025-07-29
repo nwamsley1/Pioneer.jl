@@ -43,7 +43,6 @@ function asset_path(parts...)
         exe = exe_full !== nothing ? exe_full : exe
     end
     exe_dir = abspath(dirname(realpath(exe)))
-    println("ISO PATH:", joinpath(exe_dir, "..", "data", parts...))
     return joinpath(exe_dir, "..", "data", parts...)
 
 

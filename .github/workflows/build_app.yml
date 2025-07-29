@@ -382,11 +382,8 @@ jobs:
           mkdir -p deb/usr/local/Pioneer/data
           cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
 
-          mkdir -p deb/usr/local/bin
-          for f in deb/usr/local/Pioneer/bin/*; do
-            [ -f "$f" ] || continue
-            ln -sf ../Pioneer/bin/$(basename "$f") deb/usr/local/bin/$(basename "$f")
-          done
+          # symlink the main pioneer script for PATH access
+          ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           
           for f in deb/usr/local/Pioneer/bin/*; do
             [ -f "$f" ] || continue
