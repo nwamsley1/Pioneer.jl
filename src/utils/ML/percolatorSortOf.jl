@@ -54,7 +54,6 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
         psms_train = @view psms[train_indices[test_fold_idx], :]
-        replace_missing_with_median!(psms, features)
         test_fold_idxs = fold_indices[test_fold_idx]
         test_fold_psms = @view psms[test_fold_idxs, :]
         fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
@@ -659,37 +658,6 @@ function dropVectorColumns!(df)
     end
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
-end
-
-function replace_missing_with_median!(df::AbstractDataFrame, features)
-    for feat in copy(features)
-        col = df[!, feat]                           # get the column vector
-        miss_mask = ismissing.(col)                 # 1 pass: pure Bool mask of missings
-
-        # if nothing missing, just disallow and skip
-        if !any(miss_mask)
-            disallowmissing!(df, feat)
-            continue
-        end
-
-        # 2) indicator column
-        miss_col = Symbol(feat, "_ismissing")
-        df[!, miss_col] = miss_mask
-        if miss_col ∉ features
-            push!(features, miss_col)
-        end
-
-        # 3) compute median and fill in place
-        #    collect only the non-missing values
-        med = median(collect(skipmissing(col)))
-        T0  = nonmissingtype(eltype(col))
-        fill_val = T0 <: AbstractFloat ? convert(T0, med) : round(T0, med)
-
-        col[miss_mask] .= fill_val                 # fill the missings
-
-        disallowmissing!(df, feat)
-    end
-    return df
 end
 
 """

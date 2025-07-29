@@ -245,6 +245,7 @@ function score_precursor_isotope_traces_in_memory!(
             :m0_error_ms1,
             :n_iso_ms1,
             :big_iso_ms1,
+            :ms1_features_missing,
             :percent_theoretical_ignored,
             :scribe,
             :max_scribe
@@ -413,6 +414,7 @@ function score_precursor_isotope_traces_out_of_memory!(
             :m0_error_ms1,
             :n_iso_ms1,
             :big_iso_ms1,
+            :ms1_features_missing,
             :percent_theoretical_ignored,
             :scribe,
             :max_scribe,
