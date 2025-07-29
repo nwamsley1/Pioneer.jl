@@ -14,15 +14,15 @@ GetSearchParams(
     mktempdir(),
 )
 # predict
-#GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
 # empirical
-#GetParseSpecLibParams( "test_lib", mktempdir())
+GetParseSpecLibParams( "test_lib", mktempdir())
 
 
 ##########################################
 # Empirical libraries
 ##########################################
-#ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
+ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 
 
 ##########################################
@@ -30,7 +30,7 @@ GetSearchParams(
 ##########################################
 
 # Build a tiny Prosit library and search it with low memory thresholds
-#BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 # TODO
 # Build a tiny Altimeter library
 #BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
@@ -41,15 +41,15 @@ GetSearchParams(
 ##########################################
 
 # prosit
-#SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
 # altimeter + MBR
-#SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 # altimeter + MBR + OOM
-#SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))
+SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))
 
 
 
 ##########################################
 # ConvertMzML
 ##########################################
-#convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
+convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
