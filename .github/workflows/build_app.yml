@@ -239,6 +239,9 @@ jobs:
           # bundle assets used at runtime
           mkdir -p "$PKGROOT/usr/local/$APPNAME/data"
           cp -R data/IsotopeSplines "$PKGROOT/usr/local/$APPNAME/data/"
+          cp data/contaminants.fasta.gz "$PKGROOT/usr/local/$APPNAME/data/"
+          cp data/immonium.txt "$PKGROOT/usr/local/$APPNAME/data/"
+          cp data/ion_dictionary.txt "$PKGROOT/usr/local/$APPNAME/data/"
 
           # ensure CLI wrappers set a writable depot path
           for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
@@ -311,11 +314,14 @@ jobs:
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
           
           # Copy any additional resources needed
+          $dataDir = "$pioneerRoot\data"
+          New-Item -ItemType Directory -Force -Path $dataDir
           if (Test-Path "data\IsotopeSplines") {
-            $dataDir = "$pioneerRoot\data"
-            New-Item -ItemType Directory -Force -Path $dataDir
             Copy-Item -Recurse "data\IsotopeSplines" "$dataDir\"
           }
+          Copy-Item "data\contaminants.fasta.gz" "$dataDir\"
+          Copy-Item "data\immonium.txt" "$dataDir\"
+          Copy-Item "data\ion_dictionary.txt" "$dataDir\"
 
           # Include license for installer
           Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
@@ -381,6 +387,9 @@ jobs:
           # bundle assets used at runtime
           mkdir -p deb/usr/local/Pioneer/data
           cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
+          cp data/contaminants.fasta.gz deb/usr/local/Pioneer/data/
+          cp data/immonium.txt deb/usr/local/Pioneer/data/
+          cp data/ion_dictionary.txt deb/usr/local/Pioneer/data/
 
           # symlink the main pioneer script for PATH access
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
