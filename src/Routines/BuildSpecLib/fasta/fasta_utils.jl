@@ -185,7 +185,8 @@ The function uses I/L equivalence when checking for sequence uniqueness.
 function add_entrapment_sequences(
     target_fasta_entries::Vector{FastaEntry}, 
     entrapment_r::UInt8;
-    max_shuffle_attempts::Int64 = 20
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}()
 )::Vector{FastaEntry}
     
     # Pre-allocate output vector
@@ -207,12 +208,24 @@ function add_entrapment_sequences(
         end
     end
     base_prec_id = maximum_prec_id + one(UInt32)
+
+    shuffle_seq = ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+       fixed_chars#['R','K']#Vector{Char}()
+    )
+    @info "Entrapment fixed chars: $fixed_chars"
     for target_entry in target_fasta_entries
         for entrapment_group_id in 1:entrapment_r
             n_shuffle_attempts = 0
-            
+            #new_sequence = reverse(get_sequence(target_entry)[1:(end-1)]) * get_sequence(target_entry)[end]
             while n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_fast(get_sequence(target_entry))
+                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))#shuffle_fast(get_sequence(target_entry))
+
                 #Make sure the entrapment sequence is unique (I and L are equivalent)
                 if (new_sequence, get_charge(target_entry)) ∉ sequences_set
                     entrapment_fasta_entries[n] = FastaEntry(
@@ -237,6 +250,7 @@ function add_entrapment_sequences(
                     push!(sequences_set, new_sequence, get_charge(target_entry))
                     break
                 end
+                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
                 n_shuffle_attempts += 1
             end
             
@@ -248,6 +262,86 @@ function add_entrapment_sequences(
     
     return vcat(target_fasta_entries, entrapment_fasta_entries[1:n-1])
 end
+
+mutable struct ShuffleSeq
+    old_sequence::String 
+    new_sequence::Vector{Char}
+    new_positions::Vector{UInt8}
+    movable_positions::Vector{UInt8}
+    n_movable::UInt8
+    sequence_length::UInt8
+    fixed_chars::Vector{Char}
+end
+
+"""
+    resetSequence!(shuffle_sequence::ShuffleSeq, sequence::String)
+
+Resets the 'old_sequence' and 'new_sequence' attributes of the `ShuffleSeq` object.
+and resets the 'sequence_length' attribute of the 'shuffle_sequence'
+"""
+function resetSequence!(shuffle_sequence::ShuffleSeq, sequence::String)
+
+    #Fills the character string for the 'new_sequence' to match 'sequence'
+    #and resets the 'sequence_length' attribute of the 'shuffle_sequence'
+    shuffle_sequence.old_sequence = sequence 
+    shuffle_sequence.sequence_length = length(sequence)
+    for i in range(one(UInt8), UInt8(shuffle_sequence.sequence_length))
+        shuffle_sequence.new_sequence[i] = sequence[i]
+        shuffle_sequence.new_positions[i] = i
+    end
+    shuffle_sequence.n_movable = zero(UInt8) 
+    return nothing
+end
+
+"""
+    fillMovablePositions!(ss::ShuffleSeq, sequence) 
+    
+Fills the character string for the 'new_sequence' to match 'sequence'
+and resets the 'sequence_length' attribute of the 'shuffle_sequence'
+"""
+function fillMovablePositions!(shuffle_sequence::ShuffleSeq)
+
+    shuffle_sequence.n_movable = zero(UInt8)
+    for i in range(one(UInt8), shuffle_sequence.sequence_length)
+        if shuffle_sequence.old_sequence[i] ∉ shuffle_sequence.fixed_chars
+            shuffle_sequence.n_movable += one(UInt8)
+            # If the character is fixed, keep it in the same position
+            shuffle_sequence.movable_positions[shuffle_sequence.n_movable] = i
+        end
+    end
+    return nothing
+end
+
+function permuteNewPositions!(shuffle_sequence::ShuffleSeq)
+    perm = randperm(shuffle_sequence.n_movable)
+    # Update new_positions based on the permutation
+    for (new_idx, old_idx) in enumerate(perm)
+        # Update sequence 
+        shuffle_sequence.new_sequence[shuffle_sequence.movable_positions[new_idx]] = 
+            shuffle_sequence.old_sequence[shuffle_sequence.movable_positions[old_idx]]
+        # Update positions 
+        shuffle_sequence.new_positions[shuffle_sequence.movable_positions[new_idx]] = 
+            shuffle_sequence.movable_positions[old_idx]
+    end
+    return nothing
+end
+
+function shuffle_sequence!(
+    shuffle_sequence::ShuffleSeq,
+    sequence::String,
+)
+    # Reset the sequence and positions
+    resetSequence!(shuffle_sequence, sequence)
+    
+    # Fill movable positions
+    fillMovablePositions!(shuffle_sequence)
+    
+    # Permute new positions
+    permuteNewPositions!(shuffle_sequence)
+    
+    return String(shuffle_sequence.new_sequence[1:shuffle_sequence.sequence_length])
+end
+
 
 """
 Enhanced version of shuffle_fast that tracks position changes using a position vector.
@@ -374,7 +468,11 @@ all_entries = add_reverse_decoys(target_entries, max_shuffle_attempts=50)
 - Uses I/L equivalence when checking for sequence uniqueness
 - Entries are sorted by sequence in the output for efficient lookup
 """
-function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
+function add_reverse_decoys(
+    target_fasta_entries::Vector{FastaEntry}; 
+    max_shuffle_attempts::Int64 = 20,
+    fixed_chars::Vector{Char} = Vector{Char}()
+    )
     # Pre-allocate space for decoy entries
     decoy_fasta_entries = Vector{FastaEntry}(undef, length(target_fasta_entries))
     
@@ -382,8 +480,18 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
     sequences_set = PeptideSequenceSet(target_fasta_entries)
     
     # Initialize position tracking vector (max peptide length of 255 should be sufficient)
-    positions = Vector{UInt8}(undef, 255)
+    #positions = Vector{UInt8}(undef, 255)
     
+    shuffle_seq = ShuffleSeq(
+        "",
+        Vector{Char}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        Vector{UInt8}(undef, 255),
+        zero(UInt8),
+        zero(UInt8),
+        fixed_chars#['R','K']#Vector{Char}()
+    )
+    @info "Decoy fixed chars: $fixed_chars"
     n = 1
     for target_entry in target_fasta_entries
         target_sequence = get_sequence(target_entry)
@@ -391,30 +499,31 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
         seq_length = UInt8(length(target_sequence))
         
         # Reset positions vector to initial positions
-        for i in 1:seq_length
-            positions[i] = i
-        end
+        #for i in 1:seq_length
+        #    positions[i] = i
+        #end
         
         # For reversal, modify positions vector accordingly (except last position)
-        for i in 1:(seq_length-1)
-            positions[i] = seq_length - i
-        end
+        #for i in 1:(seq_length-1)
+        #    positions[i] = seq_length - i
+        #end
         
         # Create reversed sequence (keeping last amino acid)
-        decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
-        
+        #decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
+        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)#shuffle_fast_with_positions(target_sequence, positions)
+                
         n_shuffle_attempts = 0
         
         # If reversal creates a duplicate, try shuffling
         if (decoy_sequence, charge) ∈ sequences_set
             # Reset positions vector before shuffling
-            for i in 1:seq_length
-                positions[i] = i
-            end
+            #for i in 1:seq_length
+            #    positions[i] = i
+            #end
             
             while n_shuffle_attempts < max_shuffle_attempts
                 # Use enhanced shuffle function that updates positions vector
-                decoy_sequence = shuffle_fast_with_positions(target_sequence, positions)
+                 decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
                 
                 if (decoy_sequence, charge) ∉ sequences_set
                     break
@@ -422,9 +531,9 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
                 n_shuffle_attempts += 1
                 
                 # Reset positions vector before next attempt
-                for i in 1:seq_length
-                    positions[i] = i
-                end
+                #for i in 1:seq_length
+                #    positions[i] = i
+                #end
             end
         end
         
@@ -434,13 +543,13 @@ function add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffl
             # Adjust modification positions based on sequence manipulation
             adjusted_structural_mods = adjust_mod_positions(
                 get_structural_mods(target_entry),
-                positions,
+                shuffle_seq.new_positions,
                 seq_length
             )
             
             adjusted_isotopic_mods = adjust_mod_positions(
                 get_isotopic_mods(target_entry),
-                positions,
+                shuffle_seq.new_positions,
                 seq_length
             )
             
