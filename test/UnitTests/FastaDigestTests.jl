@@ -316,7 +316,7 @@
         @test all(length.(entrapment_groups) .== 2)
     end
     
-    @testset "add_reverse_decoys" begin
+    @testset "add_decoy_sequences" begin
         # Create test entries
         entries = [
             FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
@@ -324,7 +324,7 @@
         ]
         
         # Test basic reversal
-        result = add_reverse_decoys(entries)
+        result = add_decoy_sequences(entries)
         
         @test length(result) == 4  # 2 original + 2 decoy
         
@@ -334,12 +334,13 @@
         
         # Check decoy sequences are reversed except last AA
         for i in 1:2
+            
             target_seq = get_sequence(entries[i])
             decoy = decoys[i]
             decoy_seq = get_sequence(decoy)
-            
             @test decoy_seq[end] == target_seq[end]  # Last AA preserved
-            @test decoy_seq[1:end-1] == reverse(target_seq[1:end-1])  # Rest is reversed
+            @test all(decoy_seq .== target_seq) == false
+            @test Set(decoy_seq[1:end-1]) == Set(target_seq[1:end-1])  # Rest is reversed
             
             # Check metadata preserved
             @test get_base_pep_id(decoy) == get_base_pep_id(entries[i])

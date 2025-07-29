@@ -197,7 +197,7 @@ function prepare_chronologer_input(
         _params.fasta_digest_params["max_var_mods"])
 
     # Add decoy sequences
-    fasta_entries = add_reverse_decoys(fasta_entries,
+    fasta_entries = add_decoy_sequences(fasta_entries,
         fixed_chars = Vector{Char}([first(char) for char in _params.fasta_digest_params["fixed_chars"]])
         )
         

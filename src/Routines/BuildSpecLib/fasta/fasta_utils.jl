@@ -302,7 +302,8 @@ and resets the 'sequence_length' attribute of the 'shuffle_sequence'
 function fillMovablePositions!(shuffle_sequence::ShuffleSeq)
 
     shuffle_sequence.n_movable = zero(UInt8)
-    for i in range(one(UInt8), shuffle_sequence.sequence_length)
+    #shuffle_sequence.sequence_length-1 because the last amino-acid is fixed 
+    for i in range(one(UInt8), shuffle_sequence.sequence_length-1)
         if shuffle_sequence.old_sequence[i] ∉ shuffle_sequence.fixed_chars
             shuffle_sequence.n_movable += one(UInt8)
             # If the character is fixed, keep it in the same position
@@ -432,7 +433,7 @@ end
 
 
 """
-    add_reverse_decoys(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
+    add_decoy_sequences(target_fasta_entries::Vector{FastaEntry}; max_shuffle_attempts::Int64 = 20)
 
 Creates decoy sequences for target peptides by reversing all but the last amino acid.
 If reversal creates a duplicate sequence, falls back to shuffling.
@@ -456,10 +457,10 @@ For each target peptide:
 # Examples
 ```julia
 # Add reverse decoys to a set of target entries
-all_entries = add_reverse_decoys(target_entries)
+all_entries = add_decoy_sequences(target_entries)
 
 # Add decoys with more shuffle attempts
-all_entries = add_reverse_decoys(target_entries, max_shuffle_attempts=50)
+all_entries = add_decoy_sequences(target_entries, max_shuffle_attempts=50)
 ```
 
 # Notes
@@ -468,7 +469,7 @@ all_entries = add_reverse_decoys(target_entries, max_shuffle_attempts=50)
 - Uses I/L equivalence when checking for sequence uniqueness
 - Entries are sorted by sequence in the output for efficient lookup
 """
-function add_reverse_decoys(
+function add_decoy_sequences(
     target_fasta_entries::Vector{FastaEntry}; 
     max_shuffle_attempts::Int64 = 20,
     fixed_chars::Vector{Char} = Vector{Char}()
@@ -497,17 +498,7 @@ function add_reverse_decoys(
         target_sequence = get_sequence(target_entry)
         charge = get_charge(target_entry)
         seq_length = UInt8(length(target_sequence))
-        
-        # Reset positions vector to initial positions
-        #for i in 1:seq_length
-        #    positions[i] = i
-        #end
-        
-        # For reversal, modify positions vector accordingly (except last position)
-        #for i in 1:(seq_length-1)
-        #    positions[i] = seq_length - i
-        #end
-        
+
         # Create reversed sequence (keeping last amino acid)
         #decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
         decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)#shuffle_fast_with_positions(target_sequence, positions)
@@ -515,12 +506,7 @@ function add_reverse_decoys(
         n_shuffle_attempts = 0
         
         # If reversal creates a duplicate, try shuffling
-        if (decoy_sequence, charge) ∈ sequences_set
-            # Reset positions vector before shuffling
-            #for i in 1:seq_length
-            #    positions[i] = i
-            #end
-            
+        if (decoy_sequence, charge) ∈ sequences_set         
             while n_shuffle_attempts < max_shuffle_attempts
                 # Use enhanced shuffle function that updates positions vector
                  decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
@@ -529,11 +515,6 @@ function add_reverse_decoys(
                     break
                 end
                 n_shuffle_attempts += 1
-                
-                # Reset positions vector before next attempt
-                #for i in 1:seq_length
-                #    positions[i] = i
-                #end
             end
         end
         
