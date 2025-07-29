@@ -157,8 +157,8 @@ jobs:
                 "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
                 "convertMzML" => "main_convertMzML",
                 "ParseSpecLib" => "main_ParseSpecLib",
-              ],
-              precompile_execution_file="src/build/snoop.jl",
+              ]#,
+              #precompile_execution_file="src/build/snoop.jl",
             );
             '
 
