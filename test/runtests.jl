@@ -35,6 +35,7 @@ using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics
 using EvoTrees
+using MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
@@ -42,8 +43,6 @@ using SparseArrays
 using Dates 
 
 main_dir = joinpath(@__DIR__, "../src")
-include(joinpath(dirname(@__DIR__), "src", "Routines","SearchDIA","importScripts.jl"))
-files_loaded = importScripts()
 
 """
 Type alias for m/z to eV interpolation functions.
@@ -63,10 +62,10 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
     Line{Nothing}                           # Extrapolation
 }
 
-include(joinpath(dirname(@__DIR__), "src", "Routines","BuildSpecLib","importScripts.jl"))
-importScriptsSpecLib(files_loaded)
-#include(joinpath(main_dir, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))
-#const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
+include(joinpath(dirname(@__DIR__), "src", "importScripts.jl"))
+files_loaded = importScripts()
+
+#include(joinpath(main_dir, "Routines","LibrarySearch","methods","loadSpectralLibrary.jl"))  
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(dirname(@__DIR__), "src", "Routines","SearchDIA.jl"))
 include(joinpath(dirname(@__DIR__), "src", "Routines","BuildSpecLib.jl"))
