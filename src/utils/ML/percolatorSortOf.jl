@@ -283,11 +283,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                         else
                             psms_subset.MBR_best_irt_diff[i]        = -1.0f0
                             psms_subset.MBR_rv_coefficient[i]       = -1.0f0
-                            psms_subset.MBR_is_best_decoy[i]        = false
+                            psms_subset.MBR_is_best_decoy[i]        = true
                             psms_subset.MBR_max_pair_prob[i]        = -1.0f0
                             psms_subset.MBR_log2_weight_ratio[i]    = -1.0f0
                             psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
-                            psms_subset.sub_psms.MBR_is_missing[i]  = true
+                            psms_subset.MBR_is_missing[i]           = true
                             continue
                         end
 
@@ -521,7 +521,7 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             if best_idx == 0
                 sub_psms.MBR_best_irt_diff[i]           = -1.0f0
                 sub_psms.MBR_rv_coefficient[i]          = -1.0f0
-                sub_psms.MBR_is_best_decoy[i]           = false
+                sub_psms.MBR_is_best_decoy[i]           = true
                 sub_psms.MBR_log2_weight_ratio[i]       = -1.0f0
                 sub_psms.MBR_log2_explained_ratio[i]    = -1.0f0
                 sub_psms.MBR_max_pair_prob[i]           = -1.0f0

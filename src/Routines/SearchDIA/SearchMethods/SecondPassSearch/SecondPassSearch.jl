@@ -366,13 +366,13 @@ function process_search_results!(
             miss_mask = ismissing.(psms[!, ms1_cols[1]])
         else
             ms1_cols = [
-                :rt_ms1, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+                :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
                 :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1,
                 :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1
             ]
             miss_mask = trues(size(psms, 1))
             for col in ms1_cols
-                psms[!, col] = zeros(Float32, size(psms, 1))
+                psms[!, col] = -1*ones(Float32, size(psms, 1))
             end
         end
 
