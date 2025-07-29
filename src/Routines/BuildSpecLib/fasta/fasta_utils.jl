@@ -80,65 +80,6 @@ function in(seq_charge::Tuple{String, UInt8}, pss::PeptideSequenceSet)
     return (replace(first(seq_charge), 'I' => 'L'), last(seq_charge)) ∈ getSeqSet(pss)
 end
 
-
-"""
-    shuffle_fast(s::String)
-
-Fast sequence shuffling algorithm that preserves terminal amino acids.
-
-# Parameters
-- `s::String`: Peptide sequence to shuffle
-
-# Returns
-- `String`: Shuffled sequence with preserved C-terminal amino acid
-
-# Details
-This function:
-1. Preserves the last amino acid (C-terminal) position
-2. Randomly shuffles all other amino acids
-3. Uses a highly optimized implementation for performance
-
-# Examples
-```julia
-# Shuffle a peptide sequence
-shuffled = shuffle_fast("PEPTIDEK")
-# Returns something like "DPETPIEK" (last K preserved)
-```
-
-# Notes
-Used in entrapment sequence generation where C-terminal preservation is important
-for maintaining enzymatic cleavage properties.
-"""
-function shuffle_fast(s::String)
-    # Handle special cases
-    if length(s) <= 1
-        return s  # Return as-is for empty or single-character strings
-    end
-
-    ss = sizeof(s)
-    l = length(s) - 1  # Preserve last amino acid
-
-    # Create positions vector
-    v = Vector{Int}(undef, l)
-    i = 1
-    for j in 1:l
-        v[j] = i
-        i = nextind(s, i)
-    end
-
-    # Shuffle middle positions
-    p = pointer(s)
-    u = Vector{UInt8}(undef, ss)
-    k = 1
-    for i in randperm(l)
-        u[k] = unsafe_load(p, v[i])
-        k += 1
-    end
-    u[end] = unsafe_load(p, ss)  # Keep last amino acid
-    
-    return String(u)
-end
-
 """
     add_entrapment_sequences(
         target_fasta_entries::Vector{FastaEntry}, 
@@ -224,7 +165,7 @@ function add_entrapment_sequences(
             n_shuffle_attempts = 0
             #new_sequence = reverse(get_sequence(target_entry)[1:(end-1)]) * get_sequence(target_entry)[end]
             while n_shuffle_attempts < max_shuffle_attempts
-                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))#shuffle_fast(get_sequence(target_entry))
+                new_sequence = shuffle_sequence!(shuffle_seq, get_sequence(target_entry))
 
                 #Make sure the entrapment sequence is unique (I and L are equivalent)
                 if (new_sequence, get_charge(target_entry)) ∉ sequences_set
@@ -341,45 +282,6 @@ function shuffle_sequence!(
     permuteNewPositions!(shuffle_sequence)
     
     return String(shuffle_sequence.new_sequence[1:shuffle_sequence.sequence_length])
-end
-
-
-"""
-Enhanced version of shuffle_fast that tracks position changes using a position vector.
-"""
-function shuffle_fast_with_positions(s::String, positions::Vector{UInt8})
-    ss = sizeof(s)
-    l = length(s) - 1  # Preserve last amino acid
-
-    # Create indices vector
-    v = Vector{Int}(undef, l)
-    i = 1
-    for j in 1:l
-        v[j] = i
-        i = nextind(s, i)
-    end
-
-    # Generate random permutation
-    perm = randperm(l)
-    
-    # Update positions vector based on the permutation
-    # Store the original positions temporarily
-    temp_positions = copy(positions[1:l])
-    for (new_idx, old_idx) in enumerate(perm)
-        positions[new_idx] = temp_positions[old_idx]
-    end
-    
-    # Shuffle middle positions
-    p = pointer(s)
-    u = Vector{UInt8}(undef, ss)
-    k = 1
-    for i in perm
-        u[k] = unsafe_load(p, v[i])
-        k += 1
-    end
-    u[end] = unsafe_load(p, ss)  # Keep last amino acid
-    
-    return String(u)
 end
 
 function adjust_mod_positions(
@@ -501,7 +403,7 @@ function add_decoy_sequences(
 
         # Create reversed sequence (keeping last amino acid)
         #decoy_sequence = reverse(target_sequence[1:(end-1)]) * target_sequence[end]
-        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)#shuffle_fast_with_positions(target_sequence, positions)
+        decoy_sequence = shuffle_sequence!(shuffle_seq, target_sequence)
                 
         n_shuffle_attempts = 0
         

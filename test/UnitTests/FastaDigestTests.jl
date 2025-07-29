@@ -258,31 +258,6 @@
         @test ("ANOTHER", zero(UInt8)) in pss_from_entries
     end
     
-    @testset "shuffle_fast" begin
-        # Test basic shuffling preserves C-terminal
-        s = "PEPTIDEK"
-        shuffled = shuffle_fast(s)
-        @test shuffled[end] == 'K'  # Last AA preserved
-        @test length(shuffled) == length(s)  # Length preserved
-        @test Set(shuffled) == Set(s)  # Same character composition
-        
-        # Ensure some shuffling actually occurred
-        @test shuffled != s
-        
-        # Test with short strings
-        s = "AB"
-        shuffled = shuffle_fast(s)
-        @test shuffled == s  # Can't shuffle a 2-letter string with last preserved
-        
-        # Test with single character
-        s = "A"
-        @test shuffle_fast(s) == "A"
-        
-        # Test with empty string
-        s = ""
-        @test shuffle_fast(s) == ""
-    end
-    
     @testset "add_entrapment_sequences" begin
         # Create test entries
         entries = [
