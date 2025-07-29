@@ -366,7 +366,7 @@ function process_search_results!(
             miss_mask = ismissing.(psms[!, ms1_cols[1]])
         else
             ms1_cols = [
-                :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
+                :rt_ms1, :weight_ms1, :gof_ms1, :max_matched_residual_ms1,
                 :max_unmatched_residual_ms1, :fitted_spectral_contrast_ms1,
                 :error_ms1, :m0_error_ms1, :n_iso_ms1, :big_iso_ms1
             ]
@@ -380,7 +380,10 @@ function process_search_results!(
             psms[!, col] = coalesce.(psms[!, col], zero(nonmissingtype(eltype(psms[!, col]))))
             disallowmissing!(psms, col)
         end
-        psms[!,:rt_diff] = abs.(psms[!,:rt] .- psms[!,:rt_ms1])
+        psms[!,:rt_diff] = ifelse.(psms[!,:rt_ms1] .== -1,
+                          -1,
+                          abs.(psms[!,:rt] .- psms[!,:rt_ms1]))
+        
         psms[!, :ms1_features_missing] = miss_mask
         #Add additional features for final analysis
         add_features!(
