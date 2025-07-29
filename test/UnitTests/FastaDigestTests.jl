@@ -296,7 +296,7 @@
         entries = [
             FastaEntry("P1", "", "", "", "human", "test", "PEPTIDEK", UInt32(1), missing, missing, UInt8(0), UInt32(1), UInt32(1), UInt8(0), false),
             FastaEntry("P2", "", "", "", "human", "test", "MAKEPROTEIN", UInt32(1), missing, missing, UInt8(0), UInt32(2), UInt32(2), UInt8(0), false)
-        ]
+   ]
         
         # Test basic reversal
         result = add_decoy_sequences(entries)
@@ -308,6 +308,8 @@
         @test length(decoys) == 2
         
         # Check decoy sequences are reversed except last AA
+        sort!(decoys, by = x-> x.base_prec_id)
+        sort!(entries, by = x->  x.base_prec_id)
         for i in 1:2
             
             target_seq = get_sequence(entries[i])
