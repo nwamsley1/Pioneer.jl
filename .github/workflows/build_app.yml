@@ -166,8 +166,8 @@ jobs:
         run: |
           julia --project=. -e '
             using PackageCompiler
-            precompile_path = joinpath(pwd(), "pioneer_precompile.jl")
-            sysimage_path = joinpath(pwd(), "pioneer_sys.so")
+            precompile_path = abspath("pioneer_precompile.jl")
+            sysimage_path = abspath("pioneer_sys.so")
             create_sysimage(
               [:Pioneer];
               precompile_execution_file="src/build/snoop.jl",
@@ -182,8 +182,8 @@ jobs:
           julia --project=. -e '
             using PackageCompiler;
 
-            precompile_file = joinpath(pwd(), "pioneer_precompile.jl")
-            sysimage_file = joinpath(pwd(), "pioneer_sys.so")
+            precompile_file = abspath("pioneer_precompile.jl")
+            sysimage_file = abspath("pioneer_sys.so")
             
             # Create the final directory structure
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
