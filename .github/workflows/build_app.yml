@@ -166,11 +166,13 @@ jobs:
         run: |
           julia --project=. -e '
             using PackageCompiler
+            precompile_path = joinpath(pwd(), "pioneer_precompile.jl")
+            sysimage_path = joinpath(pwd(), "pioneer_sys.so")
             create_sysimage(
               [:Pioneer];
               precompile_execution_file="src/build/snoop.jl",
-              sysimage_path="pioneer_sys.so",
-              precompile_statements_file="pioneer_precompile.jl",
+              sysimage_path=sysimage_path,
+              precompile_statements_file=precompile_path,
             )
           '
 
@@ -179,6 +181,9 @@ jobs:
         run: |
           julia --project=. -e '
             using PackageCompiler;
+
+            precompile_file = joinpath(pwd(), "pioneer_precompile.jl")
+            sysimage_file = joinpath(pwd(), "pioneer_sys.so")
             
             # Create the final directory structure
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
@@ -201,8 +206,8 @@ jobs:
               incremental=false, force=true,
               executables=[first_exe => first_main],
               cpu_target="generic",
-              precompile_statements_file="pioneer_precompile.jl",
-              base_sysimage="pioneer_sys.so");
+              precompile_statements_file=precompile_file,
+              base_sysimage=sysimage_file);
             
             # Build remaining executables one at a time
             for (exe, main) in executables[2:end]
@@ -211,8 +216,8 @@ jobs:
                 incremental=false, force=true,
                 executables=[exe => main],
                 cpu_target="generic",
-                precompile_statements_file="pioneer_precompile.jl",
-                base_sysimage="pioneer_sys.so");
+                precompile_statements_file=precompile_file,
+                base_sysimage=sysimage_file);
               
               # Copy just the executable
               cp("build/temp_$exe/bin/$exe", 
@@ -223,8 +228,8 @@ jobs:
               rm("build/temp_$exe", recursive=true)
             end
 
-            rm("pioneer_sys.so", force=true)
-            rm("pioneer_precompile.jl", force=true)
+            rm(sysimage_file, force=true)
+            rm(precompile_file, force=true)
           '
       
       - name: Add wrapper scripts
