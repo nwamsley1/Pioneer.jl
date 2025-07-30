@@ -255,7 +255,8 @@ jobs:
             fi
           done
 
-          chmod -R u+w "$PKGROOT/usr/local/$APPNAME/share/julia"
+          # ensure runtime depot is writable by the installed user
+          chmod -R a+w "$PKGROOT/usr/local/$APPNAME/share/julia"
           
           # ensure files are writable so codesign can modify them
           find "$PKGROOT/usr/local/$APPNAME" -type f -exec chmod u+w {} +
@@ -402,6 +403,9 @@ jobs:
               sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
             fi
           done
+
+          # ensure runtime depot is writable by the installed user
+          chmod -R a+w deb/usr/local/Pioneer/share/julia
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
