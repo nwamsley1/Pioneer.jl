@@ -175,7 +175,6 @@ jobs:
               precompile_statements_file=precompile_path,
             )
           '
-          echo 
 
       - name: Compile application (Linux - Memory Optimized)
         if: matrix.os == 'linux'
