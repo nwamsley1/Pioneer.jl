@@ -166,8 +166,8 @@ jobs:
         run: |
           julia --project=. -e '
             using PackageCompiler
-            precompile_path = abspath("pioneer_precompile.jl")
-            sysimage_path = abspath("pioneer_sys.so")
+            precompile_path = "src/build/pioneer_precompile.jl"
+            sysimage_path = "src/build/pioneer_sys.so"
             create_sysimage(
               [:Pioneer];
               precompile_execution_file="src/build/snoop.jl",
@@ -175,6 +175,7 @@ jobs:
               precompile_statements_file=precompile_path,
             )
           '
+          echo 
 
       - name: Compile application (Linux - Memory Optimized)
         if: matrix.os == 'linux'
@@ -182,8 +183,8 @@ jobs:
           julia --project=. -e '
             using PackageCompiler;
 
-            precompile_file = abspath("pioneer_precompile.jl")
-            sysimage_file = abspath("pioneer_sys.so")
+            precompile_file = "src/build/pioneer_precompile.jl"
+            sysimage_file = "src/build/pioneer_sys.so"
             
             # Create the final directory structure
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
