@@ -129,7 +129,7 @@ jobs:
       - name: Download precompile data
         shell: bash
         run: |
-          exit 0
+          #exit 0
           mkdir -p temp/zenodo
           cd temp/zenodo
           curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
