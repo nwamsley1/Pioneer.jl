@@ -6,7 +6,7 @@
            Name="Pioneer CLI Tools" 
            Language="1033" 
            Version="$(var.ProductVersion)" 
-           Manufacturer="edu.washu.goldfarblab" 
+           Manufacturer="$(var.PackageIdentifier)"
            UpgradeCode="dfca64a0-7eb6-40db-971c-486154fa6eb0">
     
     <Package InstallerVersion="200" 
@@ -69,7 +69,7 @@
     <UIRef Id="WixUI_Minimal" />
     
     <!-- Product information -->
-    <Property Id="ARPCOMMENTS" Value="Pioneer command-line tools for data-independent acquisition (DIA) proteomics analysis" />
+    <Property Id="ARPCOMMENTS" Value="$(var.ProductDescription)" />
   </Product>
   
 </Wix>

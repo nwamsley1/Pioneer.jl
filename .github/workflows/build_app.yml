@@ -129,7 +129,6 @@ jobs:
       - name: Download precompile data
         shell: bash
         run: |
-          #exit 0
           mkdir -p temp/zenodo
           cd temp/zenodo
           curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
@@ -162,6 +161,19 @@ jobs:
             );
             '
 
+      - name: Generate sysimage
+        if: matrix.os == 'linux'
+        run: |
+          julia --project=. -e '
+            using PackageCompiler
+            create_sysimage(
+              [:Pioneer];
+              precompile_execution_file="src/build/snoop.jl",
+              sysimage_path="pioneer_sys.so",
+              precompile_statements_file="pioneer_precompile.jl",
+            )
+          '
+
       - name: Compile application (Linux - Memory Optimized)
         if: matrix.os == 'linux'
         run: |
@@ -188,7 +200,9 @@ jobs:
             create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", 
               incremental=false, force=true,
               executables=[first_exe => first_main],
-              cpu_target="generic");
+              cpu_target="generic",
+              precompile_statements_file="pioneer_precompile.jl",
+              base_sysimage="pioneer_sys.so");
             
             # Build remaining executables one at a time
             for (exe, main) in executables[2:end]
@@ -196,7 +210,9 @@ jobs:
               create_app(".", "build/temp_$exe/", 
                 incremental=false, force=true,
                 executables=[exe => main],
-                cpu_target="generic");
+                cpu_target="generic",
+                precompile_statements_file="pioneer_precompile.jl",
+                base_sysimage="pioneer_sys.so");
               
               # Copy just the executable
               cp("build/temp_$exe/bin/$exe", 
@@ -206,6 +222,9 @@ jobs:
               # Clean up temp directory to save space
               rm("build/temp_$exe", recursive=true)
             end
+
+            rm("pioneer_sys.so", force=true)
+            rm("pioneer_precompile.jl", force=true)
           '
       
       - name: Add wrapper scripts
@@ -231,7 +250,7 @@ jobs:
           APPNAME="Pioneer"
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
-          VERSION=$(grep -m1 '^version' Project.toml | awk -F'"' '{print $2}')
+          VERSION=${{ steps.get_version.outputs.VERSION }}
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APPNAME"
           cp -R "$DIST"/* "$PKGROOT/usr/local/$APPNAME/"
@@ -242,18 +261,6 @@ jobs:
           cp data/contaminants.fasta.gz "$PKGROOT/usr/local/$APPNAME/data/"
           cp data/immonium.txt "$PKGROOT/usr/local/$APPNAME/data/"
           cp data/ion_dictionary.txt "$PKGROOT/usr/local/$APPNAME/data/"
-
-          # ensure CLI wrappers set a writable depot path
-          for f in "$PKGROOT/usr/local/$APPNAME/bin"/*; do
-            [ -f "$f" ] || continue
-            if head -n1 "$f" | grep -q "^#!"; then
-              if [[ "$(uname)" == "Darwin" ]]; then
-                sed -i '' '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
-              else
-                sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
-              fi
-            fi
-          done
 
           # ensure runtime depot is writable by the installed user
           chmod -R a+w "$PKGROOT/usr/local/$APPNAME/share/julia"
@@ -273,8 +280,11 @@ jobs:
           # Create symlink in /usr/local/bin for PATH access
           ln -sf /usr/local/Pioneer/pioneer "$PKGROOT/usr/local/bin/pioneer"
 
+          info=src/build/package_info.json
+          IDENTIFIER=$(jq -r '.identifier' "$info")
+
           pkgbuild --root "$PKGROOT" \
-            --identifier edu.washu.goldfarblab.pioneer \
+            --identifier "$IDENTIFIER" \
             --version "$VERSION" \
             --install-location / PioneerUnsigned.pkg
           productsign --sign "$PKG_SIGN_IDENTITY" \
@@ -350,7 +360,10 @@ jobs:
           
           # Determine platform for WiX
           $platform = if ("${{ matrix.arch }}" -eq "x64") { "x64" } else { "x86" }
-          
+          $info = Get-Content "src/build/package_info.json" | ConvertFrom-Json
+          $desc = $info.description
+          $identifier = $info.identifier
+
           # Generate component list for all files
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
@@ -368,6 +381,8 @@ jobs:
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
             -dProductVersion="${{ steps.get_version.outputs.VERSION }}" `
+            -dProductDescription="$desc" `
+            -dPackageIdentifier="$identifier" `
             -dPlatform="$platform" `
             -arch ${{ matrix.arch }} `
             -ext WixUIExtension `
@@ -396,24 +411,21 @@ jobs:
 
           # symlink the main pioneer script for PATH access
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
-          
-          for f in deb/usr/local/Pioneer/bin/*; do
-            [ -f "$f" ] || continue
-            if head -n1 "$f" | grep -q "^#!"; then
-              sed -i '2iexport JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-$HOME/.julia}"' "$f"
-            fi
-          done
 
           # ensure runtime depot is writable by the installed user
           chmod -R a+w deb/usr/local/Pioneer/share/julia
 
+          info=src/build/package_info.json
+          PACKAGE=$(jq -r '.package' "$info")
+          MAINTAINER=$(jq -r '.maintainer' "$info")
+          DESCRIPTION=$(jq -r '.description' "$info")
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
-          Package: pioneer
-          Version: 0.0.0
+          Package: $PACKAGE
+          Version: ${{ steps.get_version.outputs.VERSION }}
           Architecture: amd64
-          Maintainer: you@example.com
-          Description: Pioneer application
+          Maintainer: $MAINTAINER
+          Description: $DESCRIPTION
           EOF
 
           dpkg-deb --build deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb

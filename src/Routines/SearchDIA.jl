@@ -112,10 +112,6 @@ results_dir/
 ```
 """
 function SearchDIA(params_path::String)
-    println("Julia DEPOT_PATH:")
-    for p in DEPOT_PATH
-        println("  ", p)
-    end
     # Clean up any old file handlers in case the program crashed
     GC.gc()
      #params_path = normpath("C:\\Users\\n.t.wamsley\\Documents\\PIONEER_PAPER\\OlsenAstralMS1SpeedTest\\OlsenAstralMS1SpeedTest.json.json")

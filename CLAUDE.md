@@ -144,7 +144,7 @@ All search methods implement this interface:
 **ML-Enhanced Scoring** (`utils_protein_ml.jl`):
 - Extracts top-N precursor scores as features
 - Adds protein-level statistics (peptide count, score distribution)
-- Uses EvoTrees gradient boosting with cross-validation
+- Uses EvoTrees/XGBoost gradient boosting with cross-validation
 - Maintains CV fold consistency with precursor models
 
 **Merging Functions**:
@@ -221,7 +221,7 @@ results_dir/
 - Custom fragment indexing for fast lookup
 - Multi-threaded processing with task partitioning
 - Spline-based models for RT conversion and quadrupole transmission
-- EvoTrees integration for PSM rescoring and protein group ML scoring
+- EvoTrees/XGBoost integration for PSM rescoring and protein group ML scoring
 - Huber loss optimization for robust parameter estimation
 
 ### Performance Considerations
@@ -252,7 +252,7 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 ### External Dependencies
 - PioneerConverter (.NET) - Required for Thermo RAW file conversion
 - Koina API - External service for spectrum prediction (requires internet)
-- EvoTrees - Machine learning for PSM rescoring
+- EvoTrees/XGBoost - Machine learning for PSM rescoring
 
 ### Supported Prediction Models
 - **unispec** - Instrument-specific models for QE, QEHFX, LUMOS, ELITE, VELOS
@@ -264,7 +264,7 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 - Refactoring ScoringSearch and MaxLFQSearch for better encapsulation
 - See src/Routines/SearchDIA/SearchMethods/REFACTORING_PLAN_V2.md for detailed plan
 - Adding FileReference abstraction layer for type-safe file operations
-- Protein group ML scoring integration using EvoTrees gradient boosting
+- Protein group ML scoring integration using EvoTrees/XGBoost gradient boosting
 - See PROTEIN_ML_SCORING_INTEGRATION.md for implementation details
 - Features top-N precursor scores with cross-validation consistency
 
@@ -272,7 +272,7 @@ All major functions use JSON parameter files. Examples in `data/example_config/`
 
 Pioneer now supports ML-enhanced protein group scoring that uses top N precursor scores as features:
 
-- EvoTrees models trained per CV fold
+- EvoTrees/XGBoost models trained per CV fold
 - Uses top N precursor scores plus protein-level statistics as features
 - Out-of-memory (OOM) support for large experiments
 - Automatic fallback to standard scoring if ML fails

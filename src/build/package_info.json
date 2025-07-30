@@ -1,0 +1,6 @@
+{
+  "package": "pioneer",
+  "maintainer": "n.t.wamsley@wustl.edu",
+  "identifier": "edu.washu.goldfarblab.pioneer",
+  "description": "Pioneer command-line tools for data-independent acquisition (DIA) proteomics analysis"
+}
