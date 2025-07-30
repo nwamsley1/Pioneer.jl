@@ -161,30 +161,12 @@ jobs:
             );
             '
 
-      - name: Generate sysimage
-        if: matrix.os == 'linux'
-        run: |
-          julia --project=. -e '
-            using PackageCompiler
-            precompile_path = "src/build/pioneer_precompile.jl"
-            sysimage_path = "src/build/pioneer_sys.so"
-            create_sysimage(
-              [:Pioneer];
-              precompile_execution_file="src/build/snoop.jl",
-              sysimage_path=sysimage_path,
-              precompile_statements_file=precompile_path,
-            )
-          '
-
       - name: Compile application (Linux - Memory Optimized)
         if: matrix.os == 'linux'
         run: |
           julia --project=. -e '
             using PackageCompiler;
 
-            precompile_file = "src/build/pioneer_precompile.jl"
-            sysimage_file = "src/build/pioneer_sys.so"
-            
             # Create the final directory structure
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib")
@@ -202,22 +184,22 @@ jobs:
             
             # First executable creates the base structure
             first_exe, first_main = first(executables)
+            ENV["PIONEER_CMD"] = first_exe
             create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/", 
               incremental=false, force=true,
               executables=[first_exe => first_main],
               cpu_target="generic",
-              precompile_statements_file=precompile_file,
-              base_sysimage=sysimage_file);
+              precompile_execution_file="src/build/snoop.jl");
             
             # Build remaining executables one at a time
             for (exe, main) in executables[2:end]
               println("Building $exe...")
+              ENV["PIONEER_CMD"] = exe
               create_app(".", "build/temp_$exe/", 
                 incremental=false, force=true,
                 executables=[exe => main],
                 cpu_target="generic",
-                precompile_statements_file=precompile_file,
-                base_sysimage=sysimage_file);
+                precompile_execution_file="src/build/snoop.jl");
               
               # Copy just the executable
               cp("build/temp_$exe/bin/$exe", 
@@ -227,9 +209,7 @@ jobs:
               # Clean up temp directory to save space
               rm("build/temp_$exe", recursive=true)
             end
-
-            rm(sysimage_file, force=true)
-            rm(precompile_file, force=true)
+            delete!(ENV, "PIONEER_CMD", nothing)
           '
       
       - name: Add wrapper scripts

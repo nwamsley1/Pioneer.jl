@@ -3,26 +3,48 @@ using Pioneer
 root = joinpath(@__DIR__)
 data_dir = joinpath(root, "..", "..", "data")
 
+cmd = get(ENV, "PIONEER_CMD", nothing)
+
+function maybe_run(name, f)
+    if cmd === nothing || cmd == name
+        try
+            f()
+        catch
+        end
+    end
+end
+
 ##########################################
 # Generate params
 ##########################################
 
 # search
-GetSearchParams(
-    joinpath(data_dir, "ecoli_test", "altimeter_ecoli.poin"),
-    joinpath(data_dir, "ecoli_test", "raw"),
-    mktempdir(),
-)
+maybe_run("GetSearchParams") do
+    GetSearchParams(
+        joinpath(data_dir, "ecoli_test", "altimeter_ecoli.poin"),
+        joinpath(data_dir, "ecoli_test", "raw"),
+        mktempdir(),
+    )
+end
+
 # predict
-GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+maybe_run("GetBuildLibParams") do
+    GetBuildLibParams(mktempdir(), "test_lib", joinpath(data_dir, "fasta"))
+end
+
 # empirical
-GetParseSpecLibParams( "test_lib", mktempdir())
+maybe_run("GetParseSpecLibParams") do
+    GetParseSpecLibParams("test_lib", mktempdir())
+end
 
 
 ##########################################
 # Empirical libraries
 ##########################################
-ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
+maybe_run("ParseSpecLib") do
+    ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
+end
+
 
 
 ##########################################
@@ -30,26 +52,30 @@ ParseSpecLib(joinpath(data_dir, "precompile", "build_empirical.json"))
 ##########################################
 
 # Build a tiny Prosit library and search it with low memory thresholds
-BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+maybe_run("BuildSpecLib") do
+    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+end
 # TODO
 # Build a tiny Altimeter library
-#BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
+#maybe_run("BuildSpecLib") do
+#    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+#end
 
 
 ##########################################
 # Search
 ##########################################
 
-# prosit
-SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
-# altimeter + MBR
-SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
-# altimeter + MBR + OOM
-SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))
-
+maybe_run("SearchDIA") do
+    SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))         # prosit
+    SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))      # altimeter + MBR
+    SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter_OOM.json"))  # altimeter + MBR + OOM
+end
 
 
 ##########################################
 # ConvertMzML
 ##########################################
-convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
+maybe_run("convertMzML") do
+    convertMzML(joinpath(data_dir, "precompile", "convert_example.mzML"))
+end
