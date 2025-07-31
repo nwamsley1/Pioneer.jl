@@ -75,6 +75,7 @@ function check_params_bsp(json_string::String)
     check_param(library_params, "prec_mz_max", Real)
     check_param(library_params, "max_frag_charge", Integer)
     check_param(library_params, "max_frag_rank", Integer)
+    check_param(library_params, "length_to_frag_count_multiple", Real)
     check_param(library_params, "min_frag_intensity", Real)
     check_param(library_params, "include_isotope", Bool)
     check_param(library_params, "include_internal", Bool)
@@ -199,6 +200,7 @@ function checkParseSpecLibParams(json_path::String)
         ("include_neutral_diff", Bool),
         ("max_frag_charge", Number),
         ("max_frag_rank", Number),
+        ("length_to_frag_count_multiple", Number),
         ("min_frag_intensity", Number),
         ("generate_decoys", Bool),
         ("generate_entrapment", Bool),
