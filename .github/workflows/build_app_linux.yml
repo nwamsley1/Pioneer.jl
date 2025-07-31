@@ -120,13 +120,13 @@ jobs:
           MAINTAINER=$(jq -r '.maintainer' "$info")
           DESCRIPTION=$(jq -r '.description' "$info")
           mkdir -p deb/DEBIAN
-          cat <<EOF2 > deb/DEBIAN/control
+          cat <<EOF > deb/DEBIAN/control
           Package: $PACKAGE
           Version: ${{ steps.get_version.outputs.VERSION }}
           Architecture: amd64
           Maintainer: $MAINTAINER
           Description: $DESCRIPTION
-EOF2
+          EOF
 
           dpkg-deb --build deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 
