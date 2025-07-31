@@ -88,6 +88,12 @@ function _select_transitions_impl!(
 
             # Update counters and temp storage
             precs_temp_size += 1
+            
+            # Resize array if needed to prevent bounds error
+            if precs_temp_size > length(precs_temp)
+                append!(precs_temp, Vector{UInt32}(undef, length(precs_temp)))
+            end
+            
             n += 1
             precs_temp[precs_temp_size] = prec_idx
 
