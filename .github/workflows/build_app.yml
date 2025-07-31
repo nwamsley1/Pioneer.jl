@@ -210,7 +210,7 @@ jobs:
               # Clean up temp directory to save space
               rm("build/temp_$exe", recursive=true)
             end
-            delete!(ENV, "PIONEER_CMD", nothing)
+            delete!(ENV, "PIONEER_CMD")
           '
       
       - name: Add wrapper scripts
