@@ -173,6 +173,7 @@ function buildPionLib(spec_lib_path::String,
     max_frag_charge,
     frag_bounds,
     max_frag_rank,
+    precursors_table[:length],
     min_frag_intensity,
     model_type
     );
@@ -366,6 +367,7 @@ function buildPionLib(spec_lib_path::String,
     max_frag_charge,
     frag_bounds,
     max_frag_rank,
+    precursors_table[:length],
     min_frag_intensity,
     model_type
     );
@@ -995,7 +997,8 @@ function getDetailedFrags(
     include_neutral_diff::Bool,
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
-    max_frag_rank::UInt8,
+    max_frag_rank::AbstractVector{UInt8},
+    prec_len::UInt8,
     min_frag_intensity::AbstractFloat,
     koina_model::KoinaModelType)
 
@@ -1046,7 +1049,9 @@ function getDetailedFrags(
             #update counters 
             n_frags += one(UInt64)
             rank += 1
-            if rank > max_frag_rank
+            #if rank > min(max_frag_rank, round((frag_start_idx - frag_stop_idx)*2))
+            #if rank > max_frag_rank
+            if rank > round((prec_len[pid])*1.5)+1
                 break
             end
         end
@@ -1112,7 +1117,9 @@ function getDetailedFrags(
             )
             detailed_frag_idx += 1
             rank += 1
-            if rank > max_frag_rank
+            #if rank > min(max_frag_rank, round((frag_start_idx - frag_stop_idx)*2))
+            #if rank > max_frag_rank
+            if rank > round((prec_len[pid])*1.5)+1
                 break
             end
         end
@@ -1224,6 +1231,7 @@ function getDetailedFrags(
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
     max_frag_rank::UInt8,
+    prec_len::AbstractVector{UInt8},
     min_frag_intensity::AbstractFloat,
     koina_model::SplineCoefficientModel) where {N}
 
@@ -1271,7 +1279,9 @@ function getDetailedFrags(
             #update counters 
             n_frags += one(UInt64)
             rank += 1
-            if rank > max_frag_rank
+            #if rank > min(max_frag_rank, round((frag_start_idx - frag_stop_idx)*2))
+            #if rank > max_frag_rank
+            if rank > round((prec_len[pid])*1.5)+1
                 break
             end
         end
@@ -1337,7 +1347,9 @@ function getDetailedFrags(
             )
             detailed_frag_idx += 1
             rank += 1
-            if rank > max_frag_rank
+            #if rank > min(max_frag_rank, round((frag_start_idx - frag_stop_idx)*2))
+            #if rank > max_frag_rank
+            if rank > round((prec_len[pid])*1.5)+1
                 break
             end
         end
