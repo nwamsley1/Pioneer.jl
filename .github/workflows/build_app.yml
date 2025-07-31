@@ -396,6 +396,7 @@ jobs:
           cp data/ion_dictionary.txt deb/usr/local/Pioneer/data/
 
           # symlink the main pioneer script for PATH access
+          mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
 
           # ensure runtime depot is writable by the installed user
