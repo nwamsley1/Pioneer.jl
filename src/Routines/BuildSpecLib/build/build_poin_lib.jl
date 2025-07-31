@@ -271,7 +271,7 @@ function buildPionLib(spec_lib_path::String,
                       include_neutral_diff::Bool,
                       max_frag_charge::UInt8,
                       max_frag_rank::UInt8,
-                      length_to_frag_count_multiple::UInt8,
+                      length_to_frag_count_multiple::AbstractFloat,
                       min_frag_intensity::Float32,
                       rank_to_score::Vector{UInt8},
                       frag_bounds::FragBoundModel,
@@ -910,7 +910,7 @@ end
     Helper function to decide if the fragment should be filtered out. Filters based on maximum rank or
         a constant multiple of the peptide length, whichever is least 
 """
-function filterFrag(rank::UInt8, prec_len::UInt8, max_frag_rank::UInt8, length_to_frag_count_multiple::AbstractFloat)
+function filterFrag(rank::Int64, prec_len::UInt8, max_frag_rank::UInt8, length_to_frag_count_multiple::AbstractFloat)
     return rank > min(max_frag_rank, round((prec_len)*length_to_frag_count_multiple)+1)
 end
 
