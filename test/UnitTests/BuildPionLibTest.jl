@@ -233,6 +233,7 @@ end
         include_neutral_diff = false
         max_frag_charge = UInt8(2)
         max_frag_rank = UInt8(10)
+        length_to_frag_count_multiple = Float32(10)
         min_frag_intensity = Float32(0.1)
         rank_to_score = UInt8[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
         
@@ -261,6 +262,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             rank_to_score,
             frag_bounds,
@@ -354,6 +356,7 @@ end
             include_neutral_diff,
             max_frag_charge,
             max_frag_rank,
+            length_to_frag_count_multiple,
             min_frag_intensity,
             rank_to_score,
             frag_bounds,

@@ -335,6 +335,7 @@ function BuildSpecLib(params_path::String)
                 _params.library_params["include_neutral_diff"],
                 UInt8(_params.library_params["max_frag_charge"]),
                 UInt8(_params.library_params["max_frag_rank"]),
+                Float32(_params.library_params["length_to_frag_count_multiple"]),
                 Float32(_params.library_params["min_frag_intensity"]),
                 UInt8.(_params.library_params["rank_to_score"]),
                 frag_bounds,
