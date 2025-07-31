@@ -21,7 +21,7 @@ using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, CategoricalArrays, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries , Distributions 
+using DataFrames, DataStructures, Dictionaries, Distributions
 using FASTX
 using Interpolations
 using JSON, JLD2
@@ -29,7 +29,7 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, ProgressBars, Pkg
+using Plots, PrettyPrinting, Polynomials, ProgressBars
 using Tables, Test
 using StatsPlots, SentinelArrays
 using Random

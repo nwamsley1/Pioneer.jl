@@ -16,17 +16,16 @@ Version: 0.1.12
 ### Development Setup
 ```bash
 # Start Julia with optimal performance (adjust threads based on system)
-julia --threads 15 --gcthreads 7,1
+julia --threads 15 --gcthreads 7,1 --project=dev
 
 # In Julia REPL
-pkg> activate .
 pkg> develop ./
 ```
 
 ### Running Tests
 ```bash
 # Run all tests
-pkg> test
+pkg> test Pioneer
 
 # Run specific test file
 julia> include("test/UnitTests/buildDesignMatrix.jl")
