@@ -149,13 +149,13 @@ jobs:
               incremental=false,
               force=true,
               executables=[
-                "SearchDIA" => "main_SearchDIA",
-                "BuildSpecLib" => "main_BuildSpecLib",
                 "GetSearchParams" => "main_GetSearchParams",
                 "GetBuildLibParams" => "main_GetBuildLibParams",
                 "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
-                "convertMzML" => "main_convertMzML",
                 "ParseSpecLib" => "main_ParseSpecLib",
+                "BuildSpecLib" => "main_BuildSpecLib",
+                "SearchDIA" => "main_SearchDIA",
+                "convertMzML" => "main_convertMzML"
               ],
               precompile_execution_file="src/build/snoop.jl",
             );
