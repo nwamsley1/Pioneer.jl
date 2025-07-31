@@ -383,6 +383,17 @@ function summarize_precursor(
     prec_charge::AbstractVector{UInt8},
     weight::AbstractVector{Float32},
     δ::AbstractVector{Float32})
+    
+    # Handle empty groups gracefully
+    if isempty(iso_idx)
+        return (center_mz = missing, 
+                δ = missing, 
+                yt = missing, 
+                x0 = missing, 
+                x1 = missing, 
+                prec_charge = missing)
+    end
+    
     if (length(iso_idx) == 2)
         if ((iso_idx[1] == 1) & (iso_idx[2] == 2))
             m0_idx, m1_idx = 0, 0
