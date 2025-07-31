@@ -174,12 +174,13 @@ jobs:
             
             # Build executables one at a time to reduce memory usage
             executables = [
-              "SearchDIA" => "main_SearchDIA",
-              "BuildSpecLib" => "main_BuildSpecLib",
               "GetSearchParams" => "main_GetSearchParams",
               "GetBuildLibParams" => "main_GetBuildLibParams",
-              "convertMzML" => "main_convertMzML",
-              "ParseSpecLib" => "main_ParseSpecLib"
+              "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
+              "ParseSpecLib" => "main_ParseSpecLib",
+              "BuildSpecLib" => "main_BuildSpecLib",
+              "SearchDIA" => "main_SearchDIA",
+              "convertMzML" => "main_convertMzML"
             ]
             
             # First executable creates the base structure
