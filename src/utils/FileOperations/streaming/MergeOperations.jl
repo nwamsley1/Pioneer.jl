@@ -321,7 +321,10 @@ function _write_batch_typed(
     if n_writes == 0
         # First write
         if isfile(output_path)
-            rm(output_path)
+            # Force garbage collection to release any lingering file handles
+            GC.gc()
+            # Use Windows-safe removal to avoid permission errors
+            safeRm(output_path, nothing)
         end
         open(output_path, "w") do io
             Arrow.write(io, data_to_write; file=false)

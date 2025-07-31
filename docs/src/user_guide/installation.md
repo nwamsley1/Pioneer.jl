@@ -33,15 +33,17 @@ julia> using Pioneer
 ```
 
 #### Developeer Instructions
-To install Pioneer for development, clone the github repository and use in a local environment according to these instructions. 
+To install Pioneer for development, clone the GitHub repository and work in the
+dedicated development environment. This keeps production dependencies clean
+while providing tools like Documenter, PProf, Revise, and PackageCompiler.
 1. Open Command Prompt (Windows) or Terminal (MacOSX/Linux) and clone the repository:
    ```@julia
    git clone https://github.com/nwamsley1/Pioneer.jl.git
    cd Pioneer.jl
    ```
-2. Start Julia and enter package mode (press `]`), then:
+2. Start Julia with the development environment and enter package mode (press `]`):
    ```@julia
-   pkg> activate .
+   julia --project=dev
    pkg> develop ./
    ```
 3. Return from package mode (backspace) and verify installation:
@@ -50,7 +52,7 @@ To install Pioneer for development, clone the github repository and use in a loc
    ```
 4. Test your installation. Enter package mode (press `]`), then:
    ```@julia
-   pkg> test
+   pkg> test Pioneer
    ```
 
 !!! note "'note'"

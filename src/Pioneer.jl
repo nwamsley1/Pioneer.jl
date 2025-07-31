@@ -18,14 +18,13 @@
 module Pioneer
 #__precompile__(false)
 using Arrow, ArrowTypes, ArgParse
-using Profile
-using PProf
-#using BSplineKit Don't need this imports anymore?
+#using Profile
+#using PProf
 using Base64
 using Base.Order
 using Base.Iterators: partition
-using CSV, CategoricalArrays, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries#, Distributions 
+using CSV, Combinatorics, CodecZlib
+using DataFrames, DataStructures, Dictionaries
 using EzXML
 using FASTX
 using Interpolations
@@ -34,18 +33,21 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, PDFmerger, Profile, ProgressBars, Pkg, Printf
-using Tables, Test
+using Plots, Polynomials, ProgressBars, Printf
+using Tables
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
-using XGBoost
+using EvoTrees
+using MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
+
+gr() # set GR as plotting backend
 
 """
 Type alias for m/z to eV interpolation functions.
@@ -124,5 +126,5 @@ const KOINA_URLS = Dict(
 
 
 
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
 end

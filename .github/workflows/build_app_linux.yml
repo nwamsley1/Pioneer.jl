@@ -1,0 +1,143 @@
+name: Build App Linux
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JULIA_NUM_THREADS: auto
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            identifier: linux-x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11'
+
+      - name: Determine tag version
+        id: get_version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+
+      - name: Download precompile data
+        shell: bash
+        run: |
+          mkdir -p temp/zenodo
+          cd temp/zenodo
+          curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
+          unzip yeast.poin.zip
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -o yeast_1.arrow
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
+          cd ../../
+
+      - name: Compile application (Memory Optimized)
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib")
+            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share")
+
+            executables = [
+              "GetSearchParams" => "main_GetSearchParams",
+              "GetBuildLibParams" => "main_GetBuildLibParams",
+              "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
+              "ParseSpecLib" => "main_ParseSpecLib",
+              "BuildSpecLib" => "main_BuildSpecLib",
+              "SearchDIA" => "main_SearchDIA",
+              "convertMzML" => "main_convertMzML"
+            ]
+
+            first_exe, first_main = first(executables)
+            ENV["PIONEER_CMD"] = first_exe
+            create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false, force=true,
+              executables=[first_exe => first_main],
+              cpu_target="generic",
+              precompile_execution_file="src/build/snoop.jl");
+
+            for (exe, main) in executables[2:end]
+              println("Building $exe...")
+              ENV["PIONEER_CMD"] = exe
+              create_app(".", "build/temp_$exe/",
+                incremental=false, force=true,
+                executables=[exe => main],
+                cpu_target="generic",
+                precompile_execution_file="src/build/snoop.jl");
+
+              cp("build/temp_$exe/bin/$exe",
+                 "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/$exe",
+                 force=true)
+
+              rm("build/temp_$exe", recursive=true)
+            end
+            delete!(ENV, "PIONEER_CMD")
+          '
+
+      - name: Add wrapper scripts
+        shell: bash
+        run: |
+          cp src/build/scripts/pioneer build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
+
+      - name: Package Linux .deb
+        run: |
+          mkdir -p deb/usr/local/Pioneer
+          cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
+          mkdir -p deb/usr/local/Pioneer/data
+          cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
+          cp data/contaminants.fasta.gz deb/usr/local/Pioneer/data/
+          cp data/immonium.txt deb/usr/local/Pioneer/data/
+          cp data/ion_dictionary.txt deb/usr/local/Pioneer/data/
+
+          mkdir -p deb/usr/local/bin
+          ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
+
+          chmod -R a+w deb/usr/local/Pioneer/share/julia
+
+          info=src/build/package_info.json
+          PACKAGE=$(jq -r '.package' "$info")
+          MAINTAINER=$(jq -r '.maintainer' "$info")
+          DESCRIPTION=$(jq -r '.description' "$info")
+          mkdir -p deb/DEBIAN
+          cat <<EOF2 > deb/DEBIAN/control
+          Package: $PACKAGE
+          Version: ${{ steps.get_version.outputs.VERSION }}
+          Architecture: amd64
+          Maintainer: $MAINTAINER
+          Description: $DESCRIPTION
+EOF2
+
+          dpkg-deb --build deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pioneer-${{ matrix.identifier }}
+          path: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          files: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb

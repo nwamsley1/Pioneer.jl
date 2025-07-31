@@ -1,0 +1,129 @@
+#!/bin/bash
+
+# Set default threads to auto if not specified
+if [ -z "$JULIA_NUM_THREADS" ]; then
+    export JULIA_NUM_THREADS=auto
+fi
+
+# Valid subcommands
+VALID_COMMANDS="search predict empirical search-config predict-config empirical-config convert-mzml"
+
+# Parse command line arguments for thread override
+SUBCOMMAND=""
+SUBCOMMAND_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --threads)
+            if [[ -n "$2" && "$2" != --* ]]; then
+                export JULIA_NUM_THREADS="$2"
+                shift 2
+            else
+                echo "Error: --threads requires a value"
+                exit 1
+            fi
+            ;;
+        --threads=*)
+            export JULIA_NUM_THREADS="${1#*=}"
+            shift
+            ;;
+        --help|-h)
+            echo "Pioneer - Mass Spectrometry Data Analysis"
+            echo ""
+            echo "Usage: pioneer [options] <subcommand> [subcommand-args...]"
+            echo ""
+            echo "Options:"
+            echo "  --threads N        Set number of Julia threads (default: auto)"
+            echo "  --threads=N        Alternative syntax for setting threads"
+            echo "  --help, -h         Show this help message"
+            echo ""
+            echo "Subcommands:"
+            echo "  search             Perform DIA search analysis"
+            echo "  predict            Predict spectral library"
+            echo "  empirical          Parse spectral library"
+            echo "  search-config      Generate search parameter template"
+            echo "  predict-config     Generate library build parameter template"
+            echo "  empirical-config   Generate parse parameter template"
+            echo "  convert-mzml       Convert mzML files"
+            
+            echo ""
+            echo "Examples:"
+            echo "  pioneer search config.json                    # Use auto threading"
+            echo "  pioneer --threads=8 search config.json        # Use 8 threads"
+            echo "  pioneer --threads 4 predict config.json       # Use 4 threads"
+            echo ""
+            echo "For subcommand-specific help:"
+            echo "  pioneer <subcommand> --help"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            # First non-option argument should be the subcommand
+            if [[ -z "$SUBCOMMAND" ]]; then
+                # Check if it's a valid subcommand
+                if [[ " $VALID_COMMANDS " =~ " $1 " ]]; then
+                    SUBCOMMAND="$1"
+                else
+                    echo "Error: Unknown subcommand '$1'"
+                    echo "Valid subcommands: $VALID_COMMANDS"
+                    echo "Use --help for usage information"
+                    exit 1
+                fi
+            else
+                # All remaining arguments go to the subcommand
+                SUBCOMMAND_ARGS+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if subcommand was provided
+if [[ -z "$SUBCOMMAND" ]]; then
+    echo "Error: Subcommand required"
+    echo "Valid subcommands: $VALID_COMMANDS"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# Map aliases to the canonical executable names
+case "$SUBCOMMAND" in
+    search)
+        SUBCOMMAND="SearchDIA"
+        ;;
+    predict)
+        SUBCOMMAND="BuildSpecLib"
+        ;;
+    empirical)
+        SUBCOMMAND="ParseSpecLib"
+        ;;
+    empirical-config)
+        SUBCOMMAND="GetParseSpecLibParams"
+        ;;
+    search-config)
+        SUBCOMMAND="GetSearchParams"
+        ;;
+    predict-config)
+        SUBCOMMAND="GetBuildLibParams"
+        ;;
+    convert-mzml)
+        SUBCOMMAND="convertMzML"
+        ;;
+esac
+
+# Resolve the actual script location, handling symlinks
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Call the actual Pioneer executable with subcommand and its arguments
+# The executables are in the bin/ subdirectory relative to the script location
+exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"

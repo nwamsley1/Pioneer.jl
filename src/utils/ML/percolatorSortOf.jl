@@ -40,7 +40,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     MBR_estimates  = zeros(Float32, nrow(psms))
 
     unique_cv_folds = unique(psms[!, :cv_fold])
-    models = Dict{UInt8, Vector{Booster}}()
+    models = Dict{UInt8, Vector{EvoTrees.EvoTree}}()
     mbr_start_iter = length(iter_scheme)
 
     cv_fold_col = psms[!, :cv_fold]
@@ -48,13 +48,15 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
     train_indices = Dict(fold => findall(!=(fold), cv_fold_col) for fold in unique_cv_folds)
 
     Random.seed!(1776)
+    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+
     pbar = ProgressBar(total=length(unique_cv_folds) * length(iter_scheme))
     for test_fold_idx in unique_cv_folds
         initialize_prob_group_features!(psms, match_between_runs)
         psms_train = @view psms[train_indices[test_fold_idx], :]
         test_fold_idxs = fold_indices[test_fold_idx]
         test_fold_psms = @view psms[test_fold_idxs, :]
-        fold_models = Vector{Booster}(undef, length(iter_scheme))
+        fold_models = Vector{EvoTrees.EvoTree}(undef, length(iter_scheme))
 
         for (itr, num_round) in enumerate(iter_scheme)
             psms_train_itr = get_training_data_for_iteration!(psms_train,
@@ -65,7 +67,9 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                                               min_PEP_neg_threshold_xgboost_rescore,
                                                               itr >= mbr_start_iter)
 
-            bst = train_booster(psms_train_itr, features, num_round;
+            train_feats = itr < mbr_start_iter ? non_mbr_features : features
+            
+            bst = train_booster(psms_train_itr, train_feats, num_round;
                                colsample_bytree=colsample_bytree,
                                colsample_bynode=colsample_bynode,
                                eta=eta,
@@ -75,7 +79,7 @@ function sort_of_percolator_in_memory!(psms::DataFrame,
                                max_depth=max_depth)
             fold_models[itr] = bst
 
-            predict_fold!(bst, psms_train, test_fold_psms, features)
+            predict_fold!(bst, psms_train, test_fold_psms, train_feats)
 
             if match_between_runs
                 update_mbr_features!(psms_train, test_fold_psms, prob_estimates,
@@ -140,7 +144,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
     function getBestScorePerPrec!(
         prec_to_best_score_new::Dictionary,
         file_paths::Vector{String},
-        models::Dictionary{UInt8,Booster},
+        models::Dictionary{UInt8,EvoTrees.EvoTree},
         features::Vector{Symbol},
         match_between_runs::Bool;
         is_last_iteration::Bool = false)
@@ -277,12 +281,13 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                             psms_subset.MBR_max_pair_prob[i]    = scores.best_prob_2
                             MBR_is_best_decoy                   = scores.is_best_decoy_2
                         else
-                            psms_subset.MBR_best_irt_diff[i]        = missing
-                            psms_subset.MBR_rv_coefficient[i]       = missing
-                            psms_subset.MBR_is_best_decoy[i]        = missing
-                            psms_subset.MBR_max_pair_prob[i]        = missing
-                            psms_subset.MBR_log2_weight_ratio[i]    = missing
-                            psms_subset.MBR_log2_explained_ratio[i] = missing
+                            psms_subset.MBR_best_irt_diff[i]        = -1.0f0
+                            psms_subset.MBR_rv_coefficient[i]       = -1.0f0
+                            psms_subset.MBR_is_best_decoy[i]        = true
+                            psms_subset.MBR_max_pair_prob[i]        = -1.0f0
+                            psms_subset.MBR_log2_weight_ratio[i]    = -1.0f0
+                            psms_subset.MBR_log2_explained_ratio[i] = -1.0f0
+                            psms_subset.MBR_is_missing[i]           = true
                             continue
                         end
 
@@ -308,9 +313,11 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
 
     unique_cv_folds = unique(psms[!, :cv_fold])
     #Train the model for 1:K-1 cross validation folds and apply to the held-out fold
-    models = Dictionary{UInt8, Vector{Booster}}()
+    models = Dictionary{UInt8, Vector{EvoTrees.EvoTree}}()
     pbar = ProgressBar(total=length(unique_cv_folds)*length(iter_scheme))
     Random.seed!(1776);
+    non_mbr_features = [f for f in features if !startswith(String(f), "MBR_")]
+
     for test_fold_idx in unique_cv_folds#(0, 1)#range(1, n_folds)
         #Clear prob stats 
         initialize_prob_group_features!(psms, match_between_runs)
@@ -328,7 +335,8 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                                 itr >= length(iter_scheme))
             ###################
             #Train a model on the n-1 training folds.
-            bst = train_booster(psms_train_itr, features, num_round;
+            train_feats = itr < length(iter_scheme) ? non_mbr_features : features
+            bst = train_booster(psms_train_itr, train_feats, num_round;
                                colsample_bytree=colsample_bytree,
                                colsample_bynode=colsample_bynode,
                                eta=eta,
@@ -340,17 +348,16 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                 insert!(
                     models,
                     test_fold_idx,
-                    Vector{Booster}([bst])
+                    Vector{EvoTrees.EvoTree}([bst])
                 )
             else
                 push!(models[test_fold_idx], bst)
             end
-            bst.feature_names = [string(x) for x in features]
             #print_importance = true
-            print_importance ? println(collect(zip(importance(bst)))[1:30]) : nothing
+            print_importance ? println(collect(zip(feature_importance(bst)))[1:30]) : nothing
 
             # Get probabilities for training sample so we can get q-values
-            psms_train[!,:prob] = XGBoost.predict(bst, psms_train[!, features])
+            psms_train[!,:prob] = EvoTrees.predict(bst, psms_train)
             
             if match_between_runs
                 summarize_precursors!(psms_train, q_cutoff = max_q_value_xgboost_rescore)
@@ -381,7 +388,7 @@ function sort_of_percolator_out_of_memory!(psms::DataFrame,
                                                 unique_passing_runs::Set{UInt16}}}()
 
     for (train_iter, num_round) in enumerate(iter_scheme)
-        models_for_iter = Dictionary{UInt8,Booster}()
+        models_for_iter = Dictionary{UInt8,EvoTrees.EvoTree}()
         for test_fold_idx in unique_cv_folds
             insert!(models_for_iter, test_fold_idx, models[test_fold_idx][train_iter])
         end
@@ -420,29 +427,25 @@ function train_booster(psms::AbstractDataFrame, features, num_round;
                        subsample::Float64,
                        gamma::Int,
                        max_depth::Int)
-    bst = xgboost(
-        (psms[!, features], psms[!, :target]),
-        num_round = num_round,
-        colsample_bytree = colsample_bytree,
-        colsample_bynode = colsample_bynode,
-        scale_pos_weight = sum(psms.decoy) / sum(psms.target),
-        gamma = gamma,
+
+    config = EvoTreeRegressor(
+        loss=:logloss,
+        nrounds = num_round,
         max_depth = max_depth,
+        min_weight = min_child_weight,
+        rowsample = subsample,
+        colsample = colsample_bytree,
         eta = eta,
-        min_child_weight = min_child_weight,
-        subsample = subsample,
-        objective = "binary:logistic",
-        seed = rand(UInt32),
-        watchlist = (;),
+        gamma = gamma
     )
-    bst.feature_names = string.(features)
-    return bst
+    model = fit(config, psms; target_name = :target, feature_names = features)
+    return model
 end
 
-function predict_fold!(bst::Booster, psms_train::AbstractDataFrame,
+function predict_fold!(bst, psms_train::AbstractDataFrame,
                        test_fold_psms::AbstractDataFrame, features)
-    test_fold_psms[!, :prob] = XGBoost.predict(bst, test_fold_psms[!, features])
-    psms_train[!, :prob] = XGBoost.predict(bst, psms_train[!, features])
+    test_fold_psms[!, :prob] = predict(bst, test_fold_psms)
+    psms_train[!, :prob] = predict(bst, psms_train)
     get_qvalues!(psms_train.prob, psms_train.target, psms_train.q_value)
 end
 
@@ -463,7 +466,7 @@ function update_mbr_features!(psms_train::AbstractDataFrame,
     end
 end
 
-function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)   
+function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01f0)
     # Compute pair specific features that rely on decoys and chromatograms
     pair_groups = collect(pairs(groupby(psms, [:pair_id, :isotopes_captured])))
     Threads.@threads for idx in eachindex(pair_groups)
@@ -516,12 +519,13 @@ function summarize_precursors!(psms::AbstractDataFrame; q_cutoff::Float32 = 0.01
             idx = Int(sub_psms.ms_file_idx[i]) - offset + 1
             best_idx = run_best_indices[idx]
             if best_idx == 0
-                sub_psms.MBR_best_irt_diff[i] = missing
-                sub_psms.MBR_rv_coefficient[i] = missing
-                sub_psms.MBR_is_best_decoy[i] = missing
-                sub_psms.MBR_log2_weight_ratio[i] = missing
-                sub_psms.MBR_log2_explained_ratio[i] = missing
-                sub_psms.MBR_max_pair_prob[i] = missing
+                sub_psms.MBR_best_irt_diff[i]           = -1.0f0
+                sub_psms.MBR_rv_coefficient[i]          = -1.0f0
+                sub_psms.MBR_is_best_decoy[i]           = true
+                sub_psms.MBR_log2_weight_ratio[i]       = -1.0f0
+                sub_psms.MBR_log2_explained_ratio[i]    = -1.0f0
+                sub_psms.MBR_max_pair_prob[i]           = -1.0f0
+                sub_psms.MBR_is_missing[i]              = true
                 continue
             end
 
@@ -555,16 +559,15 @@ function initialize_prob_group_features!(
 
     if match_between_runs
         psms[!, :MBR_prob]                      = zeros(Float32, n)
-        psms[!, :MBR_max_pair_prob]             = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_best_irt_diff]             = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_log2_weight_ratio]         = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_log2_explained_ratio]      = Vector{Union{Missing, Float32}}(missing, n)
-        psms[!, :MBR_rv_coefficient]            = Vector{Union{Missing, Float32}}(missing, n)
+        psms[!, :MBR_max_pair_prob]             = zeros(Float32, n)
+        psms[!, :MBR_best_irt_diff]             = zeros(Float32, n)
+        psms[!, :MBR_log2_weight_ratio]         = zeros(Float32, n)
+        psms[!, :MBR_log2_explained_ratio]      = zeros(Float32, n)
+        psms[!, :MBR_rv_coefficient]            = zeros(Float32, n)
+        psms[!, :MBR_is_best_decoy]             = trues(n)
         psms[!, :MBR_num_runs]                  = zeros(Int32, n)
-        psms[!, :MBR_is_best_decoy]             = Vector{Union{Missing, Bool}}(missing, n)
         psms[!, :MBR_transfer_candidate]        = falses(n)
-        allowmissing!(psms, [:MBR_max_pair_prob, :MBR_rv_coefficient,
-                              :MBR_best_irt_diff, :MBR_is_best_decoy, :MBR_log2_weight_ratio])
+        psms[!, :MBR_is_missing]                = falses(n)
     end
 
     return psms
@@ -618,8 +621,8 @@ function get_training_data_for_iteration!(
             # and the best precursor can't be a decoy
             psms_train_mbr = subset(
                 psms_train_itr,
-                [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob] => ByRow((d, mp, p) ->
-                    (!ismissing(d) && !d && !ismissing(mp) && !ismissing(p) && mp >= max_prob_threshold && p < max_prob_threshold)
+                [:MBR_is_best_decoy, :MBR_max_pair_prob, :prob, :MBR_is_missing] => ByRow((d, mp, p, im) ->
+                    (!im && !d && mp >= max_prob_threshold && p < max_prob_threshold)
                 );
                 view = true
             )
@@ -630,7 +633,7 @@ function get_training_data_for_iteration!(
             # Take all decoys and targets passing q_thresh (all 0's now) or mbr_q_thresh
             psms_train_itr = subset(
                 psms_train_itr,
-                [:target, :q_value, :MBR_is_best_decoy] => ByRow((t,q,MBR_d) -> (!t) || (t && !ismissing(MBR_d) && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
+                [:target, :q_value, :MBR_is_best_decoy, :MBR_is_missing] => ByRow((t, q, MBR_d, im) -> (!t) || (t && !im && !MBR_d && q <= max_q_value_xgboost_mbr_rescore))
             )
         else
             # Take all decoys and targets passing q_thresh
@@ -656,7 +659,6 @@ function dropVectorColumns!(df)
     # 2) Drop those columns in place
     select!(df, Not(to_drop))
 end
-
 
 """
     reset_precursor_scores!(dict)
@@ -692,14 +694,14 @@ end
 
 Return a vector of probabilities for `df` using the cross validation `models`.
 """
-function predict_cv_models(models::Dictionary{UInt8,Booster},
+function predict_cv_models(models::Dictionary{UInt8,EvoTrees.EvoTree},
                            df::AbstractDataFrame,
                            features::Vector{Symbol})
     probs = zeros(Float32, nrow(df))
     for (fold_idx, bst) in pairs(models)
         fold_rows = findall(==(fold_idx), df[!, :cv_fold])
         if !isempty(fold_rows)
-            probs[fold_rows] = XGBoost.predict(bst, df[fold_rows, features])
+            probs[fold_rows] = predict(bst, df[fold_rows, :])
         end
     end
     return probs
@@ -737,10 +739,10 @@ function write_subset(file_path::String,
         else
             df[!, :prob] = probs
         end
-        Arrow.write(file_path, dropVectorColumns!(df))
+        writeArrow(file_path, dropVectorColumns!(df))
     else
         df[!, :prob] = probs
-        Arrow.write(file_path, convert_subarrays(df))
+        writeArrow(file_path, convert_subarrays(df))
     end
 end
 

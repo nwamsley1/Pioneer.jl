@@ -801,7 +801,7 @@ function add_features!(psms::DataFrame,
     N = size(psms, 1)
     irt_diff = zeros(Float32, N)
     irt_obs = zeros(Float32, N)
-    ms1_irt_diff = Vector{Union{Missing, Float32}}(undef, N)
+    ms1_irt_diff = zeros(Float32, N)
     irt_pred = zeros(Float32, N)
     irt_error = zeros(Float32, N)
     pair_idxs = zeros(UInt32, N)
@@ -828,7 +828,8 @@ function add_features!(psms::DataFrame,
     #longest_y::Vector{UInt8} = psms[!,:longest_y]
     #longest_b::Vector{UInt8} = psms[!,:longest_b]
     rt::Vector{Float32} = psms[!,:rt]
-    ms1_rt::Vector{Union{Missing, Float32}} = allowmissing(psms[!,:rt_ms1])
+    ms1_rt::Vector{Float32} = psms[!,:rt_ms1]
+    ms1_missing::Vector{Bool} = psms[!,:ms1_features_missing]
     #tic = MS_TABLE[:TIC]::Arrow.Primitive{Union{Missing, Float32}, Vector{Float32}}
     log2_intensity_explained = psms[!,:log2_intensity_explained]::Vector{Float16}
     #precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
@@ -854,10 +855,10 @@ function add_features!(psms::DataFrame,
                 irt_pred[i] = getPredIrt(search_context, prec_idx)#prec_irt[prec_idx]
                 #irt_diff[i] = abs(irt_obs[i] - first(prec_id_to_irt[prec_idx]))
                 irt_diff[i] = abs(irt_obs[i] - prec_id_to_irt[prec_idx].best_irt)
-                if !ismissing(ms1_rt[i])
+                if !ms1_missing[i]
                     ms1_irt_diff[i] = abs(rt_to_irt_interp(ms1_rt[i]) - getPredIrt(search_context, prec_idx))
                 else
-                    ms1_irt_diff[i] = missing
+                    ms1_irt_diff[i] = 0f0
                 end
                 irt_error[i] = abs(irt_obs[i] - irt_pred[i])
 

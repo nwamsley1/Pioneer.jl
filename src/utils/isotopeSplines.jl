@@ -26,32 +26,27 @@ struct CubicSpline{N, T<:AbstractFloat}
     first::T
     last::T
     bin_width::T
+    inv_bin_width::T
 end
 
 function (s::CubicSpline)(t::U) where {U<:AbstractFloat}
     @inbounds @fastmath begin
         if t < s.first
-            u = 0.0f0
-            idx = 0
-        else
-            idx = floor(Int32, 
-                        (t - s.first)/s.bin_width
-                        )
-            u = (t - (s.first + s.bin_width*(idx)))
+            return s.coeffs[1] 
         end
-        x = zero(U)
-        coeff = (idx)*4 + 1
-        c = one(U)
-        x += s.coeffs[coeff]*c
-        c *= u
-        coeff += 1
-        x += s.coeffs[coeff]*c
-        c *= u
-        coeff += 1
-        x += s.coeffs[coeff]*c
-        c *= u
-        coeff += 1
-        x += s.coeffs[coeff]*c
+        
+        idx = floor(Int32, (t - s.first)*s.inv_bin_width)
+        u = t - (s.first + s.bin_width*idx)
+        
+        coeff = idx*4 + 1
+        a0 = s.coeffs[coeff]
+        a1 = s.coeffs[coeff + 1]
+        a2 = s.coeffs[coeff + 2]
+        a3 = s.coeffs[coeff + 3]
+
+        x = muladd(a3, u, a2)
+        x = muladd(x, u, a1)
+        x = muladd(x, u, a0)
     end
     return x
 end
@@ -108,6 +103,7 @@ function parseIsoXML(iso_xml_path::String)
                     @SVector[x for x in zeros(Float32, 40)],
                     0.0f0,
                     0.0f0,
+                    0.0f0,
                     0.0f0)
             )
         end
@@ -126,7 +122,8 @@ function parseIsoXML(iso_xml_path::String)
                 SVector{length(spline), Float32}(spline),
                 Float32(first(knots)),
                 Float32(last(knots)),
-                Float32((last(knots)-first(knots))/(length(knots) - 1))
+                Float32((last(knots)-first(knots))/(length(knots) - 1)),
+                Float32(1.0f0 / ((last(knots)-first(knots))/(length(knots) - 1)))
             )
         end
     end

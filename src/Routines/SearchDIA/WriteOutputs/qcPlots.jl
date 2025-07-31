@@ -64,6 +64,7 @@ function qcPlots(
     n_files_per_plot = Int64(params_.output[:plots_per_page])
     #Number of QC plots to build 
     n_qc_plots = Int64(round(n_files/n_files_per_plot, RoundUp))
+    qc_plots = Plots.Plot[]
     ###############
     #Plot precursor abundance distribution
     function plotAbundanceECDF(
@@ -102,7 +103,7 @@ function qcPlots(
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             try
             sampled_range, sorted_precursor_abundances = getColumnECDF(precursors_wide[Symbol(parsed_fname)])
-            Plots.plot!(p, 
+            plot!(p, 
                     collect(sampled_range),
                     sorted_precursor_abundances,
                     #ylim = (0, log2(maximum(sorted_precursor_abundances))),
@@ -113,20 +114,21 @@ function qcPlots(
                 continue
             end
         end
-        savefig(p, f_out)
+        return p
     end
 
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
-        plotAbundanceECDF(
+        p = plotAbundanceECDF(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
             [x for x in short_fnames[start:stop]],
             title = "Precursor Abundance by Rank",
             f_out = joinpath(qc_plot_folder, "precursor_abundance_qc_"*string(n)*".pdf")
         )
+        push!(qc_plots, p)
     end
 
     ###############
@@ -186,7 +188,7 @@ function qcPlots(
             xrotation = 45,
         )
         
-        savefig(p, f_out)
+        return p
     end
 
     # Create multiple plots with chunking
@@ -200,7 +202,7 @@ function qcPlots(
     )
         # Get counts of IDs per file once
         fname_to_id = getIdCounts(
-            precursors_long, 
+            precursors_long,
             file_column = file_column,
             q_value_column = q_value_column,
             q_value_threshold = q_value_threshold
@@ -208,29 +210,32 @@ function qcPlots(
         fnames = collect(keys(fname_to_id))
         # Calculate number of plots needed
         n_qc_plots = ceil(Int, length(fnames) / n_files_per_plot)
+        plots = Plots.Plot[]
         
         # Create plots in chunks
         for n in 1:n_qc_plots
             start = (n - 1) * n_files_per_plot + 1
             stop = min(n * n_files_per_plot, length(fnames))
             
-            plotPrecursorIDBarPlot(
+            push!(plots, plotPrecursorIDBarPlot(
                 fname_to_id,
                 fnames[start:stop],
                 title = "Precursor ID's per File",
                 f_out = joinpath(qc_plot_folder, "precursor_ids_barplot_" * string(n) * ".pdf")
-            )
+            ))
         end
+        return plots
     end
 
     # Example usage:
     precursors_long_df = DataFrame(Tables.columntable(Arrow.Table(precursors_long_path)))
-    create_precursor_id_plots(precursors_long_df, 
+    id_plots = create_precursor_id_plots(precursors_long_df,
                                 n_files_per_plot=n_files_per_plot,
                                 file_column = :file_name,
                                 q_value_column = :qval,
                                 q_value_threshold = params_.global_settings.scoring.q_value_threshold,
-                                qc_plot_folder = qc_plot_folder)   
+                                qc_plot_folder = qc_plot_folder)
+    append!(qc_plots, id_plots)
     ###############
     #Plot Protein Group IDs
     
@@ -270,7 +275,7 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out)
+        return p
     end
 
 
@@ -278,13 +283,14 @@ function qcPlots(
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
-        plotProteinGroupIDBarPlot(
+        p = plotProteinGroupIDBarPlot(
             protein_groups_wide,
             [x for x in parsed_fnames[start:stop]],
             [x for x in short_fnames[start:stop]],
             title = "Protein Group ID's per File",
             f_out = joinpath(qc_plot_folder, "protein_group_ids_barplot_"*string(n)*".pdf")
         )
+        push!(qc_plots, p)
 
     end
     
@@ -333,20 +339,21 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out)
+        return p
     end
 
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
 
-        plotMissedCleavageRate(
+        p = plotMissedCleavageRate(
             precursors_wide,
             [x for x in parsed_fnames[start:stop]],
             [x for x in short_fnames[start:stop]],
             title = "Missed Cleavage Percentage",
             f_out = joinpath(qc_plot_folder, "missed_cleavage_plot_"*string(n)*".pdf")
         )
+        push!(qc_plots, p)
 
     end
 
@@ -369,7 +376,7 @@ function qcPlots(
             ms1_scans = getMsOrders(ms_table).==1
 
             
-            Plots.plot!(p, 
+            plot!(p, 
             [getRetentionTime(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
             [getTIC(ms_table, scan_idx) for scan_idx in range(1, length(ms_table)) if getMsOrder(ms_table, scan_idx)==1],
                     subplot = 1,
@@ -378,19 +385,20 @@ function qcPlots(
                     alpha = 0.3
                     )
         end
-        savefig(p, f_out)
+        return p
     end
 
     for n in 1:n_qc_plots
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(parsed_fnames))
-        plotTIC(
+        p = plotTIC(
             MS_TABLE_PATHS[start:stop],
             parsed_fnames,
             short_fnames,
             title = "TIC plot",
             f_out = joinpath(qc_plot_folder, "tic_plot_"*string(n)*".pdf")
         )
+        push!(qc_plots, p)
     end
 
     ###############
@@ -409,7 +417,7 @@ function qcPlots(
 
             irt_range = LinRange(0, 35, 250)
             irt_rt = iRT_RT[key]
-            Plots.plot!(p, 
+            plot!(p, 
                     irt_range,
                     irt_rt.(irt_range),
                     xlabel = "iRT",
@@ -419,7 +427,7 @@ function qcPlots(
                     lw = 3
                     )
         end
-        savefig(p, f_out)
+        return p
     end
 #=
     for n in 1:n_qc_plots
@@ -447,7 +455,7 @@ function qcPlots(
                         legend=:none, layout = (1, 1))
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
-            Plots.boxplot!(p, 
+            boxplot!(p, 
             [short_fname],
             gpsms[(file_name = parsed_fname,)][!,:error_norm],
             subplot = 1,
@@ -460,7 +468,7 @@ function qcPlots(
             )
         end
 
-        savefig(p, f_out)
+        return p
     end
 
     #=
@@ -505,7 +513,7 @@ function qcPlots(
         xrotation = 45,
         )
 
-        savefig(p, f_out)
+        return p
     end
 
 
@@ -513,7 +521,7 @@ function qcPlots(
         start = (n - 1)*n_files_per_plot + 1
         stop = min(n*n_files_per_plot, length(short_fnames))
 
-        plotMS2MassErrorCorrection(
+        p = plotMS2MassErrorCorrection(
             parsed_fnames,
             short_fnames,
             frag_err_dist_dict,
@@ -521,6 +529,7 @@ function qcPlots(
             title = "MS2 Mass Error Correction",
             f_out = joinpath(qc_plot_folder, "mass_err_correction_"*string(n)*".pdf")
         )
+        push!(qc_plots, p)
 
     end
 
@@ -535,13 +544,13 @@ function qcPlots(
         f_out::String = "./test.pdf"
         )
 
-        p = Plots.plot(title = title,
+        p = plot(title = title,
                         legend=:none, layout = (1, 1))
 
 
         for (parsed_fname, short_fname) in zip(parsed_fnames, short_fnames)
             psms =  gpsms[(file_name = parsed_fname,)]
-            Plots.boxplot!(p, 
+            boxplot!(p, 
             [short_fname],
             psms[psms[!,:points_above_FWHM_01].>1,:FWHM],
             subplot = 1,
@@ -555,7 +564,7 @@ function qcPlots(
             )
         end
 
-        savefig(p, f_out)
+        return p
     end
 
     #=
@@ -580,9 +589,5 @@ function qcPlots(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    plots_to_merge = [joinpath(qc_plot_folder, x) for x in readdir(qc_plot_folder) if endswith(x, ".pdf")]
-    if length(plots_to_merge)>1
-        merge_pdfs_safe(plots_to_merge,
-                        output_path, cleanup=true)
-    end
+    save_multipage_pdf(qc_plots, output_path)
 end

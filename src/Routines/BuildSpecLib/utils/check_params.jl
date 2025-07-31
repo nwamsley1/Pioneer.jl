@@ -130,7 +130,7 @@ function check_params_bsp(json_string::String)
 
     # Add default contaminants fasta
     if params["include_contaminants"]
-        contam_path = joinpath(pkgdir(Pioneer), "data", "contaminants.fasta.gz")
+        contam_path = asset_path("contaminants.fasta.gz")
         push!(params["fasta_paths"], contam_path)
         push!(params["fasta_names"], "CONTAM")
         push!(get!(params, "fasta_header_regex_accessions", String[]), "^\\w+\\|(\\w+(?:-\\d+)?)\\|")

@@ -73,7 +73,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     presearch_f_index_frag_bins = Arrow.Table(joinpath(SPEC_LIB_DIR, "presearch_f_index_fragment_bins.arrow"))
 
 
-    println("Loading spectral libraries into main memory...")
+    println("Loading spectral library from $SPEC_LIB_DIR into main memory...")
     spec_lib = Dict{String, Any}()
     detailed_frags = load_detailed_frags(joinpath(SPEC_LIB_DIR,"detailed_fragments.jld2"))
     prec_frag_ranges = load(joinpath(SPEC_LIB_DIR,"precursor_to_fragment_indices.jld2"))["pid_to_fid"]

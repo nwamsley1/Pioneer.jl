@@ -9,6 +9,14 @@
 ## Documentation 
 See [documentation for installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
 
+## Development Environment
+Additional packages for documentation, testing, and profiling live in `dev/Project.toml`.
+Activate that environment when working locally:
+
+```julia
+julia --project=dev
+```
+
 ## Introduction
 
 Pioneer and its companion tool, Altimeter, are together an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data. 

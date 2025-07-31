@@ -1,31 +1,27 @@
-# Utility functions for working with PDFs
+module PDFGenerator
+    import GR
 
-"""
-    merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
-
-Merge `files` into a single PDF at `dest` using the `pdfunite` tool. All
-temporary files are created inside `dest`'s directory so write
-permissions are respected on read-only installations.
-
-If `cleanup` is true, the source files will be removed after merging.
-"""
-function merge_pdfs_safe(files::Vector{String}, dest::String; cleanup::Bool=false)
-    ensure_directory_exists(dest)
-    pdfunite = something(Sys.which("pdfunite"), "pdfunite")
-    tmp_path, io = mktemp(dirname(dest))
-    close(io)
-    try
-        cmd = Cmd([pdfunite; files; tmp_path])
-        run(cmd)
-        mv(tmp_path, dest; force=true)
-    finally
-        isfile(tmp_path) && rm(tmp_path, force=true)
-    end
-    if cleanup
-        for f in files
-            safeRm(f, nothing)
+    function create_multipage_pdf(plots::Vector, dest::String)
+        withenv("GKSwstype" => "100") do
+            GR.beginprint(dest)
+            try
+                for p in plots
+                    # Suppress all display output
+                    redirect_stdout(devnull) do
+                        redirect_stderr(devnull) do
+                            display(p)
+                        end
+                    end
+                end
+            finally
+                GR.endprint()
+            end
         end
     end
-    return dest
 end
 
+function save_multipage_pdf(plots::Vector{Plots.Plot}, dest::String)
+    ensure_directory_exists(dest)
+    PDFGenerator.create_multipage_pdf(plots, dest)
+    return dest
+end

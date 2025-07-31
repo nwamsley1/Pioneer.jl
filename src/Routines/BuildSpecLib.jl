@@ -247,7 +247,7 @@ function BuildSpecLib(params_path::String)
                         joinpath(lib_dir, "spline_knots.jld2");
                         spl_knots
                     )
-                    ion_dictionary = get_altimeter_ion_dict(joinpath(@__DIR__, "../../data/ion_dictionary.txt"))
+                    ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
 
                     parse_altimeter_fragments(
                         precursors_table,
@@ -255,7 +255,7 @@ function BuildSpecLib(params_path::String)
                         frag_annotation_type,
                         ion_dictionary,
                         10000,
-                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        asset_path("immonium.txt"),
                         lib_dir,
                         Dict{String, Int8}(),
                         iso_mod_to_mass,
@@ -276,7 +276,7 @@ function BuildSpecLib(params_path::String)
                         ion_annotation_set,
                         frag_name_to_idx,
                         10000,
-                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        asset_path("immonium.txt"),
                         lib_dir,
                         Dict{String, Int8}(),
                         iso_mod_to_mass,
