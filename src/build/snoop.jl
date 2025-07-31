@@ -5,7 +5,7 @@ data_dir = joinpath(root, "..", "..", "data")
 
 cmd = get(ENV, "PIONEER_CMD", nothing)
 
-function maybe_run(name, f)
+function maybe_run(f, name)
     if cmd === nothing || cmd == name
         try
             f()
