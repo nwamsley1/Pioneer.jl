@@ -20,7 +20,7 @@ using Arrow, ArrowTypes, ArgParse
 using Base64
 using Base.Order
 using Base.Iterators: partition
-using CSV, CategoricalArrays, Combinatorics, CodecZlib
+using CSV, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries, Distributions
 using FASTX
 using Interpolations
@@ -29,7 +29,7 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, ProgressBars
+using Plots, Polynomials, ProgressBars
 using Tables, Test
 using StatsPlots, SentinelArrays
 using Random

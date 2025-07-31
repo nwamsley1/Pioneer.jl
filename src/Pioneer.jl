@@ -23,7 +23,7 @@ using Arrow, ArrowTypes, ArgParse
 using Base64
 using Base.Order
 using Base.Iterators: partition
-using CSV, CategoricalArrays, Combinatorics, CodecZlib
+using CSV, Combinatorics, CodecZlib
 using DataFrames, DataStructures, Dictionaries
 using EzXML
 using FASTX
@@ -33,7 +33,7 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, ProgressBars, Printf
+using Plots, Polynomials, ProgressBars, Printf
 using Tables
 using StatsPlots, SentinelArrays
 using Random
