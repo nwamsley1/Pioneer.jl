@@ -209,7 +209,18 @@ function collect_psms(
         return mask
     end
 
-    total_psms = DataFrame()
+    # Initialize with proper schema to handle missing values from summarize_precursor
+    total_psms = DataFrame(
+        scan_idx = Int64[],
+        precursor_idx = UInt32[],
+        center_mz = Union{Float32, Missing}[],
+        δ = Union{Float32, Missing}[],
+        yt = Union{Float32, Missing}[],
+        x0 = Union{Float32, Missing}[],
+        x1 = Union{Float32, Missing}[],
+        prec_charge = Union{UInt8, Missing}[],
+        half_width_mz = Float32[]
+    )
     n = 0
     unique_precursors = Set{UInt32}()
     function getCharges(prec_charges::AbstractVector{UInt8}, precursor_idx::AbstractVector{UInt32})
