@@ -1,9 +1,11 @@
 [deps]
-Pioneer = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 DocumenterTools = "35a29f4d-8980-5a13-9543-d66fff28ecb8"
 PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
+PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
+Pioneer = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 
 [compat]
 Documenter = "1.5"

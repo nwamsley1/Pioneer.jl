@@ -35,7 +35,7 @@ julia> using Pioneer
 #### Developeer Instructions
 To install Pioneer for development, clone the GitHub repository and work in the
 dedicated development environment. This keeps production dependencies clean
-while providing tools like documentation builders and profilers.
+while providing tools like Documenter, PProf, Revise, and PackageCompiler.
 1. Open Command Prompt (Windows) or Terminal (MacOSX/Linux) and clone the repository:
    ```@julia
    git clone https://github.com/nwamsley1/Pioneer.jl.git
