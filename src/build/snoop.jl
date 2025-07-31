@@ -9,7 +9,8 @@ function maybe_run(name, f)
     if cmd === nothing || cmd == name
         try
             f()
-        catch
+        catch e
+            @warn "Error executing $name during precompile of $cmd " exception=(e, catch_backtrace()) 
         end
     end
 end
