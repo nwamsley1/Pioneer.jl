@@ -40,7 +40,7 @@ If Pioneer has already been installed, then open the REPL and enter the followin
 ```@julia
 julia> using Pioneer
 ```
-The Pioneer.jl package exports several methods for programmatic use. When installed as an application it also provides a single `pioneer` command with subcommands `buildspeclib`, `parsespeclib`, `searchdia`, `getbuildlibparams`, `getsearchparams`, and `convertmzml`.
+The Pioneer.jl package exports several methods for programmatic use. When installed as an application it also provides a single `pioneer` command with subcommands `buildspeclib`, `parsespeclib`, `searchdia`, `getbuildlibparams`, `getsearchparams`, `convertmzml`, and `convert-raw`.
 
 From the command line the syntax is:
 ```bash

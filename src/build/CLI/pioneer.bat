@@ -7,7 +7,7 @@ set SCRIPT_DIR=%~dp0
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict empirical search-config predict-config empirical-config convert-mzml
+set VALID_COMMANDS=search predict empirical search-config predict-config empirical-config convert-raw convert-mzml
 
 :parse_args
 if "%~1"=="" goto check_subcommand
@@ -88,7 +88,9 @@ echo                                                 Generate library build para
 echo                                                 Default config output path: ./buildspeclib_params.json
 echo   empirical-config ^<input_path_to_empirical_lib^> ^<output_path_to_spectral_lib^> [config_output_path]
 echo                                                 Generate parse parameter template
-echo                                                 Default config output path: ./parsespeclib_params.json"
+echo                                                 Default config output path: ./parsespeclib_params.json
+echo   convert-raw ^<path_to_raw_file_or_dir^> [options]
+echo                                                 Convert Thermo RAW files
 echo   convert-mzml ^<path_to_mzml_dir^> [skip_header]
 echo                                                 Convert mzML files
 echo.
@@ -120,6 +122,7 @@ if /I "%SUBCOMMAND%"=="empirical-config" set SUBCOMMAND=GetParseSpecLibParams
 if /I "%SUBCOMMAND%"=="search-config" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="predict-config" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
+if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
 
 :run_pioneer

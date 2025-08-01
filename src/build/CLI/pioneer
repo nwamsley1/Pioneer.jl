@@ -6,7 +6,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict empirical search-config predict-config empirical-config convert-mzml"
+VALID_COMMANDS="search predict empirical search-config predict-config empirical-config convert-raw convert-mzml"
 
 # Parse command line arguments for thread override
 SUBCOMMAND=""
@@ -50,6 +50,8 @@ while [[ $# -gt 0 ]]; do
             echo "  empirical-config <input_path_to_empirical_lib> <output_path_to_spectral_lib> [config_output_path]"
             echo "                                              Generate parse parameter template"
             echo "                                              Default config output path: ./parsespeclib_params.json"
+            echo "  convert-raw <path_to_raw_file_or_dir> [options]"
+            echo "                                              Convert Thermo RAW files"
             echo "  convert-mzml <path_to_mzml_dir> [skip_header]"
             echo "                                              Convert mzML files"
             
@@ -118,6 +120,9 @@ case "$SUBCOMMAND" in
         ;;
     predict-config)
         SUBCOMMAND="GetBuildLibParams"
+        ;;
+    convert-raw)
+        SUBCOMMAND="PioneerConverter"
         ;;
     convert-mzml)
         SUBCOMMAND="convertMzML"
