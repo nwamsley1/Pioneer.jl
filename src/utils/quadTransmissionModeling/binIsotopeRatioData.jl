@@ -158,6 +158,20 @@ function estimateKdeBins(
     return getBinIdx(x, x_bin_boundaries), length(x_bin_boundaries) - 2 + 1
 end
 
+# Method overload to handle vectors with missing values
+function estimateKdeBins(x::AbstractVector{Union{Missing, T}}) where T<:AbstractFloat
+    # Filter out missing values
+    x_clean = collect(skipmissing(x))
+    
+    # Check if we have enough data for meaningful KDE
+    if length(x_clean) < 10
+        throw(ArgumentError("Insufficient non-missing data for KDE estimation: $(length(x_clean)) points"))
+    end
+    
+    # Call the original method with clean data
+    return estimateKdeBins(x_clean)
+end
+
 function MergeBins(isotopes_ratio_data::SubDataFrame, x0_lim::Tuple{<:Real,<:Real}; min_bin_size=300, min_bin_width=0.1, max_iterations=100)
     
     isotopes_ratio_data = copy(isotopes_ratio_data)
