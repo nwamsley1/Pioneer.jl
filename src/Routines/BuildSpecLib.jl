@@ -20,7 +20,7 @@
 # Entry point for PackageCompiler
 function main_BuildSpecLib(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "params_path"
             help = "Path to BuildSpecLib parameters JSON file"
             arg_type = String

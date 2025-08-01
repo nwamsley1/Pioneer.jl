@@ -74,7 +74,7 @@ jobs:
       - name: Add wrapper scripts
         shell: bash
         run: |
-          cp src/build/scripts/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          cp src/build/CLI/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
       - name: Package Windows MSI
         shell: pwsh
@@ -83,12 +83,13 @@ jobs:
 
           $dataDir = "$pioneerRoot\data"
           New-Item -ItemType Directory -Force -Path $dataDir
-          if (Test-Path "data\IsotopeSplines") {
-            Copy-Item -Recurse "data\IsotopeSplines" "$dataDir\"
+          Get-ChildItem "assets" | ForEach-Object {
+            if ($_.PSIsContainer) {
+              Copy-Item -Recurse $_.FullName "$dataDir\"
+            } else {
+              Copy-Item $_.FullName "$dataDir\"
+            }
           }
-          Copy-Item "data\contaminants.fasta.gz" "$dataDir\"
-          Copy-Item "data\immonium.txt" "$dataDir\"
-          Copy-Item "data\ion_dictionary.txt" "$dataDir\"
 
           Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
 

@@ -20,7 +20,7 @@
 # Entry point for PackageCompiler
 function main_ParseSpecLib(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "params_path"
             help = "Path to ParseSpecLib parameters JSON file"
             arg_type = String

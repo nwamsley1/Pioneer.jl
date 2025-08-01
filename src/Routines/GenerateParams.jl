@@ -18,7 +18,7 @@
 # Entry point for PackageCompiler
 function main_GetSearchParams(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "library_path"
             help = "Path to spectral library (.poin)"
             arg_type = String
@@ -51,7 +51,7 @@ end
 # Entry point for PackageCompiler
 function main_GetBuildLibParams(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "out_dir"
             help = "Output directory for library"
             arg_type = String
@@ -83,7 +83,7 @@ end
 # Entry point for PackageCompiler
 function main_GetParseSpecLibParams(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "input_lib_path"
             help = "Input empirical library TSV"
             arg_type = String
@@ -153,7 +153,7 @@ function GetSearchParams(lib_path::String, ms_data_path::String, results_path::S
     end
     
     # Read the JSON template and convert to OrderedDict
-    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultSearchParams.json"), String)
+    config_text = read(asset_path("example_config", "defaultSearchParams.json"), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
         
@@ -182,7 +182,7 @@ end
     GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String)
 
 Creates a new library build parameter file with updated paths and automatically discovered FASTA files.
-Uses a default template from data/example_config/defaultBuildLibParams.json.
+Uses a default template from assets/example_config/defaultBuildLibParams.json.
 
 Arguments:
 - out_dir: Output directory path
@@ -211,7 +211,7 @@ function GetBuildLibParams(out_dir::String, lib_name::String, fasta_dir::String;
     end
 
     # Parse JSON
-    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultBuildLibParams.json"), String)
+    config_text = read(asset_path("example_config", "defaultBuildLibParams.json"), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
     # Find all FASTA files in the specified directory
@@ -248,7 +248,7 @@ end
     GetParseSpecLibParams(input_lib_path::String, output_lib_path::String)
 
 Create a new parameter file for `ParseSpecLib` with updated input and output paths.
-Uses a default template from `data/example_config/defaultParseSpecLibParams.json`.
+Uses a default template from `assets/example_config/defaultParseSpecLibParams.json`.
 
 Arguments:
 - input_lib_path: Path to the empirical library TSV file
@@ -275,7 +275,7 @@ function GetParseSpecLibParams(input_lib_path::String, output_lib_path::String; 
         end
     end
 
-    config_text = read(joinpath(@__DIR__, "../../data/example_config/defaultParseEmpiricalLibParams.json"), String)
+    config_text = read(asset_path("example_config", "defaultParseEmpiricalLibParams.json"), String)
     config = JSON.parse(config_text, dicttype=OrderedDict)
 
     config["library_params"]["input_lib_path"] = input_lib_path

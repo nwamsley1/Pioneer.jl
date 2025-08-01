@@ -97,7 +97,7 @@ jobs:
       - name: Add wrapper scripts
         shell: bash
         run: |
-          cp src/build/scripts/pioneer build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          cp src/build/CLI/pioneer build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
       - name: Package Linux .deb
@@ -105,10 +105,7 @@ jobs:
           mkdir -p deb/usr/local/Pioneer
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
           mkdir -p deb/usr/local/Pioneer/data
-          cp -r data/IsotopeSplines deb/usr/local/Pioneer/data/
-          cp data/contaminants.fasta.gz deb/usr/local/Pioneer/data/
-          cp data/immonium.txt deb/usr/local/Pioneer/data/
-          cp data/ion_dictionary.txt deb/usr/local/Pioneer/data/
+          cp -r assets/* deb/usr/local/Pioneer/data/
 
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer

@@ -18,7 +18,7 @@
 # Entry point for PackageCompiler
 function main_SearchDIA(argv=ARGS)::Cint
     s = ArgParseSettings()
-    @add_arg_table s begin
+    @add_arg_table! settings begin
         "params_path"
             help = "Path to search parameters JSON file"
             arg_type = String
@@ -36,11 +36,11 @@ end
 """
     asset_path(parts...)
     Return the path to a bundled asset. The function first checks the
-    compile-time `data/` directory and falls back to a path relative to the
+    compile-time `assets/` directory and falls back to a path relative to the
     installed executable.
 """
 function asset_path(parts...)
-    compile_dir = joinpath(@__DIR__, "..", "..", "data", parts...)
+    compile_dir = joinpath(@__DIR__, "..", "..", "assets", parts...)
     if ispath(compile_dir)
         return compile_dir
     end
@@ -59,7 +59,7 @@ end
 """
     Locate the isotope spline XML file bundled with the application.
 """
-isotope_spline_path() = asset_path("IsotopeSplines", "IsotopeSplines_10kDa_21isotopes-1.xml")
+isotope_spline_path() = asset_path("IsotopeSplines_10kDa_21isotopes.xml")
 
 
 """
