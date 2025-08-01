@@ -510,6 +510,11 @@ function process_quad_results(
         )
     end
     
+    # Filter out rows where summarize_precursor returned all missing values
+    # Since summarize_precursor returns either all values or all missing,
+    # we only need to check one column
+    filter!(row -> !ismissing(row.center_mz), combined)
+    
     postprocess_combined_results!(combined)
     return combined
 end
