@@ -127,14 +127,23 @@ jobs:
 
           dpkg-deb --build --root-owner-group deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 
+      - name: Package zipped binaries
+        run: |
+          cd build/Pioneer_${{ matrix.identifier }}/Applications
+          zip -r ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+          path: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
-          files: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+          files: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip

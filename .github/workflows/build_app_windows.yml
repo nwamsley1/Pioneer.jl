@@ -144,15 +144,25 @@ jobs:
             -cultures:en-us `
             -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
+      
+      - name: Package zipped binaries
+        shell: pwsh
+        run: |
+          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+          Compress-Archive -Path "$pioneerRoot\*" -DestinationPath "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
-          path: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+          path: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
-          files: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+          files: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
