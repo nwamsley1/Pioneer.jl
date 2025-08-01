@@ -274,12 +274,27 @@ function process_file!(
             (getFragTolPpm(params), getFragTolPpm(params)))
         ppm_errs = nothing
         prev_mass_err = 0.0f0
-        for i in range(0, 1)
+        init_mass_tol = getFragTolPpm(params)
+        n_attempts = 0
+        converged = false
+        min_psms_for_fitting = 1000  # Minimum PSMs needed for reliable parameter estimation
+        
+        while n_attempts < 5
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
             # Collect PSMs through iterations
             psms = collect_psms(spectra, search_context, params, ms_file_idx)
+            
+            # Check if we have enough PSMs to proceed
+            if size(psms, 1) < min_psms_for_fitting
+                @warn "Only $(size(psms, 1)) PSMs found in iteration $(n_attempts + 1) for file $ms_file_idx. Need at least $min_psms_for_fitting for reliable fitting."
+                if n_attempts >= 2  # Give up early if we're not getting enough PSMs
+                    break
+                end
+                n_attempts += 1
+                continue
+            end
             
             # Fit RT alignment model
             set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
@@ -289,20 +304,59 @@ function process_file!(
             fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
             mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
             #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
+            #Need to be able to search again with only the topN abundant fragments in each scan if the presearch
+            #without the RT filter is not specific enough to select a large majority of true positives on its own 
+            @info "TESt (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) = $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)) \n"
             if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
                 prev_mass_err = getMassOffset(mass_err_model)
+                @warn "Mass error offset is too large: $(getMassOffset(mass_err_model)). Retrying with updated estimate. \n"
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
+            #The estimated mass error is almost as wide as the initial guess. Need to research with a wider initial mass tolerance 
+            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (init_mass_tol) 
+                init_mass_tol *= 1.5
+                results.mass_err_model[] =  MassErrorModel(
+                                                0.0f0, 
+                                                (Float32(init_mass_tol), Float32(init_mass_tol))
+                                            )
+                @warn "Mass error model is too wide: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)). Retrying with wider initial mass tolerance: $init_mass_tol ppm \n"
             else
                 results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+                converged = true
                 break
             end
+            n_attempts += 1
         end
-
-        append!(results.ppm_errs, ppm_errs)
+        
+        if !converged
+            @warn "Failed to converge mass error model after $n_attempts attempts for file $ms_file_idx. Using conservative defaults." 
+            # Apply fallback parameters
+            results.mass_err_model[] = MassErrorModel(
+                0.0f0,  # No bias assumption
+                (50.0f0, 50.0f0)  # ±50 ppm tolerance
+            )
+            results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
+            
+            # Store warning but don't fail
+            parsed_fname = getParsedFileName(search_context, ms_file_idx)
+            @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
+        else
+            # Normal case - append collected errors
+            append!(results.ppm_errs, ppm_errs)
+        end
+        
     catch e
-        setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
-        @warn "Could not tune parameters for $ms_file_idx"
-        throw(e)
+        parsed_fname = getParsedFileName(search_context, ms_file_idx)
+        @warn "Parameter tuning failed for file $parsed_fname. Using conservative defaults." exception=(e, catch_backtrace())
+        
+        # Apply fallback parameters
+        results.mass_err_model[] = MassErrorModel(
+            0.0f0,  # No bias assumption
+            (50.0f0, 50.0f0)  # ±50 ppm tolerance
+        )
+        results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
+        
+        # Store warning but don't fail
+        @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Used fallback values."
     end
     
     return results
