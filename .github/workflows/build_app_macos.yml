@@ -128,8 +128,15 @@ jobs:
       #  shell: bash
       #  run: |
       #    mkdir -p converter
-      #    curl -L https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/PioneerConverter-${{ matrix.identifier }}.tar.gz -o converter.tar.gz
-      #    tar -xzf converter.tar.gz -C converter
+      #    if [ "${{ matrix.identifier }}" = "macos-x64" ]; then
+      #      PATTERN="osx-x64"
+      #    else
+      #      PATTERN="osx-arm64"
+      #    fi
+      #    ASSET=$(curl -s https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest |
+      #      grep -o "Binary-PioneerConverter${PATTERN}-[^\"]*\.zip" | head -n 1)
+      #    curl -L "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
+      #    unzip -q converter.zip -d converter
       #    cp converter/PioneerConverter build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/
 
       - name: Add wrapper scripts
