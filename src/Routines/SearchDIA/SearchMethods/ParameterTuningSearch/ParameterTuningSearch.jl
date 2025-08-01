@@ -218,6 +218,11 @@ function process_file!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
+    
+    # Initialize diagnostics for this file
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    warnings = String[]
+    final_psm_count = 0
 
     """
     Collect PSMs through multiple iterations until sufficient high-quality PSMs found.
@@ -410,6 +415,23 @@ function summarize_results!(
     params::P,
     search_context::SearchContext
 ) where {P<:ParameterTuningSearchParameters}
+    
+    @info "Parameter Tuning Search Summary"
+    @info "================================"
+    
+    # Count files that used fallback
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data.file_paths)
+    n_fallback = 0
+    
+    # Check each file for warnings (simple approach for now)
+    for i in 1:n_files
+        # Files that failed would have logged warnings
+        # This is a placeholder - in future we'd check actual diagnostics
+    end
+    
+    @info "Total files processed: $n_files"
+    @info "Note: Files using fallback parameters will show warnings above"
     
     @info "Writing QC plots..."
     
