@@ -16,13 +16,30 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Entry point for PackageCompiler
-function main_GetSearchParams()::Cint
+function main_GetSearchParams(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "library_path"
+            help = "Path to spectral library (.poin)"
+            arg_type = String
+        "ms_data_path"
+            help = "Directory containing MS data"
+            arg_type = String
+        "results_path"
+            help = "Output directory for search results"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "search_parameters.json")
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
+    params_path = parsed_args[:"params-path"]
     try
-        GetSearchParams(ARGS[1], # library path
-                        ARGS[2], # MS data path
-                        ARGS[3], # results path
-                        params_path = length(ARGS) >= 4 ? ARGS[4] : missing # params json output path
-        )
+       GetSearchParams(parsed_args[:library_path],
+                       parsed_args[:ms_data_path],
+                       parsed_args[:results_path];
+                       params_path=params_path)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
@@ -32,13 +49,30 @@ end
 
 
 # Entry point for PackageCompiler
-function main_GetBuildLibParams()::Cint
+function main_GetBuildLibParams(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "out_dir"
+            help = "Output directory for library"
+            arg_type = String
+        "lib_name"
+            help = "Name of the library"
+            arg_type = String
+        "fasta_dir"
+            help = "Directory containing FASTA files"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "buildspeclib_params.json")
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
+    params_path = parsed_args[:"params-path"]
     try
-        GetBuildLibParams(ARGS[1], # library output path
-                          ARGS[2], # library name
-                          ARGS[3], # fasta path
-                          params_path = length(ARGS) >= 4 ? ARGS[4] : missing # params json output path
-        )
+        GetBuildLibParams(parsed_args[:out_dir],
+                          parsed_args[:lib_name],
+                          parsed_args[:fasta_dir];
+                          params_path=params_path)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
@@ -47,10 +81,26 @@ function main_GetBuildLibParams()::Cint
 end
 
 # Entry point for PackageCompiler
-function main_GetParseSpecLibParams()::Cint
+function main_GetParseSpecLibParams(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "input_lib_path"
+            help = "Input empirical library TSV"
+            arg_type = String
+        "output_lib_path"
+            help = "Output path for processed library"
+            arg_type = String
+        "--params-path"
+            help = "Output path for generated parameters file"
+            arg_type = String
+            default = joinpath(pwd(), "parsespeclib_params.json")
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
+    params_path = parsed_args[:"params-path"]
     try
-        GetParseSpecLibParams(ARGS[1], ARGS[2];
-            params_path = length(ARGS) >= 3 ? ARGS[3] : missing)
+        GetParseSpecLibParams(parsed_args[:input_lib_path], 
+                              parsed_args[:output_lib_path];
+                              params_path = params_path)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1

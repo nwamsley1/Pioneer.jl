@@ -18,9 +18,16 @@
 # src/ParseSpecLib.jl
 
 # Entry point for PackageCompiler
-function main_ParseSpecLib()::Cint
+function main_ParseSpecLib(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "params_path"
+            help = "Path to ParseSpecLib parameters JSON file"
+            arg_type = String
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
     try
-        ParseSpecLib(ARGS[1])
+        ParseSpecLib(parsed_args[:params_path])
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1

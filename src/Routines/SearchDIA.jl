@@ -16,9 +16,16 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Entry point for PackageCompiler
-function main_SearchDIA()::Cint
+function main_SearchDIA(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "params_path"
+            help = "Path to search parameters JSON file"
+            arg_type = String
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
     try
-        SearchDIA(ARGS[1])
+        SearchDIA(parsed_args[:params_path])
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1

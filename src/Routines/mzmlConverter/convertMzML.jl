@@ -16,11 +16,22 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Entry point for PackageCompiler
-function main_convertMzML()::Cint
+function main_convertMzML(argv=ARGS)::Cint
+    s = ArgParseSettings()
+    @add_arg_table s begin
+        "mzml_dir"
+            help = "Directory containing mzML files"
+            arg_type = String
+        "skip_header"
+            help = "Skip scan header (true/false)"
+            arg_type = Bool
+            default = true
+            required = false
+    end
+    parsed_args = parse_args(argv, s; as_symbols = true)
     try
-        convertMzML(ARGS[1], # input data path
-                    skip_scan_header = length(ARGS) >= 2 ? parse(Bool, ARGS[2]) : true # skip scan header
-        )
+        convertMzML(parsed_args[:mzml_dir]; 
+                    skip_scan_header = parsed_args[:skip_header])
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
