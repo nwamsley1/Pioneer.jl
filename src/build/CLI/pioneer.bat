@@ -21,10 +21,7 @@ if "%~1"=="--threads" (
     shift
     goto parse_args
 )
-if "%~1"=="--help" goto show_help
-if "%~1"=="-h" goto show_help
-if "%~1"=="-help" goto show_help
-if "%~1"=="/?" goto show_help
+for %%H in (--help -h -help /?) do if /I "%~1"=="%%H" goto handle_help
 
 rem Check for --threads=value format
 echo %~1 | findstr /C:"--threads=" >nul
@@ -66,6 +63,20 @@ if "%SUBCOMMAND%"=="" (
 shift
 goto parse_args
 
+:handle_help
+if "%SUBCOMMAND%"=="" (
+    goto show_help
+) else (
+    if "%SUBCOMMAND_ARGS%"=="" (
+        set SUBCOMMAND_ARGS=%~1
+    ) else (
+        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
+    )
+    shift
+    goto parse_args
+)
+
+
 :show_help
 echo Pioneer - Mass Spectrometry Data Analysis
 echo.
@@ -77,29 +88,29 @@ echo   --threads=N        Alternative syntax for setting threads
 echo   --help, -h         Show this help message
 echo.
 echo Subcommands:
-echo   search ^<path_to_config.json^>                Perform DIA search analysis
-echo   predict ^<path_to_config.json^>               Predict spectral library
-echo   empirical ^<path_to_config.json^>             Parse spectral library
-echo   search-config ^<path_to_spectral_lib^> ^<path_to_ms_data^> ^<path_to_search_results^> [config_output_path]
+echo   search ^<params.json^>                       Perform DIA search analysis
+echo   predict ^<params.json^>                      Predict spectral library
+echo   empirical ^<params.json^>                    Parse spectral library
+echo   params-search ^<library_path^> ^<ms_data_path^> ^<results_path^> [params_out_path]
 echo                                                 Generate search parameter template
-echo                                                 Default config output path: ./search_parameters.json
-echo   predict-config ^<output_path_to_spectral_lib^> ^<lib_name^> ^<path_to_fasta_dir^> [config]
+echo                                                 Default params output path: ./search_parameters.json
+echo   params-predict ^<library_outpath^> ^<lib_name^> ^<fasta_path^> [params_out_path]
 echo                                                 Generate library build parameter template
-echo                                                 Default config output path: ./buildspeclib_params.json
-echo   empirical-config ^<input_path_to_empirical_lib^> ^<output_path_to_spectral_lib^> [config_output_path]
+echo                                                 Default params output path: ./buildspeclib_params.json
+echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [params_out_path]
 echo                                                 Generate parse parameter template
-echo                                                 Default config output path: ./parsespeclib_params.json
-echo   convert-raw ^<path_to_raw_file_or_dir^> [options]
+echo                                                 Default params output path: ./parsespeclib_params.json
+echo   convert-raw ^<data_path^> [options]
 echo                                                 Convert Thermo RAW files
-echo   convert-mzml ^<path_to_mzml_dir^> [skip_header]
+echo   convert-mzml ^<data_path^> [skip_header]
 echo                                                 Convert mzML files
 echo.
 echo Examples:
-echo   pioneer predict-config yeast.poin yeast fasta/ predict_config.json
-echo   pioneer predict predict_config.json
-echo   pioneer search-config yeast.poin data/ results/ search_config.json
-echo   pioneer search config.json                    # Use auto threading
-echo   pioneer --threads=8 search config.json        # Use 8 threads
+echo   pioneer params-predict yeast.poin yeast fasta/ predict_params.json
+echo   pioneer predict predict_params.json
+echo   pioneer params-search yeast.poin data/ results/ search_params.json
+echo   pioneer search search_params.json                    # Use auto threading
+echo   pioneer --threads=8 search search_params.json        # Use 8 threads
 echo.
 echo For subcommand-specific help:
 echo   pioneer ^<subcommand^> --help

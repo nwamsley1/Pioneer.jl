@@ -17,7 +17,7 @@
 
 # Entry point for PackageCompiler
 function main_SearchDIA(argv=ARGS)::Cint
-    settings = ArgParseSettings()
+    settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "params_path"
             help = "Path to search parameters JSON file"

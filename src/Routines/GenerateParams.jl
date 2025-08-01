@@ -17,7 +17,7 @@
 
 # Entry point for PackageCompiler
 function main_GetSearchParams(argv=ARGS)::Cint
-    settings = ArgParseSettings()
+    settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "library_path"
             help = "Path to spectral library (.poin)"
@@ -34,7 +34,7 @@ function main_GetSearchParams(argv=ARGS)::Cint
             default = joinpath(pwd(), "search_parameters.json")
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
-    params_path = parsed_args[:"params-path"]
+    params_path = parsed_args[:params_path]
     try
        GetSearchParams(parsed_args[:library_path],
                        parsed_args[:ms_data_path],
@@ -50,7 +50,7 @@ end
 
 # Entry point for PackageCompiler
 function main_GetBuildLibParams(argv=ARGS)::Cint
-    settings = ArgParseSettings()
+    settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "out_dir"
             help = "Output directory for library"
@@ -67,7 +67,7 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
             default = joinpath(pwd(), "buildspeclib_params.json")
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
-    params_path = parsed_args[:"params-path"]
+    params_path = parsed_args[:params-path]
     try
         GetBuildLibParams(parsed_args[:out_dir],
                           parsed_args[:lib_name],
@@ -82,7 +82,7 @@ end
 
 # Entry point for PackageCompiler
 function main_GetParseSpecLibParams(argv=ARGS)::Cint
-    settings = ArgParseSettings()
+    settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "input_lib_path"
             help = "Input empirical library TSV"
@@ -96,7 +96,7 @@ function main_GetParseSpecLibParams(argv=ARGS)::Cint
             default = joinpath(pwd(), "parsespeclib_params.json")
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
-    params_path = parsed_args[:"params-path"]
+    params_path = parsed_args[:params-path]
     try
         GetParseSpecLibParams(parsed_args[:input_lib_path], 
                               parsed_args[:output_lib_path];

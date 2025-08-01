@@ -17,7 +17,7 @@
 
 # Entry point for PackageCompiler
 function main_convertMzML(argv=ARGS)::Cint
-    settings = ArgParseSettings()
+    settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "mzml_dir"
             help = "Directory containing mzML files"
