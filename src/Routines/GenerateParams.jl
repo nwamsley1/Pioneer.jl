@@ -33,7 +33,7 @@ function main_GetSearchParams(argv=ARGS)::Cint
             arg_type = String
             default = joinpath(pwd(), "search_parameters.json")
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     params_path = parsed_args[:"params-path"]
     try
        GetSearchParams(parsed_args[:library_path],
@@ -66,7 +66,7 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
             arg_type = String
             default = joinpath(pwd(), "buildspeclib_params.json")
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     params_path = parsed_args[:"params-path"]
     try
         GetBuildLibParams(parsed_args[:out_dir],
@@ -95,7 +95,7 @@ function main_GetParseSpecLibParams(argv=ARGS)::Cint
             arg_type = String
             default = joinpath(pwd(), "parsespeclib_params.json")
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     params_path = parsed_args[:"params-path"]
     try
         GetParseSpecLibParams(parsed_args[:input_lib_path], 

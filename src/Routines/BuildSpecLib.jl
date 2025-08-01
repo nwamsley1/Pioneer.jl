@@ -25,7 +25,7 @@ function main_BuildSpecLib(argv=ARGS)::Cint
             help = "Path to BuildSpecLib parameters JSON file"
             arg_type = String
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     try
         BuildSpecLib(parsed_args[:params_path])
     catch

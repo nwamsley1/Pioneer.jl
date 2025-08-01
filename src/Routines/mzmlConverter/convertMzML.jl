@@ -28,7 +28,7 @@ function main_convertMzML(argv=ARGS)::Cint
             default = true
             required = false
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     try
         convertMzML(parsed_args[:mzml_dir]; 
                     skip_scan_header = parsed_args[:skip_header])

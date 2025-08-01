@@ -25,7 +25,7 @@ function main_ParseSpecLib(argv=ARGS)::Cint
             help = "Path to ParseSpecLib parameters JSON file"
             arg_type = String
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     try
         ParseSpecLib(parsed_args[:params_path])
     catch

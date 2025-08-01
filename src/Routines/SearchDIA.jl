@@ -23,7 +23,7 @@ function main_SearchDIA(argv=ARGS)::Cint
             help = "Path to search parameters JSON file"
             arg_type = String
     end
-    parsed_args = parse_args(argv, s; as_symbols = true)
+    parsed_args = parse_args(argv, settings; as_symbols = true)
     try
         SearchDIA(parsed_args[:params_path])
     catch
