@@ -124,13 +124,13 @@ jobs:
             );
           '
       
-      - name: Download PioneerConverter
-        shell: bash
-        run: |
-          mkdir -p converter
-          curl -L https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/PioneerConverter-${{ matrix.identifier }}.tar.gz -o converter.tar.gz
-          tar -xzf converter.tar.gz -C converter
-          cp converter/PioneerConverter build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/
+      #- name: Download PioneerConverter
+      #  shell: bash
+      #  run: |
+      #    mkdir -p converter
+      #    curl -L https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/PioneerConverter-${{ matrix.identifier }}.tar.gz -o converter.tar.gz
+      #    tar -xzf converter.tar.gz -C converter
+      #    cp converter/PioneerConverter build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/
 
       - name: Add wrapper scripts
         shell: bash
