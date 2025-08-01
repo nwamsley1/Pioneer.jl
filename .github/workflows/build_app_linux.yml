@@ -113,7 +113,7 @@ jobs:
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
 
-          chmod -R a+w deb/usr/local/Pioneer/share/julia
+          chmod -R a+rwx deb/usr/local/Pioneer/share/julia
 
           info=src/build/package_info.json
           PACKAGE=$(jq -r '.package' "$info")
@@ -128,7 +128,7 @@ jobs:
           Description: $DESCRIPTION
           EOF
 
-          dpkg-deb --build deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+          dpkg-deb --build --root-owner-group deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
