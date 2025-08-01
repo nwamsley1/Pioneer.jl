@@ -17,7 +17,7 @@
 
 # Entry point for PackageCompiler
 function main_GetSearchParams(argv=ARGS)::Cint
-    s = ArgParseSettings()
+    settings = ArgParseSettings()
     @add_arg_table! settings begin
         "library_path"
             help = "Path to spectral library (.poin)"
@@ -50,7 +50,7 @@ end
 
 # Entry point for PackageCompiler
 function main_GetBuildLibParams(argv=ARGS)::Cint
-    s = ArgParseSettings()
+    settings = ArgParseSettings()
     @add_arg_table! settings begin
         "out_dir"
             help = "Output directory for library"
@@ -82,7 +82,7 @@ end
 
 # Entry point for PackageCompiler
 function main_GetParseSpecLibParams(argv=ARGS)::Cint
-    s = ArgParseSettings()
+    settings = ArgParseSettings()
     @add_arg_table! settings begin
         "input_lib_path"
             help = "Input empirical library TSV"
