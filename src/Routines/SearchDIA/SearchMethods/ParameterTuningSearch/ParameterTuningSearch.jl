@@ -65,9 +65,9 @@ Type Definitions
 
 """
 Results container for parameter tuning search.
-Holds mass error models, RT alignment models, and associated data.
+Holds mass error models, RT alignment models, associated data, and diagnostics.
 """
-struct ParameterTuningSearchResults <: SearchResults 
+mutable struct ParameterTuningSearchResults <: SearchResults 
     mass_err_model::Base.Ref{<:MassErrorModel}
     rt_to_irt_model::Base.Ref{<:RtConversionModel}
     irt::Vector{Float32}
@@ -76,6 +76,8 @@ struct ParameterTuningSearchResults <: SearchResults
     rt_plots::Vector{Plots.Plot}
     mass_plots::Vector{Plots.Plot}
     qc_plots_folder_path::String
+    diagnostics::ParameterTuningDiagnostics
+    parameter_history::ParameterHistory
 end
 
 """
@@ -158,9 +160,10 @@ end
 Results Access Methods
 ==========================================================#
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
-getMs1MassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.ms1_mass_err_model[]
 getRtToIrtModel(ptsr::ParameterTuningSearchResults) = ptsr.rt_to_irt_model[]
 getQcPlotsFolder(ptsr::ParameterTuningSearchResults) = ptsr.qc_plots_folder_path
+getDiagnostics(ptsr::ParameterTuningSearchResults) = ptsr.diagnostics
+getParameterHistory(ptsr::ParameterTuningSearchResults) = ptsr.parameter_history
 
 function set_rt_to_irt_model!(
     ptsr::ParameterTuningSearchResults, 
@@ -204,7 +207,9 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Plots.Plot[],
         Plots.Plot[],
-        qc_dir
+        qc_dir,
+        ParameterTuningDiagnostics(),
+        ParameterHistory()
     )
 end
 
@@ -276,28 +281,58 @@ function process_file!(
         return psms
     end
 
+    # Get parsed filename for diagnostics
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    
     try
-        mass_err_passing = false
-        results.mass_err_model[] =  MassErrorModel(
-            0.0f0, 
-            (getFragTolPpm(params), getFragTolPpm(params)))
-        ppm_errs = nothing
-        prev_mass_err = 0.0f0
-        init_mass_tol = getFragTolPpm(params)
-        n_attempts = 0
-        converged = false
-        min_psms_for_fitting = 1000  # Minimum PSMs needed for reliable parameter estimation
+        # Get initial parameters from cross-run learning
+        initial_params = get_initial_parameters(results.parameter_history, params)
         
+        # Initialize tracking variables
+        warnings = String[]
+        converged = false
+        n_attempts = 0
+        min_psms_for_fitting = 1000
+        final_psm_count = 0
+        
+        # Check if we should attempt bias detection
+        if should_attempt_bias_detection(params, 1, 0) && !initial_params.informed_by_history
+            @info "Attempting mass bias detection for file $ms_file_idx"
+            best_bias, psm_count = detect_mass_bias(spectra, search_context, params, ms_file_idx)
+            if psm_count > 100  # Minimum for reliable bias estimate
+                initial_bias = best_bias
+                @info "Detected mass bias: $best_bias ppm"
+            else
+                initial_bias = initial_params.bias_estimate
+                push!(warnings, "Bias detection yielded insufficient PSMs")
+            end
+        else
+            initial_bias = initial_params.bias_estimate
+        end
+        
+        # Set initial mass error model
+        results.mass_err_model[] = MassErrorModel(
+            initial_bias,
+            (initial_params.initial_tolerance, initial_params.initial_tolerance)
+        )
+        
+        prev_mass_err = 0.0f0
+        init_mass_tol = initial_params.initial_tolerance
+        ppm_errs = nothing
+        
+        # Main convergence loop
         while n_attempts < 5
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
             # Collect PSMs through iterations
             psms = collect_psms(spectra, search_context, params, ms_file_idx)
+            final_psm_count = size(psms, 1)
             
             # Check if we have enough PSMs to proceed
-            if size(psms, 1) < min_psms_for_fitting
-                @warn "Only $(size(psms, 1)) PSMs found in iteration $(n_attempts + 1) for file $ms_file_idx. Need at least $min_psms_for_fitting for reliable fitting."
+            if final_psm_count < min_psms_for_fitting
+                @warn "Only $final_psm_count PSMs found in iteration $(n_attempts + 1) for file $ms_file_idx. Need at least $min_psms_for_fitting for reliable fitting."
+                push!(warnings, "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting")
                 if n_attempts >= 2  # Give up early if we're not getting enough PSMs
                     break
                 end
@@ -310,31 +345,76 @@ function process_file!(
                                 fit_irt_model(params, psms))
 
             # Get fragments and fit mass error model
-            fragments = get_matched_fragments(spectra, psms, results,search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs = fit_mass_err_model(params, fragments)
-            #If the mass offset is much larger than expected, need to research with an updated mass offset estimate 
-            #Need to be able to search again with only the topN abundant fragments in each scan if the presearch
-            #without the RT filter is not specific enough to select a large majority of true positives on its own 
-            @info "TESt (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) = $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)) \n"
-            if abs(getMassOffset(mass_err_model))>(getFragTolPpm(params)/4)
+            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+            ppm_errs = ppm_errs_new  # Update for boundary checking
+            
+            # Check boundary sampling adequacy
+            boundary_result = check_boundary_sampling(ppm_errs_new, mass_err_model)
+            if !boundary_result.adequate_sampling
+                @warn boundary_result.diagnostic_message
+                push!(warnings, boundary_result.diagnostic_message)
+                # Expand tolerance based on boundary analysis
+                expanded_model = expand_tolerance(mass_err_model, boundary_result.suggested_expansion_factor)
+                results.mass_err_model[] = expanded_model
+                init_mass_tol *= boundary_result.suggested_expansion_factor
+                n_attempts += 1
+                continue
+            end
+            
+            # Check convergence conditions
+            if abs(getMassOffset(mass_err_model)) > (getFragTolPpm(params)/4)
                 prev_mass_err = getMassOffset(mass_err_model)
-                @warn "Mass error offset is too large: $(getMassOffset(mass_err_model)). Retrying with updated estimate. \n"
-                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getFragTolPpm(params), getFragTolPpm(params)))
-            #The estimated mass error is almost as wide as the initial guess. Need to research with a wider initial mass tolerance 
+                @warn "Mass error offset is too large: $(getMassOffset(mass_err_model)). Retrying with updated estimate."
+                push!(warnings, "Large mass offset: $(getMassOffset(mass_err_model)) ppm")
+                results.mass_err_model[] = MassErrorModel(
+                    getMassOffset(mass_err_model), 
+                    (getFragTolPpm(params), getFragTolPpm(params))
+                )
             elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (init_mass_tol) 
                 init_mass_tol *= 1.5
-                results.mass_err_model[] =  MassErrorModel(
-                                                0.0f0, 
-                                                (Float32(init_mass_tol), Float32(init_mass_tol))
-                                            )
-                @warn "Mass error model is too wide: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)). Retrying with wider initial mass tolerance: $init_mass_tol ppm \n"
+                results.mass_err_model[] = MassErrorModel(
+                    0.0f0, 
+                    (Float32(init_mass_tol), Float32(init_mass_tol))
+                )
+                @warn "Mass error model is too wide: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)). Retrying with wider initial mass tolerance: $init_mass_tol ppm"
+                push!(warnings, "Wide tolerance: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)) ppm")
             else
-                results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+                results.mass_err_model[] = MassErrorModel(
+                    getMassOffset(mass_err_model) + prev_mass_err, 
+                    (getLeftTol(mass_err_model), getRightTol(mass_err_model))
+                )
                 converged = true
                 break
             end
             n_attempts += 1
         end
+        
+        # Record tuning results
+        tuning_result = TuningResults(
+            getMassOffset(results.mass_err_model[]),
+            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            converged,
+            final_psm_count,
+            n_attempts,
+            warnings
+        )
+        store_tuning_results!(results.parameter_history, ms_file_idx, tuning_result)
+        
+        # Record diagnostic status
+        status = ParameterTuningStatus(
+            ms_file_idx,
+            parsed_fname,
+            converged,
+            !converged,  # used_fallback
+            !converged ? "Failed to converge after $n_attempts attempts" : "",
+            n_attempts,
+            final_psm_count,
+            getMassOffset(results.mass_err_model[]),
+            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            warnings
+        )
+        record_tuning_status!(results.diagnostics, status)
         
         if !converged
             @warn "Failed to converge mass error model after $n_attempts attempts for file $ms_file_idx. Using conservative defaults." 
@@ -345,12 +425,12 @@ function process_file!(
             )
             results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
             
-            # Store warning but don't fail
-            parsed_fname = getParsedFileName(search_context, ms_file_idx)
             @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
         else
             # Normal case - append collected errors
-            append!(results.ppm_errs, ppm_errs)
+            if ppm_errs !== nothing
+                append!(results.ppm_errs, ppm_errs)
+            end
         end
         
     catch e
@@ -364,7 +444,21 @@ function process_file!(
         )
         results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
         
-        # Store warning but don't fail
+        # Record error in diagnostics
+        status = ParameterTuningStatus(
+            ms_file_idx,
+            parsed_fname,
+            false,  # not converged
+            true,   # used fallback
+            "Exception: $(typeof(e))",
+            0,      # n_iterations
+            0,      # psm_count
+            0.0f0,  # mass_offset
+            (50.0f0, 50.0f0),  # tolerance
+            ["Error: $(string(e))"]
+        )
+        record_tuning_status!(results.diagnostics, status)
+        
         @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Used fallback values."
     end
     
@@ -419,19 +513,33 @@ function summarize_results!(
     @info "Parameter Tuning Search Summary"
     @info "================================"
     
-    # Count files that used fallback
+    # Generate diagnostics report
+    diagnostics = results.diagnostics
     ms_data = getMSData(search_context)
     n_files = length(ms_data.file_paths)
-    n_fallback = 0
-    
-    # Check each file for warnings (simple approach for now)
-    for i in 1:n_files
-        # Files that failed would have logged warnings
-        # This is a placeholder - in future we'd check actual diagnostics
-    end
     
     @info "Total files processed: $n_files"
-    @info "Note: Files using fallback parameters will show warnings above"
+    @info "Successfully tuned: $(diagnostics.n_successful)"
+    @info "Used fallback parameters: $(diagnostics.n_fallback)"
+    @info "Failed completely: $(diagnostics.n_failed)"
+    
+    # Generate parameter tuning report
+    out_dir = getDataOutDir(search_context)
+    report_path = joinpath(out_dir, "parameter_tuning_report.txt")
+    generate_parameter_tuning_report(diagnostics, report_path)
+    @info "Parameter tuning report saved to: $report_path"
+    
+    # Generate cross-run statistics report if applicable
+    if results.parameter_history.global_stats.n_successful_files > 0
+        cross_run_report_path = joinpath(out_dir, "cross_run_parameter_report.txt")
+        generate_cross_run_report(results.parameter_history, cross_run_report_path)
+        @info "Cross-run parameter report saved to: $cross_run_report_path"
+    end
+    
+    # Warn if many files used fallback
+    if diagnostics.n_fallback > 0
+        @warn "$(diagnostics.n_fallback) file(s) used fallback parameters. Check parameter_tuning_report.txt for details."
+    end
     
     @info "Writing QC plots..."
     
