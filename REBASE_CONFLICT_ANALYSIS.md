@@ -13,14 +13,18 @@
 
 ## Conflicts Encountered
 
-### 1. Binary Files (Resolved)
+### 1. Binary Files (RECURRING)
 **Files**: 
 - `data/.DS_Store`
 - `src/.DS_Store`
 
 **Nature**: macOS system files that track folder display preferences
-**Resolution**: Removed both files with `git rm` since they shouldn't be tracked
-**Status**: ✅ RESOLVED
+**Issue**: These files appear in almost every commit (18+ times)
+**Resolution**: 
+  - Already in .gitignore but were tracked before
+  - Need to remove from every conflicting commit
+  - Created automated script to handle this
+**Status**: ⚠️ ONGOING - Appearing in multiple commits
 
 ### 2. Expected Major Conflict Areas
 
