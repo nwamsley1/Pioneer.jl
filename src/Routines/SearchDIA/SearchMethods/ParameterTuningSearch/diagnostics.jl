@@ -15,39 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-    ParameterTuningStatus
-
-Simple structure to track parameter tuning outcomes for each file.
-"""
-struct ParameterTuningStatus
-    file_idx::Int64
-    file_name::String
-    converged::Bool
-    used_fallback::Bool
-    fallback_reason::String
-    n_iterations::Int
-    final_psm_count::Int
-    final_mass_offset::Float32
-    final_mass_tolerance::Tuple{Float32, Float32}
-    warnings::Vector{String}
-end
-
-"""
-    ParameterTuningDiagnostics
-
-Container for parameter tuning diagnostics across all files.
-"""
-mutable struct ParameterTuningDiagnostics
-    file_statuses::Dict{Int64, ParameterTuningStatus}
-    n_successful::Int
-    n_fallback::Int
-    n_failed::Int
-    
-    function ParameterTuningDiagnostics()
-        new(Dict{Int64, ParameterTuningStatus}(), 0, 0, 0)
-    end
-end
+# Type definitions moved to types.jl
 
 """
     record_tuning_status!(diagnostics, status)

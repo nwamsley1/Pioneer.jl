@@ -333,7 +333,7 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
-    ::MS2CHROM
+    #::MS2CHROM  # TODO: Fix dependency - MS2CHROM defined in IntegrateChromatogramsSearch which loads later
 ) where {
         M<:MassErrorModel, 
         S<:SearchDataStructures, 
