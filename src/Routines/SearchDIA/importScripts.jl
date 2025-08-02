@@ -183,27 +183,18 @@ function importScripts()
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
     # Load ParameterTuningSearch files in dependency order
-    @info "Loading ParameterTuningSearch files in explicit order..."
-    param_tuning_dir = joinpath(search_methods_dir, "ParameterTuningSearch")
-    param_tuning_files = [
-        "types.jl",                    # All type definitions to avoid circular dependencies
-        "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
-        "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
-        "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
-        "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
-        "boundary_sampling.jl",        # Uses MassErrorModel
-        "utils.jl"                     # Uses all types - NOTE: depends on MS2CHROM from IntegrateChromatogramsSearch
-    ]
-    
-    for file in param_tuning_files
-        file_path = joinpath(param_tuning_dir, file)
-        @info "  Attempting to load: $file"
-        if safe_include!(file_path)
-            @info "  ✓ Successfully loaded: $file"
-        else
-            @error "  ✗ Failed to load: $file"
-        end
-    end
+    include_files!(
+        joinpath(search_methods_dir, "ParameterTuningSearch"),
+        [
+            "types.jl",                    # All type definitions to avoid circular dependencies
+            "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
+            "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
+            "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
+            "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
+            "boundary_sampling.jl",        # Uses MassErrorModel
+            "utils.jl"                     # Uses all types - NOTE: MS2CHROM dependency temporarily commented out
+        ]
+    )
     
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
     # Skip ParameterTuningSearch since we loaded it above
