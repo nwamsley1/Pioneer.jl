@@ -6,7 +6,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict empirical search-config predict-config empirical-config convert-raw convert-mzml"
+VALID_COMMANDS="search predict empirical params-search params-predict params-empirical convert-raw convert-mzml"
 
 show_help() {
     echo "Pioneer - Mass Spectrometry Data Analysis"
@@ -119,13 +119,13 @@ case "$SUBCOMMAND" in
     empirical)
         SUBCOMMAND="ParseSpecLib"
         ;;
-    empirical-config)
+    params-empirical)
         SUBCOMMAND="GetParseSpecLibParams"
         ;;
-    search-config)
+    params-search)
         SUBCOMMAND="GetSearchParams"
         ;;
-    predict-config)
+    params-predict)
         SUBCOMMAND="GetBuildLibParams"
         ;;
     convert-raw)

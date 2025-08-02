@@ -70,7 +70,7 @@ jobs:
               precompile_execution_file="src/build/snoop.jl",
             );
           '
-          
+
       - name: Download PioneerConverter
         shell: pwsh
         run: |
@@ -81,7 +81,8 @@ jobs:
           $asset = ($json.assets | Where-Object { $_.name -like "*${pattern}*.zip" } | Select-Object -First 1).name
           Invoke-WebRequest -Uri "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
-          Copy-Item "$dir\PioneerConverter.exe" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\"
+          $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
+          Copy-Item "$($subdir.FullName)\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\" -Recurse
 
 
       - name: Add wrapper scripts

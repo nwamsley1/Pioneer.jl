@@ -7,7 +7,7 @@ set SCRIPT_DIR=%~dp0
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict empirical search-config predict-config empirical-config convert-raw convert-mzml
+set VALID_COMMANDS=search predict empirical params-search params-predict params-empirical convert-raw convert-mzml
 
 :parse_args
 if "%~1"=="" goto check_subcommand
@@ -129,9 +129,9 @@ rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
 if /I "%SUBCOMMAND%"=="predict" set SUBCOMMAND=BuildSpecLib
 if /I "%SUBCOMMAND%"=="empirical" set SUBCOMMAND=ParseSpecLib
-if /I "%SUBCOMMAND%"=="empirical-config" set SUBCOMMAND=GetParseSpecLibParams
-if /I "%SUBCOMMAND%"=="search-config" set SUBCOMMAND=GetSearchParams
-if /I "%SUBCOMMAND%"=="predict-config" set SUBCOMMAND=GetBuildLibParams
+if /I "%SUBCOMMAND%"=="params-empirical" set SUBCOMMAND=GetParseSpecLibParams
+if /I "%SUBCOMMAND%"=="params-search" set SUBCOMMAND=GetSearchParams
+if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
