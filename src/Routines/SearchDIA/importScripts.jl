@@ -182,8 +182,32 @@ function importScripts()
     # SearchMethods (excluding the old FileReferences.jl and FileOperations.jl files)
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
+    # Load ParameterTuningSearch files in dependency order
+    include_files!(
+        joinpath(search_methods_dir, "ParameterTuningSearch"),
+        [
+            "diagnostics.jl",              # Define diagnostic types first
+            "ParameterTuningSearch.jl",    # Main file with parameter types
+            "bias_detection.jl",           # Uses parameter types
+            "boundary_sampling.jl",        # Uses parameter types
+            "cross_run_learning.jl",       # Uses parameter types
+            "utils.jl"                     # Uses all types
+        ]
+    )
+    
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
-    safe_include_directory!(search_methods_dir)
+    # Skip ParameterTuningSearch since we loaded it above
+    for (root, dirs, files) in walkdir(search_methods_dir)
+        # Skip ParameterTuningSearch directory
+        if occursin("ParameterTuningSearch", root)
+            continue
+        end
+        for file in files
+            if endswith(file, ".jl")
+                safe_include!(joinpath(root, file))
+            end
+        end
+    end
     
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "WriteOutputs"))
 
