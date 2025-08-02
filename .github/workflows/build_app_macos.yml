@@ -134,7 +134,7 @@ jobs:
             PATTERN="osx-arm64"
           fi
           ASSET=$(curl -s https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest |
-            grep -o "Binary-PioneerConverter${PATTERN}-[^\"]*\.zip" | head -n 1)
+            grep -o "PioneerConverter${PATTERN}-[^\"]*\.zip" | head -n 1)
           curl -L "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
           unzip -q converter.zip -d converter
           cp converter/PioneerConverter build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/
