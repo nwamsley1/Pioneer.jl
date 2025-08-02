@@ -71,7 +71,7 @@ function main_GetBuildLibParams(argv=ARGS)::Cint
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
     println("Parsed arguments: ", parsed_args)
-    params_path = parsed_args[:params-path]
+    params_path = parsed_args[:params_path]
     try
         GetBuildLibParams(parsed_args[:out_dir],
                           parsed_args[:lib_name],
@@ -102,7 +102,7 @@ function main_GetParseSpecLibParams(argv=ARGS)::Cint
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
     println("Parsed arguments: ", parsed_args)
-    params_path = parsed_args[:params-path]
+    params_path = parsed_args[:params_path]
     try
         GetParseSpecLibParams(parsed_args[:input_lib_path], 
                               parsed_args[:output_lib_path];
