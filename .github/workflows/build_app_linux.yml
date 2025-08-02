@@ -100,7 +100,7 @@ jobs:
           mkdir -p converter
           PATTERN="${{ matrix.identifier }}"
           ASSET=$(curl -sL https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest \
-            | jq -r --arg PATTERN "$PATTERN" '.assets[] | select(.name | test("Binary-PioneerConverter-" + $PATTERN + ".*\\.zip")) | .name' | head -n 1)
+            | jq -r --arg PATTERN "$PATTERN" '.assets[] | select(.name | test("PioneerConverter-" + $PATTERN + ".*\\.zip")) | .name' | head -n 1)
           if [ -z "$ASSET" ]; then
             echo "Failed to find PioneerConverter asset for pattern $PATTERN" >&2
             exit 1
