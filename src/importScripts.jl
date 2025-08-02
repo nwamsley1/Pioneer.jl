@@ -184,17 +184,26 @@ function importScripts()
     search_methods_dir = joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods")
     
     # Load ParameterTuningSearch files in dependency order
-    include_files!(
-        joinpath(search_methods_dir, "ParameterTuningSearch"),
-        [
-            "diagnostics.jl",              # Define diagnostic types first
-            "ParameterTuningSearch.jl",    # Main file with parameter types
-            "bias_detection.jl",           # Uses parameter types
-            "boundary_sampling.jl",        # Uses parameter types
-            "cross_run_learning.jl",       # Uses parameter types
-            "utils.jl"                     # Uses all types
-        ]
-    )
+    @info "Loading ParameterTuningSearch files in explicit order..."
+    param_tuning_dir = joinpath(search_methods_dir, "ParameterTuningSearch")
+    param_tuning_files = [
+        "diagnostics.jl",              # Define diagnostic types first
+        "cross_run_learning.jl",       # Define ParameterHistory and related types
+        "ParameterTuningSearch.jl",    # Main file - uses diagnostics and cross_run_learning types
+        "bias_detection.jl",           # Uses ParameterTuningSearchParameters
+        "boundary_sampling.jl",        # Uses MassErrorModel
+        "utils.jl"                     # Uses all types
+    ]
+    
+    for file in param_tuning_files
+        file_path = joinpath(param_tuning_dir, file)
+        @info "  Attempting to load: $file"
+        if safe_include!(file_path)
+            @info "  ✓ Successfully loaded: $file"
+        else
+            @error "  ✗ Failed to load: $file"
+        end
+    end
     
     # Include remaining SearchMethods files (excluding old FileReferences and FileOperations)
     # Skip ParameterTuningSearch since we loaded it above
