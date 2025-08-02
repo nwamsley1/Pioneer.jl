@@ -187,12 +187,13 @@ function importScripts()
     @info "Loading ParameterTuningSearch files in explicit order..."
     param_tuning_dir = joinpath(search_methods_dir, "ParameterTuningSearch")
     param_tuning_files = [
-        "diagnostics.jl",              # Define diagnostic types first
-        "cross_run_learning.jl",       # Define ParameterHistory and related types
-        "ParameterTuningSearch.jl",    # Main file - uses diagnostics and cross_run_learning types
-        "bias_detection.jl",           # Uses ParameterTuningSearchParameters
+        "types.jl",                    # All type definitions to avoid circular dependencies
+        "diagnostics.jl",              # Diagnostic functions (types moved to types.jl)
+        "cross_run_learning.jl",       # Cross-run learning functions (types moved to types.jl)
+        "ParameterTuningSearch.jl",    # Main implementation (types moved to types.jl)
+        "bias_detection.jl",           # Uses ParameterTuningSearchParameters from types.jl
         "boundary_sampling.jl",        # Uses MassErrorModel
-        "utils.jl"                     # Uses all types
+        "utils.jl"                     # Uses all types - NOTE: depends on MS2CHROM from IntegrateChromatogramsSearch
     ]
     
     for file in param_tuning_files
