@@ -67,7 +67,7 @@ Type Definitions
 Results container for parameter tuning search.
 Holds mass error models, RT alignment models, associated data, and diagnostics.
 """
-mutable struct ParameterTuningSearchResults <: SearchResults 
+struct ParameterTuningSearchResults <: SearchResults 
     mass_err_model::Base.Ref{<:MassErrorModel}
     rt_to_irt_model::Base.Ref{<:RtConversionModel}
     irt::Vector{Float32}
@@ -187,7 +187,7 @@ end
 Interface Implementation
 ==========================================================#
 
-get_parameters(::ParameterTuningSearch, params::PioneerParameters) = ParameterTuningSearchParameters(params)
+get_parameters(::ParameterTuningSearch, params::Any) = ParameterTuningSearchParameters(params)
 
 function init_search_results(::ParameterTuningSearchParameters, search_context::SearchContext)
     out_dir = getDataOutDir(search_context)
