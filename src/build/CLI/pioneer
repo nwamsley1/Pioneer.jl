@@ -22,13 +22,13 @@ show_help() {
     echo "  search <params.json>                        Perform DIA search analysis"
     echo "  predict <params.json>                       Predict spectral library"
     echo "  empirical <params.json>                     Parse spectral library"
-    echo "  params-search <library_path> <ms_data_path> <results_path> [params_out_path]"
+    echo "  params-search <library_path> <ms_data_path> <results_path> [--params-path <params_out_path>]"
     echo "                                              Generate search parameter template."
     echo "                                              Default params output path: ./search_parameters.json"
-    echo "  params-predict <library_outpath> <lib_name> <fasta_path> [params_out_path]"
+    echo "  params-predict <library_outpath> <lib_name> <fasta_path> [--params-path <params_out_path>]"
     echo "                                              Generate library build parameter template."
     echo "                                              Default params output path: ./buildspeclib_params.json"
-    echo "  params-empirical <empirical_lib_path> <library_outpath> [params_out_path]"
+    echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
     echo "                                              Generate parse parameter template"
     echo "                                              Default params output path: ./parsespeclib_params.json"
     echo "  convert-raw <data_path> [options]"
@@ -37,9 +37,9 @@ show_help() {
     echo "                                              Convert mzML files"
     echo ""
     echo "Examples:"
-    echo "  pioneer params-predict yeast.poin yeast fasta/ predict_params.json"
+    echo "  pioneer params-predict yeast.poin yeast fasta/ --params-path predict_params.json"
     echo "  pioneer predict predict_params.json"
-    echo "  pioneer params-search yeast.poin data/ results/ search_params.json"
+    echo "  pioneer params-search yeast.poin data/ results/ --params-path search_params.json"
     echo "  pioneer search search_params.json                                        # Use auto threading"
     echo "  pioneer --threads=8 search search_params.json                            # Use 8 threads"
     echo ""
@@ -75,9 +75,14 @@ while [[ $# -gt 0 ]]; do
             fi
             ;;
         -*)
-            echo "Error: Unknown option $1"
-            echo "Use --help for usage information"
-            exit 1
+            if [[ -z "$SUBCOMMAND" ]]; then
+                echo "Error: Unknown option $1"
+                echo "Use --help for usage information"
+                exit 1
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
             ;;
         *)
             # First non-option argument should be the subcommand
@@ -147,4 +152,5 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # Call the actual Pioneer executable with subcommand and its arguments
 # The executables are in the bin/ subdirectory relative to the script location
+echo "Executing: $SCRIPT_DIR/bin/$SUBCOMMAND ${SUBCOMMAND_ARGS[@]}"
 exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"

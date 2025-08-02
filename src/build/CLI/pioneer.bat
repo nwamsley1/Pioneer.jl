@@ -32,12 +32,22 @@ if !errorlevel! equ 0 (
     goto parse_args
 )
 
-rem Check for unknown options
+rem Check for unknown options before subcommand; otherwise pass through
 echo %~1 | findstr /R "^-" >nul
 if !errorlevel! equ 0 (
-    echo Error: Unknown option %~1
-    echo Use --help for usage information
-    exit /b 1
+    if "%SUBCOMMAND%"=="" (
+        echo Error: Unknown option %~1
+        echo Use --help for usage information
+        exit /b 1
+    ) else (
+        if "%SUBCOMMAND_ARGS%"=="" (
+            set SUBCOMMAND_ARGS=%~1
+        ) else (
+            set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
+        )
+        shift
+        goto parse_args
+    )
 )
 
 rem First non-option argument should be subcommand
@@ -91,13 +101,13 @@ echo Subcommands:
 echo   search ^<params.json^>                       Perform DIA search analysis
 echo   predict ^<params.json^>                      Predict spectral library
 echo   empirical ^<params.json^>                    Parse spectral library
-echo   params-search ^<library_path^> ^<ms_data_path^> ^<results_path^> [params_out_path]
+echo   params-search ^<library_path^> ^<ms_data_path^> ^<results_path^> [--params-path ^<params_out_path^>]
 echo                                                 Generate search parameter template
 echo                                                 Default params output path: ./search_parameters.json
-echo   params-predict ^<library_outpath^> ^<lib_name^> ^<fasta_path^> [params_out_path]
+echo   params-predict ^<library_outpath^> ^<lib_name^> ^<fasta_path^> [--params-path ^<params_out_path^>]
 echo                                                 Generate library build parameter template
 echo                                                 Default params output path: ./buildspeclib_params.json
-echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [params_out_path]
+echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [--params-path ^<params_out_path^>]
 echo                                                 Generate parse parameter template
 echo                                                 Default params output path: ./parsespeclib_params.json
 echo   convert-raw ^<data_path^> [options]
@@ -106,9 +116,9 @@ echo   convert-mzml ^<data_path^> [skip_header]
 echo                                                 Convert mzML files
 echo.
 echo Examples:
-echo   pioneer params-predict yeast.poin yeast fasta/ predict_params.json
+echo   pioneer params-predict yeast.poin yeast fasta/ --params-path predict_params.json
 echo   pioneer predict predict_params.json
-echo   pioneer params-search yeast.poin data/ results/ search_params.json
+echo   pioneer params-search yeast.poin data/ results/ --params-path search_params.json
 echo   pioneer search search_params.json                    # Use auto threading
 echo   pioneer --threads=8 search search_params.json        # Use 8 threads
 echo.
@@ -139,6 +149,7 @@ if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 :run_pioneer
 rem The executables are in the bin\ subdirectory
 set "EXEC=%SCRIPT_DIR%bin\%SUBCOMMAND%.exe"
+echo Executing: "%EXEC%" %SUBCOMMAND_ARGS%
 if "%SUBCOMMAND_ARGS%"=="" (
     "%EXEC%"
 ) else (

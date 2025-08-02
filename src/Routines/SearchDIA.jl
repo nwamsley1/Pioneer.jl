@@ -17,6 +17,7 @@
 
 # Entry point for PackageCompiler
 function main_SearchDIA(argv=ARGS)::Cint
+    println("Raw arguments: ", argv)
     settings = ArgParseSettings(; autofix_names = true)
     @add_arg_table! settings begin
         "params_path"
@@ -24,6 +25,7 @@ function main_SearchDIA(argv=ARGS)::Cint
             arg_type = String
     end
     parsed_args = parse_args(argv, settings; as_symbols = true)
+    println("Parsed arguments: ", parsed_args)
     try
         SearchDIA(parsed_args[:params_path])
     catch
