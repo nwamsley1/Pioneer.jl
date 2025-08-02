@@ -15,50 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-"""
-    TuningResults
-
-Results from parameter tuning for a single file.
-"""
-struct TuningResults
-    mass_offset::Float32
-    mass_tolerance::Tuple{Float32, Float32}
-    converged::Bool
-    psm_count::Int
-    iterations::Int
-    warnings::Vector{String}
-end
-
-"""
-    GlobalParameterStats
-
-Statistics computed across all successfully tuned files.
-"""
-mutable struct GlobalParameterStats
-    median_mass_offset::Float32
-    mass_offset_mad::Float32
-    median_tolerance::Float32
-    tolerance_mad::Float32
-    n_successful_files::Int
-    
-    function GlobalParameterStats()
-        new(0.0f0, 0.0f0, 0.0f0, 0.0f0, 0)
-    end
-end
-
-"""
-    ParameterHistory
-
-Container for tracking parameter tuning results across files.
-"""
-mutable struct ParameterHistory
-    file_parameters::Dict{Int64, TuningResults}
-    global_stats::GlobalParameterStats
-    
-    function ParameterHistory()
-        new(Dict{Int64, TuningResults}(), GlobalParameterStats())
-    end
-end
+# Type definitions moved to types.jl
 
 """
     InitialParameters

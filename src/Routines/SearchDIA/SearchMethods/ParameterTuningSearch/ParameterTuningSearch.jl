@@ -57,104 +57,7 @@ params = Dict(
 results = execute_search(ParameterTuningSearch(), search_context, params)
 ```
 """
-struct ParameterTuningSearch <: TuningMethod end
-
-#==========================================================
-Type Definitions
-==========================================================#
-
-"""
-Results container for parameter tuning search.
-Holds mass error models, RT alignment models, associated data, and diagnostics.
-"""
-struct ParameterTuningSearchResults <: SearchResults 
-    mass_err_model::Base.Ref{<:MassErrorModel}
-    rt_to_irt_model::Base.Ref{<:RtConversionModel}
-    irt::Vector{Float32}
-    rt::Vector{Float32}
-    ppm_errs::Vector{Float32}
-    rt_plots::Vector{Plots.Plot}
-    mass_plots::Vector{Plots.Plot}
-    qc_plots_folder_path::String
-    diagnostics::ParameterTuningDiagnostics
-    parameter_history::ParameterHistory
-end
-
-"""
-Parameters for parameter tuning search.
-Configures fragment matching, RT alignment, and general search behavior.
-"""
-struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParameters
-    # Core parameters from the original struct
-    isotope_err_bounds::Tuple{UInt8, UInt8}
-    min_fraction_transmitted::Float32
-    frag_tol_ppm::Float32
-    frag_err_quantile::Float32
-    min_psms::Int64
-    max_q_val::Float32
-    max_presearch_iters::Int64
-    min_index_search_score::UInt8
-    min_frag_count::Int64
-    min_spectral_contrast::Float32
-    min_log2_matched_ratio::Float32
-    min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
-    n_frag_isotopes::Int64
-    max_frag_rank::UInt8
-    sample_rate::Float32
-    irt_tol::Float32
-    spec_order::Set{Int64}
-    relative_improvement_threshold::Float32
-    spline_degree::Int64
-    spline_n_knots::Int64
-    spline_fit_outlier_sd::Int64
-    irt_tol_sd::Int64
-    prec_estimation::P
-
-    function ParameterTuningSearchParameters(params::PioneerParameters)
-        # Extract relevant parameter groups
-        global_params = params.global_settings
-        tuning_params = params.parameter_tuning
-        frag_params = tuning_params.fragment_settings
-        search_params = tuning_params.search_settings
-        rt_params = params.rt_alignment
-        
-        # Convert isotope error bounds
-        isotope_bounds = global_params.isotope_settings.err_bounds_first_pass
-        
-        # Create precursor estimation type
-        prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
-        
-        # Construct with appropriate type conversions
-        new{typeof(prec_estimation)}(
-            # Core parameters
-            (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
-            Float32(global_params.isotope_settings.min_fraction_transmitted),
-            Float32(frag_params.tol_ppm),
-            Float32(search_params.frag_err_quantile),
-            Int64(search_params.min_samples),
-            Float32(global_params.scoring.q_value_threshold),
-            Int64(search_params.max_presearch_iters),
-            UInt8(frag_params.min_score),
-            Int64(frag_params.min_count),
-            Float32(frag_params.min_spectral_contrast),
-            Float32(frag_params.min_log2_ratio),
-            (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1), # max_best_rank default
-            Int64(frag_params.n_isotopes),
-            UInt8(frag_params.max_rank),
-            Float32(search_params.sample_rate),
-            typemax(Float32), # irt_tol default
-            Set{Int64}([2]), # spec_order default
-            Float32(frag_params.relative_improvement_threshold),
-            3,  # spline_degree default
-            5,  # spline_n_knots default
-            5,  # spline_fit_outlier_sd default
-            Int64(rt_params.sigma_tolerance),
-            prec_estimation
-        )
-    end
-end
+# Type definitions moved to types.jl
 
 #==========================================================
 Results Access Methods
@@ -205,8 +108,6 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),
-        Plots.Plot[],
-        Plots.Plot[],
         qc_dir,
         ParameterTuningDiagnostics(),
         ParameterHistory()
@@ -476,18 +377,22 @@ function process_search_results!(
     ::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
     try
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        
-        # Generate RT alignment plot
-        push!(results.rt_plots, generate_rt_plot(results, parsed_fname))
-
-        # Generate mass error plot
-        push!(results.mass_plots, generate_mass_error_plot(results, parsed_fname))
-        
-        # Update models in search context
-        setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-        
-        setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
+    rt_alignment_folder = getRtAlignPlotFolder(search_context)
+    mass_error_folder = getMassErrPlotFolder(search_context)
+    parsed_fname = getParsedFileName(search_context, ms_file_idx)
+    
+    # Generate and save RT alignment plot
+    rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
+    generate_rt_plot(results, rt_plot_path, parsed_fname)
+    
+    # Generate and save mass error plot
+    mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
+    generate_mass_error_plot(results, parsed_fname, mass_plot_path)
+    
+    # Update models in search context
+    setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
+    
+    setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
     catch
         setFailedIndicator!(getMSData(search_context), ms_file_idx, true)
         nothing
@@ -541,7 +446,7 @@ function summarize_results!(
         @warn "$(diagnostics.n_fallback) file(s) used fallback parameters. Check parameter_tuning_report.txt for details."
     end
     
-    @info "Writing QC plots..."
+    @info "Merging QC plots..."
     
     # Merge RT alignment plots
     rt_alignment_folder = getRtAlignPlotFolder(search_context)
@@ -553,9 +458,13 @@ function summarize_results!(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    if !isempty(results.rt_plots)
-        save_multipage_pdf(results.rt_plots, output_path)
-        empty!(results.rt_plots)
+    rt_plots = [joinpath(rt_alignment_folder, x) for x in readdir(rt_alignment_folder) 
+    if endswith(x, ".pdf")]
+    
+    if !isempty(rt_plots)
+        merge_pdfs(rt_plots, 
+                    output_path, 
+                  cleanup=true)
     end
     
     # Merge mass error plots
@@ -568,12 +477,16 @@ function summarize_results!(
     catch e
         @warn "Could not clear existing file: $e"
     end
-    if !isempty(results.mass_plots)
-        save_multipage_pdf(results.mass_plots, output_path)
-        empty!(results.mass_plots)
+    mass_plots = [joinpath(mass_error_folder, x) for x in readdir(mass_error_folder) 
+                    if endswith(x, ".pdf")]
+
+    if !isempty(mass_plots)
+        merge_pdfs(mass_plots, 
+                  output_path, 
+                  cleanup=true)
     end
 
-    @info "QC plot writing complete"
+    @info "QC plot merging complete"
 end
 
 
