@@ -6,7 +6,8 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict empirical params-search params-predict params-empirical convert-raw convert-mzml"
+VALID_COMMANDS="search predict params-search params-predict convert-raw convert-mzml"
+# empirical params-empirical 
 
 show_help() {
     echo "Pioneer - Mass Spectrometry Data Analysis"
@@ -21,16 +22,16 @@ show_help() {
     echo "Subcommands:"
     echo "  search <params.json>                        Perform DIA search analysis"
     echo "  predict <params.json>                       Predict spectral library"
-    echo "  empirical <params.json>                     Parse spectral library"
+    #echo "  empirical <params.json>                     Parse spectral library"
     echo "  params-search <library_path> <ms_data_path> <results_path> [--params-path <params_out_path>]"
     echo "                                              Generate search parameter template."
     echo "                                              Default params output path: ./search_parameters.json"
     echo "  params-predict <library_outpath> <lib_name> <fasta_path> [--params-path <params_out_path>]"
     echo "                                              Generate library build parameter template."
     echo "                                              Default params output path: ./buildspeclib_params.json"
-    echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
-    echo "                                              Generate parse parameter template"
-    echo "                                              Default params output path: ./parsespeclib_params.json"
+    #echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
+    #echo "                                              Generate parse parameter template"
+    #echo "                                              Default params output path: ./parsespeclib_params.json"
     echo "  convert-raw <data_path> [options]"
     echo "                                              Convert Thermo RAW files"
     echo "  convert-mzml <data_path> [skip_header]"
@@ -121,12 +122,6 @@ case "$SUBCOMMAND" in
     predict)
         SUBCOMMAND="BuildSpecLib"
         ;;
-    empirical)
-        SUBCOMMAND="ParseSpecLib"
-        ;;
-    params-empirical)
-        SUBCOMMAND="GetParseSpecLibParams"
-        ;;
     params-search)
         SUBCOMMAND="GetSearchParams"
         ;;
@@ -140,6 +135,12 @@ case "$SUBCOMMAND" in
         SUBCOMMAND="convertMzML"
         ;;
 esac
+    #empirical)
+    #    SUBCOMMAND="ParseSpecLib"
+    #    ;;
+    #params-empirical)
+    #    SUBCOMMAND="GetParseSpecLibParams"
+    #    ;;
 
 # Resolve the actual script location, handling symlinks
 SCRIPT_PATH="$0"
@@ -152,5 +153,4 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 # Call the actual Pioneer executable with subcommand and its arguments
 # The executables are in the bin/ subdirectory relative to the script location
-echo "Executing: $SCRIPT_DIR/bin/$SUBCOMMAND ${SUBCOMMAND_ARGS[@]}"
 exec "$SCRIPT_DIR/bin/$SUBCOMMAND" "${SUBCOMMAND_ARGS[@]}"
