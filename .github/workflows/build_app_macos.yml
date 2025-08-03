@@ -134,7 +134,8 @@ jobs:
             PATTERN="osx-arm64"
           fi
           echo "Using PATTERN=$PATTERN"
-          ASSET=$(curl -s https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest |
+          curl -s https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest
+          ASSET=$(curl https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest |
             grep -o "PioneerConverter-${PATTERN}-[^\"]*\.zip" | head -n 1)
           echo "Resolved ASSET=$ASSET"
           curl -L "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
