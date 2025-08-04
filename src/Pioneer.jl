@@ -121,7 +121,9 @@ const KOINA_URLS = Dict(
     "altimeter" => "http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer",
 )
 
-
+function __init__()
+    gr() # set GR as plotting backend
+end
 
 export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
 end
