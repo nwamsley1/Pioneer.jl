@@ -6,15 +6,63 @@
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl)
 </h1>
 
-## Documentation 
-See [documentation for installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
+## Documentation
+See [documentation for full installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
 
-## Development Environment
-Additional packages for documentation, testing, and profiling live in `dev/Project.toml`.
-Activate that environment when working locally:
+## Installation and Usage
+Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases). The installer adds a `pioneer` command to your `PATH`. On the first run, Windows and Linux download IntelOpenMP and MKL; macOS performs a Gatekeeper security check.
+
+```bash
+pioneer --help
+```
+Lists subcommands such as `predict`, `params-predict`, `search`, `params-search`, `convert-raw`, and `convert-mzml`.
+A typical workflow is:
+
+```bash
+pioneer params-predict out_dir lib_name fasta_dir
+pioneer predict buildspeclib_params.json
+pioneer convert-raw raw_dir
+pioneer params-search library.poin ms_data results
+pioneer search search_parameters.json
+```
+
+`params-predict` and `params-search` write template JSON files. Review and edit these
+configurations before running `predict` or `search`. See the
+[Parameter Configuration](https://nwamsley1.github.io/Pioneer.jl/dev/user_guide/parameters/)
+guide for available options.
+
+## Development
+To work on Pioneer itself:
+
+```bash
+git clone https://github.com/nwamsley1/Pioneer.jl.git
+cd Pioneer.jl
+julia --project=dev
+```
 
 ```julia
-julia --project=dev
+pkg> develop ./
+julia> using Revise, Pioneer
+```
+
+Install [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) to convert Thermo RAW files to Arrow format before calling functions like `GetBuildLibParams`, `BuildSpecLib`, `GetSearchParams`, and `SearchDIA` directly.
+
+| Subcommand       | Julia function   |
+|------------------|------------------|
+| `params-predict` | `GetBuildLibParams` |
+| `predict`        | `BuildSpecLib`     |
+| `params-search`  | `GetSearchParams`  |
+| `search`         | `SearchDIA`        |
+| `convert-raw`    | `PioneerConverter` |
+| `convert-mzml`   | `convertMzML`      |
+
+Developers can invoke these functions directly:
+
+```julia
+params = GetBuildLibParams(out_dir, lib_name, fasta_dir)
+BuildSpecLib(params)
+params = GetSearchParams("library.poin", "ms_data", "results")
+SearchDIA(params)
 ```
 
 ## Introduction
