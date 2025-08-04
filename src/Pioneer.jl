@@ -16,6 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Pioneer
+ENV["GKSwstype"] = "100" # don't plot anything to the screen. Avoids GUI dependencies.
 #__precompile__(false)
 using Arrow, ArrowTypes, ArgParse
 #using Profile
@@ -47,7 +48,6 @@ using Dates
 using InlineStrings
 using HTTP
 
-#ENV["GKSwstype"] = "100" # don't plot anything to the screen. Avoids GUI dependencies.
 #gr() # set GR as plotting backend
 
 """
