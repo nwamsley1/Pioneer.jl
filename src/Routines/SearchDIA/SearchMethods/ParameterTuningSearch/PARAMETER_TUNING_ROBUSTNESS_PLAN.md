@@ -11,11 +11,13 @@ This plan outlines a comprehensive approach to make ParameterTuningSearch more r
   - Implemented fallback to conservative defaults (±50 ppm, identity RT)
   - Added warning system with file-specific messages
   - Basic diagnostic structure in place
+  - **Issue Found**: Type initialization prevents fallback from working (needs fix)
   
 - ✅ **Phase 2: Mass Bias Detection Strategy** - COMPLETED
   - Created `bias_detection.jl` with BiasSearchStrategy
   - Implemented intelligent bias search up to ±50 ppm
   - Added adaptive window expansion for bias
+  - **Issue Found**: Yields too few PSMs in simple samples (41 vs 100 needed)
   
 - ✅ **Phase 3: Diagnostic Infrastructure** - COMPLETED
   - Created `diagnostics.jl` with comprehensive tracking
@@ -32,17 +34,59 @@ This plan outlines a comprehensive approach to make ParameterTuningSearch more r
   - Implemented intelligent initial parameter selection
   - Added adaptive strategy selection based on variability
 
-- ⚠️ **Interface Issues** - IN PROGRESS
-  - Fixed struct vs mutable struct issue (requires Julia restart)
-  - Need to fix `get_parameters` method signature mismatch
-  - Need to verify all interface methods match expected signatures
+- ✅ **Module Loading Issues** - RESOLVED
+  - Created `types.jl` to break circular dependencies
+  - Fixed loading order in `importScripts.jl`
+  - All types now load correctly
+
+### Critical Issues Discovered (2025-08-02)
+
+1. **Type System Bug**: 
+   - `rt_to_irt_model` initialized as `Ref{SplineRtConversionModel}()` instead of `Ref{RtConversionModel}()`
+   - Prevents fallback to `IdentityModel`, causing crashes
+   - **Location**: Line 107 in `ParameterTuningSearch.jl`
+   - **Fix Required**: Change initialization to use abstract type
+
+2. **PSM Threshold Too High**:
+   - Current minimum of 1000 PSMs unrealistic for simple samples
+   - E. coli test only yields 281-350 PSMs per iteration
+   - Bias detection only finds 41 PSMs (needs 100)
+   - **Fix Required**: Implement adaptive thresholds based on sample complexity
+
+### Immediate Fixes Required
+
+#### Fix 1: Type Initialization Bug (CRITICAL)
+```julia
+# In init_search_results(), line 107:
+# WRONG:
+Ref{SplineRtConversionModel}(),
+
+# CORRECT:
+Ref{RtConversionModel}(),
+```
+
+This allows the field to hold either `SplineRtConversionModel` or `IdentityModel`.
+
+#### Fix 2: Update types.jl Structure Definition
+```julia
+# In types.jl, line 113:
+# WRONG:
+rt_to_irt_model::Base.Ref{<:RtConversionModel}
+
+# CORRECT:
+rt_to_irt_model::Base.Ref{RtConversionModel}
+```
+
+Remove the `<:` to match the initialization.
 
 ### Next Steps
-1. Fix the interface method signatures to match SearchMethods framework
-2. Implement Phase 4: Adaptive Sampling Strategy
-3. Implement Phase 5: Enhanced Convergence Logic
-4. Add configuration support for new features
-5. Create comprehensive test suite
+1. ✅ Fix type initialization bug in `init_search_results` 
+2. ✅ Update struct definition in `types.jl`
+3. Implement adaptive PSM thresholds (new Phase 1.3)
+4. Enhance low-PSM handling strategies
+5. Add sample complexity estimation
+6. Create fallback parameter profiles
+7. Continue with Phases 4-5 after fixes
 
 ## Problem Analysis
 
@@ -108,7 +152,7 @@ This plan outlines a comprehensive approach to make ParameterTuningSearch more r
 
 ### Phase 1: Graceful Fallback System (Priority 1)
 
-#### 1.1 Remove Hard Failure Mode
+#### 1.1 Remove Hard Failure Mode ✅ COMPLETED
 ```julia
 function process_file!(results, params, search_context, ms_file_idx, spectra)
     try
@@ -139,7 +183,7 @@ function process_file!(results, params, search_context, ms_file_idx, spectra)
 end
 ```
 
-#### 1.2 Warning System
+#### 1.2 Warning System ✅ COMPLETED
 ```julia
 # Add to SearchContext or MSData
 struct ParameterTuningWarnings
@@ -154,6 +198,82 @@ end
 
 function getParameterTuningReport(search_context::SearchContext)
     # Generate markdown report of all warnings and fallbacks
+end
+```
+
+#### 1.3 Adaptive PSM Thresholds (NEW - Priority 1)
+
+Current issue: Fixed 1000 PSM minimum is too high for simple samples like E. coli test data.
+
+```julia
+struct AdaptivePSMThresholds
+    # Minimum thresholds by sample complexity
+    high_complexity_min::Int      # Default: 1000 (human plasma, tissue)
+    medium_complexity_min::Int    # Default: 500 (cell lysates)
+    low_complexity_min::Int       # Default: 200 (purified proteins, QC)
+    
+    # Absolute minimums for fitting
+    mass_model_min::Int          # Default: 100 (minimum for reliable mass fitting)
+    rt_model_min::Int            # Default: 50 (minimum for RT spline)
+    
+    # Fallback thresholds
+    bias_detection_min::Int      # Default: 50 (minimum for bias search)
+end
+
+function estimate_sample_complexity(
+    initial_psm_count::Int,
+    n_unique_peptides::Int,
+    n_proteins::Int,
+    isolation_window_width::Float32
+) :: Symbol
+    # Heuristic based on initial results
+    if n_proteins > 1000 || n_unique_peptides > 5000
+        return :high_complexity
+    elseif n_proteins > 100 || n_unique_peptides > 500
+        return :medium_complexity
+    else
+        return :low_complexity
+    end
+end
+
+function get_adaptive_psm_threshold(
+    complexity::Symbol,
+    thresholds::AdaptivePSMThresholds
+) :: Int
+    if complexity == :high_complexity
+        return thresholds.high_complexity_min
+    elseif complexity == :medium_complexity
+        return thresholds.medium_complexity_min
+    else
+        return thresholds.low_complexity_min
+    end
+end
+```
+
+**Fallback Profiles for Low-PSM Scenarios:**
+```julia
+struct FallbackProfile
+    name::String
+    min_psms::Int
+    mass_tolerance::Tuple{Float32, Float32}
+    rt_model_type::Symbol  # :spline, :linear, :identity
+    confidence_level::Symbol  # :high, :medium, :low
+end
+
+const FALLBACK_PROFILES = [
+    FallbackProfile("Conservative", 0, (50.0f0, 50.0f0), :identity, :low),
+    FallbackProfile("Low Sample", 50, (30.0f0, 30.0f0), :linear, :medium),
+    FallbackProfile("Medium Sample", 200, (25.0f0, 25.0f0), :spline, :medium),
+    FallbackProfile("Normal", 500, (20.0f0, 20.0f0), :spline, :high)
+]
+
+function select_fallback_profile(psm_count::Int) :: FallbackProfile
+    for profile in reverse(FALLBACK_PROFILES)
+        if psm_count >= profile.min_psms
+            return profile
+        end
+    end
+    return FALLBACK_PROFILES[1]  # Most conservative
 end
 ```
 
@@ -529,6 +649,15 @@ end
             "quick_search_sample_rate": 0.005,
             "min_psms_for_detection": 100
         },
+        "adaptive_psm_thresholds": {
+            "enabled": true,
+            "high_complexity_min": 1000,
+            "medium_complexity_min": 500,
+            "low_complexity_min": 200,
+            "mass_model_min": 100,
+            "rt_model_min": 50,
+            "bias_detection_min": 50
+        },
         "adaptive_sampling": {
             "enabled": true,
             "min_sample_rate": 0.02,
@@ -642,27 +771,36 @@ end
 
 ## Implementation Priority
 
-### Phase 1 (Week 1) - Critical
-1. Implement graceful fallback (remove hard failures)
-2. Add warning system with clear user visibility
-3. Basic diagnostic structure
+### Phase 1 (Week 1) - Critical ✅ COMPLETED
+1. ✅ Implement graceful fallback (remove hard failures)
+2. ✅ Add warning system with clear user visibility
+3. ✅ Basic diagnostic structure
+4. 🔧 **IN PROGRESS**: Adaptive PSM thresholds (Phase 1.3)
+   - Need to fix type initialization bug first
+   - Then implement adaptive thresholds
 
-### Phase 2 (Week 1-2) - High Priority  
-1. Mass bias detection strategy
-2. Adaptive search window for large bias
-3. Integration with existing convergence loop
+### Phase 2 (Week 1-2) - High Priority ✅ COMPLETED
+1. ✅ Mass bias detection strategy
+2. ✅ Adaptive search window for large bias
+3. ✅ Integration with existing convergence loop
+4. ✅ Boundary sampling validation
+5. ✅ Cross-run parameter learning
 
-### Phase 3 (Week 2) - Medium Priority
-1. Comprehensive diagnostics
-2. Per-file diagnostic reports
-3. Cross-file summary reports
+### Phase 3 (Week 2) - Medium Priority ✅ COMPLETED
+1. ✅ Comprehensive diagnostics
+2. ✅ Per-file diagnostic reports
+3. ✅ Cross-file summary reports
 
-### Phase 4 (Week 3) - Medium Priority
+### Critical Fixes Required (Immediate)
+1. 🔴 **Type initialization bug** - Prevents fallback from working
+2. 🔴 **Adaptive PSM thresholds** - Current thresholds too high for simple samples
+
+### Phase 4 (Week 3) - Medium Priority ⏳ PENDING
 1. Adaptive sampling rate
 2. TopN peak filtering
 3. Performance optimizations
 
-### Phase 5 (Week 3-4) - Lower Priority
+### Phase 5 (Week 3-4) - Lower Priority ⏳ PENDING
 1. Enhanced convergence criteria
 2. Configuration system
 3. Full testing suite
