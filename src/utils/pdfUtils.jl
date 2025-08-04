@@ -1,5 +1,6 @@
 module PDFGenerator
-    import GR
+    import ..Plots
+    const GR = Plots.GR
 
     function create_multipage_pdf(plots::Vector, dest::String)
         withenv("GKSwstype" => "100") do
