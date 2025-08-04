@@ -134,11 +134,11 @@ jobs:
             PATTERN="osx-arm64"
           fi
           echo "Using PATTERN=$PATTERN"
-          curl -s https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest
-          ASSET=$(curl https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest |
+          curl -s https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest
+          ASSET=$(curl https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest |
             grep -o "PioneerConverter-${PATTERN}-[^\"]*\.zip" | head -n 1)
           echo "Resolved ASSET=$ASSET"
-          curl -L "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
+          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
           unzip -q converter.zip -d converter
           echo "Contents of converter after unzip:"
           find converter -maxdepth 3 -print

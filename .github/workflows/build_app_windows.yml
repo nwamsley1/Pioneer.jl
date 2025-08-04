@@ -77,9 +77,9 @@ jobs:
           $dir = "converter"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           $pattern = "win-x64"
-          $json = Invoke-WebRequest -Uri https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest | Select-Object -ExpandProperty Content | ConvertFrom-Json
+          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest | Select-Object -ExpandProperty Content | ConvertFrom-Json
           $asset = ($json.assets | Where-Object { $_.name -like "*${pattern}*.zip" } | Select-Object -First 1).name
-          Invoke-WebRequest -Uri "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
+          Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
           $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
           Copy-Item "$($subdir.FullName)\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\" -Recurse

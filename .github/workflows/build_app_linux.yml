@@ -137,14 +137,14 @@ jobs:
           mkdir -p converter
           PATTERN="${{ matrix.identifier }}"
           echo "Using PATTERN=$PATTERN"
-          ASSET=$(curl -sL https://api.github.com/repos/DennisGoldfarb/PioneerConverter/releases/latest \
+          ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
             | jq -r --arg PATTERN "$PATTERN" '.assets[] | select(.name | test("PioneerConverter-" + $PATTERN + ".*\\.zip")) | .name' | head -n 1)
           echo "Resolved ASSET=$ASSET"
           if [ -z "$ASSET" ]; then
             echo "Failed to find PioneerConverter asset for pattern $PATTERN" >&2
             exit 1
           fi
-          curl -L "https://github.com/DennisGoldfarb/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
+          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
           unzip -q converter.zip -d converter
           echo "Contents of converter after unzip:"
           find converter -maxdepth 3 -print
