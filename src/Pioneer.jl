@@ -47,6 +47,7 @@ using Dates
 using InlineStrings
 using HTTP
 
+ENV["GKSwstype"] = "100"
 gr() # set GR as plotting backend
 
 """
