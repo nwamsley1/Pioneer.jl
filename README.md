@@ -22,15 +22,17 @@ Pioneer and its companion tool, Altimeter, are together an open-source and perfo
 See [documentation for full installation and usage instructions.](https://nwamsley1.github.io/Pioneer.jl/dev)
 
 ## Installation
-Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases). The installer adds a `pioneer` command to your `PATH`. On the first run, Windows and Linux download IntelOpenMP and MKL; macOS performs a Gatekeeper security check.
+Download the installer for your operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases). The installer adds a `pioneer` command to your `PATH`.
 
 ```bash
 pioneer --help
 ```
 Lists subcommands such as `predict`, `params-predict`, `search`, `params-search`, `convert-raw`, and `convert-mzml`.
 
+On the first run, Windows and Linux download IntelOpenMP and MKL; macOS performs a Gatekeeper security check.
+
 ## Quick Start
-Pioneer uses [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) to convert vendor RAW files to Arrow format. A minimal end-to-end workflow is:
+A minimal end-to-end workflow is:
 
 ```bash
 pioneer params-predict lib_dir lib_name fasta_dir --params-path=predict_params.json
