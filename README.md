@@ -1,4 +1,4 @@
-<img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/PIONEER_LOGO.jpg" align="right" width="150px"/>
+<img src="figures/PIONEER_LOGO.svg" align="right" width="200px"/>
 <h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
 [![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/dev)
