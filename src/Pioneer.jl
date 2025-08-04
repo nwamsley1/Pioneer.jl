@@ -47,8 +47,8 @@ using Dates
 using InlineStrings
 using HTTP
 
-ENV["GKSwstype"] = "100"
-gr() # set GR as plotting backend
+#ENV["GKSwstype"] = "100" # don't plot anything to the screen. Avoids GUI dependencies.
+#gr() # set GR as plotting backend
 
 """
 Type alias for m/z to eV interpolation functions.
