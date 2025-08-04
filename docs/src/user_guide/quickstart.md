@@ -1,19 +1,20 @@
 # Quick Start Tutorial
 
 ## Basic Workflow
-Pioneer performs two major steps:
-1. Build in silico spectral libraries using FASTA files and the [Koina](https://koina.wilhelmlab.org/) server.
-2. Search DIA experiments using a spectral library and the MS data files.
+Pioneer performs three major steps:
+1. Convert vendor MS files into the Arrow format using [PioneerConverter](https://github.com/nwamsley1/PioneerConverter).
+2. Build in silico spectral libraries using FASTA files and the [Koina](https://koina.wilhelmlab.org/) server.
+3. Search DIA experiments using a spectral library and the MS data files.
 
 ## Pioneer Converter
 Pioneer operates on MS/MS data stored in the [Apache Arrow IPC format](https://arrow.apache.org/docs/python/ipc.html).
-Use the bundled PioneerConverter via the CLI to convert Thermo RAW files:
+Use the bundled [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) via the CLI to convert Thermo RAW files:
 
 ```bash
 pioneer convert-raw /path/to/raw/or/folder
 ```
 
-This subcommand accepts either a single `.raw` file or a directory of files. See the PioneerConverter repository for additional options such as thread count and output paths.
+This subcommand accepts either a single `.raw` file or a directory of files. See the [PioneerConverter repository](https://github.com/nwamsley1/PioneerConverter) for additional options such as thread count and output paths.
 
 ## MzML to Arrow IPC (Sciex)
 For mzML-formatted data, use:
@@ -34,11 +35,11 @@ Subcommands include `search`, `predict`, `params-search`, `params-predict`, `con
 A minimal end-to-end workflow is:
 
 ```bash
-pioneer params-predict out_dir lib_name fasta_dir
-pioneer predict buildspeclib_params.json
+pioneer params-predict lib_dir lib_name fasta_dir --params-path=predict_params.json
+pioneer predict predict_params.json
 pioneer convert-raw raw_dir
-pioneer params-search library.poin ms_data results
-pioneer search search_parameters.json
+pioneer params-search library.poin ms_data_dir results_dir --params-path=search_params.json
+pioneer search search_params.json
 ```
 
 This sequence builds a predicted spectral library, converts vendor files to Arrow, generates search parameters, and searches the experiment.
