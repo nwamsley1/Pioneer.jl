@@ -104,7 +104,7 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
     !isdir(ms1_mass_error_plots ) && mkdir(ms1_mass_error_plots )
     return ParameterTuningSearchResults(
         Base.Ref{MassErrorModel}(),
-        Ref{SplineRtConversionModel}(),
+        Ref{RtConversionModel}(),
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),

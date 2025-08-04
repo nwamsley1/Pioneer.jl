@@ -110,7 +110,7 @@ Holds mass error models, RT alignment models, associated data, and diagnostics.
 """
 struct ParameterTuningSearchResults <: SearchResults 
     mass_err_model::Base.Ref{<:MassErrorModel}
-    rt_to_irt_model::Base.Ref{<:RtConversionModel}
+    rt_to_irt_model::Base.Ref{RtConversionModel}
     irt::Vector{Float32}
     rt::Vector{Float32}
     ppm_errs::Vector{Float32}
