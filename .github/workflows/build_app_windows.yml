@@ -82,7 +82,9 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
           $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
-          Copy-Item "$($subdir.FullName)\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\" -Recurse
+          Copy-Item "$($subdir.FullName)\bin\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\" -Recurse
+          New-Item -ItemType Directory -Force -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib" | Out-Null
+          Copy-Item "$($subdir.FullName)\lib\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib\" -Recurse
 
 
       - name: Add wrapper scripts

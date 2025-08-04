@@ -150,7 +150,9 @@ jobs:
           find converter -maxdepth 3 -print
           echo "Listing of converter/*/bin:"
           ls converter/*/bin || true
-          cp -r "converter/PioneerConverter-${PATTERN}/"* "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
+          cp -r "converter/PioneerConverter-${PATTERN}/bin/"* "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
+          mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
+          cp -r "converter/PioneerConverter-${PATTERN}/lib/"* "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
       - name: Add wrapper scripts
         shell: bash
