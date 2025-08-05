@@ -141,6 +141,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32
+    topn_peaks::Union{Nothing, Int64}
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -164,6 +165,9 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         # Create precursor estimation type
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
+        # Extract topn_peaks if present
+        topn_peaks = haskey(search_params, "topn_peaks") ? Int64(search_params["topn_peaks"]) : nothing
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -183,6 +187,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Float32(search_params.sample_rate),
+            topn_peaks,
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
