@@ -323,7 +323,7 @@ function _write_batch_typed(
         if isfile(output_path)
             # Force garbage collection to release any lingering file handles
             GC.gc()
-            # Use Windows-safe removal to avoid permission errors
+            # Use Windows-safe removal with retries to avoid permission errors
             safeRm(output_path, nothing)
         end
         open(output_path, "w") do io
