@@ -193,6 +193,11 @@ function getMsOrder(ms_data::BasicNonIonMobilityMassSpecData, scan_idx::Integer)
     getMsOrders(ms_data)[scan_idx]
 end
 
+# Add missing getPrecursorMz method (alias to getCenterMz for BasicNonIonMobilityMassSpecData)
+function getPrecursorMz(ms_data::BasicNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+    getCenterMz(ms_data, scan_idx)
+end
+
 #=====================================#
 #Basic 
 #=====================================#
@@ -328,4 +333,9 @@ end
 getMsOrders(ms_data::BatchNonIonMobilityMassSpecData)::SentinelArrays.ChainedVector{UInt8, Arrow.Primitive{UInt8, Vector{UInt8}}} = ms_data.data[:msOrder]
 function getMsOrder(ms_data::BatchNonIonMobilityMassSpecData, scan_idx::Integer)::UInt8
     getMsOrders(ms_data)[scan_idx]
+end
+
+# Add missing getPrecursorMz method (alias to getCenterMz for BatchNonIonMobilityMassSpecData)
+function getPrecursorMz(ms_data::BatchNonIonMobilityMassSpecData{T}, scan_idx::Integer)::Union{Missing, T} where T
+    getCenterMz(ms_data, scan_idx)
 end
