@@ -17,6 +17,26 @@
 
 # src/BuildSpecLib.jl
 
+# Entry point for PackageCompiler
+function main_BuildSpecLib(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "params_path"
+            help = "Path to BuildSpecLib parameters JSON file"
+            arg_type = String
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    try
+        BuildSpecLib(parsed_args[:params_path])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 """
     BuildSpecLib(params_path::String)
 
@@ -236,7 +256,7 @@ function BuildSpecLib(params_path::String)
                         joinpath(lib_dir, "spline_knots.jld2");
                         spl_knots
                     )
-                    ion_dictionary = get_altimeter_ion_dict(joinpath(@__DIR__, "../../data/ion_dictionary.txt"))
+                    ion_dictionary = get_altimeter_ion_dict(asset_path("ion_dictionary.txt"))
 
                     parse_altimeter_fragments(
                         precursors_table,
@@ -244,7 +264,7 @@ function BuildSpecLib(params_path::String)
                         frag_annotation_type,
                         ion_dictionary,
                         10000,
-                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        asset_path("immonium.txt"),
                         lib_dir,
                         Dict{String, Int8}(),
                         iso_mod_to_mass,
@@ -265,7 +285,7 @@ function BuildSpecLib(params_path::String)
                         ion_annotation_set,
                         frag_name_to_idx,
                         10000,
-                        joinpath(@__DIR__, "../../data/immonium.txt"),
+                        asset_path("immonium.txt"),
                         lib_dir,
                         Dict{String, Int8}(),
                         iso_mod_to_mass,

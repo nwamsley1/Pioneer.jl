@@ -1,0 +1,184 @@
+name: Build App Windows
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      JULIA_NUM_THREADS: auto
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            identifier: windows-x64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.11'
+
+      - name: Determine tag version
+        id: get_version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
+
+      - name: Download precompile data
+        shell: bash
+        run: |
+          mkdir -p temp/zenodo
+          cd temp/zenodo
+          curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
+          unzip yeast.poin.zip
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -o yeast_1.arrow
+          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
+          cd ../../
+
+      - name: Compile application
+        run: |
+          julia --project=. -e '
+            using PackageCompiler;
+            create_app(
+              ".",
+              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false,
+              force=true,
+              executables=[
+                "GetSearchParams" => "main_GetSearchParams",
+                "GetBuildLibParams" => "main_GetBuildLibParams",
+                "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
+                "ParseSpecLib" => "main_ParseSpecLib",
+                "BuildSpecLib" => "main_BuildSpecLib",
+                "SearchDIA" => "main_SearchDIA",
+                "convertMzML" => "main_convertMzML"
+              ],
+              precompile_execution_file="src/build/snoop.jl",
+            );
+          '
+
+      - name: Download PioneerConverter
+        shell: pwsh
+        run: |
+          $dir = "converter"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $pattern = "win-x64"
+          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest | Select-Object -ExpandProperty Content | ConvertFrom-Json
+          $asset = ($json.assets | Where-Object { $_.name -like "*${pattern}*.zip" } | Select-Object -First 1).name
+          Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
+          Expand-Archive -Path converter.zip -DestinationPath $dir
+          $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
+          Copy-Item "$($subdir.FullName)\bin\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\bin\" -Recurse
+          New-Item -ItemType Directory -Force -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib" | Out-Null
+          Copy-Item "$($subdir.FullName)\lib\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib\" -Recurse
+
+
+      - name: Add wrapper scripts
+        shell: bash
+        run: |
+          cp src/build/CLI/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+
+      - name: Package Windows MSI
+        shell: pwsh
+        run: |
+          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+
+          $dataDir = "$pioneerRoot\data"
+          New-Item -ItemType Directory -Force -Path $dataDir
+          Get-ChildItem "assets" | ForEach-Object {
+            if ($_.PSIsContainer) {
+              Copy-Item -Recurse $_.FullName "$dataDir\"
+            } else {
+              Copy-Item $_.FullName "$dataDir\"
+            }
+          }
+
+          Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
+
+          $artifactDir = "$pioneerRoot\share\julia\artifacts"
+          if (Test-Path $artifactDir) {
+            Get-ChildItem -Path $artifactDir -Recurse -Directory |
+              Where-Object {
+                $_.FullName -like "*QtQuick*" -or
+                $_.FullName -like "*Qt6*" -or
+                $_.Name -eq "include" -or
+                $_.Name -eq "test" -or
+                $_.Name -eq ".qt" -or
+                $_.FullName.Length -gt 200
+              } |
+              ForEach-Object {
+                Write-Host "Removing long path: $($_.FullName)"
+                Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          }
+
+          $platform = if ("${{ matrix.arch }}" -eq "x64") { "x64" } else { "x86" }
+          $info = Get-Content "src/build/package_info.json" | ConvertFrom-Json
+          $desc = $info.description
+          $identifier = $info.identifier
+
+          & heat.exe dir $pioneerRoot `
+            -cg ProductComponents `
+            -dr INSTALLFOLDER `
+            -platform x64 `
+            -gg `
+            -scom `
+            -sreg `
+            -sfrag `
+            -srd `
+            -var var.SourceDir `
+            -out components.wxs
+
+          & candle.exe `
+            -dSourceDir="$pioneerRoot" `
+            -dProductVersion="${{ steps.get_version.outputs.VERSION }}" `
+            -dProductDescription="$desc" `
+            -dPackageIdentifier="$identifier" `
+            -dPlatform="$platform" `
+            -arch ${{ matrix.arch }} `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            src\build\windows\installer.wxs components.wxs
+
+          & light.exe `
+            -ext WixUIExtension `
+            -ext WixUtilExtension `
+            -cultures:en-us `
+            -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
+            installer.wixobj components.wixobj
+      
+      - name: Package zipped binaries
+        shell: pwsh
+        run: |
+          $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
+          Compress-Archive -Path "$pioneerRoot\*" -DestinationPath "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pioneer-${{ matrix.identifier }}
+          path: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          files: |
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip

@@ -39,7 +39,7 @@ processing based on data size.
 - `file_paths`: Vector of PSM file paths
 - `precursors`: Library precursors
 - `match_between_runs`: Whether to perform match between runs
-- `max_q_value_xgboost_rescore`: Max q-value for XGBoost rescoring
+- `max_q_value_xgboost_rescore`: Max q-value for EvoTrees/XGBoost rescoring
 - `max_q_value_xgboost_mbr_rescore`: Max q-value for MBR rescoring
 - `min_PEP_neg_threshold_xgboost_rescore`: Min PEP for negative relabeling
 - `q_value_threshold`: Max q-value for final output
@@ -47,7 +47,7 @@ processing based on data size.
 - `max_psms_in_memory`: Maximum PSMs to keep in memory
 
 # Returns
-- Trained XGBoost models
+- Trained EvoTrees/XGBoost models
 """
 function score_precursor_isotope_traces(
     second_pass_folder::String,
@@ -97,7 +97,7 @@ end
 """
      get_psms_count(quant_psms_folder::String)::Integer
 
-Sample PSMs from multiple files for XGBoost model training.
+Sample PSMs from multiple files for EvoTrees/XGBoost model training.
 
 # Arguments
 - `quant_psms_folder`: Folder containing PSM Arrow files
@@ -122,7 +122,7 @@ end
 """
     sample_psms_for_xgboost(quant_psms_folder::String, psms_count::Integer max_psms::Integer) -> DataFrame
 
-Sample PSMs from multiple files for XGBoost model training.
+Sample PSMs from multiple files for EvoTrees/XGBoost model training.
 
 # Arguments
 - `quant_psms_folder`: Folder containing PSM Arrow files
@@ -166,7 +166,7 @@ end
 """
      get_psms_count(quant_psms_folder::String)::Integer
 
-Loads all PSMs from multiple files for XGBoost model training.
+Loads all PSMs from multiple files for EvoTrees/XGBoost model training.
 """
 function load_psms_for_xgboost(quant_psms_folder::String)
     file_paths = [fpath for fpath in readdir(quant_psms_folder, join=true) if endswith(fpath,".arrow")]
@@ -175,9 +175,9 @@ end
 
 """
     score_precursor_isotope_traces_in_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> XGBoostModels
+                                  precursors::LibraryPrecursors) -> EvoTreesModels
 
-Train XGBoost models for PSM scoring. All psms are kept in memory
+Train EvoTrees/XGBoost models for PSM scoring. All psms are kept in memory
 
 # Arguments
 - `best_psms`: Sample of high-quality PSMs for training
@@ -185,7 +185,7 @@ Train XGBoost models for PSM scoring. All psms are kept in memory
 - `precursors`: Library precursor information
 
 # Returns
-Trained XGBoost models or simplified model if insufficient PSMs.
+Trained EvoTrees/XGBoost models or simplified model if insufficient PSMs.
 """
 function score_precursor_isotope_traces_in_memory!(
     best_psms::DataFrame,
@@ -245,6 +245,7 @@ function score_precursor_isotope_traces_in_memory!(
             :m0_error_ms1,
             :n_iso_ms1,
             :big_iso_ms1,
+            :ms1_features_missing,
             :percent_theoretical_ignored,
             :scribe,
             :max_scribe
@@ -319,7 +320,7 @@ function score_precursor_isotope_traces_in_memory!(
         best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
         best_psms[!,:decoy] = best_psms[!,:target].==false;
         #see src/utils/ML/percolatorSortOf.jl
-        #Train XGBoost model to score each precursor trace. Target-decoy descrimination
+        #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
         models = sort_of_percolator_in_memory!(
                                 best_psms, 
                                 file_paths,
@@ -343,9 +344,9 @@ end
 
 """
     score_precursor_isotope_traces_out_of_memory!(best_psms::DataFrame, file_paths::Vector{String},
-                                  precursors::LibraryPrecursors) -> XGBoostModels
+                                  precursors::LibraryPrecursors) -> EvoTreesModels
 
-Train XGBoost models for PSM scoring. Only a subset of psms are kept in memory
+Train EvoTrees/XGBoost models for PSM scoring. Only a subset of psms are kept in memory
 
 # Arguments
 - `best_psms`: Sample of high-quality PSMs for training
@@ -353,7 +354,7 @@ Train XGBoost models for PSM scoring. Only a subset of psms are kept in memory
 - `precursors`: Library precursor information
 
 # Returns
-Trained XGBoost models or simplified model if insufficient PSMs.
+Trained EvoTrees/XGBoost models or simplified model if insufficient PSMs.
 """
 function score_precursor_isotope_traces_out_of_memory!(
     best_psms::DataFrame,
@@ -413,9 +414,11 @@ function score_precursor_isotope_traces_out_of_memory!(
             :m0_error_ms1,
             :n_iso_ms1,
             :big_iso_ms1,
+            :ms1_features_missing,
             :percent_theoretical_ignored,
             :scribe,
-            :max_scribe
+            :max_scribe,
+            :target
         ];
         features = [f for f in features if hasproperty(best_psms, f)];
         if match_between_runs
@@ -425,7 +428,8 @@ function score_precursor_isotope_traces_out_of_memory!(
                 :MBR_num_runs,
                 :MBR_max_pair_prob,
                 :MBR_log2_weight_ratio,
-                :MBR_log2_explained_ratio
+                :MBR_log2_explained_ratio,
+                :MBR_is_missing
                 ])
         end
 
@@ -474,12 +478,12 @@ function score_precursor_isotope_traces_out_of_memory!(
         best_psms[!,:q_value] = zeros(Float32, size(best_psms, 1));
         best_psms[!,:decoy] = best_psms[!,:target].==false;
         #see src/utils/ML/percolatorSortOf.jl
-        #Train XGBoost model to score each precursor trace. Target-decoy descrimination
+        #Train EvoTrees/XGBoost model to score each precursor trace. Target-decoy descrimination
         models = sort_of_percolator_out_of_memory!(
                                 best_psms, 
                                 file_paths,
                                 features,
-                                match_between_runs,
+                                match_between_runs;
                                 max_q_value_xgboost_rescore,
                                 max_q_value_xgboost_mbr_rescore,
                                 min_PEP_neg_threshold_xgboost_rescore,

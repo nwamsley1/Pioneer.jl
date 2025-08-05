@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+  xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <Product Id="*" 
+           Name="Pioneer CLI Tools" 
+           Language="1033" 
+           Version="$(var.ProductVersion)" 
+           Manufacturer="$(var.PackageIdentifier)"
+           UpgradeCode="dfca64a0-7eb6-40db-971c-486154fa6eb0">
+    
+    <Package InstallerVersion="200" 
+             Compressed="yes" 
+             InstallScope="perMachine"
+             Platform="x64" />
+    
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Display the project license during installation -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.SourceDir)\LICENSE.rtf" />
+    
+    <!-- Single feature containing all components -->
+    <Feature Id="ProductFeature" Title="Pioneer CLI Tools" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="EnvironmentPath" />
+      <ComponentRef Id="JuliaDirPermissions" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Pioneer">
+          <Directory Id="ShareDir" Name="share">
+            <Directory Id="JuliaDir" Name="julia">
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Component Id="JuliaDirPermissions" Guid="db93e87c-29a4-43ce-87d4-46910c0a8772" Win64="yes" Directory="JuliaDir">
+      <CreateFolder>
+        <util:PermissionEx 
+            User="Users" 
+            GenericAll="yes" />
+      </CreateFolder>
+    </Component>
+    
+    <!-- Add installation directory to PATH -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="EnvironmentPath" Guid="53903eaf-c9de-4d7f-ac6f-9307b1dbec5e" Win64="yes">
+        <Environment Id="PATH" 
+                     Name="PATH" 
+                     Value="[INSTALLFOLDER]" 
+                     Permanent="no" 
+                     Part="last" 
+                     Action="set" 
+                     System="yes" />
+        <RegistryValue Root="HKLM" 
+                       Key="Software\WashU\GoldfarbLab\Pioneer" 
+                       Name="version" 
+                       Type="string" 
+                       Value="$(var.ProductVersion)" 
+                       KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+    
+    <!-- Minimal UI for silent or basic installation -->
+    <UIRef Id="WixUI_Minimal" />
+    
+    <!-- Product information -->
+    <Property Id="ARPCOMMENTS" Value="$(var.ProductDescription)" />
+  </Product>
+  
+</Wix>

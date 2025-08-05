@@ -68,7 +68,7 @@ processChunk!(method::SearchMethod, batch_id::Int, thread_id::Int) -> Nothing
 
 ### Stage 3: Scoring & FDR Control
 **ScoringSearch** - ML training and FDR control
-- **Purpose**: XGBoost training, PSM rescoring, protein grouping
+- **Purpose**: EvoTrees/XGBoost training, PSM rescoring, protein grouping
 - **Algorithm**: Cross-validation training + FDR filtering + protein inference
 - **Key Output**: High-confidence PSMs + protein groups
 - **Memory**: Stores all features for ML training

@@ -90,6 +90,26 @@ function get_best_traces(
 end
 
 
+"""
+    adjust_any_common_peps!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
+
+Remove :any_common_peps from `feature_names` if the column is constant.
+This avoids singular matrices in probit regression when the feature has
+the same value for all rows.
+"""
+function adjust_any_common_peps!(feature_names::Vector{Symbol}, df::AbstractDataFrame)
+    if :any_common_peps in feature_names && hasproperty(df, :any_common_peps)
+        col = df.any_common_peps
+        if all(col) || all(.!col)
+            filter!(x -> x != :any_common_peps, feature_names)
+            @warn "Removed constant :any_common_peps feature" constant_value = first(col)
+        end
+    end
+    return feature_names
+end
+
+
+
 
 
 #==========================================================
@@ -880,6 +900,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :log_binom_coeff, :any_common_peps]
+    adjust_any_common_peps!(feature_names, sampled_protein_groups)
     X = Matrix{Float64}(sampled_protein_groups[:, feature_names])
     y = sampled_protein_groups.target
     
@@ -945,6 +966,7 @@ function perform_probit_analysis(all_protein_groups::DataFrame, qc_folder::Strin
     @info "In memory probit regression analysis" n_targets=n_targets n_decoys=n_decoys total_protein_groups=nrow(all_protein_groups)
     # Define features to use
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps] # :log_binom_coeff] 
+    adjust_any_common_peps!(feature_names, sampled_protein_groups)
     X = Matrix{Float64}(all_protein_groups[:, feature_names])
     y = all_protein_groups.target
 
@@ -1743,6 +1765,7 @@ function perform_probit_analysis_multifold(
     
     # 4. Define features (same as original)
     feature_names = [:pg_score, :peptide_coverage, :n_possible_peptides, :any_common_peps]
+    adjust_any_common_peps!(feature_names, all_protein_groups)
     
     # 5. Train probit model for each fold
     models = Dict{UInt8, Vector{Float64}}()

@@ -15,6 +15,32 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# Entry point for PackageCompiler
+function main_convertMzML(argv=ARGS)::Cint
+    
+    settings = ArgParseSettings(; autofix_names = true)
+    @add_arg_table! settings begin
+        "mzml_dir"
+            help = "Directory containing mzML files"
+            arg_type = String
+        "skip_header"
+            help = "Skip scan header (true/false)"
+            arg_type = Bool
+            default = true
+            required = false
+    end
+    parsed_args = parse_args(argv, settings; as_symbols = true)
+    
+    try
+        convertMzML(parsed_args[:mzml_dir]; 
+                    skip_scan_header = parsed_args[:skip_header])
+    catch
+        Base.invokelatest(Base.display_error, Base.catch_stack())
+        return 1
+    end
+    return 0
+end
+
 struct PioneerScanElement
     mz_array::Vector{Union{Missing, Float32}}
     intensity_array::Vector{Union{Missing, Float32}}

@@ -67,7 +67,9 @@ function safe_replace_file(temp_path::String, target_path::String, file_handle)
                     if i == max_retries
                         # If all retries failed, try Windows-specific deletion
                         try
-                            run(`cmd /c del /f /q "$target_path"`)
+                            win_path = replace(abspath(target_path), "/" => "\\")
+                            cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
+                            run(cmd_del)
                         catch
                             # If that also fails, rename the old file instead of deleting
                             backup_path = target_path * ".backup_" * string(time_ns())

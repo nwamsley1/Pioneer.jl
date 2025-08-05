@@ -55,7 +55,10 @@ function safeRm(fpath::String, file_handle; force::Bool=false)
                 if i == max_retries
                     # If all retries failed, try Windows-specific deletion
                     try
-                        run(`cmd /c del /f /q "$fpath"`)
+                        # Convert to a Windows-style path for the cmd call
+                        win_path = replace(abspath(fpath), "/" => "\\")
+                        cmd_del = Cmd(["cmd", "/c", "del", "/f", "/q", win_path])
+                        run(cmd_del)
                         return nothing
                     catch
                         # If that also fails, rename the old file instead of deleting

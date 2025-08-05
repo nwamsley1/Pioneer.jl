@@ -18,14 +18,13 @@
 module Pioneer
 #__precompile__(false)
 using Arrow, ArrowTypes, ArgParse
-using Profile
-using PProf
-#using BSplineKit Don't need this imports anymore?
+#using Profile
+#using PProf
 using Base64
 using Base.Order
 using Base.Iterators: partition
-using CSV, CategoricalArrays, Combinatorics, CodecZlib
-using DataFrames, DataStructures, Dictionaries#, Distributions 
+using CSV, Combinatorics, CodecZlib
+using DataFrames, DataStructures, Dictionaries
 using EzXML
 using FASTX
 using Interpolations
@@ -34,24 +33,19 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, PrettyPrinting, Polynomials, PDFmerger, Profile, ProgressBars, Pkg, Printf
-using Tables, Test
+using Plots, Polynomials, ProgressBars, Printf
+using Tables
 using StatsPlots, SentinelArrays
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
-using XGBoost
+using EvoTrees
+using MLJModelInterface: fit, predict
 using KernelDensity
 using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
-#Set Seed 
-Random.seed!(1776);
-
-#Import Pioneer Files 
-include(joinpath(@__DIR__, "Routines","SearchDIA","importScripts.jl"))
-files_loaded = importScripts()
 
 """
 Type alias for m/z to eV interpolation functions.
@@ -71,9 +65,14 @@ const InterpolationTypeAlias = Interpolations.Extrapolation{
     Line{Nothing}                           # Extrapolation
 }
 
+#Set Seed 
+Random.seed!(1776);
 
-include(joinpath(@__DIR__, "Routines","BuildSpecLib","importScripts.jl"))
-importScriptsSpecLib(files_loaded)
+#Import Pioneer Files 
+include("importScripts.jl")
+files_loaded = importScripts()
+
+#importScriptsSpecLib(files_loaded)
 #include(joinpath(@__DIR__, "Routines","LibrarySearch","method"s,"loadSpectralLibrary.jl"))
 const methods_path = joinpath(@__DIR__, "Routines","LibrarySearch")       
 include(joinpath(@__DIR__, "Routines","SearchDIA.jl"))
@@ -122,7 +121,11 @@ const KOINA_URLS = Dict(
     "altimeter" => "http://127.0.0.1:8000/v2/models/Altimeter_2024_splines_index/infer",
 )
 
+function __init__()
+    # Don't initialize gr() immediately - let it be initialized when first used
+    # This prevents Qt registration conflicts
+    ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
+end
 
-
-export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, convertMzML
+export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
 end

@@ -80,6 +80,8 @@ struct QuadTuningSearchResults <: SearchResults
     }}}
     quad_model::Base.Ref{QuadTransmissionModel}
     quad_plot_dir::String
+    quad_model_plots::Vector{Plots.Plot}
+    quad_data_plots::Vector{Plots.Plot}
 end
 
 """
@@ -210,7 +212,9 @@ function init_search_results(::QuadTuningSearchParameters, search_context::Searc
     return QuadTuningSearchResults(
         temp_data,
         Ref{QuadTransmissionModel}(),
-        qpp
+        qpp,
+        Plots.Plot[],
+        Plots.Plot[]
     )
 end
 
@@ -258,7 +262,7 @@ function process_file!(
         end
 
         # Plot charge states
-        plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx))
+        push!(results.quad_data_plots, plot_charge_distributions(total_psms, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
         # Fit quad model
         window_width = parse(Float64, first(window_widths))
@@ -267,7 +271,7 @@ function process_file!(
         setQuadModel(results, fitted_model)
 
         # Plot quad model
-        plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx))
+        push!(results.quad_model_plots, plot_quad_model(fitted_model, window_width, results, getFileIdToName(getMSData(search_context), ms_file_idx)))
         
     catch e
         throw(e)
@@ -311,18 +315,14 @@ function summarize_results!(
         @warn "Could not clear existing file: $e"
     end
 
-    qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_models"), join=true) if endswith(x, ".pdf")]
-    if !isempty(qmp)
-        merge_pdfs(qmp, 
-                  models_path, 
-                  cleanup=true)
+    if !isempty(results.quad_model_plots)
+        save_multipage_pdf(results.quad_model_plots, models_path)
+        empty!(results.quad_model_plots)
     end
 
-    qmp = [x for x in readdir(joinpath(results.quad_plot_dir, "quad_data"), join=true) if endswith(x, ".pdf")]
-    if !isempty(qmp)
-        merge_pdfs(qmp, 
-                  data_path, 
-                  cleanup=true)
+    if !isempty(results.quad_data_plots)
+        save_multipage_pdf(results.quad_data_plots, data_path)
+        empty!(results.quad_data_plots)
     end
 
     reset_precursor_arrays!(search_context)
