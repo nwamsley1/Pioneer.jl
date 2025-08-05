@@ -59,13 +59,13 @@ jobs:
             mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share")
 
             executables = [
-              "GetSearchParams" => "main_GetSearchParams",
-              "GetBuildLibParams" => "main_GetBuildLibParams",
-              "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
-              "ParseSpecLib" => "main_ParseSpecLib",
-              "BuildSpecLib" => "main_BuildSpecLib",
+              #"GetSearchParams" => "main_GetSearchParams",
+              #"GetBuildLibParams" => "main_GetBuildLibParams",
+              #"GetParseSpecLibParams" => "main_GetParseSpecLibParams",
+              #"ParseSpecLib" => "main_ParseSpecLib",
+              #"BuildSpecLib" => "main_BuildSpecLib",
               "SearchDIA" => "main_SearchDIA",
-              "convertMzML" => "main_convertMzML"
+              #"convertMzML" => "main_convertMzML"
             ]
 
             first_exe, first_main = first(executables)
