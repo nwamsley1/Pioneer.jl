@@ -105,6 +105,7 @@ function importScripts()
         joinpath(package_root, "src","structs"),
         [
             "MassSpecData.jl",
+            "FilteredMassSpecData.jl",
             "ChromObject.jl",
             "ArrayDict.jl",
             "Counter.jl",
