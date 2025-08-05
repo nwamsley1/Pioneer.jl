@@ -61,7 +61,7 @@ function add_original_target_scores!(prec_results::DataFrame, library_precursors
     # This handles both per-file (ms_file_idx > 0) and global (ms_file_idx = 0) analyses
     pair_to_target = Dictionary{Int, Dictionary{UInt32, @NamedTuple{target_row::UInt32,target_score::Float32}}}()
     #@info "ms_file_idx values in prec_results: $(unique(prec_results.ms_file_idx))"
-    @info "prec_results pair id 942181 " prec_results[prec_results[!,:entrap_pair_id].==942181,:]
+    #@info "prec_results pair id 942181 " prec_results[prec_results[!,:entrap_pair_id].==942181,:]
     for (idx, row) in enumerate(eachrow(prec_results))
         if !ismissing(row.entrap_pair_id) && !ismissing(row[score_col])
             pair_id = row.entrap_pair_id

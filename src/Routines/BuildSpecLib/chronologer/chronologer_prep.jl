@@ -137,6 +137,18 @@ function prepare_chronologer_input(
     # Process FASTA files
     fasta_entries = Vector{FastaEntry}()
     protein_entries = Vector{FastaEntry}()
+    @info "params[fasta_names]", params["fasta_names"]
+    @info "params[fasta_paths]", params["fasta_paths"]
+
+    test_zip = collect(zip(
+            params["fasta_names"],
+            params["fasta_paths"],
+            accession_rgxs,
+            gene_rgxs,
+            protein_rgxs,
+            organism_rgxs,
+        ))
+    @info "test_zip ", test_zip
     for (proteome_name, fasta, acc_rgx, gene_rgx, prot_rgx, org_rgx) in zip(
             params["fasta_names"],
             params["fasta_paths"],
@@ -174,7 +186,8 @@ function prepare_chronologer_input(
     # Add entrapment sequences if specified
     fasta_entries = add_entrapment_sequences(
         fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"])
+        UInt8(_params.fasta_digest_params["entrapment_r"]),
+        fixed_chars = Vector{Char}([first(char) for char in _params.fasta_digest_params["fixed_chars"]])
     )
     #Fasta entries with the fixed and variable mods added 
     fasta_entries = add_mods(
@@ -182,16 +195,17 @@ function prepare_chronologer_input(
         fixed_mods, 
         var_mods,
         _params.fasta_digest_params["max_var_mods"])
-  
+
+    # Add decoy sequences
+    fasta_entries = add_decoy_sequences(fasta_entries,
+        fixed_chars = Vector{Char}([first(char) for char in _params.fasta_digest_params["fixed_chars"]])
+        )
+        
     fasta_entries = add_charge(
         fasta_entries,
         _params.fasta_digest_params["min_charge"],
         _params.fasta_digest_params["max_charge"]
     )
-
-    # Add decoy sequences
-    fasta_entries = add_reverse_decoys(fasta_entries)
-  
     # Build UniSpec input dataframe
     fasta_df = build_fasta_df(
         fasta_entries,

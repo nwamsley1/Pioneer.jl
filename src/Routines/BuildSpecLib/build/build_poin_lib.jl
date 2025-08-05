@@ -75,6 +75,7 @@ function buildPionLib(spec_lib_path::String,
                       include_neutral_diff::Bool,
                       max_frag_charge::UInt8,
                       max_frag_rank::UInt8,
+                      length_to_frag_count_multiple::AbstractFloat,
                       min_frag_intensity::Float32,
                       rank_to_score::Vector{UInt8},
                       frag_bounds::FragBoundModel,
@@ -162,6 +163,7 @@ function buildPionLib(spec_lib_path::String,
     fragments_table[:has_neutral_diff],
     precursors_table[:mz],
     precursors_table[:prec_charge],#:precursor_charge],
+    precursors_table[:length],
     prec_to_frag[:start_idx],
     y_start,
     b_start,
@@ -173,6 +175,7 @@ function buildPionLib(spec_lib_path::String,
     max_frag_charge,
     frag_bounds,
     max_frag_rank,
+    length_to_frag_count_multiple,
     min_frag_intensity,
     model_type
     );
@@ -268,6 +271,7 @@ function buildPionLib(spec_lib_path::String,
                       include_neutral_diff::Bool,
                       max_frag_charge::UInt8,
                       max_frag_rank::UInt8,
+                      length_to_frag_count_multiple::AbstractFloat,
                       min_frag_intensity::Float32,
                       rank_to_score::Vector{UInt8},
                       frag_bounds::FragBoundModel,
@@ -355,6 +359,7 @@ function buildPionLib(spec_lib_path::String,
     fragments_table[:has_neutral_diff],
     precursors_table[:mz],
     precursors_table[:prec_charge],#:precursor_charge],
+    precursors_table[:length],
     prec_to_frag[:start_idx],
     y_start,
     b_start,
@@ -366,6 +371,7 @@ function buildPionLib(spec_lib_path::String,
     max_frag_charge,
     frag_bounds,
     max_frag_rank,
+    length_to_frag_count_multiple,
     min_frag_intensity,
     model_type
     );
@@ -901,6 +907,14 @@ function buildFragmentIndex!(
 end
 
 """
+    Helper function to decide if the fragment should be filtered out. Filters based on maximum rank or
+        a constant multiple of the peptide length, whichever is least 
+"""
+function filterFrag(rank::Int64, prec_len::UInt8, max_frag_rank::UInt8, length_to_frag_count_multiple::AbstractFloat)
+    return rank > min(max_frag_rank, round((prec_len)*length_to_frag_count_multiple)+1)
+end
+
+"""
     getDetailedFrags(
         frag_mz::AbstractVector{Float32},
         frag_intensity::AbstractVector{Float16},
@@ -985,6 +999,7 @@ function getDetailedFrags(
     frag_neutral_diff::AbstractVector{Bool},
     precursor_mz::AbstractVector{Float32},
     precursor_charge::AbstractVector{UInt8},
+    prec_len::AbstractVector{UInt8},
     prec_to_frag_idx::AbstractVector{UInt64},
     y_start::UInt8,
     b_start::UInt8,
@@ -996,6 +1011,7 @@ function getDetailedFrags(
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
     max_frag_rank::UInt8,
+    length_to_frag_count_multiple::AbstractFloat,
     min_frag_intensity::AbstractFloat,
     koina_model::KoinaModelType)
 
@@ -1046,7 +1062,7 @@ function getDetailedFrags(
             #update counters 
             n_frags += one(UInt64)
             rank += 1
-            if rank > max_frag_rank
+            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
                 break
             end
         end
@@ -1112,7 +1128,7 @@ function getDetailedFrags(
             )
             detailed_frag_idx += 1
             rank += 1
-            if rank > max_frag_rank
+            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
                 break
             end
         end
@@ -1213,6 +1229,7 @@ function getDetailedFrags(
     frag_neutral_diff::AbstractVector{Bool},
     precursor_mz::AbstractVector{Float32},
     precursor_charge::AbstractVector{UInt8},
+    prec_len::AbstractVector{UInt8},
     prec_to_frag_idx::AbstractVector{UInt64},
     y_start::UInt8,
     b_start::UInt8,
@@ -1224,6 +1241,7 @@ function getDetailedFrags(
     max_frag_charge::UInt8,
     frag_bounds::FragBoundModel,
     max_frag_rank::UInt8,
+    length_to_frag_count_multiple::AbstractFloat,
     min_frag_intensity::AbstractFloat,
     koina_model::SplineCoefficientModel) where {N}
 
@@ -1271,7 +1289,7 @@ function getDetailedFrags(
             #update counters 
             n_frags += one(UInt64)
             rank += 1
-            if rank > max_frag_rank
+            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
                 break
             end
         end
@@ -1337,7 +1355,7 @@ function getDetailedFrags(
             )
             detailed_frag_idx += 1
             rank += 1
-            if rank > max_frag_rank
+            if filterFrag(rank, prec_len[pid], max_frag_rank, length_to_frag_count_multiple)
                 break
             end
         end

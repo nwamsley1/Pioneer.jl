@@ -675,6 +675,7 @@ function perform_protein_probit_regression(
     max_protein_groups_in_memory_limit = 5 * max_psms_in_memory
     
     if total_protein_groups > max_protein_groups_in_memory_limit
+        #Need to implement safety checks for minimal number of targets/decoys in each split 
         @info "Using out-of-memory probit regression (exceeds limit of $max_protein_groups_in_memory_limit)"
         perform_probit_analysis_oom(pg_refs, total_protein_groups, max_protein_groups_in_memory_limit, qc_folder)
     else
@@ -691,7 +692,7 @@ function perform_protein_probit_regression(
         n_targets = sum(all_protein_groups.target)
         n_decoys = sum(.!all_protein_groups.target)
         
-        if n_targets > 0 && n_decoys > 0 && nrow(all_protein_groups) > 10
+        if n_targets > 50 && n_decoys > 50 && nrow(all_protein_groups) > 1000
             # Perform probit regression analysis
             @info "Performing Probit Analysis (targets: $n_targets, decoys: $n_decoys)"
             #perform_probit_analysis(all_protein_groups, qc_folder, pg_refs)
@@ -863,7 +864,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     # Calculate sampling ratio
     sampling_ratio = max_protein_groups_in_memory / total_protein_groups
     @info "Sampling ratio: $(round(sampling_ratio * 100, digits=2))%"
-    
+    sampled_targets, sampled_decoys = 0, 0
     # Sample protein groups from each file
     sampled_protein_groups = DataFrame()
     for ref in pg_refs
@@ -878,11 +879,23 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
                 # Load sampled rows
                 table = Arrow.Table(file_path(ref))
                 df = DataFrame(Tables.columntable(table))
-                append!(sampled_protein_groups, df[sample_indices, :])
+                # Count statistics
+                sampled_df = df[sample_indices, :]
+                _df_targets = sum(sampled_df.target)
+                _df_decoys = size(sampled_df, 1) - _df_targets
+                sampled_targets += _df_targets
+                sampled_decoys += _df_decoys
+                append!(sampled_protein_groups, sampled_df)
             end
         end
     end
     
+    n_sampled = sampled_targets + sampled_decoys
+    if (n_sampled < 1000) || (sampled_targets < 50) || (sampled_decoys < 50)
+        @warn "Insufficient sampled protein groups for OOM probit regression: targets=$sampled_targets, decoys=$sampled_decoys"
+        return
+    end
+
     @info "Sampled $(nrow(sampled_protein_groups)) protein groups for training"
     
     # Define features to use
@@ -895,12 +908,7 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
     #β_fitted, X_mean, X_std = fit_probit_model(X, y)
     β_fitted = fit_probit_model(X, y)
     @info "Fitted probit model coefficients: $β_fitted"
-    
-    # Now apply the model to all protein groups file by file
-    # and collect statistics
-    total_targets = 0
-    total_decoys = 0
-    
+    total_targets, total_decoys = 0, 0
     # Process each file
     for ref in pg_refs
         if exists(ref)
@@ -917,10 +925,8 @@ function perform_probit_analysis_oom(pg_refs::Vector{ProteinGroupFileReference},
             # Sort by pg_score and target in descending order
             sort!(df, [:pg_score, :target], rev = [true, true])
             
-            # Count statistics
             total_targets += sum(df.target)
             total_decoys += sum(.!df.target)
-            
             # Write back the file with probit scores
             writeArrow(file_path(ref), df)
         end
