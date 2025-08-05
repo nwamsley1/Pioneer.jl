@@ -324,6 +324,25 @@ Performs mass error-focused fragment matching.
 
 Returns matched fragments for mass error analysis.
 """
+# Default method without chromatogram type - calls MS2CHROM version
+function mass_error_search(
+    spectra::MassSpecData,
+    scan_idxs::Vector{UInt32},
+    precursor_idxs::Vector{UInt32},
+    ms_file_idx::UInt32,
+    spec_lib::SpectralLibrary,
+    search_data::AbstractVector{S},
+    mem::M,
+    params::P
+) where {
+        M<:MassErrorModel, 
+        S<:SearchDataStructures, 
+        P<:SearchParameters
+        }
+    return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx, 
+                            spec_lib, search_data, mem, params, MS2CHROM())
+end
+
 function mass_error_search(
     spectra::MassSpecData,
     scan_idxs::Vector{UInt32},
@@ -333,7 +352,7 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
-    #::MS2CHROM  # TODO: Fix dependency - MS2CHROM defined in IntegrateChromatogramsSearch which loads later
+    ::MS2CHROM
 ) where {
         M<:MassErrorModel, 
         S<:SearchDataStructures, 
