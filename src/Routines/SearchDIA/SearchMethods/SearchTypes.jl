@@ -78,6 +78,22 @@ Parameters specifically for fragment index-based searches.
 """
 abstract type FragmentIndexSearchParameters <: SearchParameters end
 
+"""
+Base type for chromatogram extraction methods.
+Used to distinguish between MS1 and MS2 chromatogram searches.
+"""
+abstract type CHROMATOGRAM end
+
+"""
+MS2 chromatogram type for fragment-based searches.
+"""
+struct MS2CHROM <: CHROMATOGRAM end
+
+"""
+MS1 chromatogram type for precursor-based searches.
+"""
+struct MS1CHROM <: CHROMATOGRAM end
+
 #==========================================================
 Concrete Types
 ==========================================================#
