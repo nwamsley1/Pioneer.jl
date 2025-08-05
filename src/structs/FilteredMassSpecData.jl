@@ -164,7 +164,7 @@ function FilteredMassSpecData(
         scan_numbers[filtered_idx] = getScanNumber(original, original_idx)
         base_peak_mzs[filtered_idx] = T(getBasePeakMz(original, original_idx))
         base_peak_intensities[filtered_idx] = T(getBasePeakIntensity(original, original_idx))
-        injection_times[filtered_idx] = T(getInjectionTime(original, original_idx))
+        injection_times[filtered_idx] = zero(T)  # Default to zero - injection time not available in BasicNonIonMobilityMassSpecData
         retention_times[filtered_idx] = T(getRetentionTime(original, original_idx))
         precursor_mzs[filtered_idx] = T(getPrecursorMz(original, original_idx))
         isolation_widths[filtered_idx] = T(getIsolationWidthMz(original, original_idx))
@@ -377,7 +377,7 @@ function Base.append!(
         push!(filtered.scan_numbers, getScanNumber(original, original_idx))
         push!(filtered.base_peak_mzs, T(getBasePeakMz(original, original_idx)))
         push!(filtered.base_peak_intensities, T(getBasePeakIntensity(original, original_idx)))
-        push!(filtered.injection_times, T(getInjectionTime(original, original_idx)))
+        push!(filtered.injection_times, zero(T))  # Default to zero - injection time not available in BasicNonIonMobilityMassSpecData
         push!(filtered.retention_times, T(getRetentionTime(original, original_idx)))
         push!(filtered.precursor_mzs, T(getPrecursorMz(original, original_idx)))
         push!(filtered.isolation_widths, T(getIsolationWidthMz(original, original_idx)))
