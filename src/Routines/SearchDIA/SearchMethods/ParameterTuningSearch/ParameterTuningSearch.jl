@@ -170,7 +170,7 @@ function process_file!(
         filtered_spectra = FilteredMassSpecData(
             spectra,
             params.sample_rate,
-            params.topn_peaks,
+            1000,#params.topn_peaks,
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         )
         
@@ -271,12 +271,28 @@ function process_file!(
             # Collect PSMs through iterations
             psms = collect_psms(spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
-            
+            @info "Iteration $(n_attempts + 1): Found $final_psm_count PSMs for file $ms_file_idx"
             # Check if we have enough PSMs to proceed
             if final_psm_count < min_psms_for_fitting
                 @warn "Only $final_psm_count PSMs found in iteration $(n_attempts + 1) for file $ms_file_idx. Need at least $min_psms_for_fitting for reliable fitting."
                 push!(warnings, "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting")
-                if n_attempts >= 2  # Give up early if we're not getting enough PSMs
+                
+                # Try expanding mass tolerance before giving up
+                if n_attempts < 2
+                    current_tol = getLeftTol(results.mass_err_model[]) 
+                    new_tol = current_tol * 1.5f0
+                    
+                    # Cap at reasonable maximum of 50 ppm
+                    new_tol = min(new_tol, 50.0f0)
+                    
+                    results.mass_err_model[] = MassErrorModel(
+                        getMassOffset(results.mass_err_model[]),
+                        (new_tol, new_tol)
+                    )
+                    @info "Expanding mass tolerance from $current_tol to $new_tol ppm to find more PSMs"
+                    push!(warnings, "Expanded tolerance to $new_tol ppm due to low PSM count")
+                else
+                    # Give up early if we're not getting enough PSMs
                     break
                 end
                 n_attempts += 1
@@ -314,7 +330,7 @@ function process_file!(
                     getMassOffset(mass_err_model), 
                     (getFragTolPpm(params), getFragTolPpm(params))
                 )
-            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > (init_mass_tol) 
+            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > 1.8*(init_mass_tol) 
                 init_mass_tol *= 1.5
                 results.mass_err_model[] = MassErrorModel(
                     0.0f0, 
