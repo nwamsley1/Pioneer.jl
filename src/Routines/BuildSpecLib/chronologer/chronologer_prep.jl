@@ -186,8 +186,7 @@ function prepare_chronologer_input(
     # Add entrapment sequences if specified
     fasta_entries = add_entrapment_sequences(
         fasta_entries,
-        UInt8(_params.fasta_digest_params["entrapment_r"]),
-        fixed_chars = Vector{Char}([first(char) for char in _params.fasta_digest_params["fixed_chars"]])
+        UInt8(_params.fasta_digest_params["entrapment_r"])
     )
     #Fasta entries with the fixed and variable mods added 
     fasta_entries = add_mods(
@@ -197,9 +196,7 @@ function prepare_chronologer_input(
         _params.fasta_digest_params["max_var_mods"])
 
     # Add decoy sequences
-    fasta_entries = add_decoy_sequences(fasta_entries,
-        fixed_chars = Vector{Char}([first(char) for char in _params.fasta_digest_params["fixed_chars"]])
-        )
+    fasta_entries = add_decoy_sequences(fasta_entries)
         
     fasta_entries = add_charge(
         fasta_entries,

@@ -159,7 +159,6 @@ function add_entrapment_sequences(
         zero(UInt8),
        fixed_chars#['R','K']#Vector{Char}()
     )
-    @info "Entrapment fixed chars: $fixed_chars"
     for target_entry in target_fasta_entries
         for entrapment_group_id in 1:entrapment_r
             n_shuffle_attempts = 0
@@ -394,7 +393,6 @@ function add_decoy_sequences(
         zero(UInt8),
         fixed_chars#['R','K']#Vector{Char}()
     )
-    @info "Decoy fixed chars: $fixed_chars"
     n = 1
     for target_entry in target_fasta_entries
         target_sequence = get_sequence(target_entry)
