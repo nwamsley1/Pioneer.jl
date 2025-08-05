@@ -123,7 +123,6 @@ const KOINA_URLS = Dict(
 
 function __init__()
     # Don't initialize gr() immediately - let it be initialized when first used
-    # This prevents Qt registration conflicts
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
 end
 

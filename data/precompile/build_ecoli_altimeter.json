@@ -33,6 +33,7 @@
         "prec_mz_max": 600.0,
         "max_frag_charge": 3,
         "max_frag_rank": 50,
+        "length_to_frag_count_multiple": 10,
         "min_frag_intensity": 0.0,
         "include_isotope": false,
         "include_internal": false,
