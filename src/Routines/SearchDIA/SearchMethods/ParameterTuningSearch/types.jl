@@ -166,7 +166,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
         # Extract topn_peaks if present
-        topn_peaks = haskey(search_params, "topn_peaks") ? Int64(search_params["topn_peaks"]) : nothing
+        topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
         
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
