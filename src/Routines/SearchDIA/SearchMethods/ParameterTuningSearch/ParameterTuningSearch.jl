@@ -166,19 +166,61 @@ function process_file!(
                 end
         end
 
+        # Create filtered/sampled data structure
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            params.sample_rate,
+            params.topn_peaks,
+            target_ms_order = UInt8(2)  # Only MS2 for presearch
+        )
+        
         psms = DataFrame()
-        for i in 1:getMaxPresearchIters(params)
-            new_psms = library_search(spectra, search_context, params, ms_file_idx)
+        for i in 1:params.max_presearch_iters
+            # Perform library search on filtered data
+            new_psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
             iszero(size(new_psms, 1)) && continue
             
+            # CRITICAL: Map filtered scan indices back to original
+            # library_search returns scan_idx relative to filtered_spectra
+            new_psms[!, :filtered_scan_idx] = new_psms[!, :scan_idx]
+            new_psms[!, :scan_idx] = [
+                getOriginalScanIndex(filtered_spectra, idx) 
+                for idx in new_psms[!, :filtered_scan_idx]
+            ]
+            
+            # Use ORIGINAL spectra for metadata lookup
             add_columns_and_concat!(psms, new_psms, spectra, 
                                 getPrecursors(getSpecLib(search_context)), params)
-            try 
-                filter_and_score_psms!(psms, params, search_context) >= getMinPsms(params) && break
+            
+            # Check if we have enough high-quality PSMs
+            n_passing = try
+                filter_and_score_psms!(psms, params, search_context)
             catch e
                 throw(e)
             end
+            
+            n_passing >= params.min_psms && break
+            
+            # Not enough PSMs - try sampling more scans
+            if i < params.max_presearch_iters && hasUnsampledScans(filtered_spectra)
+                # Increase sampling rate for next iteration
+                additional_rate = params.sample_rate * (1.5 ^ i)
+                n_added = append!(
+                    filtered_spectra, 
+                    additional_rate,
+                    max_additional_scans = 1000
+                )
+                
+                # If no scans added, we've exhausted the data
+                n_added == 0 && break
+            end
         end
+        
+        # Clean up temporary column if it exists
+        if "filtered_scan_idx" in names(psms)
+            select!(psms, Not(:filtered_scan_idx))
+        end
+        
         return psms
     end
 
