@@ -158,6 +158,9 @@ function importScripts()
 
     # Include new FileOperations module from utils (after writeArrow is loaded)
     safe_include!(joinpath(package_root, "src", "utils", "FileOperations", "FileOperations.jl"))
+    
+    # Include PlottingCompat for lazy loading support
+    safe_include!(joinpath(package_root, "src", "utils", "PlottingCompat.jl"))
 
     # PSMs
     include_files!(
