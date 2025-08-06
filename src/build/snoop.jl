@@ -5,6 +5,15 @@ data_dir = joinpath(root, "..", "..", "data")
 
 cmd = get(ENV, "PIONEER_CMD", nothing)
 
+# Control whether to precompile plotting (can be disabled to avoid Qt issues)
+if get(ENV, "PIONEER_PRECOMPILE_PLOTS", "false") == "true"
+    try
+        Pioneer.ensure_plotting_loaded()
+    catch e
+        @warn "Could not precompile plotting libraries" exception=(e, catch_backtrace())
+    end
+end
+
 function maybe_run(f, name)
     if cmd === nothing || cmd == name
         try
