@@ -140,8 +140,10 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     max_best_rank::UInt8
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
-    sample_rate::Float32
+    sample_rate::Float32  # Deprecated - kept for compatibility
     topn_peaks::Union{Nothing, Int64}
+    initial_scan_count::Int64
+    expanded_scan_count::Int64
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -168,6 +170,10 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
         
+        # Extract scan count parameters
+        initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
+        expanded_scan_count = hasproperty(search_params, :expanded_scan_count) ? Int64(search_params.expanded_scan_count) : Int64(5000)
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -186,8 +192,10 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             UInt8(1), # max_best_rank default
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
-            Float32(search_params.sample_rate),
+            Float32(search_params.sample_rate),  # Deprecated
             topn_peaks,
+            initial_scan_count,
+            expanded_scan_count,
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
