@@ -20,6 +20,23 @@
    pioneer --help
    ```
 
+### Docker
+Run Pioneer in a container without installing dependencies.
+
+1. Pull the prebuilt image:
+   ```bash
+   docker pull dennisgoldfarb/pioneer:latest
+   ```
+2. Execute Pioneer inside the container, mounting a host directory (e.g. the current directory) to access data:
+   ```bash
+   docker run --rm -it -v $(pwd):/work dennisgoldfarb/pioneer:latest pioneer --help
+   ```
+   Replace `pioneer --help` with any subcommand.
+3. To build the image locally using the included `Dockerfile`:
+   ```bash
+   docker build -t pioneer .
+   ```
+
 ### Development Setup
 To work on Pioneer itself, set up a local development environment.
 

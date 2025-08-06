@@ -47,6 +47,27 @@ pioneer search search_params.json
 guide for available options.
 
 
+### Docker
+
+Pioneer can also be run from a Docker container:
+
+```bash
+docker pull dennisgoldfarb/pioneer:latest
+```
+
+Run Pioneer inside the container, mounting a host directory to access your data:
+
+```bash
+docker run --rm -it -v /path/on/host:/work dennisgoldfarb/pioneer:latest pioneer --help
+```
+
+Replace `/path/on/host` with the directory containing your data and `pioneer --help` with any Pioneer subcommand. The repository includes a `Dockerfile` for building the image locally:
+
+```bash
+docker build -t pioneer .
+```
+
+
 <h1>Goldfarb Lab </h1>
  Pioneer is developed in the Goldfarb Lab: https://goldfarblab.wustl.edu   <img src="https://github.com/nwamsley1/Pioneer.jl/blob/main/figures/goldfarb.png" align="left" width="125px"/> 
 <br><br><br><br><br>
