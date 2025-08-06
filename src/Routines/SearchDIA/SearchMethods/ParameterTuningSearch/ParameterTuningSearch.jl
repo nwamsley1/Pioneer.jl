@@ -239,20 +239,8 @@ function process_file!(
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         )
         
-        # Check if we should attempt bias detection
-        if should_attempt_bias_detection(params, 1, 0) && !initial_params.informed_by_history
-            @info "Attempting mass bias detection for file $ms_file_idx"
-            best_bias, psm_count = detect_mass_bias(spectra, search_context, params, ms_file_idx)
-            if psm_count > 100  # Minimum for reliable bias estimate
-                initial_bias = best_bias
-                @info "Detected mass bias: $best_bias ppm"
-            else
-                initial_bias = initial_params.bias_estimate
-                push!(warnings, "Bias detection yielded insufficient PSMs")
-            end
-        else
-            initial_bias = initial_params.bias_estimate
-        end
+        # Use bias estimate from cross-run learning or default
+        initial_bias = initial_params.bias_estimate
         
         # Set initial mass error model
         results.mass_err_model[] = MassErrorModel(
