@@ -131,7 +131,7 @@ function process_file!(
     final_psm_count = 0
 
     """
-    Collect PSMs through multiple iterations until sufficient high-quality PSMs found.
+    Collect PSMs from filtered spectra using library search.
     """
     function collect_psms(
         filtered_spectra::FilteredMassSpecData,
@@ -141,77 +141,37 @@ function process_file!(
         ms_file_idx::Int64
     ) where {P<:ParameterTuningSearchParameters}
         
-        """
-        Add columns and concatenate new PSMs to existing DataFrame.
-        """
-        function add_columns_and_concat!(
-                psms::DataFrame,
-                new_psms::DataFrame,
-                spectra::MassSpecData,
-                precursors::LibraryPrecursors,
-                params::P
-            ) where {P<:ParameterTuningSearchParameters}
-                
-                add_tuning_search_columns!(
-                    new_psms,
-                    spectra,
-                    getIsDecoy(precursors),#[:is_decoy],
-                    getIrt(precursors),#[:irt],
-                    getCharge(precursors),#[:prec_charge],
-                    getRetentionTimes(spectra),
-                    getTICs(spectra)
-                )
-                
-                if new_psms !== nothing
-                    append!(psms, new_psms)
-                end
-        end
+        # Perform library search on filtered data
+        psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
         
-        psms = DataFrame()
-        for i in 1:params.max_presearch_iters
-            # Perform library search on filtered data
-            new_psms = library_search(filtered_spectra, search_context, params, ms_file_idx)
-            iszero(size(new_psms, 1)) && continue
-            
+        if !iszero(size(psms, 1))
             # CRITICAL: Map filtered scan indices back to original
             # library_search returns scan_idx relative to filtered_spectra
-            new_psms[!, :filtered_scan_idx] = new_psms[!, :scan_idx]
-            new_psms[!, :scan_idx] = [
+            psms[!, :filtered_scan_idx] = psms[!, :scan_idx]
+            psms[!, :scan_idx] = [
                 getOriginalScanIndex(filtered_spectra, idx) 
-                for idx in new_psms[!, :filtered_scan_idx]
+                for idx in psms[!, :filtered_scan_idx]
             ]
             
-            # Use ORIGINAL spectra for metadata lookup
-            add_columns_and_concat!(psms, new_psms, spectra, 
-                                getPrecursors(getSpecLib(search_context)), params)
+            # Add metadata columns using ORIGINAL spectra
+            precursors = getPrecursors(getSpecLib(search_context))
+            add_tuning_search_columns!(
+                psms,
+                spectra,
+                getIsDecoy(precursors),
+                getIrt(precursors),
+                getCharge(precursors),
+                getRetentionTimes(spectra),
+                getTICs(spectra)
+            )
             
-            # Check if we have enough high-quality PSMs
-            n_passing = try
-                filter_and_score_psms!(psms, params, search_context)
-            catch e
-                throw(e)
+            # Score and filter PSMs
+            filter_and_score_psms!(psms, params, search_context)
+            
+            # Clean up temporary column
+            if "filtered_scan_idx" in names(psms)
+                select!(psms, Not(:filtered_scan_idx))
             end
-            
-            n_passing >= params.min_psms && break
-            
-            # Not enough PSMs - try sampling more scans
-            if i < params.max_presearch_iters && hasUnsampledScans(filtered_spectra)
-                # Increase sampling rate for next iteration
-                additional_rate = params.sample_rate * (1.5 ^ i)
-                n_added = append!(
-                    filtered_spectra, 
-                    additional_rate,
-                    max_additional_scans = 1000
-                )
-                
-                # If no scans added, we've exhausted the data
-                n_added == 0 && break
-            end
-        end
-        
-        # Clean up temporary column if it exists
-        if "filtered_scan_idx" in names(psms)
-            select!(psms, Not(:filtered_scan_idx))
         end
         
         return psms
@@ -231,13 +191,23 @@ function process_file!(
         min_psms_for_fitting = 1000
         final_psm_count = 0
         
-        # Create filtered/sampled data structure
+        # Create filtered/sampled data structure with initial scan count
         filtered_spectra = FilteredMassSpecData(
             spectra,
-            params.sample_rate,
-            1000,  # params.topn_peaks,
+            max_scans = params.initial_scan_count,  # Default: 2500
+            topn = params.topn_peaks,
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         )
+        
+        # Count total MS2 scans for logging
+        total_ms2_count = 0
+        for i in 1:length(spectra)
+            if getMsOrder(spectra, i) == UInt8(2)
+                total_ms2_count += 1
+            end
+        end
+        
+        @info "Initial sampling: $(length(filtered_spectra)) MS2 scans from $total_ms2_count total for file $ms_file_idx"
         
         # Use bias estimate from cross-run learning or default
         initial_bias = initial_params.bias_estimate
@@ -260,32 +230,39 @@ function process_file!(
             # Collect PSMs through iterations
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
-            @info "Iteration $(n_attempts + 1): Found $final_psm_count PSMs for file $ms_file_idx"
+            @info "Iteration $(n_attempts + 1): Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans"
+            
             # Check if we have enough PSMs to proceed
             if final_psm_count < min_psms_for_fitting
-                @warn "Only $final_psm_count PSMs found in iteration $(n_attempts + 1) for file $ms_file_idx. Need at least $min_psms_for_fitting for reliable fitting."
+                @warn "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting"
                 push!(warnings, "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting")
                 
-                # Try expanding mass tolerance before giving up
-                if n_attempts < 2
+                # First retry: Expand to more scans
+                if n_attempts == 0 && length(filtered_spectra) < params.expanded_scan_count
+                    additional_scans = params.expanded_scan_count - length(filtered_spectra)
+                    n_added = append!(filtered_spectra, max_additional_scans = additional_scans)
+                    @info "Expanded sampling: added $n_added scans (now $(length(filtered_spectra)) total)"
+                    push!(warnings, "Expanded scan sampling to $(length(filtered_spectra)) scans")
+                    n_attempts += 1
+                    continue
+                end
+                
+                # Second retry: Increase mass tolerance
+                if n_attempts == 1
                     current_tol = getLeftTol(results.mass_err_model[]) 
-                    new_tol = current_tol * 1.5f0
-                    
-                    # Cap at reasonable maximum of 50 ppm
-                    new_tol = min(new_tol, 50.0f0)
-                    
+                    new_tol = min(current_tol * 1.5f0, 50.0f0)
                     results.mass_err_model[] = MassErrorModel(
                         getMassOffset(results.mass_err_model[]),
                         (new_tol, new_tol)
                     )
-                    @info "Expanding mass tolerance from $current_tol to $new_tol ppm to find more PSMs"
+                    @info "Expanding mass tolerance from $current_tol to $new_tol ppm"
                     push!(warnings, "Expanded tolerance to $new_tol ppm due to low PSM count")
-                else
-                    # Give up early if we're not getting enough PSMs
-                    break
+                    n_attempts += 1
+                    continue
                 end
-                n_attempts += 1
-                continue
+                
+                # Give up after two retries
+                break
             end
             
             # Fit RT alignment model
