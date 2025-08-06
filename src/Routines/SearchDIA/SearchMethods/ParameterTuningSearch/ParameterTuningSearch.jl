@@ -134,6 +134,7 @@ function process_file!(
     Collect PSMs through multiple iterations until sufficient high-quality PSMs found.
     """
     function collect_psms(
+        filtered_spectra::FilteredMassSpecData,
         spectra::MassSpecData,
         search_context::SearchContext,
         params::P,
@@ -165,14 +166,6 @@ function process_file!(
                     append!(psms, new_psms)
                 end
         end
-
-        # Create filtered/sampled data structure
-        filtered_spectra = FilteredMassSpecData(
-            spectra,
-            params.sample_rate,
-            1000,#params.topn_peaks,
-            target_ms_order = UInt8(2)  # Only MS2 for presearch
-        )
         
         psms = DataFrame()
         for i in 1:params.max_presearch_iters
@@ -238,6 +231,14 @@ function process_file!(
         min_psms_for_fitting = 1000
         final_psm_count = 0
         
+        # Create filtered/sampled data structure
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            params.sample_rate,
+            1000,  # params.topn_peaks,
+            target_ms_order = UInt8(2)  # Only MS2 for presearch
+        )
+        
         # Check if we should attempt bias detection
         if should_attempt_bias_detection(params, 1, 0) && !initial_params.informed_by_history
             @info "Attempting mass bias detection for file $ms_file_idx"
@@ -269,7 +270,7 @@ function process_file!(
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
 
             # Collect PSMs through iterations
-            psms = collect_psms(spectra, search_context, params, ms_file_idx)
+            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Iteration $(n_attempts + 1): Found $final_psm_count PSMs for file $ms_file_idx"
             # Check if we have enough PSMs to proceed
