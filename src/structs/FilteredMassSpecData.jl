@@ -54,36 +54,37 @@ mutable struct FilteredMassSpecData{T<:AbstractFloat} <: MassSpecData
     # Filtering configuration
     topn::Union{Nothing, Int}           # Nothing = no peak filtering
     min_intensity::T                    # Minimum intensity threshold
-    sample_rate::Float64                # Fraction of scans to sample
+    max_scans::Int                      # Maximum number of scans to sample
     target_ms_order::Union{Nothing, UInt8}  # Which MS order to include
     rng::MersenneTwister               # RNG for reproducible sampling
     
     # Sampling state
     sampled_scans::Set{Int}            # Track which scans have been sampled
+    total_ms2_scans::Int                # Total MS2 scans in original data
     
     # Current size
     n::Int                             # Number of sampled scans
 end
 
 """
-    FilteredMassSpecData(original, sample_rate, topn; kwargs...)
+    FilteredMassSpecData(original; max_scans, topn, kwargs...)
 
 Create a filtered and sampled view of mass spectrometry data.
 
 # Arguments
 - `original::MassSpecData`: Original data to filter/sample
-- `sample_rate::Float64`: Fraction of scans to sample (0.0 to 1.0)
-- `topn::Union{Nothing, Int}`: Number of top peaks to keep per scan (nothing = no filtering)
 
 # Keyword Arguments
+- `max_scans::Int`: Maximum number of scans to sample (default: 2500)
+- `topn::Union{Nothing, Int}`: Number of top peaks to keep per scan (default: nothing = no filtering)
 - `min_intensity`: Minimum intensity threshold for peaks
 - `target_ms_order`: MS order to filter for (default: UInt8(2) for MS2)
 - `seed`: Random seed for reproducible sampling
 """
 function FilteredMassSpecData(
-    original::MassSpecData,
-    sample_rate::AbstractFloat,
-    topn::Union{Nothing, Int} = nothing;
+    original::MassSpecData;
+    max_scans::Int = 2500,
+    topn::Union{Nothing, Int} = nothing,
     min_intensity::Union{Nothing, AbstractFloat} = nothing,
     target_ms_order::Union{Nothing, UInt8} = UInt8(2),
     seed::Union{Nothing, Int} = nothing
@@ -98,17 +99,27 @@ function FilteredMassSpecData(
     min_intensity_typed = min_intensity === nothing ? zero(T) : T(min_intensity)
     
     # Phase 1: Determine which scans to sample
-    scan_indices_to_sample = UInt32[]
+    # First collect all eligible scan indices
+    eligible_indices = UInt32[]
     for scan_idx in 1:length(original)
         # Apply MS order filter
         if target_ms_order !== nothing && getMsOrder(original, scan_idx) != target_ms_order
             continue
         end
-        
-        # Apply sampling
-        if rand(rng) <= sample_rate
-            push!(scan_indices_to_sample, UInt32(scan_idx))
-        end
+        push!(eligible_indices, UInt32(scan_idx))
+    end
+    
+    total_ms2_scans = length(eligible_indices)
+    
+    # Randomly sample up to max_scans
+    n_to_sample = min(max_scans, total_ms2_scans)
+    if n_to_sample == total_ms2_scans
+        scan_indices_to_sample = eligible_indices
+    else
+        # Random sampling without replacement
+        sampled_idx = randperm(rng, total_ms2_scans)[1:n_to_sample]
+        scan_indices_to_sample = eligible_indices[sampled_idx]
+        sort!(scan_indices_to_sample)  # Maintain scan order
     end
     
     n_sampled = length(scan_indices_to_sample)
@@ -189,8 +200,9 @@ function FilteredMassSpecData(
         low_mzs, high_mzs, isolation_width_mzs,
         scan_indices_to_sample,  # original_scan_indices
         original,                # reference
-        topn, min_intensity_typed, sample_rate, target_ms_order, rng,
+        topn, min_intensity_typed, max_scans, target_ms_order, rng,
         Set(scan_indices_to_sample),  # sampled_scans
+        total_ms2_scans,             # total_ms2_scans
         n_sampled                     # n
     )
 end
@@ -307,22 +319,24 @@ getOriginalScanIndex(ms_data::FilteredMassSpecData, filtered_idx::Integer)::UInt
 getOriginalScanIndices(ms_data::FilteredMassSpecData)::Vector{UInt32} = ms_data.original_scan_indices
 
 # Helper to check if more scans available for sampling
-hasUnsampledScans(ms_data::FilteredMassSpecData) = length(ms_data.sampled_scans) < length(ms_data.original_data)
+hasUnsampledScans(ms_data::FilteredMassSpecData) = length(ms_data.sampled_scans) < ms_data.total_ms2_scans
+
+# Helper to get count of unsampled scans
+getUnsampledCount(ms_data::FilteredMassSpecData) = ms_data.total_ms2_scans - length(ms_data.sampled_scans)
 
 """
 Append additional sampled scans to the filtered data.
 Returns the number of scans added.
 """
 function Base.append!(
-    filtered::FilteredMassSpecData{T},
-    additional_sample_rate::Float64;
-    max_additional_scans::Union{Nothing, Int} = nothing
+    filtered::FilteredMassSpecData{T};
+    max_additional_scans::Int = 2500
 ) where {T<:AbstractFloat}
     
     original = filtered.original_data
-    new_scan_indices = UInt32[]
     
-    # Phase 1: Select additional scans to sample
+    # Collect unsampled eligible scan indices
+    unsampled_indices = UInt32[]
     for scan_idx in 1:length(original)
         # Skip if already sampled
         scan_idx in filtered.sampled_scans && continue
@@ -332,16 +346,23 @@ function Base.append!(
             continue
         end
         
-        # Sample based on rate
-        if rand(filtered.rng) <= additional_sample_rate
-            push!(new_scan_indices, UInt32(scan_idx))
-            push!(filtered.sampled_scans, scan_idx)
-            
-            # Check limit
-            if max_additional_scans !== nothing && length(new_scan_indices) >= max_additional_scans
-                break
-            end
-        end
+        push!(unsampled_indices, UInt32(scan_idx))
+    end
+    
+    # Determine how many to add
+    n_to_add = min(max_additional_scans, length(unsampled_indices))
+    
+    # Return early if nothing to add
+    n_to_add == 0 && return 0
+    
+    # Randomly sample from unsampled indices
+    sampled_idx = randperm(filtered.rng, length(unsampled_indices))[1:n_to_add]
+    new_scan_indices = unsampled_indices[sampled_idx]
+    sort!(new_scan_indices)  # Maintain scan order
+    
+    # Add to sampled set
+    for idx in new_scan_indices
+        push!(filtered.sampled_scans, idx)
     end
     
     # Return early if no new scans
