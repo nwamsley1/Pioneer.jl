@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       JULIA_NUM_THREADS: auto
     strategy:
@@ -49,86 +49,26 @@ jobs:
           curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
           cd ../../
 
-      - name: Compile application (Memory Optimized)
+      - name: Compile application
         run: |
           julia --project=. -e '
             using PackageCompiler;
-
-            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin")
-            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib")
-            mkpath("build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share")
-
-            executables = [
-              #"GetSearchParams" => "main_GetSearchParams",
-              #"GetBuildLibParams" => "main_GetBuildLibParams",
-              #"GetParseSpecLibParams" => "main_GetParseSpecLibParams",
-              #"ParseSpecLib" => "main_ParseSpecLib",
-              #"BuildSpecLib" => "main_BuildSpecLib",
-              "SearchDIA" => "main_SearchDIA",
-              #"convertMzML" => "main_convertMzML"
-            ]
-
-            first_exe, first_main = first(executables)
-            ENV["PIONEER_CMD"] = first_exe
-            create_app(".", "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
-              incremental=false, force=true,
-              executables=[first_exe => first_main],
-              cpu_target="generic",
-              precompile_execution_file="src/build/snoop.jl");
-
-            for (exe, main) in executables[2:end]
-              println("Building $exe...")
-              ENV["PIONEER_CMD"] = exe
-              create_app(".", "build/temp_$exe/",
-                incremental=false, force=true,
-                executables=[exe => main],
-                cpu_target="generic",
-                precompile_execution_file="src/build/snoop.jl");
-
-            # Copy the executable
-            cp("build/temp_$exe/bin/$exe",
-              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/$exe",
-              force=true)
-
-            # Merge artifacts - copy any new artifacts that dont exist in main build
-            if isdir("build/temp_$exe/share/julia/artifacts")
-              main_artifacts_dir = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share/julia/artifacts"
-              mkpath(main_artifacts_dir)  # Ensure the directory exists
-              
-              for artifact in readdir("build/temp_$exe/share/julia/artifacts")
-                src_path = "build/temp_$exe/share/julia/artifacts/$artifact"
-                dst_path = joinpath(main_artifacts_dir, artifact)
-                
-                if isdir(src_path) && !isdir(dst_path)
-                  println("Copying missing artifact: $artifact")
-                  cp(src_path, dst_path, force=true)
-                elseif isdir(src_path) && isdir(dst_path)
-                  # Artifact directory exists, but might be missing files
-                  # Check if destination has content, if empty, replace it
-                  if isempty(readdir(dst_path))
-                    println("Replacing empty artifact directory: $artifact")
-                    rm(dst_path, recursive=true)
-                    cp(src_path, dst_path, force=true)
-                  else
-                    println("Artifact $artifact already exists and has content, skipping")
-                  end
-                end
-              end
-            end
-
-            # Also merge any other shared directories that might be needed
-            for shared_dir in ["depot", "compiled"]
-              src_shared = "build/temp_$exe/share/julia/$shared_dir"
-              dst_shared = "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/share/julia/$shared_dir"
-              if isdir(src_shared) && !isdir(dst_shared)
-                println("Copying missing shared directory: $shared_dir")
-                cp(src_shared, dst_shared, force=true)
-              end
-            end
-
-            rm("build/temp_$exe", recursive=true)
-          end
-          delete!(ENV, "PIONEER_CMD")
+            create_app(
+              ".",
+              "build/Pioneer_linux-x64/Applications/Pioneer/",
+              incremental=false,
+              force=true,
+              executables=[
+                "GetSearchParams" => "main_GetSearchParams",
+                "GetBuildLibParams" => "main_GetBuildLibParams",
+                "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
+                "ParseSpecLib" => "main_ParseSpecLib",
+                "BuildSpecLib" => "main_BuildSpecLib",
+                "SearchDIA" => "main_SearchDIA",
+                "convertMzML" => "main_convertMzML"
+              ],
+              precompile_execution_file="src/build/snoop.jl",
+            );
           '
 
       - name: Download PioneerConverter
