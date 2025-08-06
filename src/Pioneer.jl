@@ -33,9 +33,10 @@ using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
 using Measures
 using NumericalIntegration
 using Optim
-using Plots, Polynomials, ProgressBars, Printf
+using Polynomials, ProgressBars, Printf
 using Tables
-using StatsPlots, SentinelArrays
+using SentinelArrays
+# Note: Plots and StatsPlots will be loaded lazily to prevent Qt conflicts
 using Random
 using StaticArrays, StatsBase, SpecialFunctions, Statistics, SparseArrays
 using EvoTrees
@@ -122,10 +123,86 @@ const KOINA_URLS = Dict(
 )
 
 function __init__()
-    # Don't initialize gr() immediately - let it be initialized when first used
-    # This prevents Qt registration conflicts
-    ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
+    # Prevent Qt registration conflicts by setting environment early
+    ENV["GKSwstype"] = "100"  # Non-interactive GR backend
+    ENV["QT_QPA_PLATFORM"] = "offscreen"  # No Qt GUI
+    # Note: PLOTS_DEFAULT_BACKEND will be set when plotting is loaded
+    
+    # Ensure we're not in a conflicting Qt environment
+    if haskey(ENV, "QT_PLUGIN_PATH")
+        @debug "QT_PLUGIN_PATH is set, this may cause conflicts" QT_PLUGIN_PATH=ENV["QT_PLUGIN_PATH"]
+    end
 end
 
+# Lazy loading state for plotting libraries
+const PLOTTING_LOADED = Ref(false)
+const PLOTTING_LOCK = ReentrantLock()
+
+"""
+    ensure_plotting_loaded()
+
+Lazily loads Plots and StatsPlots packages with GR backend.
+This prevents Qt registration conflicts at startup on Linux.
+"""
+function ensure_plotting_loaded()
+    lock(PLOTTING_LOCK) do
+        if !PLOTTING_LOADED[]
+            @info "Loading plotting libraries..."
+            
+            # Set environment to prevent Qt conflicts
+            ENV["GKSwstype"] = "100"  # Use non-interactive backend
+            ENV["QT_QPA_PLATFORM"] = "offscreen"  # Prevent Qt GUI initialization
+            
+            # Load plotting packages at module level
+            @eval using Plots
+            @eval using StatsPlots
+            
+            # Ensure GR backend is set
+            ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
+            
+            PLOTTING_LOADED[] = true
+            @info "Plotting libraries loaded successfully"
+        end
+    end
+    return nothing
+end
+
+# Re-export commonly used plotting functions with lazy loading
+for func in [:plot, :scatter, :histogram, :heatmap, :savefig, :plot!, :scatter!, 
+             :histogram!, :violin, :violin!, :boxplot, :boxplot!, :gr, :annotate!,
+             :vline!, :hline!, :title!, :xlabel!, :ylabel!, :xlims!, :ylims!]
+    @eval begin
+        function $func(args...; kwargs...)
+            ensure_plotting_loaded()
+            # Use getfield to access the function from the loaded module
+            if PLOTTING_LOADED[]
+                return getfield(Plots, $(QuoteNode(func)))(args...; kwargs...)
+            else
+                error("Failed to load plotting libraries")
+            end
+        end
+        export $func
+    end
+end
+
+# Handle StatsPlots specific functions
+for func in [:groupedbar, :groupedbar!, :groupedhist, :groupedhist!]
+    @eval begin
+        function $func(args...; kwargs...)
+            ensure_plotting_loaded()
+            if PLOTTING_LOADED[]
+                return getfield(StatsPlots, $(QuoteNode(func)))(args...; kwargs...)
+            else
+                error("Failed to load plotting libraries")
+            end
+        end
+        export $func
+    end
+end
+
+# Note: @df macro from StatsPlots not directly re-exported due to complexity
+# Users should call ensure_plotting_loaded() then use StatsPlots.@df directly if needed
+
 export SearchDIA, BuildSpecLib, ParseSpecLib, GetSearchParams, GetBuildLibParams, GetParseSpecLibParams, convertMzML
+export ensure_plotting_loaded  # Export for explicit use if needed
 end
