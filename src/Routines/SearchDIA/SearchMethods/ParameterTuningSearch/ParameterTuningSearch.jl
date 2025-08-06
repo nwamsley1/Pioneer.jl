@@ -195,7 +195,7 @@ function process_file!(
         filtered_spectra = FilteredMassSpecData(
             spectra,
             max_scans = params.initial_scan_count,  # Default: 2500
-            topn = params.topn_peaks,
+            topn = params.topn_peaks,  # Use configured value or nothing
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         )
         
