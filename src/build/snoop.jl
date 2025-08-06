@@ -56,11 +56,10 @@ end
 maybe_run("BuildSpecLib") do
     BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end
-# TODO
 # Build a tiny Altimeter library
-#maybe_run("BuildSpecLib") do
-#    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
-#end
+maybe_run("BuildSpecLib") do
+    BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+end
 
 
 ##########################################
