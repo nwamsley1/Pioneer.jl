@@ -120,13 +120,6 @@ jobs:
           cp -r "converter/PioneerConverter-${PATTERN}/lib/"* \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
-
-      #- name: Prune unneeded files
-      #  uses: ./.github/actions/prune
-      #  with:
-      #    app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
-
-
       - name: Add wrapper scripts
         shell: bash
         run: |
@@ -161,7 +154,7 @@ jobs:
       - name: Package zipped binaries
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -r ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
+          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

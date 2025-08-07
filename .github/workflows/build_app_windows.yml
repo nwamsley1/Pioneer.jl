@@ -119,13 +119,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib" | Out-Null
           Copy-Item "$($subdir.FullName)\lib\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib\" -Recurse
 
-
-      - name: Prune unneeded files
-        uses: ./.github/actions/prune
-        with:
-          app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
-
-
       - name: Add wrapper scripts
         shell: pwsh
         run: |
