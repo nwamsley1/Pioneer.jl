@@ -19,11 +19,6 @@ runs:
           -type d -name locale -prune \
           -exec rm -rf {} +
 
-        # Drop versioned .so files, keep only soname symlinks
-        find "$ROOT/lib/julia" \
-          -type f -name 'lib*.so.*.*' \
-          -delete
-
         # Strip debug symbols (optional)
         find "$ROOT/lib/julia" \
           -type f -name '*.so' \
