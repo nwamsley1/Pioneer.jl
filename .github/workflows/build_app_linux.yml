@@ -51,7 +51,7 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Julia
@@ -140,10 +140,12 @@ jobs:
           PACKAGE=$(jq -r '.package' $info)
           MAINTAINER=$(jq -r '.maintainer' $info)
           DESCRIPTION=$(jq -r '.description' $info)
+          VERSION_WITH_V="${{ steps.get_version.outputs.VERSION }}"
+          VERSION=${VERSION_WITH_V#v}
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
           Package: $PACKAGE
-          Version: ${{ steps.get_version.outputs.VERSION }}
+          Version: $VERSION
           Architecture: amd64
           Maintainer: $MAINTAINER
           Description: $DESCRIPTION
