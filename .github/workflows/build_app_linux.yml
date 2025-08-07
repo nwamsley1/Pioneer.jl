@@ -1,13 +1,27 @@
-name: Build App Linux
+name: Build & Release Linux
 on:
+  # 1️⃣ CI on every push to main/develop + PRs
   push:
-    tags: ['v*']
-  release:
-    types: [published]
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  # 2️⃣ Release only on semver tags or when manually dispatched with a tag
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.2.3)'
+        required: false
 
 jobs:
   build:
+    name: Build & Package
     runs-on: self-hosted
     env:
       JULIA_NUM_THREADS: auto
@@ -17,22 +31,27 @@ jobs:
         include:
           - arch: x64
             identifier: linux-x64
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine VERSION
+        id: get_version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
-
-      - name: Determine tag version
-        id: get_version
-        shell: bash
-        run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Install dependencies
         run: |
@@ -76,23 +95,22 @@ jobs:
         run: |
           mkdir -p converter
           PATTERN="${{ matrix.identifier }}"
-          echo "Using PATTERN=$PATTERN"
           ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
-            | jq -r --arg PATTERN "$PATTERN" '.assets[] | select(.name | test("PioneerConverter-" + $PATTERN + ".*\\.zip")) | .name' | head -n 1)
-          echo "Resolved ASSET=$ASSET"
+            | jq -r --arg PATTERN "$PATTERN" '.assets[]
+              | select(.name | test("PioneerConverter-" + $PATTERN + ".*\\.zip"))
+              | .name' | head -n1)
           if [ -z "$ASSET" ]; then
             echo "Failed to find PioneerConverter asset for pattern $PATTERN" >&2
             exit 1
           fi
-          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
+          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
+            -o converter.zip
           unzip -q converter.zip -d converter
-          echo "Contents of converter after unzip:"
-          find converter -maxdepth 3 -print
-          echo "Listing of converter/*/bin:"
-          ls converter/*/bin || true
-          cp -r "converter/PioneerConverter-${PATTERN}/bin/"* "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
+          cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
           mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
-          cp -r "converter/PioneerConverter-${PATTERN}/lib/"* "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
+          cp -r "converter/PioneerConverter-${PATTERN}/lib/"* \
+            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
       - name: Add wrapper scripts
         shell: bash
@@ -106,12 +124,9 @@ jobs:
           cp -r build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/* deb/usr/local/Pioneer/
           mkdir -p deb/usr/local/Pioneer/data
           cp -r assets/* deb/usr/local/Pioneer/data/
-
           mkdir -p deb/usr/local/bin
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
-
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
-
           info=src/build/package_info.json
           PACKAGE=$(jq -r '.package' "$info")
           MAINTAINER=$(jq -r '.maintainer' "$info")
@@ -124,26 +139,58 @@ jobs:
           Maintainer: $MAINTAINER
           Description: $DESCRIPTION
           EOF
-
-          dpkg-deb --build --root-owner-group deb Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+          dpkg-deb --build --root-owner-group deb \
+            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 
       - name: Package zipped binaries
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
           zip -r ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Pioneer-${{ matrix.identifier }}
+          name: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}
           path: |
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v1
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    env:
+      VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        uses: actions/setup-gh@v3
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          files: |
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+          path: artifacts
+
+      - name: Create or update Release
+        run: |
+          gh release view "${VERSION}" \
+            || gh release create "${VERSION}" \
+                 --title "Release ${VERSION}" \
+                 --notes "Automated release for ${VERSION}"
+
+      - name: Upload assets
+        run: |
+          for file in artifacts/**/*; do
+            gh release upload "${VERSION}" "$file" --clobber \
+              --name "$(basename "$file")"
+          done
+
+      - name: Notify success
+        run: echo "✅ Published version ${VERSION}"

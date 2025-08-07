@@ -1,40 +1,58 @@
-name: Build App Windows
+name: Build & Release Windows
+
 on:
   push:
-    tags: ['v*']
-  release:
-    types: [published]
+    branches:
+      - main
+      - develop
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - main
+      - develop
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.2.3)'
+        required: false
 
 jobs:
   build:
+    name: Build & Package Windows
     runs-on: windows-latest
-    env:
-      JULIA_NUM_THREADS: auto
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x64
             identifier: windows-x64
+    env:
+      JULIA_NUM_THREADS: auto
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine VERSION
+        id: get_version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
 
-      - name: Determine tag version
-        id: get_version
-        shell: bash
-        run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Install dependencies
+        shell: bash
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
 
@@ -50,6 +68,7 @@ jobs:
           cd ../../
 
       - name: Compile application
+        shell: bash
         run: |
           julia --project=. -e '
             using PackageCompiler;
@@ -78,7 +97,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           $pattern = "win-x64"
           $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest | Select-Object -ExpandProperty Content | ConvertFrom-Json
-          $asset = ($json.assets | Where-Object { $_.name -like "*${pattern}*.zip" } | Select-Object -First 1).name
+          $asset = ($json.assets | Where-Object { $_.name -like "*$pattern*.zip" } | Select-Object -First 1).name
           Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
           $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
@@ -86,29 +105,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib" | Out-Null
           Copy-Item "$($subdir.FullName)\lib\*" "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\lib\" -Recurse
 
-
       - name: Add wrapper scripts
-        shell: bash
+        shell: pwsh
         run: |
-          cp src/build/CLI/pioneer.bat build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
       - name: Package Windows MSI
         shell: pwsh
         run: |
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
-
           $dataDir = "$pioneerRoot\data"
           New-Item -ItemType Directory -Force -Path $dataDir
-          Get-ChildItem "assets" | ForEach-Object {
-            if ($_.PSIsContainer) {
-              Copy-Item -Recurse $_.FullName "$dataDir\"
-            } else {
-              Copy-Item $_.FullName "$dataDir\"
-            }
-          }
-
+          Copy-Item assets\* $dataDir -Recurse
           Copy-Item "src\build\windows\LICENSE.rtf" "$pioneerRoot\LICENSE.rtf"
-
           $artifactDir = "$pioneerRoot\share\julia\artifacts"
           if (Test-Path $artifactDir) {
             Get-ChildItem -Path $artifactDir -Recurse -Directory |
@@ -119,55 +128,42 @@ jobs:
                 $_.Name -eq "test" -or
                 $_.Name -eq ".qt" -or
                 $_.FullName.Length -gt 200
-              } |
-              ForEach-Object {
-                Write-Host "Removing long path: $($_.FullName)"
-                Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-              }
+              } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
-
-          $platform = if ("${{ matrix.arch }}" -eq "x64") { "x64" } else { "x86" }
-          $info = Get-Content "src/build/package_info.json" | ConvertFrom-Json
+          $info = Get-Content src\build\package_info.json | ConvertFrom-Json
           $desc = $info.description
           $identifier = $info.identifier
-
           & heat.exe dir $pioneerRoot `
             -cg ProductComponents `
             -dr INSTALLFOLDER `
             -platform x64 `
-            -gg `
-            -scom `
-            -sreg `
-            -sfrag `
-            -srd `
+            -gg -scom -sreg -sfrag -srd `
             -var var.SourceDir `
             -out components.wxs
-
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
             -dProductVersion="${{ steps.get_version.outputs.VERSION }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
-            -dPlatform="$platform" `
-            -arch ${{ matrix.arch }} `
+            -dPlatform="x64" `
+            -arch x64 `
             -ext WixUIExtension `
             -ext WixUtilExtension `
             src\build\windows\installer.wxs components.wxs
-
           & light.exe `
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-us `
             -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
-      
+
       - name: Package zipped binaries
         shell: pwsh
         run: |
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
           Compress-Archive -Path "$pioneerRoot\*" -DestinationPath "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip"
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
@@ -175,10 +171,42 @@ jobs:
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v1
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    env:
+      VERSION:      ${{ github.event.inputs.tag || github.ref_name }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        uses: actions/setup-gh@v3
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
-          tag_name: ${{ steps.get_version.outputs.VERSION }}
-          files: |
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+          path: artifacts
+
+      - name: Create or update Release
+        run: |
+          gh release view "${VERSION}" \
+            || gh release create "${VERSION}" \
+                 --title "Release ${VERSION}" \
+                 --notes "Automated release for ${VERSION}"
+
+      - name: Upload all assets
+        run: |
+          for file in artifacts/**/*; do
+            gh release upload "${VERSION}" "$file" \
+              --clobber --name "$(basename "$file")"
+          done
+
+      - name: Notify success
+        run: echo "✅ Published version ${VERSION}"
