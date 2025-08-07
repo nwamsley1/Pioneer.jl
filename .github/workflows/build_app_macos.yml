@@ -1,7 +1,6 @@
 name: Build & Release macOS
 
 on:
-  # 1️⃣ CI on every push to main/develop + PRs
   push:
     branches:
       - main
@@ -12,18 +11,24 @@ on:
     branches:
       - main
       - develop
-
-  # 2️⃣ Release only on semver tags or when manually dispatched with a tag
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag (e.g., v1.2.3)'
         required: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build & Package macOS
     runs-on: ${{ matrix.runner }}
+    env:
+      JULIA_NUM_THREADS: auto
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
     strategy:
       fail-fast: false
       matrix:
@@ -34,12 +39,12 @@ jobs:
           - arch: arm64
             runner: macos-latest
             identifier: macos-arm64
-    env:
-      JULIA_NUM_THREADS: auto
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine VERSION
         id: get_version
@@ -57,15 +62,25 @@ jobs:
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
+          arch: ${{ matrix.arch }}
+
+      - name: Cache Julia packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: julia-macos-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
+          restore-keys: julia-macos-${{ matrix.identifier }}-
 
       - name: Install Apple certificate & provisioning profile
         env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERT_P12 }}
-          P12_PASSWORD:           ${{ secrets.MACOS_CERT_PASSWORD }}
-          INSTALLER_CERT_BASE64:  ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
-          INSTALLER_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          BUILD_CERTIFICATE_BASE64:       ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD:                   ${{ secrets.MACOS_CERT_PASSWORD }}
+          INSTALLER_CERT_BASE64:          ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          INSTALLER_CERT_PASSWORD:        ${{ secrets.MACOS_CERT_PASSWORD }}
           BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD:      ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:              ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
           CERT_PATH=$RUNNER_TEMP/build_cert.p12
           INSTALLER_PATH=$RUNNER_TEMP/installer_cert.p12
@@ -73,15 +88,15 @@ jobs:
           KEYCHAIN=$RUNNER_TEMP/signing.keychain-db
 
           echo -n "$BUILD_CERTIFICATE_BASE64"    | base64 --decode > "$CERT_PATH"
-          echo -n "$INSTALLER_CERT_BASE64"      | base64 --decode > "$INSTALLER_PATH"
+          echo -n "$INSTALLER_CERT_BASE64"       | base64 --decode > "$INSTALLER_PATH"
           echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
-          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security import "$INSTALLER_PATH" -k "$KEYCHAIN" -P "$INSTALLER_CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$CERT_PATH"        -k "$KEYCHAIN" -P "$P12_PASSWORD"         -T /usr/bin/codesign
+          security import "$INSTALLER_PATH"   -k "$KEYCHAIN" -P "$INSTALLER_CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
@@ -89,18 +104,18 @@ jobs:
 
       - uses: apple-actions/import-codesign-certs@v2
         with:
-          p12-file-base64: ${{ secrets.MACOS_CERT_P12 }}
-          p12-password:    ${{ secrets.MACOS_CERT_PASSWORD }}
+          p12-file-base64:   ${{ secrets.MACOS_CERT_P12 }}
+          p12-password:      ${{ secrets.MACOS_CERT_PASSWORD }}
           keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain:        signing_temp
+          keychain:          signing_temp
 
       - uses: apple-actions/import-codesign-certs@v2
         with:
-          p12-file-base64: ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
-          p12-password:    ${{ secrets.MACOS_CERT_PASSWORD }}
+          p12-file-base64:   ${{ secrets.MACOS_INSTALLER_CERT_P12 }}
+          p12-password:      ${{ secrets.MACOS_CERT_PASSWORD }}
           keychain-password: ${{ secrets.MACOS_CERT_PASSWORD }}
-          keychain:        signing_temp
-          create-keychain: false
+          keychain:          signing_temp
+          create-keychain:   false
 
       - name: Install dependencies
         run: |
@@ -109,11 +124,13 @@ jobs:
       - name: Download precompile data
         shell: bash
         run: |
-          mkdir -p temp/zenodo && cd $_
+          mkdir -p temp/zenodo && cd temp/zenodo
           curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
           unzip yeast.poin.zip
-          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -o yeast_1.arrow
-          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
+          for i in 1 2; do
+            curl -L "https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep${i}.arrow?download=1" \
+              -o yeast_${i}.arrow
+          done
           cd ../../
 
       - name: Compile application
@@ -149,9 +166,10 @@ jobs:
           fi
           ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
             | jq -r --arg PATTERN "$PATTERN" '.assets[]
-              | select(.name|test("PioneerConverter-"+$PATTERN+".*\\.zip"))
+              | select(.name | test("PioneerConverter-"+$PATTERN+".*\\.zip"))
               | .name' | head -n1)
-          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" -o converter.zip
+          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
+            -o converter.zip
           unzip -q converter.zip -d converter
           cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
@@ -162,7 +180,7 @@ jobs:
       - name: Add wrapper scripts
         run: |
           cp src/build/CLI/pioneer \
-             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
       - name: Codesign & package macOS app
@@ -246,16 +264,23 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    if: >
+      needs.build.outputs.version != '0.0.0' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+      )
+    permissions:
+      contents: write
+      actions: read
     env:
-      VERSION:      ${{ github.event.inputs.tag || github.ref_name }}
+      VERSION:      ${{ needs.build.outputs.version }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup GitHub CLI
         uses: actions/setup-gh@v3

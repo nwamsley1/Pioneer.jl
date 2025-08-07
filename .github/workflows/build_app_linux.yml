@@ -1,6 +1,6 @@
 name: Build & Release Linux
+
 on:
-  # 1️⃣ CI on every push to main/develop + PRs
   push:
     branches:
       - main
@@ -11,20 +11,24 @@ on:
     branches:
       - main
       - develop
-
-  # 2️⃣ Release only on semver tags or when manually dispatched with a tag
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag (e.g., v1.2.3)'
         required: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Build & Package
+    name: Build & Package Linux
     runs-on: self-hosted
     env:
       JULIA_NUM_THREADS: auto
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +39,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Determine VERSION
         id: get_version
@@ -53,6 +59,15 @@ jobs:
         with:
           version: '1.11'
 
+      - name: Cache Julia packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: julia-linux-${{ matrix.identifier }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
+          restore-keys: julia-linux-${{ matrix.identifier }}-
+
       - name: Install dependencies
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
@@ -64,8 +79,10 @@ jobs:
           cd temp/zenodo
           curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
           unzip yeast.poin.zip
-          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep1.arrow?download=1 -o yeast_1.arrow
-          curl -L https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep2.arrow?download=1 -o yeast_2.arrow
+          for f in 1 2; do
+            curl -L "https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep${f}.arrow?download=1" \
+              -o yeast_${f}.arrow
+          done
           cd ../../
 
       - name: Compile application
@@ -74,19 +91,18 @@ jobs:
             using PackageCompiler;
             create_app(
               ".",
-              "build/Pioneer_linux-x64/Applications/Pioneer/",
-              incremental=false,
-              force=true,
+              "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/",
+              incremental=false, force=true,
               executables=[
-                "GetSearchParams" => "main_GetSearchParams",
-                "GetBuildLibParams" => "main_GetBuildLibParams",
-                "GetParseSpecLibParams" => "main_GetParseSpecLibParams",
-                "ParseSpecLib" => "main_ParseSpecLib",
-                "BuildSpecLib" => "main_BuildSpecLib",
-                "SearchDIA" => "main_SearchDIA",
-                "convertMzML" => "main_convertMzML"
+                "GetSearchParams"=>"main_GetSearchParams",
+                "GetBuildLibParams"=>"main_GetBuildLibParams",
+                "GetParseSpecLibParams"=>"main_GetParseSpecLibParams",
+                "ParseSpecLib"=>"main_ParseSpecLib",
+                "BuildSpecLib"=>"main_BuildSpecLib",
+                "SearchDIA"=>"main_SearchDIA",
+                "convertMzML"=>"main_convertMzML"
               ],
-              precompile_execution_file="src/build/snoop.jl",
+              precompile_execution_file="src/build/snoop.jl"
             );
           '
 
@@ -97,10 +113,10 @@ jobs:
           PATTERN="${{ matrix.identifier }}"
           ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
             | jq -r --arg PATTERN "$PATTERN" '.assets[]
-              | select(.name | test("PioneerConverter-" + $PATTERN + ".*\\.zip"))
+              | select(.name|test("PioneerConverter-"+$PATTERN+".*\\.zip"))
               | .name' | head -n1)
-          if [ -z "$ASSET" ]; then
-            echo "Failed to find PioneerConverter asset for pattern $PATTERN" >&2
+          if [[ -z "$ASSET" ]]; then
+            echo "ERROR: No asset for $PATTERN" >&2
             exit 1
           fi
           curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
@@ -115,7 +131,8 @@ jobs:
       - name: Add wrapper scripts
         shell: bash
         run: |
-          cp src/build/CLI/pioneer build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
+          cp src/build/CLI/pioneer \
+            build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
       - name: Package Linux .deb
@@ -128,9 +145,9 @@ jobs:
           ln -sf ../Pioneer/pioneer deb/usr/local/bin/pioneer
           chmod -R a+rwx deb/usr/local/Pioneer/share/julia
           info=src/build/package_info.json
-          PACKAGE=$(jq -r '.package' "$info")
-          MAINTAINER=$(jq -r '.maintainer' "$info")
-          DESCRIPTION=$(jq -r '.description' "$info")
+          PACKAGE=$(jq -r '.package' $info)
+          MAINTAINER=$(jq -r '.maintainer' $info)
+          DESCRIPTION=$(jq -r '.description' $info)
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
           Package: $PACKAGE
@@ -159,16 +176,23 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    if: >
+      needs.build.outputs.version != '0.0.0' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+      )
+    permissions:
+      contents: write
+      actions: read
     env:
-      VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+      VERSION:      ${{ needs.build.outputs.version }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup GitHub CLI
         uses: actions/setup-gh@v3
@@ -185,11 +209,11 @@ jobs:
                  --title "Release ${VERSION}" \
                  --notes "Automated release for ${VERSION}"
 
-      - name: Upload assets
+      - name: Upload all assets
         run: |
           for file in artifacts/**/*; do
-            gh release upload "${VERSION}" "$file" --clobber \
-              --name "$(basename "$file")"
+            gh release upload "${VERSION}" "$file" \
+              --clobber --name "$(basename "$file")"
           done
 
       - name: Notify success
