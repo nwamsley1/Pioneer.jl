@@ -489,13 +489,26 @@ function process_search_results!(
     mass_error_folder = getMassErrPlotFolder(search_context)
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
-    # Generate and save RT alignment plot
-    rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
-    generate_rt_plot(results, rt_plot_path, parsed_fname)
+    # Always generate plots, even with limited or no data
+    # This ensures we have diagnostic output for all files
     
-    # Generate and save mass error plot
+    # Generate RT alignment plot
+    rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
+    if length(results.rt) > 0
+        generate_rt_plot(results, rt_plot_path, parsed_fname)
+    else
+        # Create a diagnostic plot showing fallback/borrowed status
+        generate_fallback_rt_plot(results, rt_plot_path, parsed_fname, search_context, ms_file_idx)
+    end
+    
+    # Generate mass error plot
     mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
-    generate_mass_error_plot(results, parsed_fname, mass_plot_path)
+    if length(results.ppm_errs) > 0
+        generate_mass_error_plot(results, parsed_fname, mass_plot_path)
+    else
+        # Create a diagnostic plot showing fallback/borrowed status
+        generate_fallback_mass_error_plot(results, mass_plot_path, parsed_fname, search_context, ms_file_idx)
+    end
     
     # Update models in search context
     setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))

@@ -785,6 +785,94 @@ function generate_mass_error_plot(
 
 end
 
+"""
+    generate_fallback_rt_plot(results, plot_path, fname, search_context, ms_file_idx)
+
+Generates a diagnostic RT plot when no data is available (fallback/borrowed parameters).
+"""
+function generate_fallback_rt_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    # Create an informative plot showing the fallback/borrowed status
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        xlabel = "Retention Time RT (min)",
+        ylabel = "Indexed Retention Time iRT (min)",
+        size = 100*[13.3, 7.5],
+        grid = true
+    )
+    
+    # Add identity line if using identity model
+    rt_model = getRtToIrtModel(results)
+    if isa(rt_model, IdentityModel)
+        rt_range = [0, 120]  # Default RT range for visualization
+        Plots.plot!(rt_range, rt_range, 
+                   lw=2, ls=:dash, color=:red,
+                   label="Identity Model (Fallback)")
+    else
+        # If borrowed, show the borrowed model
+        rt_range = LinRange(0, 120, 100)
+        Plots.plot!(rt_range, rt_model.(rt_range),
+                   lw=2, color=:blue,
+                   label="Borrowed RT Model")
+    end
+    
+    # Add text annotation explaining the situation
+    Plots.annotate!(60, 20, 
+                   text("Insufficient PSMs for RT calibration\n" *
+                        "Using conservative parameters", 
+                        :center, 10))
+    
+    savefig(p, plot_path)
+end
+
+"""
+    generate_fallback_mass_error_plot(results, plot_path, fname, search_context, ms_file_idx)
+
+Generates a diagnostic mass error plot when no data is available (fallback/borrowed parameters).
+"""
+function generate_fallback_mass_error_plot(
+    results::ParameterTuningSearchResults,
+    plot_path::String,
+    fname::String,
+    search_context::SearchContext,
+    ms_file_idx::Int64
+)
+    mem = getMassErrorModel(results)
+    mass_offset = getMassOffset(mem)
+    left_tol = getLeftTol(mem)
+    right_tol = getRightTol(mem)
+    
+    # Create an informative plot showing the tolerances being used
+    p = Plots.plot(
+        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
+        xlabel = "Count",
+        ylabel = "Mass Error (ppm)",
+        size = 100*[13.3, 7.5],
+        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
+        grid = true,
+        yflip = true,
+        orientation = :h
+    )
+    
+    # Draw tolerance boundaries
+    Plots.hline!([mass_offset], color=:black, lw=2, label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
+    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
+    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
+    
+    # Add text annotation
+    Plots.annotate!(0, 0,
+                   text("Insufficient fragment matches\n" *
+                        "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm",
+                        :center, 10))
+    
+    savefig(p, plot_path)
+end
+
 function generate_ms1_mass_error_plot(
     results::R,
     fname::String
