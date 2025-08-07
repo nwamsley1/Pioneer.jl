@@ -109,11 +109,11 @@ function get_fallback_parameters(
     
     # Check previous files first (prefer neighboring files)
     for file_idx in (ms_file_idx-1):-1:1
-        if haskey(search_context.irt_to_rt_model, file_idx) && 
+        if haskey(search_context.rt_irt_map, file_idx) && 
            haskey(search_context.mass_error_model, file_idx)
             borrowed_from = file_idx
             fallback_mass_err = search_context.mass_error_model[file_idx]
-            fallback_rt_model = search_context.irt_to_rt_model[file_idx]
+            fallback_rt_model = search_context.rt_irt_map[file_idx]
             break
         end
     end
@@ -121,11 +121,11 @@ function get_fallback_parameters(
     # If no previous file, check subsequent files
     if borrowed_from === nothing
         for file_idx in (ms_file_idx+1):n_files
-            if haskey(search_context.irt_to_rt_model, file_idx) && 
+            if haskey(search_context.rt_irt_map, file_idx) && 
                haskey(search_context.mass_error_model, file_idx)
                 borrowed_from = file_idx
                 fallback_mass_err = search_context.mass_error_model[file_idx]
-                fallback_rt_model = search_context.irt_to_rt_model[file_idx]
+                fallback_rt_model = search_context.rt_irt_map[file_idx]
                 break
             end
         end
