@@ -1,72 +1,65 @@
 name: CI
+
 on:
   push:
     branches:
       - main
-    tags: ['*']
+      - develop
+    tags:
+      - 'v*.*.*'
   pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} on ${{ matrix.os }} (${{ github.event_name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
-      actions: write
       contents: read
+
     strategy:
       fail-fast: false
       matrix:
-        version:
-          - '1.11'
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
+        version: ['1.11']
+        os:      [ubuntu-latest]
+        arch:    [x64]
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history for all branches and tags
-      - name: Debug file structure
-        run: |
-          echo "Current directory:"
-          pwd
-          echo "Directory contents:"
-          ls -R
-          echo "Looking for isotopes.jl:"
-          find . -name "isotopes.jl"
-      - name: Debug Julia environment
-        run: |
-          julia --project=. -e 'using Pkg; Pkg.status()'
-          julia --project=. -e 'println(LOAD_PATH)'
-      - name: List repository contents
-        run: |
-          echo "Repository contents:"
-          ls -R
-      
+          fetch-depth: 0
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      
-      - uses: julia-actions/cache@v2
-      
-      - name: Build package
-        uses: julia-actions/julia-buildpkg@v1
-      
+          arch:    ${{ matrix.arch }}
+
+      - name: Cache Julia packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: julia-${{ matrix.version }}-${{ runner.os }}-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
+          restore-keys: |
+            julia-${{ matrix.version }}-${{ runner.os }}-
+
+      - name: Instantiate & build
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
+
       - name: Run tests
-        uses: julia-actions/julia-runtest@v1
-      
+        run: julia --project=. -e 'using Pkg; Pkg.test()'
+
       - name: Process coverage
         uses: julia-actions/julia-processcoverage@v1
-      
+
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
@@ -75,41 +68,45 @@ jobs:
           fail_ci_if_error: false
 
   docs:
-    name: Documentation
+    if: github.ref == 'refs/heads/main'
+    name: Docs
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: write
-      statuses: write
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history for all branches and tags
-      
-      - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+          fetch-depth: 0
+
+      - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
-      
-      - uses: julia-actions/cache@v2
-      
+
+      - name: Cache docs packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: docs-${{ runner.os }}-${{ hashFiles('docs/Project.toml','docs/Manifest.toml') }}
+
       - name: Configure doc environment
         shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
-          Pkg.develop(PackageSpec(path=pwd()))
+          Pkg.develop(path=pwd())
           Pkg.instantiate()
-      
-      - name: Build package
+
+      - name: Build docs
         uses: julia-actions/julia-buildpkg@v1
-      
+
       - name: Deploy docs
         uses: julia-actions/julia-docdeploy@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-      
+          GITHUB_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY:  ${{ secrets.DOCUMENTER_KEY }}
+
       - name: Run doctests
         shell: julia --project=docs --color=yes {0}
         run: |
