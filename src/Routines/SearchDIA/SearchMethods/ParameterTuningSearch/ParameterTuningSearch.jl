@@ -281,6 +281,11 @@ function process_file!(
         init_mass_tol = initial_params.initial_tolerance
         ppm_errs = nothing
         
+        # Track PSM counts and bias corrections across iterations
+        prev_psm_count = 0
+        bias_corrected_last = false
+        min_psms_for_bias = 50  # Minimum PSMs needed to attempt bias correction
+        
         # Main convergence loop
         while n_attempts < 5
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
@@ -289,39 +294,101 @@ function process_file!(
             # Collect PSMs through iterations
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
-            @info "Iteration $(n_attempts + 1): Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans"
+            psm_improvement = final_psm_count - prev_psm_count
+            psm_improvement_pct = prev_psm_count > 0 ? (psm_improvement / prev_psm_count * 100) : 0
             
-            # Check if we have enough PSMs to proceed
+            @info "Iteration $(n_attempts + 1): Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans ($(round(psm_improvement_pct, digits=1))% change)"
+            
+            # Check if we have enough PSMs to proceed with full fitting
             if final_psm_count < min_psms_for_fitting
                 @warn "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting"
-                push!(warnings, "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting")
+                push!(warnings, "Iteration $(n_attempts + 1): $final_psm_count PSMs")
                 
-                # First retry: Expand to more scans
+                # Strategy 1: First attempt with very few PSMs - try scan expansion
                 if n_attempts == 0 && length(filtered_spectra) < params.expanded_scan_count
                     additional_scans = params.expanded_scan_count - length(filtered_spectra)
-                    n_added = append!(filtered_spectra, max_additional_scans = additional_scans)
-                    @info "Expanded sampling: added $n_added scans (now $(length(filtered_spectra)) total)"
+                    n_added = append!(filtered_spectra; max_additional_scans = additional_scans)
+                    @info "Strategy: Expanding scan sampling - added $n_added scans (now $(length(filtered_spectra)) total)"
                     push!(warnings, "Expanded scan sampling to $(length(filtered_spectra)) scans")
+                    prev_psm_count = final_psm_count
                     n_attempts += 1
                     continue
                 end
                 
-                # Second retry: Increase mass tolerance
-                if n_attempts == 1
-                    current_tol = getLeftTol(results.mass_err_model[]) 
+                # Strategy 2: Have some PSMs (≥50) - try bias correction if we haven't just done it
+                if final_psm_count >= min_psms_for_bias && !bias_corrected_last
+                    @info "Strategy: Attempting mass bias correction with $final_psm_count PSMs"
+                    
+                    # Calculate mass bias from available PSMs (use up to 200 for speed)
+                    psms_for_bias = first(psms, min(final_psm_count, 200))
+                    fragments = get_matched_fragments(spectra, psms_for_bias, results, search_context, params, ms_file_idx)
+                    
+                    if length(fragments) > 0
+                        temp_mass_err_model, _ = fit_mass_err_model(params, fragments)
+                        new_bias = getMassOffset(temp_mass_err_model)
+                        
+                        # Keep current tolerance but update bias
+                        current_tol = max(getLeftTol(results.mass_err_model[]), 
+                                         getRightTol(results.mass_err_model[]))
+                        results.mass_err_model[] = MassErrorModel(new_bias, (current_tol, current_tol))
+                        
+                        @info "Corrected mass bias: $(round(new_bias, digits=2)) ppm (was $(round(getMassOffset(results.mass_err_model[]), digits=2)) ppm)"
+                        push!(warnings, "Bias correction: $(round(new_bias, digits=2)) ppm")
+                        bias_corrected_last = true
+                    else
+                        @warn "Could not calculate bias - no fragment matches"
+                        bias_corrected_last = false
+                    end
+                    
+                # Strategy 3: Significant improvement (>20%) after tolerance increase - try bias correction
+                elseif psm_improvement_pct > 20 && final_psm_count >= min_psms_for_bias && !bias_corrected_last
+                    @info "Strategy: PSMs improved by $(round(psm_improvement_pct, digits=1))% - attempting bias correction"
+                    
+                    psms_for_bias = first(psms, min(final_psm_count, 200))
+                    fragments = get_matched_fragments(spectra, psms_for_bias, results, search_context, params, ms_file_idx)
+                    
+                    if length(fragments) > 0
+                        temp_mass_err_model, _ = fit_mass_err_model(params, fragments)
+                        new_bias = getMassOffset(temp_mass_err_model)
+                        
+                        current_tol = max(getLeftTol(results.mass_err_model[]), 
+                                         getRightTol(results.mass_err_model[]))
+                        results.mass_err_model[] = MassErrorModel(new_bias, (current_tol, current_tol))
+                        
+                        @info "Corrected mass bias after improvement: $(round(new_bias, digits=2)) ppm"
+                        push!(warnings, "Bias correction after improvement: $(round(new_bias, digits=2)) ppm")
+                        bias_corrected_last = true
+                    else
+                        bias_corrected_last = false
+                    end
+                    
+                # Strategy 4: Too few PSMs or bias didn't help - expand tolerance
+                else
+                    current_tol = max(getLeftTol(results.mass_err_model[]), 
+                                     getRightTol(results.mass_err_model[]))
                     new_tol = min(current_tol * 1.5f0, 50.0f0)
-                    results.mass_err_model[] = MassErrorModel(
-                        getMassOffset(results.mass_err_model[]),
-                        (new_tol, new_tol)
-                    )
-                    @info "Expanding mass tolerance from $current_tol to $new_tol ppm"
-                    push!(warnings, "Expanded tolerance to $new_tol ppm due to low PSM count")
-                    n_attempts += 1
-                    continue
+                    
+                    if new_tol > current_tol
+                        # Keep current bias if we have corrected it
+                        current_bias = getMassOffset(results.mass_err_model[])
+                        results.mass_err_model[] = MassErrorModel(current_bias, (new_tol, new_tol))
+                        
+                        @info "Strategy: Expanding mass tolerance from $(round(current_tol, digits=1)) to $(round(new_tol, digits=1)) ppm"
+                        push!(warnings, "Expanded tolerance to $(round(new_tol, digits=1)) ppm")
+                        bias_corrected_last = false
+                    else
+                        @warn "Already at maximum tolerance (50 ppm) - cannot expand further"
+                        push!(warnings, "At maximum tolerance")
+                        # No more strategies available
+                        if n_attempts >= 2  # Give at least 3 attempts total
+                            break
+                        end
+                    end
                 end
                 
-                # Give up after two retries
-                break
+                prev_psm_count = final_psm_count
+                n_attempts += 1
+                continue
             end
             
             # Fit RT alignment model
