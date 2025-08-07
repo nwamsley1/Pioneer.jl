@@ -1,0 +1,35 @@
+# .github/workflows/prune.yml
+on:
+  workflow_call:
+    inputs:
+      app_root:
+        description: 'Path to the compiled app root'
+        required: true
+        type: string
+      runner:
+        description: 'Runner to use for pruning (e.g. ubuntu-latest, macos-latest, windows-latest, self-hosted)'
+        required: true
+        type: string
+
+jobs:
+  prune:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Trim unneeded files
+        shell: bash
+        run: |
+          ROOT="${{ inputs.app_root }}"
+
+          # 1) Remove all locale data
+          find "$ROOT/share/julia/artifacts" -type d -name locale -prune -exec rm -rf {} +
+
+          # 2) Drop versioned .so files, keep only soname symlinks
+          find "$ROOT/lib/julia" -type f -name 'lib*.so.*.*' -delete
+
+          # 3) Strip debug symbols (if available)
+          find "$ROOT/lib/julia" -type f -name '*.so' -exec strip --strip-unneeded {} + || true

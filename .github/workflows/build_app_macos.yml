@@ -177,6 +177,12 @@ jobs:
           cp -r "converter/PioneerConverter-${PATTERN}/lib/"* \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
+      - name: Prune unneeded files
+        uses: ./.github/workflows/prune.yml
+        with:
+          app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
+          runner: ${{ matrix.runner }}
+
       - name: Add wrapper scripts
         run: |
           cp src/build/CLI/pioneer \
