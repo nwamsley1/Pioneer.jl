@@ -14,11 +14,27 @@ runs:
       run: |
         ROOT="${{ inputs.app_root }}"
 
-        # 1) Remove all locale data
-        find "$ROOT/share/julia/artifacts" -type d -name locale -prune -exec rm -rf {} +
+        # 1) Remove all locale translation files
+        find "$ROOT/share/julia/artifacts" \
+          -type d -name locale -prune \
+          -exec rm -rf {} +
 
         # 2) Drop versioned .so files, keep only soname symlinks
-        find "$ROOT/lib/julia" -type f -name 'lib*.so.*.*' -delete
+        find "$ROOT/lib/julia" \
+          -type f -name 'lib*.so.*.*' \
+          -delete
 
-        # 3) Strip debug symbols (if available)
-        find "$ROOT/lib/julia" -type f -name '*.so' -exec strip --strip-unneeded {} + || true
+        # 3) Strip debug symbols (optional)
+        find "$ROOT/lib/julia" \
+          -type f -name '*.so' \
+          -exec strip --strip-unneeded {} + || true
+
+        # 4) Remove man pages
+        find "$ROOT/share/julia/artifacts" \
+          -type d -path '*/share/man*' -prune \
+          -exec rm -rf {} +
+
+        # 5) Remove HTML docs
+        find "$ROOT/share/julia/artifacts" \
+          -type d -path '*/share/doc*' -prune \
+          -exec rm -rf {} +
