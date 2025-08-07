@@ -1,0 +1,40 @@
+name: "Publish GitHub Release"
+description: "Create or update a GitHub Release and upload all artifacts."
+inputs:
+  version:
+    description: "The release tag/version to publish"
+    required: true
+    type: string
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup GitHub CLI
+      uses: actions/setup-gh@v3
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create or update Release
+      run: |
+        gh release view "${{ inputs.version }}" \
+          || gh release create "${{ inputs.version }}" \
+               --title "Release ${{ inputs.version }}" \
+               --notes "Automated release for ${{ inputs.version }}"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload all assets
+      run: |
+        for file in artifacts/**/*; do
+          gh release upload "${{ inputs.version }}" "$file" \
+            --clobber --name "$(basename "$file")"
+        done
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

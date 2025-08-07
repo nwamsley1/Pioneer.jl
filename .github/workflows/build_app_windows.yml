@@ -209,37 +209,9 @@ jobs:
     permissions:
       contents: write
       actions:  read
-    env:
-      VERSION:      ${{ needs.build.outputs.version }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Publish Release
+        uses: ./.github/actions/publish-release
         with:
-          fetch-depth: 0
-
-      - name: Setup GitHub CLI
-        uses: actions/setup-gh@v3
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create or update Release
-        run: |
-          gh release view "${VERSION}" \
-            || gh release create "${VERSION}" \
-                 --title "Release ${VERSION}" \
-                 --notes "Automated release for ${VERSION}"
-
-      - name: Upload all assets
-        run: |
-          for file in artifacts/**/*; do
-            gh release upload "${VERSION}" "$file" \
-              --clobber --name "$(basename "$file")"
-          done
-
-      - name: Notify success
-        run: echo "✅ Published version ${VERSION}"
+          version: ${{ needs.build.outputs.version }}
