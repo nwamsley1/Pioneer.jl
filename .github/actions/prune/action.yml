@@ -14,30 +14,32 @@ runs:
       run: |
         ROOT="${{ inputs.app_root }}"
 
-        # Remove all locale translation files
-        find "$ROOT/share/julia/artifacts" \
-          -type d -name locale -prune \
-          -exec rm -rf {} +
+        # 1) Remove locale translations
+        if [ -d "$ROOT/share/julia/artifacts" ]; then
+          find "$ROOT/share/julia/artifacts" -type d -name locale -prune -exec rm -rf {} +
+        fi
 
-        # Strip debug symbols (optional)
-        find "$ROOT/lib/julia" \
-          -type f -name '*.so' \
-          -exec strip --strip-unneeded {} + || true
+        # 2) Strip debug symbols
+        if [ -d "$ROOT/lib/julia" ]; then
+          find "$ROOT/lib/julia" -type f -name '*.so' -exec strip --strip-unneeded {} + || true
+        fi
 
-        # Remove man pages
-        find "$ROOT/share/julia/artifacts" \
-          -type d -path '*/share/man*' -prune \
-          -exec rm -rf {} +
+        # 3) Remove man pages
+        if [ -d "$ROOT/share/julia/artifacts" ]; then
+          find "$ROOT/share/julia/artifacts" -type d -path '*/share/man*' -prune -exec rm -rf {} +
+        fi
 
-        # Remove HTML docs
-        find "$ROOT/share/julia/artifacts" \
-          -type d -path '*/share/doc*' -prune \
-          -exec rm -rf {} +
+        # 4) Remove HTML docs
+        if [ -d "$ROOT/share/julia/artifacts" ]; then
+          find "$ROOT/share/julia/artifacts" -type d -path '*/share/doc*' -prune -exec rm -rf {} +
+        fi
 
-        # Remove fontconfig configuration & fonts
-        find "$ROOT/etc/fonts"               -type d -prune -exec rm -rf {} +
-        find "$ROOT/share/fontconfig"        -type d -prune -exec rm -rf {} +
-        find "$ROOT/share/julia/artifacts"   -type d -path '*/fonts' -prune -exec rm -rf {} +
+        # 5) Remove fontconfig configs & fonts
+        [ -d "$ROOT/etc/fonts" ]        && rm -rf "$ROOT/etc/fonts"
+        [ -d "$ROOT/share/fontconfig" ] && rm -rf "$ROOT/share/fontconfig"
+        find "$ROOT/share/julia/artifacts" -type d -path '*/fonts' -prune -exec rm -rf {} + 2>/dev/null
 
-        # Remove any broken symlinks
-        find "$ROOT/lib/julia" -xtype l -delete
+        # 6) Remove any broken symlinks
+        if [ -d "$ROOT/lib/julia" ]; then
+          find "$ROOT/lib/julia" -xtype l -delete
+        fi
