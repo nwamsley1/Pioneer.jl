@@ -130,10 +130,9 @@ jobs:
 
 
       - name: Prune unneeded files
-        uses: ./.github/workflows/prune.yml
+        uses: ./.github/actions/prune
         with:
           app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
-          runner: ${{ matrix.runner }}
 
 
       - name: Add wrapper scripts
@@ -170,7 +169,7 @@ jobs:
       - name: Package zipped binaries
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
+          zip -r ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

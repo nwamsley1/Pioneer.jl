@@ -1,0 +1,24 @@
+name: "Prune Unneeded Files"
+description: "Remove locale data, versioned .so files, and strip symbols from the built app tree."
+inputs:
+  app_root:
+    description: "Path to the compiled app root (e.g. build/Pioneer_<id>/Applications/Pioneer)"
+    required: true
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Trim unneeded files
+      shell: bash
+      run: |
+        ROOT="${{ inputs.app_root }}"
+
+        # 1) Remove all locale data
+        find "$ROOT/share/julia/artifacts" -type d -name locale -prune -exec rm -rf {} +
+
+        # 2) Drop versioned .so files, keep only soname symlinks
+        find "$ROOT/lib/julia" -type f -name 'lib*.so.*.*' -delete
+
+        # 3) Strip debug symbols (if available)
+        find "$ROOT/lib/julia" -type f -name '*.so' -exec strip --strip-unneeded {} + || true

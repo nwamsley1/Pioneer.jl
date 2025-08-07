@@ -178,10 +178,9 @@ jobs:
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
       - name: Prune unneeded files
-        uses: ./.github/workflows/prune.yml
+        uses: ./.github/actions/prune
         with:
           app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
-          runner: ${{ matrix.runner }}
 
       - name: Add wrapper scripts
         run: |
