@@ -51,7 +51,7 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
+            echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Julia
