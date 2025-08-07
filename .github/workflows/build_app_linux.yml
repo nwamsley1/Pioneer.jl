@@ -72,18 +72,10 @@ jobs:
         run: |
           julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); Pkg.instantiate()'
 
-      - name: Download precompile data
-        shell: bash
-        run: |
-          mkdir -p temp/zenodo
-          cd temp/zenodo
-          curl -LJO https://zenodo.org/record/16289168/files/yeast.poin.zip?download=1
-          unzip yeast.poin.zip
-          for f in 1 2; do
-            curl -L "https://zenodo.org/record/16289168/files/20241211_bkc_25-0856_Goldfarb_Wamsley_Yeast_Alternating-v2_3min_Rep${f}.arrow?download=1" \
-              -o yeast_${f}.arrow
-          done
-          cd ../../
+      - name: Precompile data (cache & download)
+        uses: ./.github/actions/precompile-data
+        with:
+          cache-key: precompile-data-v1
 
       - name: Compile application
         run: |
@@ -178,43 +170,15 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       needs.build.outputs.version != '0.0.0' && (
-        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'push'       && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
       )
     permissions:
       contents: write
-      actions: read
-    env:
-      VERSION:      ${{ needs.build.outputs.version }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      actions:  read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Publish Release
+        uses: ./.github/actions/publish-release
         with:
-          fetch-depth: 0
-
-      - name: Setup GitHub CLI
-        uses: actions/setup-gh@v3
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create or update Release
-        run: |
-          gh release view "${VERSION}" \
-            || gh release create "${VERSION}" \
-                 --title "Release ${VERSION}" \
-                 --notes "Automated release for ${VERSION}"
-
-      - name: Upload all assets
-        run: |
-          for file in artifacts/**/*; do
-            gh release upload "${VERSION}" "$file" \
-              --clobber --name "$(basename "$file")"
-          done
-
-      - name: Notify success
-        run: echo "✅ Published version ${VERSION}"
+          version: ${{ needs.build.outputs.version }}
