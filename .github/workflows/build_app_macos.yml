@@ -46,17 +46,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Determine VERSION
-        id: get_version
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Determine version
+        uses: ./.github/actions/determine-version
+        with:
+          tag-input: ${{ github.event.inputs.tag }}
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
