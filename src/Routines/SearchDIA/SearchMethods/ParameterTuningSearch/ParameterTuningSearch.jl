@@ -278,7 +278,6 @@ function process_file!(
         )
         
         prev_mass_err = 0.0f0
-        init_mass_tol = initial_params.initial_tolerance
         ppm_errs = nothing
         
         # Track PSM counts and bias corrections across iterations
@@ -401,23 +400,29 @@ function process_file!(
             ppm_errs = ppm_errs_new  # Update for later use
             
             # Check convergence conditions
-            if abs(getMassOffset(mass_err_model)) > (getFragTolPpm(params)/4)
-                prev_mass_err = getMassOffset(mass_err_model)
-                @warn "Mass error offset is too large: $(getMassOffset(mass_err_model)). Retrying with updated estimate."
-                push!(warnings, "Large mass offset: $(getMassOffset(mass_err_model)) ppm")
+            # Get the current tolerance being used for search
+            current_tol = max(getLeftTol(results.mass_err_model[]), 
+                             getRightTol(results.mass_err_model[]))
+            
+            # Check if fitted tolerance is too close to search tolerance (within 75%)
+            if ((getLeftTol(mass_err_model)/current_tol) > 0.75) || 
+               ((getRightTol(mass_err_model)/current_tol) > 0.75)
+                
+                # Expand tolerance by 1.5x but cap at 50 ppm
+                new_tol = min(current_tol * 1.5f0, 50.0f0)
+                
+                # Preserve current bias if we have one
+                current_bias = getMassOffset(results.mass_err_model[])
+                
                 results.mass_err_model[] = MassErrorModel(
-                    getMassOffset(mass_err_model), 
-                    (getFragTolPpm(params), getFragTolPpm(params))
+                    current_bias,
+                    (Float32(new_tol), Float32(new_tol))
                 )
-            elseif (getLeftTol(mass_err_model) + getRightTol(mass_err_model)) > 1.8*(init_mass_tol) 
-                init_mass_tol *= 1.5
-                results.mass_err_model[] = MassErrorModel(
-                    0.0f0, 
-                    (Float32(init_mass_tol), Float32(init_mass_tol))
-                )
-                @warn "Mass error model is too wide: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)). Retrying with wider initial mass tolerance: $init_mass_tol ppm"
-                push!(warnings, "Wide tolerance: $(getLeftTol(mass_err_model) + getRightTol(mass_err_model)) ppm")
+                
+                @warn "Fitted tolerance ($(round(getLeftTol(mass_err_model), digits=1)), $(round(getRightTol(mass_err_model), digits=1))) too close to search tolerance $(round(current_tol, digits=1)). Expanding to $(round(new_tol, digits=1)) ppm"
+                push!(warnings, "Expanded search tolerance from $(round(current_tol, digits=1)) to $(round(new_tol, digits=1)) ppm")
             else
+                # Convergence successful - update model with fitted parameters
                 results.mass_err_model[] = MassErrorModel(
                     getMassOffset(mass_err_model) + prev_mass_err, 
                     (getLeftTol(mass_err_model), getRightTol(mass_err_model))
