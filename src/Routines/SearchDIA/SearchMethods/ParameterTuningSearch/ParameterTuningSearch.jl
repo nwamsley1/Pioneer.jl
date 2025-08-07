@@ -86,6 +86,65 @@ function set_rt_to_irt_model!(
     getIrtErrors(search_context)[ms_file_idx] = model[4] * params.irt_tol_sd
 end
 
+"""
+    get_fallback_parameters(search_context, ms_file_idx, warnings)
+
+Attempt to borrow parameters from successfully tuned neighboring files.
+Falls back to conservative defaults if no successfully tuned files are available.
+
+Returns: (mass_error_model, rt_model, borrowed_from_idx)
+"""
+function get_fallback_parameters(
+    search_context::SearchContext, 
+    ms_file_idx::Int64,
+    warnings::Vector{String}
+)
+    # Try to find a successfully tuned file's parameters
+    borrowed_from = nothing
+    fallback_mass_err = nothing
+    fallback_rt_model = nothing
+    
+    ms_data = getMSData(search_context)
+    n_files = length(ms_data.file_paths)
+    
+    # Check previous files first (prefer neighboring files)
+    for file_idx in (ms_file_idx-1):-1:1
+        if haskey(search_context.irt_to_rt_model, file_idx) && 
+           haskey(search_context.mass_error_model, file_idx)
+            borrowed_from = file_idx
+            fallback_mass_err = search_context.mass_error_model[file_idx]
+            fallback_rt_model = search_context.irt_to_rt_model[file_idx]
+            break
+        end
+    end
+    
+    # If no previous file, check subsequent files
+    if borrowed_from === nothing
+        for file_idx in (ms_file_idx+1):n_files
+            if haskey(search_context.irt_to_rt_model, file_idx) && 
+               haskey(search_context.mass_error_model, file_idx)
+                borrowed_from = file_idx
+                fallback_mass_err = search_context.mass_error_model[file_idx]
+                fallback_rt_model = search_context.irt_to_rt_model[file_idx]
+                break
+            end
+        end
+    end
+    
+    # Return borrowed parameters or conservative defaults
+    if borrowed_from !== nothing
+        borrowed_fname = getParsedFileName(search_context, borrowed_from)
+        @info "Borrowing parameters from file $borrowed_fname (index $borrowed_from) for file $ms_file_idx"
+        push!(warnings, "BORROWED: Using parameters from file $borrowed_fname")
+        return fallback_mass_err, fallback_rt_model, borrowed_from
+    else
+        # Use conservative defaults if no other files available
+        @info "No successfully tuned files available. Using conservative defaults for file $ms_file_idx"
+        push!(warnings, "FALLBACK: Used conservative default parameters (no borrowing available)")
+        return MassErrorModel(0.0f0, (50.0f0, 50.0f0)), IdentityModel(), nothing
+    end
+end
+
 #==========================================================
 Interface Implementation
 ==========================================================#
@@ -342,19 +401,27 @@ function process_file!(
         record_tuning_status!(results.diagnostics, status)
         
         if !converged
-            @warn "Failed to converge mass error model after $n_attempts attempts for file $ms_file_idx. Using conservative defaults." 
-            # Apply fallback parameters
-            results.mass_err_model[] = MassErrorModel(
-                0.0f0,  # No bias assumption
-                (50.0f0, 50.0f0)  # ±50 ppm tolerance
+            @warn "Failed to converge mass error model after $n_attempts attempts for file $ms_file_idx."
+            
+            # Try to borrow parameters from neighboring files or use defaults
+            fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
+                search_context, ms_file_idx, warnings
             )
-            results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
+            
+            # Apply fallback/borrowed parameters
+            results.mass_err_model[] = fallback_mass_err
+            results.rt_to_irt_model[] = fallback_rt_model
             
             # CRITICAL: Store models in SearchContext for downstream methods
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
             
-            @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
+            if borrowed_from !== nothing
+                borrowed_fname = getParsedFileName(search_context, borrowed_from)
+                @warn "PARAMETER_TUNING_BORROWED: File $parsed_fname borrowed parameters from $borrowed_fname"
+            else
+                @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
+            end
         else
             # Normal case - append collected errors
             if ppm_errs !== nothing
@@ -364,20 +431,24 @@ function process_file!(
         
     catch e
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        @warn "Parameter tuning failed for file $parsed_fname. Using conservative defaults." exception=(e, catch_backtrace())
+        @warn "Parameter tuning failed for file $parsed_fname with error." exception=(e, catch_backtrace())
         
-        # Apply fallback parameters
-        results.mass_err_model[] = MassErrorModel(
-            0.0f0,  # No bias assumption
-            (50.0f0, 50.0f0)  # ±50 ppm tolerance
+        # Try to borrow parameters from neighboring files or use defaults
+        error_warnings = String["Error: $(string(e))"]
+        fallback_mass_err, fallback_rt_model, borrowed_from = get_fallback_parameters(
+            search_context, ms_file_idx, error_warnings
         )
-        results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
+        
+        # Apply fallback/borrowed parameters
+        results.mass_err_model[] = fallback_mass_err
+        results.rt_to_irt_model[] = fallback_rt_model
         
         # CRITICAL: Store models in SearchContext for downstream methods
         setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
         setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
         
         # Record error in diagnostics
+        mass_tols = (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[]))
         status = ParameterTuningStatus(
             ms_file_idx,
             parsed_fname,
@@ -386,13 +457,18 @@ function process_file!(
             "Exception: $(typeof(e))",
             0,      # n_iterations
             0,      # psm_count
-            0.0f0,  # mass_offset
-            (50.0f0, 50.0f0),  # tolerance
-            ["Error: $(string(e))"]
+            getMassOffset(results.mass_err_model[]),
+            mass_tols,
+            error_warnings
         )
         record_tuning_status!(results.diagnostics, status)
         
-        @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Used fallback values."
+        if borrowed_from !== nothing
+            borrowed_fname = getParsedFileName(search_context, borrowed_from)
+            @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Borrowed from $borrowed_fname."
+        else
+            @warn "PARAMETER_TUNING_ERROR: File $parsed_fname had error $(typeof(e)). Used fallback values."
+        end
     end
     
     return results
