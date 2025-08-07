@@ -350,6 +350,10 @@ function process_file!(
             )
             results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
             
+            # CRITICAL: Store models in SearchContext for downstream methods
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
+            
             @warn "PARAMETER_TUNING_FALLBACK: File $parsed_fname used fallback values (±50 ppm, identity RT)"
         else
             # Normal case - append collected errors
@@ -368,6 +372,10 @@ function process_file!(
             (50.0f0, 50.0f0)  # ±50 ppm tolerance
         )
         results.rt_to_irt_model[] = IdentityModel()  # No RT conversion
+        
+        # CRITICAL: Store models in SearchContext for downstream methods
+        setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+        setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
         
         # Record error in diagnostics
         status = ParameterTuningStatus(
