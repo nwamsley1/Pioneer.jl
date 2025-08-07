@@ -121,10 +121,10 @@ jobs:
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
 
 
-      - name: Prune unneeded files
-        uses: ./.github/actions/prune
-        with:
-          app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
+      #- name: Prune unneeded files
+      #  uses: ./.github/actions/prune
+      #  with:
+      #    app_root: build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer
 
 
       - name: Add wrapper scripts
