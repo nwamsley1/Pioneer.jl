@@ -398,20 +398,7 @@ function process_file!(
             # Get fragments and fit mass error model
             fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
             mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            ppm_errs = ppm_errs_new  # Update for boundary checking
-            
-            # Check boundary sampling adequacy
-            boundary_result = check_boundary_sampling(ppm_errs_new, mass_err_model)
-            if !boundary_result.adequate_sampling
-                @warn boundary_result.diagnostic_message
-                push!(warnings, boundary_result.diagnostic_message)
-                # Expand tolerance based on boundary analysis
-                expanded_model = expand_tolerance(mass_err_model, boundary_result.suggested_expansion_factor)
-                results.mass_err_model[] = expanded_model
-                init_mass_tol *= boundary_result.suggested_expansion_factor
-                n_attempts += 1
-                continue
-            end
+            ppm_errs = ppm_errs_new  # Update for later use
             
             # Check convergence conditions
             if abs(getMassOffset(mass_err_model)) > (getFragTolPpm(params)/4)
