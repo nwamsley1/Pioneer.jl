@@ -416,6 +416,15 @@ function process_file!(
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
             
+            # Set default IRT error for fallback/borrowed parameters
+            if borrowed_from !== nothing && haskey(getIrtErrors(search_context), borrowed_from)
+                # Use borrowed IRT error
+                getIrtErrors(search_context)[ms_file_idx] = getIrtErrors(search_context)[borrowed_from]
+            else
+                # Use conservative default (2 minutes)
+                getIrtErrors(search_context)[ms_file_idx] = 2.0f0
+            end
+            
             if borrowed_from !== nothing
                 borrowed_fname = getParsedFileName(search_context, borrowed_from)
                 @warn "PARAMETER_TUNING_BORROWED: File $parsed_fname borrowed parameters from $borrowed_fname"
@@ -446,6 +455,15 @@ function process_file!(
         # CRITICAL: Store models in SearchContext for downstream methods
         setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
         setRtIrtMap!(search_context, results.rt_to_irt_model[], ms_file_idx)
+        
+        # Set default IRT error for exception case
+        if borrowed_from !== nothing && haskey(getIrtErrors(search_context), borrowed_from)
+            # Use borrowed IRT error
+            getIrtErrors(search_context)[ms_file_idx] = getIrtErrors(search_context)[borrowed_from]
+        else
+            # Use conservative default (2 minutes)
+            getIrtErrors(search_context)[ms_file_idx] = 2.0f0
+        end
         
         # Record error in diagnostics
         mass_tols = (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[]))
