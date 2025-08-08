@@ -1,0 +1,26 @@
+name: "Determine VERSION"
+description: "Determine the release version from tag, dispatch input, or fallback"
+inputs:
+  fallback:
+    description: "Fallback version when no tag is found"
+    required: false
+    default: "dev"
+outputs:
+  version:
+    description: "Determined version string"
+    value: ${{ steps.version.outputs.version }}
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve version
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
+          echo "version=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+        elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+        else
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
+          echo "version=${{ inputs.fallback }}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+        fi

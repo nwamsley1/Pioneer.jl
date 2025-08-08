@@ -28,7 +28,7 @@ jobs:
     env:
       JULIA_NUM_THREADS: auto
     outputs:
-      version: ${{ steps.get_version.outputs.VERSION }}
+      version: ${{ steps.get_version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,15 +44,15 @@ jobs:
 
       - name: Determine VERSION
         id: get_version
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=0.0.0" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/determine-version
+        with:
+          fallback: "dev"
+
+      - name: Normalize versions
+        id: norm
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
@@ -124,6 +124,30 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Normalize version for MSI
+        id: semver
+        shell: pwsh
+        run: |
+          $raw = '${{ steps.get_version.outputs.version }}'
+
+          # strip leading 'v' / 'V'
+          $clean = $raw -replace '^[vV]', ''
+
+          # drop prerelease/build metadata (e.g. -rc.1, +build)
+          $clean = $clean.Split('+')[0]
+          $clean = $clean.Split('-')[0]
+
+          # pad/trim to 3–4 numeric fields for MSI (x.y.z[.w])
+          $parts = $clean.Split('.')
+          if ($parts.Count -lt 3) {
+            $clean = ($parts + @('0','0'))[0..2] -join '.'
+          } elseif ($parts.Count -gt 4) {
+            $clean = $parts[0..3] -join '.'
+          }
+
+          "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "MSI_VERSION=$clean"
+
       - name: Package Windows MSI
         shell: pwsh
         run: |
@@ -159,7 +183,7 @@ jobs:
 
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
-            -dProductVersion="${{ steps.get_version.outputs.VERSION }}" `
+            -dProductVersion="${{ steps.norm.outputs.msi }}"
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dPlatform="x64" `
@@ -172,7 +196,7 @@ jobs:
             -ext WixUIExtension `
             -ext WixUtilExtension `
             -cultures:en-us `
-            -out "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi" `
+            -out "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi" `
             installer.wixobj components.wixobj
 
       - name: Package zipped binaries
@@ -180,23 +204,23 @@ jobs:
         run: |
           $pioneerRoot = "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer"
           Compress-Archive -Path "$pioneerRoot\*" `
-                           -DestinationPath "Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip"
+                           -DestinationPath "Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: |
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.msi
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
   release:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
     if: >
-      needs.build.outputs.version != '0.0.0' && (
-        (github.event_name == 'push'       && startsWith(github.ref, 'refs/tags/')) ||
+      needs.build.outputs.version != 'v0.0.0' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
       )
     permissions:
@@ -204,7 +228,17 @@ jobs:
       actions:  read
 
     steps:
+      - name: Checkout just the publish-release action
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/actions/publish-release
+          sparse-checkout-cone-mode: true
+
       - name: Publish Release
         uses: ./.github/actions/publish-release
         with:
           version: ${{ needs.build.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

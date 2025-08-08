@@ -1,40 +1,49 @@
+# .github/actions/publish-release/action.yml
 name: "Publish GitHub Release"
 description: "Create or update a GitHub Release and upload all artifacts."
 inputs:
   version:
-    description: "The release tag/version to publish"
+    description: "The release tag/version to publish (e.g., v1.2.3)"
     required: true
     type: string
+
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-
-    - name: Setup GitHub CLI
-      uses: actions/setup-gh@v3
-
     - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
 
     - name: Create or update Release
+      shell: bash
       run: |
-        gh release view "${{ inputs.version }}" \
-          || gh release create "${{ inputs.version }}" \
-               --title "Release ${{ inputs.version }}" \
-               --notes "Automated release for ${{ inputs.version }}"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        set -euo pipefail
+        # Require GITHUB_TOKEN from caller; export GH_TOKEN for gh CLI
+        if [ -z "${GITHUB_TOKEN:-}" ]; then
+          echo "ERROR: GITHUB_TOKEN is required. Pass it from the caller job via env." >&2
+          exit 1
+        fi
+        export GH_TOKEN="$GITHUB_TOKEN"
+
+        gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
+          gh release create "${{ inputs.version }}" \
+            --title "Release ${{ inputs.version }}" \
+            --notes "Automated release for ${{ inputs.version }}"
 
     - name: Upload all assets
+      shell: bash
       run: |
-        for file in artifacts/**/*; do
-          gh release upload "${{ inputs.version }}" "$file" \
-            --clobber --name "$(basename "$file")"
+        set -euo pipefail
+        export GH_TOKEN="$GITHUB_TOKEN"
+
+        shopt -s nullglob
+        files=(artifacts/**/*)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "No artifacts to upload; skipping."
+          exit 0
+        fi
+
+        for file in "${files[@]}"; do
+          gh release upload "${{ inputs.version }}" "$file" --clobber
         done
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
