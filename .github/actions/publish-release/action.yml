@@ -1,16 +1,15 @@
+# .github/actions/publish-release/action.yml
 name: "Publish GitHub Release"
 description: "Create or update a GitHub Release and upload all artifacts."
 inputs:
   version:
-    description: "The release tag/version to publish"
+    description: "The release tag/version to publish (e.g., v1.2.3)"
     required: true
     type: string
+
 runs:
   using: "composite"
   steps:
-    - name: Setup GitHub CLI
-      uses: actions/setup-gh@v3
-
     - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
@@ -20,6 +19,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        : "${GH_TOKEN:?GH_TOKEN is required}"
         gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
           gh release create "${{ inputs.version }}" \
             --title "Release ${{ inputs.version }}" \
