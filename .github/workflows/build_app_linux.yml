@@ -179,7 +179,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >
       needs.build.outputs.version != 'v0.0.0' && (
-        (github.event_name == 'push'       && startsWith(github.ref, 'refs/tags/')) ||
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
       )
     permissions:
@@ -187,9 +187,21 @@ jobs:
       actions:  read
 
     steps:
+      # Pull only the local composite action folder so `uses: ./.github/actions/publish-release` works
+      - name: Checkout just the publish-release action
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/actions/publish-release
+          sparse-checkout-cone: true
+
       - name: Publish Release
         uses: ./.github/actions/publish-release
         with:
           version: ${{ needs.build.outputs.version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Done
+        run: echo "✅ Published version ${{ needs.build.outputs.version }}"
