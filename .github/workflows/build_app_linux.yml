@@ -52,7 +52,7 @@ jobs:
         id: norm
         uses: ./.github/actions/normalize-versions
         with:
-          raw: ${{ steps.get_version.outputs.VERSION }}
+          raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
@@ -152,20 +152,20 @@ jobs:
           EOF
 
           dpkg-deb --build --root-owner-group deb \
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
 
       - name: Package zipped binaries
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
+          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}
+          name: Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}
           path: |
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
   release:
     name: Publish GitHub Release

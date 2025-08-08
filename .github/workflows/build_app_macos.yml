@@ -28,7 +28,7 @@ jobs:
     env:
       JULIA_NUM_THREADS: auto
     outputs:
-      version: ${{ steps.get_version.outputs.VERSION }}
+      version: ${{ steps.get_version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,21 +48,15 @@ jobs:
 
       - name: Determine VERSION
         id: get_version
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/determine-version
+        with:
+          fallback: "dev"
 
       - name: Normalize versions
         id: norm
         uses: ./.github/actions/normalize-versions
         with:
-          raw: ${{ steps.get_version.outputs.VERSION }}
+          raw: ${{ steps.get_version.outputs.version }}
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
@@ -221,7 +215,7 @@ jobs:
 
           productsign --sign "$PKG_SIGN_IDENTITY" \
                       PioneerUnsigned.pkg \
-                      Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
+                      Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
 
           rm PioneerUnsigned.pkg
 
@@ -235,7 +229,7 @@ jobs:
             --apple-id "$AC_USERNAME" --team-id "$TEAM_ID" \
             --password "$AC_PASSWORD"
           result=$(xcrun notarytool submit \
-                     Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg \
+                     Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg \
                      --keychain-profile notary-profile \
                      --wait --output-format json)
           status=$(echo "$result" | jq -r .status)
@@ -249,20 +243,20 @@ jobs:
       - name: Staple notarization ticket
         run: |
           xcrun stapler staple \
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
 
       - name: Package zipped binaries
         run: |
           cd build/Pioneer_${{ matrix.identifier }}/Applications
-          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip Pioneer
+          zip -qr ../../../Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip Pioneer
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Pioneer-${{ matrix.identifier }}
           path: |
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.pkg
-            Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.zip
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.pkg
+            Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
 
   release:
     name: Publish GitHub Release
