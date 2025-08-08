@@ -21,6 +21,6 @@ runs:
         elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
           echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
         else
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "version=${{ inputs.fallback }}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
+          echo "version=${{ inputs.fallback }}-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
         fi
