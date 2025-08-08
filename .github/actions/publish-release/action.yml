@@ -1,3 +1,4 @@
+# .github/actions/publish-release/action.yml
 name: "Publish GitHub Release"
 description: "Create or update a GitHub Release and upload all artifacts."
 inputs:
@@ -18,9 +19,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Require GITHUB_TOKEN from the caller; export GH_TOKEN for gh CLI
+        # Require GITHUB_TOKEN from caller; export GH_TOKEN for gh CLI
         if [ -z "${GITHUB_TOKEN:-}" ]; then
-          echo "ERROR: GITHUB_TOKEN is required. Pass env: GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}" >&2
+          echo "ERROR: GITHUB_TOKEN is required. Pass it from the caller job via env." >&2
           exit 1
         fi
         export GH_TOKEN="$GITHUB_TOKEN"
