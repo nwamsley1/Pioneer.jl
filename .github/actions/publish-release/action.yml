@@ -45,6 +45,5 @@ runs:
         fi
 
         for file in "${files[@]}"; do
-          gh release upload "${{ inputs.version }}" "$file" \
-            --clobber --name "$(basename "$file")"
+          gh release upload "${{ inputs.version }}" "$file" --clobber
         done
