@@ -124,6 +124,30 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
+      - name: Normalize version for MSI
+        id: semver
+        shell: pwsh
+        run: |
+          $raw = '${{ steps.get_version.outputs.VERSION }}'
+
+          # strip leading 'v' / 'V'
+          $clean = $raw -replace '^[vV]', ''
+
+          # drop prerelease/build metadata (e.g. -rc.1, +build)
+          $clean = $clean.Split('+')[0]
+          $clean = $clean.Split('-')[0]
+
+          # pad/trim to 3–4 numeric fields for MSI (x.y.z[.w])
+          $parts = $clean.Split('.')
+          if ($parts.Count -lt 3) {
+            $clean = ($parts + @('0','0'))[0..2] -join '.'
+          } elseif ($parts.Count -gt 4) {
+            $clean = $parts[0..3] -join '.'
+          }
+
+          "msi_version=$clean" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "MSI_VERSION=$clean"
+
       - name: Package Windows MSI
         shell: pwsh
         run: |
@@ -159,7 +183,7 @@ jobs:
 
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
-            -dProductVersion="${{ steps.get_version.outputs.VERSION }}" `
+            -dProductVersion="${{ steps.semver.outputs.msi_version }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dPlatform="x64" `
@@ -195,7 +219,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: >
-      needs.build.outputs.version != '0.0.0' && (
+      needs.build.outputs.version != 'v0.0.0' && (
         (github.event_name == 'push'       && startsWith(github.ref, 'refs/tags/')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
       )
@@ -204,6 +228,10 @@ jobs:
       actions:  read
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Publish Release
         uses: ./.github/actions/publish-release
         with:
