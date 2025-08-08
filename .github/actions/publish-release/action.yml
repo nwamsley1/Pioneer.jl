@@ -1,4 +1,3 @@
-# .github/actions/publish-release/action.yml
 name: "Publish GitHub Release"
 description: "Create or update a GitHub Release and upload all artifacts."
 inputs:
@@ -19,7 +18,13 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        : "${GH_TOKEN:?GH_TOKEN is required}"
+        # Require GITHUB_TOKEN from the caller; export GH_TOKEN for gh CLI
+        if [ -z "${GITHUB_TOKEN:-}" ]; then
+          echo "ERROR: GITHUB_TOKEN is required. Pass env: GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}" >&2
+          exit 1
+        fi
+        export GH_TOKEN="$GITHUB_TOKEN"
+
         gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
           gh release create "${{ inputs.version }}" \
             --title "Release ${{ inputs.version }}" \
@@ -29,12 +34,15 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        export GH_TOKEN="$GITHUB_TOKEN"
+
         shopt -s nullglob
         files=(artifacts/**/*)
         if [ ${#files[@]} -eq 0 ]; then
           echo "No artifacts to upload; skipping."
           exit 0
         fi
+
         for file in "${files[@]}"; do
           gh release upload "${{ inputs.version }}" "$file" \
             --clobber --name "$(basename "$file")"
