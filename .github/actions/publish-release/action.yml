@@ -17,19 +17,25 @@ runs:
         path: artifacts
 
     - name: Create or update Release
+      shell: bash
       run: |
-        gh release view "${{ inputs.version }}" \
-          || gh release create "${{ inputs.version }}" \
-               --title "Release ${{ inputs.version }}" \
-               --notes "Automated release for ${{ inputs.version }}"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        set -euo pipefail
+        gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
+          gh release create "${{ inputs.version }}" \
+            --title "Release ${{ inputs.version }}" \
+            --notes "Automated release for ${{ inputs.version }}"
 
     - name: Upload all assets
+      shell: bash
       run: |
-        for file in artifacts/**/*; do
+        set -euo pipefail
+        shopt -s nullglob
+        files=(artifacts/**/*)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "No artifacts to upload; skipping."
+          exit 0
+        fi
+        for file in "${files[@]}"; do
           gh release upload "${{ inputs.version }}" "$file" \
             --clobber --name "$(basename "$file")"
         done
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

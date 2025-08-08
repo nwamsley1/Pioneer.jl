@@ -242,3 +242,5 @@ jobs:
         uses: ./.github/actions/publish-release
         with:
           version: ${{ needs.build.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
