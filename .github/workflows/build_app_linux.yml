@@ -193,7 +193,7 @@ jobs:
           fetch-depth: 1
           sparse-checkout: |
             .github/actions/publish-release
-          sparse-checkout-cone: true
+          sparse-checkout-cone-mode: true
 
       - name: Publish Release
         uses: ./.github/actions/publish-release
