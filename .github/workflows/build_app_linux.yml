@@ -28,7 +28,7 @@ jobs:
     env:
       JULIA_NUM_THREADS: auto
     outputs:
-      version: ${{ steps.get_version.outputs.VERSION }}
+      version: ${{ steps.get_version.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,15 +44,9 @@ jobs:
 
       - name: Determine VERSION
         id: get_version
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.tag }}" ]]; then
-            echo "VERSION=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/determine-version
+        with:
+          fallback: "dev"
 
       - name: Normalize versions
         id: norm
