@@ -54,6 +54,12 @@ jobs:
             echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Normalize versions
+        id: norm
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: ${{ steps.get_version.outputs.VERSION }}
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
@@ -183,7 +189,7 @@ jobs:
 
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
-            -dProductVersion="${{ steps.semver.outputs.msi_version }}" `
+            -dProductVersion="${{ steps.norm.outputs.msi }}"
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dPlatform="x64" `

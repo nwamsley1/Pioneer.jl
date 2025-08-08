@@ -54,29 +54,11 @@ jobs:
             echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Normalize version for DEB
-        id: debver
-        shell: bash
-        run: |
-          RAW='${{ steps.get_version.outputs.VERSION }}'
-          # strip leading v/V
-          CLEAN="${RAW#[vV]}"
-          # drop build metadata (+build)
-          CLEAN="${CLEAN%%+*}"
-          # convert prerelease: 1.2.3-rc.1 -> 1.2.3~rc.1
-          if [[ "$CLEAN" == *-* ]]; then
-            BASE="${CLEAN%%-*}"
-            PRE="${CLEAN#*-}"
-            PRE="${PRE//-/.}"   # remaining hyphens to dots
-            CLEAN="${BASE}~${PRE}"
-          fi
-          # minimal sanity: must start with a digit
-          if [[ ! "$CLEAN" =~ ^[0-9] ]]; then
-            echo "Normalized version '$CLEAN' invalid for DEB; falling back to 0.0.0" >&2
-            CLEAN="0.0.0"
-          fi
-          echo "deb_version=$CLEAN" >> "$GITHUB_OUTPUT"
-          echo "DEB version: $CLEAN"
+      - name: Normalize versions
+        id: norm
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: ${{ steps.get_version.outputs.VERSION }}
 
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
@@ -164,7 +146,7 @@ jobs:
           PACKAGE=$(jq -r '.package' $info)
           MAINTAINER=$(jq -r '.maintainer' $info)
           DESCRIPTION=$(jq -r '.description' $info)
-          DEB_VERSION='${{ steps.debver.outputs.deb_version }}'
+          DEB_VERSION='${{ steps.norm.outputs.deb }}'
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
@@ -174,7 +156,7 @@ jobs:
           Maintainer: $MAINTAINER
           Description: $DESCRIPTION
           EOF
-          
+
           dpkg-deb --build --root-owner-group deb \
             Pioneer-${{ steps.get_version.outputs.VERSION }}-${{ matrix.identifier }}.deb
 

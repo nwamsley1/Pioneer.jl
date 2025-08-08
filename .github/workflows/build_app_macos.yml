@@ -58,6 +58,12 @@ jobs:
             echo "VERSION=v0.0.0" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Normalize versions
+        id: norm
+        uses: ./.github/actions/normalize-versions
+        with:
+          raw: ${{ steps.get_version.outputs.VERSION }}
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
@@ -189,7 +195,7 @@ jobs:
           APP="Pioneer"
           DIST="build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
           PKGROOT="pkgroot"
-          VERSION=${{ steps.get_version.outputs.VERSION }}
+          VERSION='${{ steps.norm.outputs.pkg }}'
 
           rm -rf "$PKGROOT"
           mkdir -p "$PKGROOT/usr/local/$APP"
