@@ -5,6 +5,10 @@ inputs:
     description: "Fallback version when no tag is found"
     required: false
     default: "dev"
+outputs:
+  version:
+    description: "Determined version string"
+    value: ${{ steps.version.outputs.version }}
 runs:
   using: "composite"
   steps:
