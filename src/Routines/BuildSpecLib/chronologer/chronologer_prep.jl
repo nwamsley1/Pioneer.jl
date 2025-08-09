@@ -137,18 +137,7 @@ function prepare_chronologer_input(
     # Process FASTA files
     fasta_entries = Vector{FastaEntry}()
     protein_entries = Vector{FastaEntry}()
-    @info "params[fasta_names]", params["fasta_names"]
-    @info "params[fasta_paths]", params["fasta_paths"]
 
-    test_zip = collect(zip(
-            params["fasta_names"],
-            params["fasta_paths"],
-            accession_rgxs,
-            gene_rgxs,
-            protein_rgxs,
-            organism_rgxs,
-        ))
-    @info "test_zip ", test_zip
     for (proteome_name, fasta, acc_rgx, gene_rgx, prot_rgx, org_rgx) in zip(
             params["fasta_names"],
             params["fasta_paths"],
