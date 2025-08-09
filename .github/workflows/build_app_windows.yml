@@ -183,7 +183,7 @@ jobs:
 
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
-            -dProductVersion="${{ steps.norm.outputs.msi }}"
+            -dProductVersion="${{ steps.norm.outputs.msi }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dPlatform="x64" `

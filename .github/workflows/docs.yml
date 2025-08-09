@@ -2,10 +2,6 @@ name: Docs
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -45,7 +41,6 @@ jobs:
           Pkg.instantiate()
 
       - name: Build docs
-        if: github.ref != 'refs/heads/main'
         run: julia --project=docs docs/make.jl
 
       - name: Deploy docs
