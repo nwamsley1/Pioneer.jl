@@ -1,9 +1,12 @@
 <img src="figures/PIONEER_LOGO.svg" align="right" width="200px"/>
 <h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
-[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/dev)
-[![Build Status](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
-[![Build Status](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
+[![Docs: stable](https://img.shields.io/badge/docs-stable-blue)](https://nwamsley1.github.io/Pioneer.jl/stable)
+[![Docs: dev](https://img.shields.io/badge/docs-dev-blue)](https://nwamsley1.github.io/Pioneer.jl/dev)
+[![Docs: versions](https://img.shields.io/badge/docs-all%20versions-blue)](https://nwamsley1.github.io/Pioneer.jl)
+[![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
+[![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl)
 </h1>
 
