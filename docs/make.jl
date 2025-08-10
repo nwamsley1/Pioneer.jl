@@ -42,5 +42,6 @@ makedocs(
 
 deploydocs(
     repo = "github.com/nwamsley1/Pioneer.jl",
-    devbranch = "main"
+    devbranch = "develop",
+    versions = ["stable", "v#.#.#", "dev"],
 )
