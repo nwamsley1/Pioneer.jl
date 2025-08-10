@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  linux:
+    uses: ./.github/workflows/build_app_linux.yml
+  macos:
+    uses: ./.github/workflows/build_app_macos.yml
+  windows:
+    uses: ./.github/workflows/build_app_windows.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - linux
+      - macos
+      - windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout just the publish-release action
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/actions/publish-release
+          sparse-checkout-cone-mode: true
+      - name: Publish Release
+        uses: ./.github/actions/publish-release
+        with:
+          version: ${{ needs.linux.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
