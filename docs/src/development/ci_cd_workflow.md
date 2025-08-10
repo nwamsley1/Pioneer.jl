@@ -31,7 +31,7 @@ Manual dispatches allow running workflows on demand.
 | Workflow | Condition | Tests | Build Docs | Deploy Docs | Compile | Release | Purpose |
 |----------|-----------|-------|-----------|-------------|---------|---------|---------|
 | `registrator.yml` | Julia registration success | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | Release new version |
-| `release.yml` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | Build & publish release |
+| `release.yml` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | GitHub release |
 | `tests.yml`, `docs.yml`, `build_app_*` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: | Manually rerun or troubleshoot |
 | `tests.yml`, `docs.yml`, `build_app_*` | no tag | :white_check_mark: | :white_check_mark: | `develop` | :white_check_mark: | :x: | Test/build dev version |
   
