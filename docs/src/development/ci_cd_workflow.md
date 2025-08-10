@@ -11,7 +11,7 @@ The repository uses several workflows:
 - `build_app_linux.yml`, `build_app_macos.yml`, `build_app_windows.yml` – build and package applications
 - `CompatHelper.yml` – update package compatibility constraints (scheduled daily)
 - `TagBot.yml` – tag releases and interact with the Julia package registry
-- `registrator.yml` – submit releases to the Julia General registry
+- `registrator.yml` – run Registrator to open a registration PR in the Julia General registry
 
 ## Event Matrix
 
@@ -27,11 +27,21 @@ The repository uses several workflows:
 
 Manual dispatches allow running workflows on demand.
 
-| Dispatch | Condition | Tests | Build Docs | Deploy Docs | Compile | Release | Purpose |
+| Workflow | Condition | Tests | Build Docs | Deploy Docs | Compile | Release | Purpose |
 |----------|-----------|-------|------|--------|---------|---------|---------|
-| `tests.yml`, `docs.yml`, `build_app_*` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark:  | :white_check_mark: | :white_check_mark: | Release new version |
-| `tests.yml`, `docs.yml`, `build_app_*` | no tag | :white_check_mark: | :white_check_mark: | if `develop` | :white_check_mark: | :x: | Test/build dev version |
-| `registrator.yml` | | :x: | :x: | :x: | :x: | :white_check_mark: | Register release with Julia General registry |
+| `registrator.yml` | Julia registration success | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | Release new version |
+| `tests.yml`, `docs.yml`, `build_app_*` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark:  | :white_check_mark: | :white_check_mark: | Manually rerun or troubleshoot |
+| `tests.yml`, `docs.yml`, `build_app_*` | no tag | :white_check_mark: | :white_check_mark: | `develop` | :white_check_mark: | :x: | Test/build dev version |
+  
+## Release Process
+
+To cut a new release:
+
+1. Update the version number in `Project.toml`.
+2. Merge that change into the `main` branch.
+3. Manually trigger `registrator.yml`, which runs `JuliaRegistries/Registrator@v1` to open or update a registration pull request in the Julia General registry.
+4. After the registry PR is merged, `TagBot` creates a tag and GitHub release.
+5. The tag triggers the docs workflow to build and deploy versioned documentation and the platform build workflows (`build_app_linux.yml`, `build_app_macos.yml`, `build_app_windows.yml`), which compile the application and attach the artifacts to the release.
 
 ## Pre-releases
 
