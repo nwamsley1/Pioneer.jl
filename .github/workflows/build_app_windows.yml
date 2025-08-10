@@ -1,21 +1,20 @@
-name: Build & Release Windows
+name: Build Windows
 
 on:
   push:
     branches:
       - main
       - develop
-    tags:
-      - 'v*.*.*'
   pull_request:
     branches:
       - main
       - develop
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g., v1.2.3)'
-        required: false
+  workflow_call:
+    outputs:
+      version:
+        description: 'Build version'
+        value: ${{ jobs.build.outputs.version }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -108,10 +107,14 @@ jobs:
           $dir = "converter"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           $pattern = "win-x64"
-          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest |
+          $headers = @{ Accept = 'application/vnd.github+json'; Authorization = 'Bearer ${{ github.token }}' }
+          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest -Headers $headers |
                   Select-Object -ExpandProperty Content | ConvertFrom-Json
           $asset = ($json.assets | Where-Object { $_.name -like "*$pattern*.zip" } | Select-Object -First 1).name
-          if (-not $asset) { throw "No asset found matching $pattern" }
+          if (-not $asset) {
+            Write-Error "Error: ASSET not found"
+            exit 1
+          }
           Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
           $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
@@ -183,7 +186,7 @@ jobs:
 
           & candle.exe `
             -dSourceDir="$pioneerRoot" `
-            -dProductVersion="${{ steps.norm.outputs.msi }}"
+            -dProductVersion="${{ steps.norm.outputs.msi }}" `
             -dProductDescription="$desc" `
             -dPackageIdentifier="$identifier" `
             -dPlatform="x64" `
@@ -213,32 +216,3 @@ jobs:
           path: |
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.msi
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-  release:
-    name: Publish GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: >
-      needs.build.outputs.version != 'v0.0.0' && (
-        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
-      )
-    permissions:
-      contents: write
-      actions:  read
-
-    steps:
-      - name: Checkout just the publish-release action
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          sparse-checkout: |
-            .github/actions/publish-release
-          sparse-checkout-cone-mode: true
-
-      - name: Publish Release
-        uses: ./.github/actions/publish-release
-        with:
-          version: ${{ needs.build.outputs.version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

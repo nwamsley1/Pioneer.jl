@@ -29,7 +29,7 @@ runs:
         gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
           gh release create "${{ inputs.version }}" \
             --title "Release ${{ inputs.version }}" \
-            --notes "Automated release for ${{ inputs.version }}"
+            --generate-notes
 
     - name: Upload all assets
       shell: bash

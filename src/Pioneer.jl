@@ -29,7 +29,7 @@ using EzXML
 using FASTX
 using Interpolations
 using JSON, JLD2
-using LinearAlgebra, LoopVectorization, LinearSolve, LightXML
+using LinearAlgebra, LoopVectorization, LinearSolve, LightXML, Logging, LoggingExtras
 using Measures
 using NumericalIntegration
 using Optim
@@ -46,6 +46,18 @@ using LaTeXStrings, Printf
 using Dates
 using InlineStrings
 using HTTP
+
+
+"""
+Configure loggers
+    @info and @debug goes to stdout
+    @warn and @error goes to stderr
+"""
+stdout_logger = ConsoleLogger(stdout)
+stderr_logger = MinLevelLogger(ConsoleLogger(stderr), Logging.Warn)
+split_logger = TeeLogger(stdout_logger, stderr_logger)
+global_logger(split_logger)
+
 
 """
 Type alias for m/z to eV interpolation functions.

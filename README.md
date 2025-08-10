@@ -1,8 +1,12 @@
 <img src="figures/PIONEER_LOGO.svg" align="right" width="200px"/>
 <h1>Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
-[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://nwamsley1.github.io/Pioneer.jl/dev)
-[![Build Status](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
+[![Docs: stable](https://img.shields.io/badge/docs-stable-blue)](https://nwamsley1.github.io/Pioneer.jl/stable)
+[![Docs: dev](https://img.shields.io/badge/docs-dev-blue)](https://nwamsley1.github.io/Pioneer.jl/dev)
+[![Docs: versions](https://img.shields.io/badge/docs-all%20versions-blue)](https://nwamsley1.github.io/Pioneer.jl)
+[![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
+[![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl)
 </h1>
 
@@ -13,9 +17,9 @@ Pioneer and its companion tool, Altimeter, are together an open-source and perfo
 ## Design Goals
 
 - **Open-Source:** Pioneer is completely open source. 
-- **Cross-Platform:** Pioneer and the vendor-specific file conversion tool run on Linux, MacOS, and Windows
+- **Cross-Platform:** Pioneer and the .raw file conversion tool run on Linux, MacOS, and Windows
 - **High-Performance:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benhcmark datat-sets 
-- **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an anslysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
+- **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an analysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
 - **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools.
 
 ## Documentation

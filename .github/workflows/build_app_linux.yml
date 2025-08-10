@@ -1,21 +1,20 @@
-name: Build & Release Linux
+name: Build Linux
 
 on:
   push:
     branches:
       - main
       - develop
-    tags:
-      - 'v*.*.*'
   pull_request:
     branches:
       - main
       - develop
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g., v1.2.3)'
-        required: false
+  workflow_call:
+    outputs:
+      version:
+        description: 'Build version'
+        value: ${{ jobs.build.outputs.version }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -103,14 +102,19 @@ jobs:
         run: |
           mkdir -p converter
           PATTERN="${{ matrix.identifier }}"
-          ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
+          ASSET=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
             | jq -r --arg PATTERN "$PATTERN" '.assets[]
               | select(.name|test("PioneerConverter-"+$PATTERN+".*\\.zip"))
               | .name' | head -n1)
+
           if [[ -z "$ASSET" ]]; then
-            echo "ERROR: No asset for $PATTERN" >&2
+            echo "Error: ASSET not found"
             exit 1
           fi
+
           curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
             -o converter.zip
           unzip -q converter.zip -d converter
@@ -166,32 +170,3 @@ jobs:
           path: |
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.deb
             Pioneer-${{ steps.get_version.outputs.version }}-${{ matrix.identifier }}.zip
-
-  release:
-    name: Publish GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: >
-      needs.build.outputs.version != 'v0.0.0' && (
-        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
-        (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
-      )
-    permissions:
-      contents: write
-      actions:  read
-
-    steps:
-      - name: Checkout just the publish-release action
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          sparse-checkout: |
-            .github/actions/publish-release
-          sparse-checkout-cone-mode: true
-
-      - name: Publish Release
-        uses: ./.github/actions/publish-release
-        with:
-          version: ${{ needs.build.outputs.version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

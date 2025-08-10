@@ -1,0 +1,13 @@
+name: Registrator
+
+on:
+  workflow_dispatch:
+
+jobs:
+  registrator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: JuliaRegistries/Registrator@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          registrator_token: ${{ secrets.REGISTRATOR_GITHUB_TOKEN }}
