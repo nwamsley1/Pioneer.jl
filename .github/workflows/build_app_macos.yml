@@ -165,10 +165,19 @@ jobs:
           else
             PATTERN="osx-arm64"
           fi
-          ASSET=$(curl -sL https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
+          ASSET=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
             | jq -r --arg PATTERN "$PATTERN" '.assets[]
               | select(.name | test("PioneerConverter-"+$PATTERN+".*\\.zip"))
               | .name' | head -n1)
+
+          if [[ -z "$ASSET" ]]; then
+            echo "Error: ASSET not found"
+            exit 1
+          fi
+
           curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
             -o converter.zip
           unzip -q converter.zip -d converter
