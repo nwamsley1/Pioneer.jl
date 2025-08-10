@@ -107,10 +107,14 @@ jobs:
           $dir = "converter"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           $pattern = "win-x64"
-          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest |
+          $headers = @{ Accept = 'application/vnd.github+json'; Authorization = 'Bearer ${{ github.token }}' }
+          $json = Invoke-WebRequest -Uri https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest -Headers $headers |
                   Select-Object -ExpandProperty Content | ConvertFrom-Json
           $asset = ($json.assets | Where-Object { $_.name -like "*$pattern*.zip" } | Select-Object -First 1).name
-          if (-not $asset) { throw "No asset found matching $pattern" }
+          if (-not $asset) {
+            Write-Error "Error: ASSET not found"
+            exit 1
+          }
           Invoke-WebRequest -Uri "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$asset" -OutFile converter.zip
           Expand-Archive -Path converter.zip -DestinationPath $dir
           $subdir = Get-ChildItem -Path $dir -Directory | Select-Object -First 1
