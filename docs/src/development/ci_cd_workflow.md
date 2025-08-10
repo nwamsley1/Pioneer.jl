@@ -18,7 +18,7 @@ The repository uses several workflows:
 | Event | Condition | Tests | Build Docs  | Deploy Docs | Compile | Release | Purpose |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | push (tag) | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | Release new version |
-| push | `main`/`develop` | :white_check_mark: | :white_check_mark: | Only if `develop` | :white_check_mark: | :x: | Merge or hotfix |
+| push | `main`/`develop` | :white_check_mark: | :white_check_mark: | if `develop` | :white_check_mark: | :x: | Merge or hotfix |
 | pull request | `main`/`develop` | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: | :x: | Completed feature |
 | pull request | not `main`/`develop` | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: | WIP feature |
 | push | not `main`/`develop` | :white_check_mark: | :white_check_mark: | :x: | :x: | :x: | WIP feature |
@@ -30,12 +30,18 @@ Manual dispatches allow running workflows on demand.
 | Dispatch | Condition | Tests | Build Docs | Deploy Docs | Compile | Release | Purpose |
 |----------|-----------|-------|------|--------|---------|---------|---------|
 | `tests.yml`, `docs.yml`, `build_app_*` | `v*.*.*` | :white_check_mark: | :white_check_mark: | :white_check_mark:  | :white_check_mark: | :white_check_mark: | Release new version |
-| `tests.yml`, `docs.yml`, `build_app_*` | no tag | :white_check_mark: | :white_check_mark: | `main`/`develop` | :white_check_mark: | :x: | Test/build dev version |
-| `registrator.yml` | | :x: | :x: | :x: | :x: | :white_check_mark: | Register release with Julia registry |
+| `tests.yml`, `docs.yml`, `build_app_*` | no tag | :white_check_mark: | :white_check_mark: | if `develop` | :white_check_mark: | :x: | Test/build dev version |
+| `registrator.yml` | | :x: | :x: | :x: | :x: | :white_check_mark: | Register release with Julia General registry |
+
+## Pre-releases
+
+- Tags containing a hyphen (e.g., `v1.2.0-rc1`) are treated as pre-releases.
+- TagBot marks such tags as GitHub prereleases.
+- Build workflows still run, and packaging steps strip pre-release/build metadata when generating Windows installers.
 
 ## Additional Notes
 
 - The docs workflow builds documentation for all pull requests, tags, and manual runs, but only deploys to `gh-pages` when invoked on `main`, `develop`, or a `v*` tag.
 - Tag-based releases (`v*.*.*`) trigger tests, docs, builds, publishing of GitHub releases, and versioned documentation.
-- `CompatHelper` runs nightly to propose dependency updates; `TagBot` publishes tags to the Julia registry.
+- `CompatHelper` runs nightly to propose dependency updates; `TagBot` publishes tags to the Julia General registry.
 - Documentation is published for `stable`, semantic version tags (`v#.#.#`), and `dev`.
