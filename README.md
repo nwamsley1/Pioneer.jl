@@ -17,9 +17,9 @@ Pioneer and its companion tool, Altimeter, are together an open-source and perfo
 ## Design Goals
 
 - **Open-Source:** Pioneer is completely open source. 
-- **Cross-Platform:** Pioneer and the vendor-specific file conversion tool run on Linux, MacOS, and Windows
+- **Cross-Platform:** Pioneer and the .raw file conversion tool run on Linux, MacOS, and Windows
 - **High-Performance:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benhcmark datat-sets 
-- **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an anslysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
+- **Scalability:** Memory consumption and speed should remain constant as the number of raw files in an analysis grows. Pioneer should scale to very large experiments with hundreds to thousands of raw files (experimental)
 - **Fast:** Pioneer searches data several times faster than it can be aquired and faster than state-of-the-art search tools.
 
 ## Documentation
