@@ -31,4 +31,3 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           ssh: ${{ secrets.DOCUMENTER_KEY }}
-          prerelease: ${{ contains(github.ref_name, '-') }} # Tags like v1.2.0-rc1 are published as prereleases
