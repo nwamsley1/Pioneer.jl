@@ -240,9 +240,6 @@ function process_file!(
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
     
     try
-        # Get initial parameters from cross-run learning
-        initial_params = get_initial_parameters(results.parameter_history, params)
-        
         # Initialize tracking variables
         warnings = String[]
         converged = false
@@ -258,12 +255,12 @@ function process_file!(
             end
         end
         
-        # Use bias estimate from cross-run learning or default
-        initial_bias = initial_params.bias_estimate
+        # Use fixed initial parameters from JSON configuration (no cross-file dependency)
+        initial_bias = 0.0f0  # Always start with zero bias
         
         # Store initial parameters for resetting at each iteration
         initial_mass_offset = initial_bias
-        initial_tolerance = initial_params.initial_tolerance
+        initial_tolerance = getFragTolPpm(params)  # Use tolerance from JSON config
         max_tolerance = getMaxTolerancePpm(params)
         
         # Set initial mass error model
