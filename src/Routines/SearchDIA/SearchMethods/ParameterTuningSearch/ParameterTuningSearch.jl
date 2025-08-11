@@ -319,27 +319,40 @@ function process_file!(
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans"
-            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            if check_convergence(psms, mass_err_model, results.mass_err_model[])
-                @info "Converged after scan expansion"
-                results.mass_err_model[] = mass_err_model
+            
+            # Check if we have PSMs before attempting model fitting
+            if final_psm_count > 0
+                fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
                 
-                # Store ppm_errs for plotting
-                # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
-                # The plotting function will add the offset back for display
-                if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
-                    resize!(results.ppm_errs, 0)  # Clear any old data
-                    append!(results.ppm_errs, ppm_errs_new)
-                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
+                # Check if we have fragments before fitting mass error model
+                if length(fragments) > 0
+                    mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+                    
+                    if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                        @info "Converged after scan expansion"
+                        results.mass_err_model[] = mass_err_model
+                        
+                        # Store ppm_errs for plotting
+                        # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
+                        # The plotting function will add the offset back for display
+                        if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
+                            resize!(results.ppm_errs, 0)  # Clear any old data
+                            append!(results.ppm_errs, ppm_errs_new)
+                            @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
+                        end
+                        
+                        set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                        fit_irt_model(params, psms))
+                        @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
+                        
+                        converged = true
+                        break
+                    end
+                else
+                    @info "No fragments matched in Strategy 1, continuing to Strategy 2"
                 end
-                
-                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                                fit_irt_model(params, psms))
-                @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
-                
-                converged = true
-                break
+            else
+                @info "No PSMs collected in Strategy 1, continuing to Strategy 2"
             end
 
             #2) Expand mass tolerance
@@ -370,52 +383,86 @@ function process_file!(
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs with expanded tolerance"
             
-            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+            # Only proceed with model fitting if we have PSMs
+            if final_psm_count > 0
+                fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+                
+                # Only fit mass error model if we have fragments
+                if length(fragments) > 0
+                    mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+                else
+                    @info "No fragments matched in Strategy 2, continuing to Strategy 3"
+                    mass_err_model = nothing
+                    ppm_errs_new = nothing
+                end
+            else
+                @info "No PSMs collected in Strategy 2, continuing to Strategy 3"
+                mass_err_model = nothing
+                ppm_errs_new = nothing
+                fragments = Vector{FragmentMatch{Float32}}()
+            end
 
             #3) Adjust mass bias
-            @info "Strategy 3: Adjusting mass bias" 
-            new_bias = getMassOffset(mass_err_model)
-            old_bias = getMassOffset(results.mass_err_model[])
-            @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
+            @info "Strategy 3: Adjusting mass bias"
             
-            # Keep current tolerances but update bias
-            current_left_tol = getLeftTol(results.mass_err_model[])
-            current_right_tol = getRightTol(results.mass_err_model[])
-            
-            results.mass_err_model[] = create_capped_mass_model(
-                new_bias,
-                current_left_tol,
-                current_right_tol,
-                max_tolerance
-            )
-            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
-            final_psm_count = size(psms, 1)
-            @info "Collected $final_psm_count PSMs with adjusted bias"
-            
-            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
-            if check_convergence(psms, mass_err_model, results.mass_err_model[])
-                @info "Converged after bias adjustment"
-                results.mass_err_model[] = mass_err_model
+            # Only adjust bias if we have a valid mass error model from Strategy 2
+            if mass_err_model !== nothing && final_psm_count > 0
+                new_bias = getMassOffset(mass_err_model)
+                old_bias = getMassOffset(results.mass_err_model[])
+                @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
                 
-                # Store ppm_errs for plotting
-                # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
-                # The plotting function will add the offset back for display
-                if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
-                    resize!(results.ppm_errs, 0)  # Clear any old data
-                    append!(results.ppm_errs, ppm_errs_new)
-                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
+                # Keep current tolerances but update bias
+                current_left_tol = getLeftTol(results.mass_err_model[])
+                current_right_tol = getRightTol(results.mass_err_model[])
+                
+                results.mass_err_model[] = create_capped_mass_model(
+                    new_bias,
+                    current_left_tol,
+                    current_right_tol,
+                    max_tolerance
+                )
+                setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+                psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+                final_psm_count = size(psms, 1)
+                @info "Collected $final_psm_count PSMs with adjusted bias"
+                
+                # Check if we have PSMs to proceed
+                if final_psm_count > 0
+                    fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+                    
+                    # Check if we have fragments to fit model
+                    if length(fragments) > 0
+                        mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+                        @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
+                        
+                        if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                            @info "Converged after bias adjustment"
+                            results.mass_err_model[] = mass_err_model
+                            
+                            # Store ppm_errs for plotting
+                            # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
+                            # The plotting function will add the offset back for display
+                            if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
+                                resize!(results.ppm_errs, 0)  # Clear any old data
+                                append!(results.ppm_errs, ppm_errs_new)
+                                @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
+                            end
+                            
+                            set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                            fit_irt_model(params, psms))
+                            @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
+                            
+                            converged = true
+                            break
+                        end
+                    else
+                        @info "No fragments matched in Strategy 3 after bias adjustment"
+                    end
+                else
+                    @info "No PSMs collected in Strategy 3 after bias adjustment"
                 end
-                
-                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                                fit_irt_model(params, psms))
-                @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
-                
-                converged = true
-                break
+            else
+                @info "Skipping Strategy 3 bias adjustment - no valid mass error model from Strategy 2"
             end
             
             n += 1
