@@ -9,7 +9,7 @@ jobs:
     steps:
      - uses: JuliaRegistries/Registrator.jl@v1.10.0
        with:
-         entryPoint: /home/registrator/run.sh 
+         entryPoint: /home/registrator/run/run.sh
        env:
          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
          REGISTRATOR_TOKEN: ${{ secrets.REGISTRATOR_TOKEN }}
