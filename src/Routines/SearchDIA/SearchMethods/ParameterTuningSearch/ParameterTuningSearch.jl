@@ -319,7 +319,6 @@ function process_file!(
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans"
-            
             fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
             mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
             if check_convergence(psms, mass_err_model, results.mass_err_model[])
