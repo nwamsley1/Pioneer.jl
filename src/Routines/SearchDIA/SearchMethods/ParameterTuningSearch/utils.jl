@@ -921,5 +921,67 @@ end
 Utility Functions
 ==========================================================#
 
+"""
+    cap_mass_tolerance(tol::Float32, max_tol::Float32 = 50.0f0)
+
+Caps a mass tolerance value to a maximum limit.
+
+# Arguments
+- `tol`: Tolerance value to cap
+- `max_tol`: Maximum allowed tolerance (default: 50.0 ppm)
+
+# Returns
+- Capped tolerance value
+"""
+function cap_mass_tolerance(tol::Float32, max_tol::Float32 = 50.0f0)
+    return min(tol, max_tol)
+end
+
+"""
+    create_capped_mass_model(offset, left_tol, right_tol, max_tol)
+
+Creates a MassErrorModel with tolerance values capped to a maximum.
+
+# Arguments
+- `offset`: Mass offset in ppm
+- `left_tol`: Left tolerance value
+- `right_tol`: Right tolerance value  
+- `max_tol`: Maximum allowed tolerance (default: 50.0 ppm)
+
+# Returns
+- MassErrorModel with capped tolerances
+"""
+function create_capped_mass_model(
+    offset::Float32, 
+    left_tol::Float32, 
+    right_tol::Float32, 
+    max_tol::Float32 = 50.0f0
+)
+    return MassErrorModel(
+        offset,
+        (cap_mass_tolerance(left_tol, max_tol), 
+         cap_mass_tolerance(right_tol, max_tol))
+    )
+end
+
+function check_convergence(
+    psms,
+    new_mass_err_model::MassErrorModel,
+    old_mass_err_model::MassErrorModel
+)
+    if size(psms, 1) < 1000
+        @info "size(psms, 1) < 1000, skipping convergence check"
+        return false 
+    end
+    if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.1
+        @info "Left tolerance failed to converge"
+        return false 
+    end
+    if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.1
+        @info "Right tolerance failed to converge"
+        return false 
+    end
+    return true
+end
 
 

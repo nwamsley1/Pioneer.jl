@@ -250,14 +250,6 @@ function process_file!(
         min_psms_for_fitting = 1000
         final_psm_count = 0
         
-        # Create filtered/sampled data structure with initial scan count
-        filtered_spectra = FilteredMassSpecData(
-            spectra,
-            max_scans = params.initial_scan_count,  # Default: 2500
-            topn = 200,#topn = params.topn_peaks,  # Use configured value or nothing
-            target_ms_order = UInt8(2)  # Only MS2 for presearch
-        )
-        
         # Count total MS2 scans for logging
         total_ms2_count = 0
         for i in 1:length(spectra)
@@ -266,26 +258,172 @@ function process_file!(
             end
         end
         
-        @info "Initial sampling: $(length(filtered_spectra)) MS2 scans from $total_ms2_count total for file $ms_file_idx"
-        
         # Use bias estimate from cross-run learning or default
         initial_bias = initial_params.bias_estimate
         
+        # Store initial parameters for resetting at each iteration
+        initial_mass_offset = initial_bias
+        initial_tolerance = initial_params.initial_tolerance
+        max_tolerance = getMaxTolerancePpm(params)
+        
         # Set initial mass error model
-        results.mass_err_model[] = MassErrorModel(
-            initial_bias,
-            (initial_params.initial_tolerance, initial_params.initial_tolerance)
+        results.mass_err_model[] = create_capped_mass_model(
+            initial_mass_offset,
+            initial_tolerance,
+            initial_tolerance,
+            max_tolerance
         )
         
-        prev_mass_err = 0.0f0
         ppm_errs = nothing
         
-        # Track PSM counts and bias corrections across iterations
-        prev_psm_count = 0
-        bias_corrected_last = false
-        min_psms_for_bias = 50  # Minimum PSMs needed to attempt bias correction
+        # Declare psms and final_psm_count outside loop for scope access
+        psms = nothing
+        final_psm_count = 0
+
+        setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+        setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
+        n, N = 0, 5
         
+        # Initialize filtered_spectra with zero scans
+        filtered_spectra = FilteredMassSpecData(
+            spectra,
+            max_scans = 0,  # Start with zero scans
+            topn = 200,     # Top 200 peaks per scan
+            target_ms_order = UInt8(2)  # Only MS2 for presearch
+        ) 
+        @info "Initial mass error model getMassErrorModel for ms_file_idx $ms_file_idx: $(getMassErrorModel(search_context, ms_file_idx))"
+        while n < N
+            # Reset to initial parameters at start of each iteration (except first)
+            if n > 0
+                @info "Resetting to initial mass error parameters for iteration $(n+1)"
+                results.mass_err_model[] = create_capped_mass_model(
+                    initial_mass_offset,
+                    initial_tolerance,
+                    initial_tolerance,
+                    max_tolerance
+                )
+                setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            end
+            
+            #1) First collect/sample more psms 
+            # Calculate additional scans to add
+            if n == 0
+                # First iteration: add initial scan count
+                additional_scans = params.initial_scan_count
+            else
+                # Subsequent iterations: expand up to expanded_scan_count limit
+                current_scans = length(filtered_spectra)
+                additional_scans = min(params.expanded_scan_count - current_scans, 2500)
+            end
+            
+            @info "Iteration $(n+1): Adding $additional_scans scans (currently $(length(filtered_spectra)) scans)"
+            append!(filtered_spectra; max_additional_scans = additional_scans)
+            @info "Strategy 1: Collecting PSMs with current parameters"
+            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+            final_psm_count = size(psms, 1)
+            @info "Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans"
+            
+            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+            if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                @info "Converged after scan expansion"
+                results.mass_err_model[] = mass_err_model
+                
+                # Store ppm_errs for plotting
+                if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
+                    resize!(results.ppm_errs, 0)  # Clear any old data
+                    append!(results.ppm_errs, ppm_errs_new .+ getMassOffset(mass_err_model))
+                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
+                end
+                
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                fit_irt_model(params, psms))
+                @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
+                
+                converged = true
+                break
+            end
+
+            #2) Expand mass tolerance
+            @info "Strategy 2: Expanding mass tolerance" 
+            current_left_tol = getLeftTol(results.mass_err_model[])
+            current_right_tol = getRightTol(results.mass_err_model[])
+            new_left_tol = current_left_tol * 1.5f0
+            new_right_tol = current_right_tol * 1.5f0
+            
+            results.mass_err_model[] = create_capped_mass_model(
+                getMassOffset(results.mass_err_model[]),
+                new_left_tol,
+                new_right_tol,
+                max_tolerance
+            )
+            
+            # Log actual values after capping
+            actual_left = getLeftTol(results.mass_err_model[])
+            actual_right = getRightTol(results.mass_err_model[])
+            if actual_left < new_left_tol || actual_right < new_right_tol
+                @info "Expanded tolerance from ($(round(current_left_tol, digits=1)), $(round(current_right_tol, digits=1))) to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm (capped at $max_tolerance)"
+            else
+                @info "Expanded tolerance from ($(round(current_left_tol, digits=1)), $(round(current_right_tol, digits=1))) to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm"
+            end
+            
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+            final_psm_count = size(psms, 1)
+            @info "Collected $final_psm_count PSMs with expanded tolerance"
+            
+            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+
+            #3) Adjust mass bias
+            @info "Strategy 3: Adjusting mass bias" 
+            new_bias = getMassOffset(mass_err_model)
+            old_bias = getMassOffset(results.mass_err_model[])
+            @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
+            
+            # Keep current tolerances but update bias
+            current_left_tol = getLeftTol(results.mass_err_model[])
+            current_right_tol = getRightTol(results.mass_err_model[])
+            
+            results.mass_err_model[] = create_capped_mass_model(
+                new_bias,
+                current_left_tol,
+                current_right_tol,
+                max_tolerance
+            )
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+            final_psm_count = size(psms, 1)
+            @info "Collected $final_psm_count PSMs with adjusted bias"
+            
+            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+            
+            if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                @info "Converged after bias adjustment"
+                results.mass_err_model[] = mass_err_model
+                
+                # Store ppm_errs for plotting
+                if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
+                    resize!(results.ppm_errs, 0)  # Clear any old data
+                    append!(results.ppm_errs, ppm_errs_new .+ getMassOffset(mass_err_model))
+                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
+                end
+                
+                set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+                                fit_irt_model(params, psms))
+                @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points for plotting"
+                
+                converged = true
+                break
+            end
+            
+            n += 1
+            @info "Iteration $(n) complete. Moving to next iteration..."
+        end
+
         # Main convergence loop
+        #=
         while n_attempts < 5
             setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
@@ -318,9 +456,7 @@ function process_file!(
                 if final_psm_count >= min_psms_for_bias && !bias_corrected_last
                     @info "Strategy: Attempting mass bias correction with $final_psm_count PSMs"
                     
-                    # Calculate mass bias from available PSMs (use up to 200 for speed)
-                    psms_for_bias = first(psms, min(final_psm_count, 200))
-                    fragments = get_matched_fragments(spectra, psms_for_bias, results, search_context, params, ms_file_idx)
+                    fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
                     
                     if length(fragments) > 0
                         temp_mass_err_model, _ = fit_mass_err_model(params, fragments)
@@ -329,7 +465,7 @@ function process_file!(
                         # Keep current tolerance but update bias
                         current_tol = max(getLeftTol(results.mass_err_model[]), 
                                          getRightTol(results.mass_err_model[]))
-                        results.mass_err_model[] = MassErrorModel(new_bias, (current_tol, current_tol))
+                        results.mass_err_model[] = MassErrorModel(new_bias, (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])))
                         
                         @info "Corrected mass bias: $(round(new_bias, digits=2)) ppm (was $(round(getMassOffset(results.mass_err_model[]), digits=2)) ppm)"
                         push!(warnings, "Bias correction: $(round(new_bias, digits=2)) ppm")
@@ -388,50 +524,41 @@ function process_file!(
                 prev_psm_count = final_psm_count
                 n_attempts += 1
                 continue
-            end
-            
-            # Fit RT alignment model
-            set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-                                fit_irt_model(params, psms))
-
-            # Get fragments and fit mass error model
-            fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-            mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            ppm_errs = ppm_errs_new  # Update for later use
-            
-            # Check convergence conditions
-            # Get the current tolerance being used for search
-            current_tol = max(getLeftTol(results.mass_err_model[]), 
-                             getRightTol(results.mass_err_model[]))
-            
-            # Check if fitted tolerance is too close to search tolerance (within 75%)
-            if ((getLeftTol(mass_err_model)/current_tol) > 0.75) || 
-               ((getRightTol(mass_err_model)/current_tol) > 0.75)
-                
-                # Expand tolerance by 1.5x but cap at 50 ppm
-                new_tol = min(current_tol * 1.5f0, 50.0f0)
-                
-                # Preserve current bias if we have one
-                current_bias = getMassOffset(results.mass_err_model[])
-                
-                results.mass_err_model[] = MassErrorModel(
-                    current_bias,
-                    (Float32(new_tol), Float32(new_tol))
-                )
-                
-                @warn "Fitted tolerance ($(round(getLeftTol(mass_err_model), digits=1)), $(round(getRightTol(mass_err_model), digits=1))) too close to search tolerance $(round(current_tol, digits=1)). Expanding to $(round(new_tol, digits=1)) ppm"
-                push!(warnings, "Expanded search tolerance from $(round(current_tol, digits=1)) to $(round(new_tol, digits=1)) ppm")
             else
-                # Convergence successful - update model with fitted parameters
-                results.mass_err_model[] = MassErrorModel(
-                    getMassOffset(mass_err_model) + prev_mass_err, 
-                    (getLeftTol(mass_err_model), getRightTol(mass_err_model))
-                )
-                converged = true
                 break
+                converged = true
             end
             n_attempts += 1
         end
+        =#
+            # Fit RT alignment model
+            #set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
+            #                    fit_irt_model(params, psms))
+
+            # Get fragments and fit mass error model
+            #fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+            #mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
+            #ppm_errs = ppm_errs_new  # Update for later use
+            
+            # Check convergence conditions
+            # Get the current tolerance being used for search
+            #if abs(getMassOffset(mass_err_model))>max(abs(getLeftTol(mass_err_model)), abs(getRightTol(mass_err_model)))/4
+            #    prev_mass_err = getMassOffset(mass_err_model)
+            #    results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+            #else
+            #    results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
+            #    converged = true
+            #    break
+            #end
+            #n_attempts += 1
+        #end
+        
+        # Log final data status before storing results
+        @info "Final data status for file $ms_file_idx:"
+        @info "  - RT points: $(length(results.rt))"
+        @info "  - iRT points: $(length(results.irt))" 
+        @info "  - PPM errors: $(length(results.ppm_errs))"
+        @info "  - Converged: $converged"
         
         # Record tuning results
         tuning_result = TuningResults(
@@ -496,7 +623,7 @@ function process_file!(
                 append!(results.ppm_errs, ppm_errs)
             end
         end
-        
+        println("\n")
     catch e
         parsed_fname = getParsedFileName(search_context, ms_file_idx)
         @warn "Parameter tuning failed for file $parsed_fname with error." exception=(e, catch_backtrace())
@@ -571,20 +698,26 @@ function process_search_results!(
     
     # Generate RT alignment plot
     rt_plot_path = joinpath(rt_alignment_folder, parsed_fname*".pdf")
+    @info "Generating RT plot for $parsed_fname: RT points = $(length(results.rt)), iRT points = $(length(results.irt))"
     if length(results.rt) > 0
         generate_rt_plot(results, rt_plot_path, parsed_fname)
+        @info "Generated normal RT plot"
     else
         # Create a diagnostic plot showing fallback/borrowed status
         generate_fallback_rt_plot(results, rt_plot_path, parsed_fname, search_context, ms_file_idx)
+        @info "Generated fallback RT plot"
     end
     
     # Generate mass error plot
     mass_plot_path = joinpath(mass_error_folder, parsed_fname*".pdf")
+    @info "Generating mass error plot for $parsed_fname: PPM errors = $(length(results.ppm_errs))"
     if length(results.ppm_errs) > 0
         generate_mass_error_plot(results, parsed_fname, mass_plot_path)
+        @info "Generated normal mass error plot"
     else
         # Create a diagnostic plot showing fallback/borrowed status
         generate_fallback_mass_error_plot(results, mass_plot_path, parsed_fname, search_context, ms_file_idx)
+        @info "Generated fallback mass error plot"
     end
     
     # Update models in search context

@@ -144,6 +144,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     topn_peaks::Union{Nothing, Int64}
     initial_scan_count::Int64
     expanded_scan_count::Int64
+    max_tolerance_ppm::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -174,6 +175,9 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
         expanded_scan_count = hasproperty(search_params, :expanded_scan_count) ? Int64(search_params.expanded_scan_count) : Int64(5000)
         
+        # Extract max tolerance parameter
+        max_tolerance_ppm = hasproperty(search_params, :max_tolerance_ppm) ? Float32(search_params.max_tolerance_ppm) : Float32(50.0)
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -196,6 +200,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             topn_peaks,
             initial_scan_count,
             expanded_scan_count,
+            max_tolerance_ppm,
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
@@ -207,3 +212,9 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         )
     end
 end
+
+# Accessor functions for ParameterTuningSearchParameters
+getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_tolerance_ppm
+getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
+getExpandedScanCount(params::ParameterTuningSearchParameters) = params.expanded_scan_count
+getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
