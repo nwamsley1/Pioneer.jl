@@ -330,10 +330,12 @@ function process_file!(
                 results.mass_err_model[] = mass_err_model
                 
                 # Store ppm_errs for plotting
+                # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
+                # The plotting function will add the offset back for display
                 if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
                     resize!(results.ppm_errs, 0)  # Clear any old data
-                    append!(results.ppm_errs, ppm_errs_new .+ getMassOffset(mass_err_model))
-                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
+                    append!(results.ppm_errs, ppm_errs_new)
+                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
                 end
                 
                 set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
@@ -404,10 +406,12 @@ function process_file!(
                 results.mass_err_model[] = mass_err_model
                 
                 # Store ppm_errs for plotting
+                # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
+                # The plotting function will add the offset back for display
                 if ppm_errs_new !== nothing && length(ppm_errs_new) > 0
                     resize!(results.ppm_errs, 0)  # Clear any old data
-                    append!(results.ppm_errs, ppm_errs_new .+ getMassOffset(mass_err_model))
-                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
+                    append!(results.ppm_errs, ppm_errs_new)
+                    @info "Stored $(length(results.ppm_errs)) ppm errors for plotting (centered)"
                 end
                 
                 set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
