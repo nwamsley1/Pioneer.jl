@@ -292,7 +292,6 @@ function process_file!(
             topn = 200,     # Top 200 peaks per scan
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         ) 
-        @info "Initial mass error model getMassErrorModel for ms_file_idx $ms_file_idx: $(getMassErrorModel(search_context, ms_file_idx))"
         while n < N
             # Reset to initial parameters at start of each iteration (except first)
             if n > 0
@@ -303,8 +302,7 @@ function process_file!(
                     initial_tolerance,
                     max_tolerance
                 )
-                # Note: We update SearchContext model here for collect_psms to use
-                setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+                # Note: Removed setMassErrorModel! here - SearchContext keeps initial model throughout
             end
             
             #1) First collect/sample more psms 
@@ -402,7 +400,6 @@ function process_file!(
             
             fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
             mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
             if check_convergence(psms, mass_err_model, results.mass_err_model[])
                 @info "Converged after bias adjustment"
                 results.mass_err_model[] = mass_err_model
@@ -440,8 +437,6 @@ function process_file!(
         @info "  - iRT points: $(length(results.irt))" 
         @info "  - PPM errors: $(length(results.ppm_errs))"
         @info "  - Converged: $converged"
-        @info "getMassErrorModel(search_context, ms_file_idx)): $(getMassErrorModel(search_context, ms_file_idx))"
-        @info "results.mass_err_model[]: $(results.mass_err_model[])"
         # Record tuning results - use the converged model from results
         tuning_result = TuningResults(
             getMassOffset(results.mass_err_model[]),
