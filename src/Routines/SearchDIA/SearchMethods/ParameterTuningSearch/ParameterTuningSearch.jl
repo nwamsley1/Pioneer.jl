@@ -400,7 +400,7 @@ function process_file!(
             
             fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
             mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            
+            @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
             if check_convergence(psms, mass_err_model, results.mass_err_model[])
                 @info "Converged after bias adjustment"
                 results.mass_err_model[] = mass_err_model
@@ -426,148 +426,18 @@ function process_file!(
             @info "Iteration $(n) complete. Moving to next iteration..."
         end
 
-        # Main convergence loop
-        #=
-        while n_attempts < 5
-            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-            setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
-
-            # Collect PSMs through iterations
-            psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
-            final_psm_count = size(psms, 1)
-            psm_improvement = final_psm_count - prev_psm_count
-            psm_improvement_pct = prev_psm_count > 0 ? (psm_improvement / prev_psm_count * 100) : 0
-            
-            @info "Iteration $(n_attempts + 1): Collected $final_psm_count PSMs from $(length(filtered_spectra)) scans ($(round(psm_improvement_pct, digits=1))% change)"
-            
-            # Check if we have enough PSMs to proceed with full fitting
-            if final_psm_count < min_psms_for_fitting
-                @warn "Insufficient PSMs: $final_psm_count < $min_psms_for_fitting"
-                push!(warnings, "Iteration $(n_attempts + 1): $final_psm_count PSMs")
-                
-                # Strategy 1: First attempt with very few PSMs - try scan expansion
-                if n_attempts == 0 && length(filtered_spectra) < params.expanded_scan_count
-                    additional_scans = params.expanded_scan_count - length(filtered_spectra)
-                    n_added = append!(filtered_spectra; max_additional_scans = additional_scans)
-                    @info "Strategy: Expanding scan sampling - added $n_added scans (now $(length(filtered_spectra)) total)"
-                    push!(warnings, "Expanded scan sampling to $(length(filtered_spectra)) scans")
-                    prev_psm_count = final_psm_count
-                    n_attempts += 1
-                    continue
-                end
-                
-                # Strategy 2: Have some PSMs (≥50) - try bias correction if we haven't just done it
-                if final_psm_count >= min_psms_for_bias && !bias_corrected_last
-                    @info "Strategy: Attempting mass bias correction with $final_psm_count PSMs"
-                    
-                    fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-                    
-                    if length(fragments) > 0
-                        temp_mass_err_model, _ = fit_mass_err_model(params, fragments)
-                        new_bias = getMassOffset(temp_mass_err_model)
-                        
-                        # Keep current tolerance but update bias
-                        current_tol = max(getLeftTol(results.mass_err_model[]), 
-                                         getRightTol(results.mass_err_model[]))
-                        results.mass_err_model[] = MassErrorModel(new_bias, (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])))
-                        
-                        @info "Corrected mass bias: $(round(new_bias, digits=2)) ppm (was $(round(getMassOffset(results.mass_err_model[]), digits=2)) ppm)"
-                        push!(warnings, "Bias correction: $(round(new_bias, digits=2)) ppm")
-                        bias_corrected_last = true
-                    else
-                        @warn "Could not calculate bias - no fragment matches"
-                        bias_corrected_last = false
-                    end
-                    
-                # Strategy 3: Significant improvement (>20%) after tolerance increase - try bias correction
-                elseif psm_improvement_pct > 20 && final_psm_count >= min_psms_for_bias && !bias_corrected_last
-                    @info "Strategy: PSMs improved by $(round(psm_improvement_pct, digits=1))% - attempting bias correction"
-                    
-                    psms_for_bias = first(psms, min(final_psm_count, 200))
-                    fragments = get_matched_fragments(spectra, psms_for_bias, results, search_context, params, ms_file_idx)
-                    
-                    if length(fragments) > 0
-                        temp_mass_err_model, _ = fit_mass_err_model(params, fragments)
-                        new_bias = getMassOffset(temp_mass_err_model)
-                        
-                        current_tol = max(getLeftTol(results.mass_err_model[]), 
-                                         getRightTol(results.mass_err_model[]))
-                        results.mass_err_model[] = MassErrorModel(new_bias, (current_tol, current_tol))
-                        
-                        @info "Corrected mass bias after improvement: $(round(new_bias, digits=2)) ppm"
-                        push!(warnings, "Bias correction after improvement: $(round(new_bias, digits=2)) ppm")
-                        bias_corrected_last = true
-                    else
-                        bias_corrected_last = false
-                    end
-                    
-                # Strategy 4: Too few PSMs or bias didn't help - expand tolerance
-                else
-                    current_tol = max(getLeftTol(results.mass_err_model[]), 
-                                     getRightTol(results.mass_err_model[]))
-                    new_tol = min(current_tol * 1.5f0, 50.0f0)
-                    
-                    if new_tol > current_tol
-                        # Keep current bias if we have corrected it
-                        current_bias = getMassOffset(results.mass_err_model[])
-                        results.mass_err_model[] = MassErrorModel(current_bias, (new_tol, new_tol))
-                        
-                        @info "Strategy: Expanding mass tolerance from $(round(current_tol, digits=1)) to $(round(new_tol, digits=1)) ppm"
-                        push!(warnings, "Expanded tolerance to $(round(new_tol, digits=1)) ppm")
-                        bias_corrected_last = false
-                    else
-                        @warn "Already at maximum tolerance (50 ppm) - cannot expand further"
-                        push!(warnings, "At maximum tolerance")
-                        # No more strategies available
-                        if n_attempts >= 2  # Give at least 3 attempts total
-                            break
-                        end
-                    end
-                end
-                
-                prev_psm_count = final_psm_count
-                n_attempts += 1
-                continue
-            else
-                break
-                converged = true
-            end
-            n_attempts += 1
-        end
-        =#
-            # Fit RT alignment model
-            #set_rt_to_irt_model!(results, search_context, params, ms_file_idx, 
-            #                    fit_irt_model(params, psms))
-
-            # Get fragments and fit mass error model
-            #fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
-            #mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
-            #ppm_errs = ppm_errs_new  # Update for later use
-            
-            # Check convergence conditions
-            # Get the current tolerance being used for search
-            #if abs(getMassOffset(mass_err_model))>max(abs(getLeftTol(mass_err_model)), abs(getRightTol(mass_err_model)))/4
-            #    prev_mass_err = getMassOffset(mass_err_model)
-            #    results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model), (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
-            #else
-            #    results.mass_err_model[] = MassErrorModel(getMassOffset(mass_err_model) + prev_mass_err, (getLeftTol(mass_err_model), getRightTol(mass_err_model)))
-            #    converged = true
-            #    break
-            #end
-            #n_attempts += 1
-        #end
-        
         # Log final data status before storing results
         @info "Final data status for file $ms_file_idx:"
         @info "  - RT points: $(length(results.rt))"
         @info "  - iRT points: $(length(results.irt))" 
         @info "  - PPM errors: $(length(results.ppm_errs))"
         @info "  - Converged: $converged"
-        
+        @info "getMassErrorModel(search_context, ms_file_idx)): $(getMassErrorModel(search_context, ms_file_idx))"
+        @info "results.mass_err_model[]: $(results.mass_err_model[])"
         # Record tuning results
         tuning_result = TuningResults(
-            getMassOffset(results.mass_err_model[]),
-            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+            (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), getRightTol(getMassErrorModel(search_context, ms_file_idx))),
             converged,
             final_psm_count,
             n_attempts,
@@ -584,8 +454,8 @@ function process_file!(
             !converged ? "Failed to converge after $n_attempts attempts" : "",
             n_attempts,
             final_psm_count,
-            getMassOffset(results.mass_err_model[]),
-            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+            (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), getRightTol(getMassErrorModel(search_context, ms_file_idx))),
             warnings
         )
         record_tuning_status!(results.diagnostics, status)
