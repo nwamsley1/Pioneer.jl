@@ -280,7 +280,6 @@ function process_file!(
         psms = nothing
         final_psm_count = 0
 
-        # Set initial model in SearchContext to prevent carryover from previous files
         setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
         setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
         n, N = 0, 5
@@ -303,7 +302,6 @@ function process_file!(
                     initial_tolerance,
                     max_tolerance
                 )
-                # Note: We update SearchContext model here for collect_psms to use
                 setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             end
             
@@ -371,7 +369,7 @@ function process_file!(
                 @info "Expanded tolerance from ($(round(current_left_tol, digits=1)), $(round(current_right_tol, digits=1))) to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm"
             end
             
-            # Note: Removed setMassErrorModel! here - only update internal model
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs with expanded tolerance"
@@ -395,7 +393,7 @@ function process_file!(
                 current_right_tol,
                 max_tolerance
             )
-            # Note: Removed setMassErrorModel! here - only update internal model
+            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs with adjusted bias"
@@ -428,12 +426,6 @@ function process_file!(
             @info "Iteration $(n) complete. Moving to next iteration..."
         end
 
-        # Store final converged model in SearchContext (only once, after convergence)
-        if converged
-            @info "Storing converged mass error model in SearchContext for file $ms_file_idx"
-            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-        end
-
         # Log final data status before storing results
         @info "Final data status for file $ms_file_idx:"
         @info "  - RT points: $(length(results.rt))"
@@ -442,10 +434,10 @@ function process_file!(
         @info "  - Converged: $converged"
         @info "getMassErrorModel(search_context, ms_file_idx)): $(getMassErrorModel(search_context, ms_file_idx))"
         @info "results.mass_err_model[]: $(results.mass_err_model[])"
-        # Record tuning results - use the converged model from results
+        # Record tuning results
         tuning_result = TuningResults(
-            getMassOffset(results.mass_err_model[]),
-            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+            (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), getRightTol(getMassErrorModel(search_context, ms_file_idx))),
             converged,
             final_psm_count,
             n_attempts,
@@ -453,7 +445,7 @@ function process_file!(
         )
         store_tuning_results!(results.parameter_history, ms_file_idx, tuning_result)
         
-        # Record diagnostic status - use the converged model from results
+        # Record diagnostic status
         status = ParameterTuningStatus(
             ms_file_idx,
             parsed_fname,
@@ -462,8 +454,8 @@ function process_file!(
             !converged ? "Failed to converge after $n_attempts attempts" : "",
             n_attempts,
             final_psm_count,
-            getMassOffset(results.mass_err_model[]),
-            (getLeftTol(results.mass_err_model[]), getRightTol(results.mass_err_model[])),
+            getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
+            (getLeftTol(getMassErrorModel(search_context, ms_file_idx)), getRightTol(getMassErrorModel(search_context, ms_file_idx))),
             warnings
         )
         record_tuning_status!(results.diagnostics, status)
