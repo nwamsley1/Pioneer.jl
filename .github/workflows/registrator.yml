@@ -1,15 +1,19 @@
-name: Registrator
+name: Register Package
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to register or component to bump (e.g., 0.3.1 or patch/minor/major)
+        required: true
+
+permissions:
+  contents: write   # needed to commit the bumped version
 
 jobs:
-  registrator:
+  register:
     runs-on: ubuntu-latest
     steps:
-     - uses: JuliaRegistries/Registrator.jl@v1.10.0
-       with:
-         entryPoint: /home/registrator/run/run.sh
-       env:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-         REGISTRATOR_TOKEN: ${{ secrets.REGISTRATOR_TOKEN }}
+      - uses: julia-actions/RegisterAction@latest
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
