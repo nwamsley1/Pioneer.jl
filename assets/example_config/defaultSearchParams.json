@@ -40,7 +40,11 @@
             "min_quad_tuning_psms": 5000,
             "min_quad_tuning_fragments": 3,
             "max_presearch_iters": 10,
-            "frag_err_quantile": 0.01
+            "frag_err_quantile": 0.01,
+            "topn_peaks": 200,
+            "max_tolerance_ppm": 50.0,
+            "initial_scan_count": 2500,
+            "expanded_scan_count": 5000
         }
     },
     "first_search": {
