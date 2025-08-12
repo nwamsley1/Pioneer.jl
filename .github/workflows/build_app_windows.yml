@@ -16,13 +16,15 @@ on:
         description: 'Build version'
         value: ${{ jobs.build.outputs.version }}
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
-  cancel-in-progress: true
-
 jobs:
   build:
     name: Build & Package Windows
+    concurrency:
+      group: >-
+        ${{ github.event_name == 'workflow_call' &&
+            format('call-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.identifier) ||
+            format('{0}-{1}-{2}', github.workflow, github.ref_name, matrix.identifier) }}
+      cancel-in-progress: true
     runs-on: windows-latest
     env:
       JULIA_NUM_THREADS: auto
