@@ -244,7 +244,6 @@ function process_file!(
         warnings = String[]
         converged = false
         n_attempts = 0
-        min_psms_for_fitting = 1000
         final_psm_count = 0
         
         # Count total MS2 scans for logging
@@ -264,12 +263,13 @@ function process_file!(
         max_tolerance = getMaxTolerancePpm(params)
         
         # Set initial mass error model
-        results.mass_err_model[] = create_capped_mass_model(
+        #results.mass_err_model[] = 
+        setMassErrorModel!(search_context, ms_file_idx, create_capped_mass_model(
             initial_mass_offset,
             initial_tolerance,
             initial_tolerance,
             max_tolerance
-        )
+        ))
         
         ppm_errs = nothing
         
@@ -277,31 +277,22 @@ function process_file!(
         psms = nothing
         final_psm_count = 0
 
-        setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+        #setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
         setQuadTransmissionModel!(search_context, ms_file_idx, GeneralGaussModel(5.0f0, 0.0f0))
         n, N = 0, 5
         
         # Initialize filtered_spectra with zero scans
+        # Use topn_peaks from parameters if specified, otherwise default to 200
+        topn_peaks = something(getTopNPeaks(params), 200)
         filtered_spectra = FilteredMassSpecData(
             spectra,
             max_scans = 0,  # Start with zero scans
-            topn = 200,     # Top 200 peaks per scan
+            topn = topn_peaks,     # Top N peaks per scan (configurable)
             target_ms_order = UInt8(2)  # Only MS2 for presearch
         ) 
         @info "Initial mass error model getMassErrorModel for ms_file_idx $ms_file_idx: $(getMassErrorModel(search_context, ms_file_idx))"
         while n < N
             # Reset to initial parameters at start of each iteration (except first)
-            if n > 0
-                @info "Resetting to initial mass error parameters for iteration $(n+1)"
-                results.mass_err_model[] = create_capped_mass_model(
-                    initial_mass_offset,
-                    initial_tolerance,
-                    initial_tolerance,
-                    max_tolerance
-                )
-                setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
-            end
-            
             #1) First collect/sample more psms 
             # Calculate additional scans to add
             if n == 0
@@ -322,16 +313,17 @@ function process_file!(
             
             # Check if we have PSMs before attempting model fitting
             if final_psm_count > 0
-                fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+                fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
                 
                 # Check if we have fragments before fitting mass error model
                 if length(fragments) > 0
                     mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
                     
-                    if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                    if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new)
                         @info "Converged after scan expansion"
-                        results.mass_err_model[] = mass_err_model
-                        
+                        #results.mass_err_model[] = mass_err_model
+                        setMassErrorModel!(search_context, ms_file_idx, mass_err_model)
+                        #setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
                         # Store ppm_errs for plotting
                         # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
                         # The plotting function will add the offset back for display
@@ -357,35 +349,35 @@ function process_file!(
 
             #2) Expand mass tolerance
             @info "Strategy 2: Expanding mass tolerance" 
-            current_left_tol = getLeftTol(results.mass_err_model[])
-            current_right_tol = getRightTol(results.mass_err_model[])
+            current_left_tol = getLeftTol(getMassErrorModel(search_context, ms_file_idx))
+            current_right_tol = getRightTol(getMassErrorModel(search_context, ms_file_idx))
             new_left_tol = current_left_tol * 1.5f0
             new_right_tol = current_right_tol * 1.5f0
             
-            results.mass_err_model[] = create_capped_mass_model(
-                getMassOffset(results.mass_err_model[]),
+            setMassErrorModel!(search_context, ms_file_idx, create_capped_mass_model(
+                getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
                 new_left_tol,
                 new_right_tol,
                 max_tolerance
-            )
+            ))
             
             # Log actual values after capping
-            actual_left = getLeftTol(results.mass_err_model[])
-            actual_right = getRightTol(results.mass_err_model[])
+            actual_left = getLeftTol(getMassErrorModel(search_context, ms_file_idx))
+            actual_right = getRightTol(getMassErrorModel(search_context, ms_file_idx))
             if actual_left < new_left_tol || actual_right < new_right_tol
                 @info "Expanded tolerance from ($(round(current_left_tol, digits=1)), $(round(current_right_tol, digits=1))) to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm (capped at $max_tolerance)"
             else
                 @info "Expanded tolerance from ($(round(current_left_tol, digits=1)), $(round(current_right_tol, digits=1))) to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm"
             end
             
-            setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+            #setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
             final_psm_count = size(psms, 1)
             @info "Collected $final_psm_count PSMs with expanded tolerance"
             
             # Only proceed with model fitting if we have PSMs
             if final_psm_count > 0
-                fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+                fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
                 
                 # Only fit mass error model if we have fragments
                 if length(fragments) > 0
@@ -408,37 +400,37 @@ function process_file!(
             # Only adjust bias if we have a valid mass error model from Strategy 2
             if mass_err_model !== nothing && final_psm_count > 0
                 new_bias = getMassOffset(mass_err_model)
-                old_bias = getMassOffset(results.mass_err_model[])
+                old_bias = getMassOffset(getMassErrorModel(search_context, ms_file_idx))
                 @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
                 
                 # Keep current tolerances but update bias
-                current_left_tol = getLeftTol(results.mass_err_model[])
-                current_right_tol = getRightTol(results.mass_err_model[])
+                current_left_tol = getLeftTol(getMassErrorModel(search_context, ms_file_idx))
+                current_right_tol = getRightTol(getMassErrorModel(search_context, ms_file_idx))
                 
-                results.mass_err_model[] = create_capped_mass_model(
+               setMassErrorModel!(search_context, ms_file_idx, create_capped_mass_model(
                     new_bias,
                     current_left_tol,
                     current_right_tol,
                     max_tolerance
-                )
-                setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
+                ))
+                #setMassErrorModel!(search_context, ms_file_idx, results.mass_err_model[])
                 psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
                 final_psm_count = size(psms, 1)
                 @info "Collected $final_psm_count PSMs with adjusted bias"
                 
                 # Check if we have PSMs to proceed
                 if final_psm_count > 0
-                    fragments = get_matched_fragments(spectra, psms, results, search_context, params, ms_file_idx)
+                    fragments = get_matched_fragments(spectra, psms, search_context, params, ms_file_idx)
                     
                     # Check if we have fragments to fit model
                     if length(fragments) > 0
                         mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
                         @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
                         
-                        if check_convergence(psms, mass_err_model, results.mass_err_model[])
+                        if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new)
                             @info "Converged after bias adjustment"
-                            results.mass_err_model[] = mass_err_model
-                            
+                            #results.mass_err_model[] = mass_err_model
+                            setMassErrorModel!(search_context, ms_file_idx, mass_err_model)
                             # Store ppm_errs for plotting
                             # Note: ppm_errs_new are already centered (offset removed) from fit_mass_err_model
                             # The plotting function will add the offset back for display
@@ -476,7 +468,7 @@ function process_file!(
         @info "  - PPM errors: $(length(results.ppm_errs))"
         @info "  - Converged: $converged"
         @info "getMassErrorModel(search_context, ms_file_idx)): $(getMassErrorModel(search_context, ms_file_idx))"
-        @info "results.mass_err_model[]: $(results.mass_err_model[])"
+       # @info "results.mass_err_model[]: $(results.mass_err_model[])"
         # Record tuning results
         tuning_result = TuningResults(
             getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
@@ -592,6 +584,7 @@ function process_file!(
         end
     end
     
+    results.mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
     return results
 end
 

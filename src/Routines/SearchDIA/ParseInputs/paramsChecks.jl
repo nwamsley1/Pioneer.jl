@@ -80,6 +80,20 @@ function checkParams(json_path::String)
     check_param(search_settings, "min_samples", Integer)
     check_param(search_settings, "max_presearch_iters", Integer)
     check_param(search_settings, "frag_err_quantile", Real)
+    
+    # Check optional parameters if present
+    if haskey(search_settings, "topn_peaks")
+        check_param(search_settings, "topn_peaks", Integer)
+    end
+    if haskey(search_settings, "max_tolerance_ppm")
+        check_param(search_settings, "max_tolerance_ppm", Real)
+    end
+    if haskey(search_settings, "initial_scan_count")
+        check_param(search_settings, "initial_scan_count", Integer)
+    end
+    if haskey(search_settings, "expanded_scan_count")
+        check_param(search_settings, "expanded_scan_count", Integer)
+    end
 
     # Validate first search parameters
     first_search = params["first_search"]

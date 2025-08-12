@@ -270,6 +270,67 @@ Tuple containing:
 #==========================================================
 Mass Error Modeling
 ==========================================================#
+
+"""
+    adjustMatchMz(match::FragmentMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+
+Adjusts the match_mz field of a FragmentMatch by a given PPM offset.
+
+# Arguments
+- `match`: FragmentMatch to adjust
+- `ppm_offset`: Parts-per-million offset to apply
+
+# Returns
+- New FragmentMatch with adjusted match_mz field
+- Formula: adjusted_mz = match_mz * (1 + ppm_offset/1e6)
+"""
+function adjustMatchMz(match::FragmentMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+    adjusted_mz = getMatchMZ(match) * (1.0f0 + ppm_offset/(Float32(1.0e6)))
+    return FragmentMatch(
+        getPredictedIntensity(match),
+        getIntensity(match),
+        getMZ(match),  # theoretical_mz stays the same
+        adjusted_mz,   # adjusted match_mz
+        getPeakInd(match),
+        getFragInd(match),
+        getCharge(match),
+        getIsotope(match),
+        getIonType(match),
+        isIsotope(match),
+        getPrecID(match),
+        getCount(match),
+        getScanID(match),
+        getMSFileID(match),
+        getRank(match)
+    )
+end
+
+"""
+    adjustMatchMz(match::PrecursorMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+
+Adjusts the observed_mz field of a PrecursorMatch by a given PPM offset.
+
+# Arguments
+- `match`: PrecursorMatch to adjust
+- `ppm_offset`: Parts-per-million offset to apply
+
+# Returns
+- New PrecursorMatch with adjusted observed_mz field
+- Formula: adjusted_mz = observed_mz * (1 + ppm_offset/1e6)
+"""
+function adjustMatchMz(match::PrecursorMatch{T}, ppm_offset::Float32) where T<:AbstractFloat
+    adjusted_mz = getMatchMz(match) * (1.0f0 + ppm_offset/1.0e6f0)
+    return PrecursorMatch(
+        getPredictedIntensity(match),
+        getIntensity(match),
+        getMZ(match),  # theoretical_mz stays the same
+        adjusted_mz,   # adjusted observed_mz
+        getIsoIdx(match),
+        getPeakInd(match),
+        getPrecID(match)
+    )
+end
+
 function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(undef, n_scans)
     start_idx = stop_idx = 1
@@ -286,11 +347,39 @@ function getScanToPrecIdx(scan_idxs::Vector{UInt32}, n_scans::Int64)
     scan_to_prec_idx
 end
 
-function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int) where {M<:MatchIon{Float32}}
+"""
+    collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int; 
+                   ppm_offset::Float32 = 0.0f0) where {M<:MatchIon{Float32}}
+
+Collects fragment matches from new_fmatches into fmatches, optionally adjusting match_mz by a PPM offset.
+
+# Arguments
+- `fmatches`: Vector to store accumulated fragment matches
+- `new_fmatches`: Vector of new fragment matches to add
+- `nmatches`: Number of matches to copy from new_fmatches
+- `n`: Current index in fmatches
+- `ppm_offset`: Optional PPM offset to apply to match_mz (default: 0.0)
+
+# Returns
+- Updated index n after adding matches
+
+# Notes
+- When ppm_offset is 0, performs direct copy (original behavior)
+- When ppm_offset is non-zero, adjusts match_mz before copying
+- Grows fmatches vector as needed
+"""
+function collectFragErrs(fmatches::Vector{M}, new_fmatches::Vector{M}, nmatches::Int, n::Int, 
+                        ppm_offset::Float32) where {M<:MatchIon{Float32}}
     for match in range(1, nmatches)
         if n < length(fmatches)
             n += 1
-            fmatches[n] = new_fmatches[match]
+            if iszero(ppm_offset)# == 0.0f0
+                # Direct copy when no adjustment needed (original behavior)
+                fmatches[n] = new_fmatches[match]
+            else
+                # Apply PPM adjustment to match_mz
+                fmatches[n] = adjustMatchMz(new_fmatches[match],ppm_offset)
+            end
         else
             fmatches = append!(fmatches, [M() for x in range(1, length(fmatches))])
         end
@@ -406,7 +495,8 @@ function mass_error_search(
                     getMassErrMatches(search_data[thread_id]),
                     getIonMatches(search_data[thread_id]),
                     nmatches,
-                    frag_err_idx
+                    frag_err_idx,
+                    getMassOffset(mem)
                 )
             end
             
@@ -651,7 +741,6 @@ Returns vector of fragment matches using mass error search strategy.
 function get_matched_fragments(
     spectra::MassSpecData,
     psms::DataFrame,
-    results::ParameterTuningSearchResults,
     search_context::SearchContext,
     params::P,
     ms_file_idx::Int64
@@ -664,7 +753,7 @@ function get_matched_fragments(
         UInt32(ms_file_idx),
         getSpecLib(search_context),
         getSearchData(search_context),
-        getMassErrorModel(results),
+        getMassErrorModel(search_context, ms_file_idx),#getMassErrorModel(results),
         params,
         MS2CHROM()
     )...)
@@ -967,18 +1056,19 @@ end
 function check_convergence(
     psms,
     new_mass_err_model::MassErrorModel,
-    old_mass_err_model::MassErrorModel
+    old_mass_err_model::MassErrorModel,
+    ppms
 )
     if size(psms, 1) < 1000
         @info "size(psms, 1) < 1000, skipping convergence check"
         return false 
     end
-    if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.1
-        @info "Left tolerance failed to converge"
+    if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
+        @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
-    if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.1
-        @info "Right tolerance failed to converge"
+    if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.05
+        @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     return true
