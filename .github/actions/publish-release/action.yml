@@ -15,21 +15,29 @@ runs:
       with:
         path: artifacts
 
-    - name: Create or update Release
+    - name: Create or ensure notes exist
       shell: bash
       run: |
         set -euo pipefail
-        # Require GITHUB_TOKEN from caller; export GH_TOKEN for gh CLI
-        if [ -z "${GITHUB_TOKEN:-}" ]; then
-          echo "ERROR: GITHUB_TOKEN is required. Pass it from the caller job via env." >&2
-          exit 1
-        fi
+        : "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
         export GH_TOKEN="$GITHUB_TOKEN"
 
-        gh release view "${{ inputs.version }}" >/dev/null 2>&1 || \
-          gh release create "${{ inputs.version }}" \
-            --title "Release ${{ inputs.version }}" \
-            --generate-notes
+        ver="${{ inputs.version }}"
+
+        if gh release view "$ver" >/dev/null 2>&1; then
+          # If body is empty, (re)generate notes and update
+          body_len=$(gh release view "$ver" --json body --jq '.body | length')
+          if [ "$body_len" -eq 0 ]; then
+            name=$(gh api -X POST repos/:owner/:repo/releases/generate-notes \
+              -f tag_name="$ver" --jq .name)
+            body=$(gh api -X POST repos/:owner/:repo/releases/generate-notes \
+              -f tag_name="$ver" --jq .body)
+            gh release edit "$ver" -t "$name" -n "$body"
+          fi
+        else
+          # Create with auto-generated notes (don’t pass --title so GH can auto-title)
+          gh release create "$ver" --generate-notes
+        fi
 
     - name: Upload all assets
       shell: bash
