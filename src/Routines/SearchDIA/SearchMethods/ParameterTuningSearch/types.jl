@@ -170,10 +170,11 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
-        
+        @info "Using topn_peaks: $(topn_peaks === nothing ? "no topn peaks found" : topn_peaks)"
         # Extract scan count parameters
         initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
-        expanded_scan_count = hasproperty(search_params, :expanded_scan_count) ? Int64(search_params.expanded_scan_count) : Int64(5000)
+        
+        expanded_scan_count = hasproperty(search_params, :expanded_scan_count) ? Int64(search_params.expanded_scan_count) : Int64(10000)
         
         # Extract max tolerance parameter
         max_tolerance_ppm = hasproperty(search_params, :max_tolerance_ppm) ? Float32(search_params.max_tolerance_ppm) : Float32(50.0)
