@@ -786,7 +786,8 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         end
         
         # Generate summary report
-        generate_summary_report(results, search_context, qc_plots_folder)
+        # TODO: Implement generate_summary_report if detailed report needed
+        # For now, the diagnostic summary below provides the key information
         
     catch e
         @warn "Failed to merge QC plots" exception=(e, catch_backtrace())
