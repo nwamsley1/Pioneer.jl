@@ -143,7 +143,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     sample_rate::Float32  # Deprecated - kept for compatibility
     topn_peaks::Union{Nothing, Int64}
     initial_scan_count::Int64
-    expanded_scan_count::Int64
+    max_parameter_tuning_scans::Int64
     max_tolerance_ppm::Float32
     irt_tol::Float32
     spec_order::Set{Int64}
@@ -174,7 +174,14 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         # Extract scan count parameters
         initial_scan_count = hasproperty(search_params, :initial_scan_count) ? Int64(search_params.initial_scan_count) : Int64(2500)
         
-        expanded_scan_count = hasproperty(search_params, :expanded_scan_count) ? Int64(search_params.expanded_scan_count) : Int64(10000)
+        # Check for new name first, then fall back to old name for backward compatibility
+        max_parameter_tuning_scans = if hasproperty(search_params, :max_parameter_tuning_scans)
+            Int64(search_params.max_parameter_tuning_scans)
+        elseif hasproperty(search_params, :expanded_scan_count)
+            Int64(search_params.expanded_scan_count)
+        else
+            Int64(8000)  # Updated default from 10000 to 8000
+        end
         
         # Extract max tolerance parameter
         max_tolerance_ppm = hasproperty(search_params, :max_tolerance_ppm) ? Float32(search_params.max_tolerance_ppm) : Float32(50.0)
@@ -204,7 +211,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.sample_rate),  # Deprecated
             topn_peaks,
             initial_scan_count,
-            expanded_scan_count,
+            max_parameter_tuning_scans,
             max_tolerance_ppm,
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
@@ -221,7 +228,7 @@ end
 # Accessor functions for ParameterTuningSearchParameters
 getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_tolerance_ppm
 getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
-getExpandedScanCount(params::ParameterTuningSearchParameters) = params.expanded_scan_count
+getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
 
