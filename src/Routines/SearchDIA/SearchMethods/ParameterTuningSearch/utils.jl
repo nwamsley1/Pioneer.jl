@@ -1058,10 +1058,11 @@ function check_convergence(
     psms,
     new_mass_err_model::MassErrorModel,
     old_mass_err_model::MassErrorModel,
-    ppms
+    ppms,
+    min_psms::Int64
 )
-    if size(psms, 1) < 1000
-        @info "size(psms, 1) < 1000, skipping convergence check"
+    if size(psms, 1) < min_psms
+        @info "size(psms, 1) < $min_psms, skipping convergence check"
         return false 
     end
     if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
