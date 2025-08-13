@@ -44,7 +44,8 @@
             "topn_peaks": 200,
             "max_tolerance_ppm": 50.0,
             "initial_scan_count": 2500,
-            "expanded_scan_count": 5000
+            "expanded_scan_count": 5000,
+            "max_frags_for_mass_err_estimation": 5
         }
     },
     "first_search": {

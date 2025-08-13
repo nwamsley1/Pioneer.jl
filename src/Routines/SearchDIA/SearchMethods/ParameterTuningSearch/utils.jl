@@ -467,6 +467,7 @@ function mass_error_search(
                 ismissing(scan_to_prec_idx[scan_idx]) && continue
 
                 # Select transitions for mass error estimation
+                # Uses top N fragments per precursor for mass tolerance calibration
                 ion_idx, _ = selectTransitions!(
                     getIonTemplates(search_data[thread_id]),
                     MassErrEstimationStrategy(),
@@ -474,7 +475,7 @@ function mass_error_search(
                     getFragmentLookupTable(spec_lib),
                     scan_to_prec_idx[scan_idx],
                     precursor_idxs,
-                    max_rank = getMaxBestRank(params)
+                    max_rank = getMaxFragsForMassErrEstimation(params)
                 )
 
                 # Match peaks and collect errors

@@ -137,7 +137,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     min_spectral_contrast::Float32
     min_log2_matched_ratio::Float32
     min_topn_of_m::Tuple{Int64, Int64}
-    max_best_rank::UInt8
+    max_frags_for_mass_err_estimation::UInt8  # Number of top fragments per precursor for mass error estimation
     n_frag_isotopes::Int64
     max_frag_rank::UInt8
     sample_rate::Float32  # Deprecated - kept for compatibility
@@ -179,6 +179,10 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         # Extract max tolerance parameter
         max_tolerance_ppm = hasproperty(search_params, :max_tolerance_ppm) ? Float32(search_params.max_tolerance_ppm) : Float32(50.0)
         
+        # Extract max fragments for mass error estimation
+        max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
+            UInt8(search_params.max_frags_for_mass_err_estimation) : UInt8(5)
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -194,7 +198,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(frag_params.min_spectral_contrast),
             Float32(frag_params.min_log2_ratio),
             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(5), # max_best_rank default - top fragments for mass error estimation
+            max_frags_for_mass_err_estimation,  # Extracted from JSON or defaults to 5
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Float32(search_params.sample_rate),  # Deprecated
@@ -219,3 +223,4 @@ getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_toleran
 getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
 getExpandedScanCount(params::ParameterTuningSearchParameters) = params.expanded_scan_count
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
+getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
