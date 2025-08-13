@@ -174,9 +174,6 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
 end
 
 """
-Main file processing method for parameter tuning search.
-"""
-"""
 Collect PSMs from filtered spectra using library search.
 (Moved outside of process_file! for better organization)
 """
