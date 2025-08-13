@@ -139,6 +139,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     min_topn_of_m::Tuple{Int64, Int64}
     max_frags_for_mass_err_estimation::UInt8  # Number of top fragments per precursor for mass error estimation
     n_frag_isotopes::Int64
+    intensity_filter_quantile::Float32  # Quantile for filtering fragments by intensity in mass error model
     max_frag_rank::UInt8
     sample_rate::Float32  # Deprecated - kept for compatibility
     topn_peaks::Union{Nothing, Int64}
@@ -168,6 +169,11 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         # Create precursor estimation type
         prec_estimation = global_params.isotope_settings.partial_capture ? PartialPrecCapture() : FullPrecCapture()
         
+        # Extract intensity filter quantile for mass error model fitting (from fragment settings)
+        intensity_filter_quantile = hasproperty(frag_params, :intensity_filter_quantile) ? 
+            Float32(frag_params.intensity_filter_quantile) : 
+            Float32(0.25)  # Default to 0.25 (25th percentile)
+        
         # Extract topn_peaks if present
         topn_peaks = hasproperty(search_params, :topn_peaks) ? Int64(search_params.topn_peaks) : nothing
         @info "Using topn_peaks: $(topn_peaks === nothing ? "no topn peaks found" : topn_peaks)"
@@ -190,6 +196,11 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
         max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
             UInt8(search_params.max_frags_for_mass_err_estimation) : UInt8(5)
         
+        # Extract max q-value for parameter tuning (with fallback to global threshold)
+        max_q_value = hasproperty(search_params, :max_q_value) ? 
+            Float32(search_params.max_q_value) : 
+            Float32(global_params.scoring.q_value_threshold)
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -198,7 +209,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(frag_params.tol_ppm),
             Float32(search_params.frag_err_quantile),
             Int64(search_params.min_samples),
-            Float32(global_params.scoring.q_value_threshold),
+            max_q_value,  # Use extracted parameter-tuning-specific q-value
             Int64(search_params.max_presearch_iters),
             UInt8(frag_params.min_score),
             Int64(frag_params.min_count),
@@ -207,6 +218,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
             max_frags_for_mass_err_estimation,  # Extracted from JSON or defaults to 5
             Int64(frag_params.n_isotopes),
+            intensity_filter_quantile,  # Fragment intensity filtering threshold
             UInt8(frag_params.max_rank),
             Float32(search_params.sample_rate),  # Deprecated
             topn_peaks,
@@ -231,6 +243,7 @@ getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_sc
 getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
+getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation

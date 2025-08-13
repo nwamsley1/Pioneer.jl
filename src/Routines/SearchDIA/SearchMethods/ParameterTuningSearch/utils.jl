@@ -677,29 +677,39 @@ function fit_mass_err_model(
     params::P,
     fragments::Vector{FragmentMatch{Float32}}
 ) where {P<:FragmentIndexSearchParameters}
-    """
-        calc_ppm_error(theoretical::T, observed::T) where T<:AbstractFloat
-
-    Calculates parts-per-million (PPM) mass error.
-
-    # Arguments
-    - `theoretical`: Theoretical mass
-    - `observed`: Observed mass
-
-    Returns PPM error between theoretical and observed masses.
-    """
-    function calc_ppm_error(theoretical::T, observed::T) where T<:AbstractFloat
-        return Float32((observed - theoretical)/(theoretical/1e6))
+    
+    # Filter fragments by intensity to remove low-quality matches
+    if length(fragments) > 0
+        intensity_threshold = getIntensityFilterQuantile(params)
+        if intensity_threshold > 0.0
+            intensities = [fragment.intensity for fragment in fragments]
+            min_intensity = quantile(intensities, intensity_threshold)
+            fragments = filter(f -> f.intensity > min_intensity, fragments)
+            @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
+        end
     end
+    
+    # Check if we have enough fragments after filtering
+    if length(fragments) == 0
+        @warn "No fragments remaining after intensity filtering"
+        return MassErrorModel(0.0f0, (30.0f0, 30.0f0)), Float32[]
+    end
+    
     # Calculate PPM errors
-    ppm_errs = [calc_ppm_error(match.theoretical_mz, match.match_mz) for match in fragments]
+    ppm_errs = [(f.match_mz - f.theoretical_mz)/(f.theoretical_mz/1e6) for f in fragments]
     mass_err = median(ppm_errs)
     ppm_errs .-= mass_err
     
-    # Calculate error bounds
+    # Calculate error bounds using configured quantile
     frag_err_quantile = getFragErrQuantile(params)
     l_bound = quantile(ppm_errs, frag_err_quantile)
     r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
+    
+    # Diagnostic logging
+    @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
+          "tolerance=(-$(round(abs(l_bound), digits=1)), +$(round(abs(r_bound), digits=1))) ppm, " *
+          "MAD=$(round(mad(ppm_errs, normalize=false)*4, digits=1)) ppm, " *
+          "error_quantile=$frag_err_quantile"
     
     return MassErrorModel(
         Float32(mass_err),
