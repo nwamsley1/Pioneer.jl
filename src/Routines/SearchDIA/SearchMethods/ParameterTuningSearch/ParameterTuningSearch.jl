@@ -376,7 +376,9 @@ end
 """
     execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, params, ms_file_idx, results)
 
-Execute one of three convergence strategies.
+Execute one of two convergence strategies:
+- Strategy 1: Try with current parameters
+- Strategy 2: Expand mass tolerance AND adjust bias
 """
 function execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, 
                          params, ms_file_idx, results)
@@ -387,27 +389,33 @@ function execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_c
                                        params, ms_file_idx, "with current parameters")
     
     elseif strategy_num == 2
-        @info "Strategy 2: Expanding mass tolerance"
+        @info "Strategy 2: Expanding mass tolerance and adjusting bias"
+        
+        # First expand mass tolerance
         expand_mass_tolerance!(search_context, ms_file_idx, params)
-        psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                       params, ms_file_idx, "with expanded tolerance")
-    
-    elseif strategy_num == 3
-        @info "Strategy 3: Adjusting mass bias"
-        # Need mass error model from previous attempt
+        
+        # Collect PSMs with expanded tolerance to estimate bias
         psms_temp, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                           params, ms_file_idx, "for bias estimation")
+                                           params, ms_file_idx, "with expanded tolerance for bias estimation")
+        
+        # Fit mass error model to get bias estimate
         mass_err_temp, _, _ = fit_models_from_psms(psms_temp, spectra, search_context, 
                                                    params, ms_file_idx)
         
         if mass_err_temp === nothing
-            @info "Skipping Strategy 3 - no valid mass error model"
-            return nothing, nothing, nothing
+            @info "No valid mass error model for bias adjustment, using expanded tolerance only"
+            psms = psms_temp  # Use the PSMs we already collected
+        else
+            # Adjust bias based on the fitted model
+            adjust_mass_bias!(search_context, ms_file_idx, mass_err_temp, params)
+            
+            # Collect final PSMs with expanded tolerance AND adjusted bias
+            psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
+                                           params, ms_file_idx, "with expanded tolerance and adjusted bias")
         end
-        
-        adjust_mass_bias!(search_context, ms_file_idx, mass_err_temp, params)
-        psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                       params, ms_file_idx, "with adjusted bias")
+    
+    else
+        error("Invalid strategy number: $strategy_num. Only strategies 1 and 2 are supported.")
     end
     
     # Fit models from collected PSMs
@@ -648,22 +656,16 @@ function process_file!(
                 converged = true
                 final_psm_count = psms !== nothing ? size(psms, 1) : 0
             else
-                # Strategy 2: Expand tolerance (no convergence check)
+                # Strategy 2: Expand tolerance AND adjust bias (combined)
                 psms, mass_err_model, ppm_errs = execute_strategy(
                     2, filtered_spectra, spectra,
                     search_context, params, ms_file_idx, results
                 )
                 
-                # Strategy 3: Adjust bias (always follows Strategy 2)
-                psms, mass_err_model, ppm_errs = execute_strategy(
-                    3, filtered_spectra, spectra,
-                    search_context, params, ms_file_idx, results
-                )
-                
-                # Check convergence after Strategy 3
+                # Check convergence after Strategy 2
                 if check_and_store_convergence!(
                     results, search_context, params, ms_file_idx,
-                    psms, mass_err_model, ppm_errs, "Strategy 3"
+                    psms, mass_err_model, ppm_errs, "Strategy 2 (expanded tolerance + bias adjustment)"
                 )
                     converged = true
                     final_psm_count = psms !== nothing ? size(psms, 1) : 0
