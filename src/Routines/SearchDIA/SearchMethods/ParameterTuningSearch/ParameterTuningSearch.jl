@@ -82,6 +82,9 @@ function set_rt_to_irt_model!(
     append!(ptsr.rt, model[2])
     append!(ptsr.irt, model[3])
     
+    # CRITICAL: Store RT model in SearchContext for downstream methods
+    setRtIrtMap!(search_context, model[1], ms_file_idx)
+    
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
     getIrtErrors(search_context)[ms_file_idx] = model[4] * params.irt_tol_sd
 end
