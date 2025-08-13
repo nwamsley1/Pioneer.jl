@@ -475,7 +475,7 @@ function mass_error_search(
                     getFragmentLookupTable(spec_lib),
                     scan_to_prec_idx[scan_idx],
                     precursor_idxs,
-                    max_rank = getMaxFragsForMassErrEstimation(params)
+                    max_rank = Int64(getMaxFragsForMassErrEstimation(params))  # Convert UInt8 to Int64 for compatibility
                 )
 
                 # Match peaks and collect errors
