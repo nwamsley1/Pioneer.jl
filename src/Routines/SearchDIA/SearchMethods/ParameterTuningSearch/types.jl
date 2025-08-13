@@ -194,7 +194,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(frag_params.min_spectral_contrast),
             Float32(frag_params.min_log2_ratio),
             (Int64(first(frag_params.min_top_n)), Int64(last(frag_params.min_top_n))),
-            UInt8(1), # max_best_rank default
+            UInt8(5), # max_best_rank default - top fragments for mass error estimation
             Int64(frag_params.n_isotopes),
             UInt8(frag_params.max_rank),
             Float32(search_params.sample_rate),  # Deprecated

@@ -474,7 +474,7 @@ function mass_error_search(
                     getFragmentLookupTable(spec_lib),
                     scan_to_prec_idx[scan_idx],
                     precursor_idxs,
-                    max_rank = 5#getMaxBestRank(params)
+                    max_rank = getMaxBestRank(params)
                 )
 
                 # Match peaks and collect errors
