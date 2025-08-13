@@ -91,7 +91,10 @@ function checkParams(json_path::String)
     if haskey(search_settings, "initial_scan_count")
         check_param(search_settings, "initial_scan_count", Integer)
     end
-    if haskey(search_settings, "expanded_scan_count")
+    # Check for both old and new parameter names for backward compatibility
+    if haskey(search_settings, "max_parameter_tuning_scans")
+        check_param(search_settings, "max_parameter_tuning_scans", Integer)
+    elseif haskey(search_settings, "expanded_scan_count")
         check_param(search_settings, "expanded_scan_count", Integer)
     end
     if haskey(search_settings, "max_frags_for_mass_err_estimation")
