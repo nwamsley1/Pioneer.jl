@@ -319,7 +319,7 @@ function process_file!(
                 if length(fragments) > 0
                     mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
                     
-                    if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new)
+                    if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new, getMinPsms(params))
                         @info "Converged after scan expansion"
                         #results.mass_err_model[] = mass_err_model
                         setMassErrorModel!(search_context, ms_file_idx, mass_err_model)
@@ -427,7 +427,7 @@ function process_file!(
                         mass_err_model, ppm_errs_new = fit_mass_err_model(params, fragments)
                         @info "mass_err_model after bias adjustment: $(getMassErrorModel(search_context, ms_file_idx))"
                         
-                        if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new)
+                        if check_convergence(psms, mass_err_model, getMassErrorModel(search_context, ms_file_idx), ppm_errs_new, getMinPsms(params))
                             @info "Converged after bias adjustment"
                             #results.mass_err_model[] = mass_err_model
                             setMassErrorModel!(search_context, ms_file_idx, mass_err_model)
