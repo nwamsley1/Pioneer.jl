@@ -631,21 +631,39 @@ function process_file!(
                 break  # Reached max scans
             end
             
-            # Try three strategies in sequence
-            for strategy in 1:3
+            # Strategy 1: Try with current parameters
+            psms, mass_err_model, ppm_errs = execute_strategy(
+                1, filtered_spectra, spectra, 
+                search_context, params, ms_file_idx, results
+            )
+            
+            # Check convergence after Strategy 1
+            if check_and_store_convergence!(
+                results, search_context, params, ms_file_idx,
+                psms, mass_err_model, ppm_errs, "Strategy 1"
+            )
+                converged = true
+                final_psm_count = psms !== nothing ? size(psms, 1) : 0
+            else
+                # Strategy 2: Expand tolerance (no convergence check)
                 psms, mass_err_model, ppm_errs = execute_strategy(
-                    strategy, filtered_spectra, spectra, 
+                    2, filtered_spectra, spectra,
                     search_context, params, ms_file_idx, results
                 )
                 
-                # Check convergence
+                # Strategy 3: Adjust bias (always follows Strategy 2)
+                psms, mass_err_model, ppm_errs = execute_strategy(
+                    3, filtered_spectra, spectra,
+                    search_context, params, ms_file_idx, results
+                )
+                
+                # Check convergence after Strategy 3
                 if check_and_store_convergence!(
                     results, search_context, params, ms_file_idx,
-                    psms, mass_err_model, ppm_errs, "Strategy $strategy"
+                    psms, mass_err_model, ppm_errs, "Strategy 3"
                 )
                     converged = true
                     final_psm_count = psms !== nothing ? size(psms, 1) : 0
-                    break
                 end
             end
             
@@ -749,13 +767,23 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
         
         # Merge RT alignment plots
         rt_merged_path = joinpath(qc_plots_folder, "rt_alignment_combined.pdf")
-        merge_pdfs(rt_plots_folder, rt_merged_path)
-        @info "Merged RT alignment plots to $rt_merged_path"
+        rt_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(rt_plots_folder, join=true))
+        if !isempty(rt_pdf_files)
+            merge_pdfs(rt_pdf_files, rt_merged_path)
+            @info "Merged $(length(rt_pdf_files)) RT alignment plots to $rt_merged_path"
+        else
+            @info "No RT alignment plots to merge"
+        end
         
         # Merge mass error plots
         mass_merged_path = joinpath(qc_plots_folder, "mass_error_combined.pdf")
-        merge_pdfs(mass_error_plots_folder, mass_merged_path)
-        @info "Merged mass error plots to $mass_merged_path"
+        mass_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(mass_error_plots_folder, join=true))
+        if !isempty(mass_pdf_files)
+            merge_pdfs(mass_pdf_files, mass_merged_path)
+            @info "Merged $(length(mass_pdf_files)) mass error plots to $mass_merged_path"
+        else
+            @info "No mass error plots to merge"
+        end
         
         # Generate summary report
         generate_summary_report(results, search_context, qc_plots_folder)
