@@ -101,6 +101,53 @@ mutable struct ParameterHistory
     end
 end
 
+# Iteration configuration
+"""
+    IterationSettings
+
+Configuration for iteration behavior in parameter tuning.
+Controls how mass tolerance scales, when to reset phases, and bias shift strategy.
+"""
+struct IterationSettings
+    mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
+    iterations_per_phase::Int64              # Iterations before phase reset
+    max_phases::Int64                         # Maximum number of phases
+    bias_shift_strategy::Symbol              # :alternating, :positive_first, :negative_first
+    bias_shift_magnitude::Union{Float32, Symbol}  # Specific value or :max_tolerance
+    
+    function IterationSettings(
+        scale_factor::Float32 = 2.0f0,
+        iterations_per_phase::Int64 = 3,
+        max_phases::Int64 = 3,
+        bias_shift_strategy::Symbol = :alternating,
+        bias_shift_magnitude::Union{Float32, Symbol} = :max_tolerance
+    )
+        @assert scale_factor > 1.0f0 "Scale factor must be greater than 1"
+        @assert iterations_per_phase > 0 "Iterations per phase must be positive"
+        @assert max_phases > 0 "Max phases must be positive"
+        @assert bias_shift_strategy in [:alternating, :positive_first, :negative_first] "Invalid bias shift strategy"
+        
+        new(scale_factor, iterations_per_phase, max_phases, bias_shift_strategy, bias_shift_magnitude)
+    end
+end
+
+"""
+    IterationState
+
+Tracks state across phases and iterations during parameter tuning.
+"""
+mutable struct IterationState
+    current_phase::Int64
+    current_iteration_in_phase::Int64
+    total_iterations::Int64
+    phase_bias_shifts::Vector{Float32}  # Bias shift applied at start of each phase
+    converged::Bool
+    
+    function IterationState()
+        new(1, 0, 0, Float32[], false)
+    end
+end
+
 # From ParameterTuningSearch.jl
 struct ParameterTuningSearch <: TuningMethod end
 
@@ -154,6 +201,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     spline_fit_outlier_sd::Int64
     irt_tol_sd::Int64
     prec_estimation::P
+    iteration_settings::IterationSettings
 
     function ParameterTuningSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -201,6 +249,28 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.max_q_value) : 
             Float32(global_params.scoring.q_value_threshold)
         
+        # Extract iteration settings (with defaults for backward compatibility)
+        iteration_settings = if hasproperty(search_params, :iteration_settings)
+            iter = search_params.iteration_settings
+            IterationSettings(
+                hasproperty(iter, :mass_tolerance_scale_factor) ? 
+                    Float32(iter.mass_tolerance_scale_factor) : 2.0f0,
+                hasproperty(iter, :iterations_per_phase) ? 
+                    Int64(iter.iterations_per_phase) : 3,
+                hasproperty(iter, :max_phases) ? 
+                    Int64(iter.max_phases) : 3,
+                hasproperty(iter, :bias_shift_strategy) ? 
+                    Symbol(iter.bias_shift_strategy) : :alternating,
+                hasproperty(iter, :bias_shift_magnitude) ? 
+                    (iter.bias_shift_magnitude == "max_tolerance" ? 
+                        :max_tolerance : Float32(iter.bias_shift_magnitude)) : 
+                    :max_tolerance
+            )
+        else
+            # Use defaults for backward compatibility
+            IterationSettings()
+        end
+        
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(
             # Core parameters
@@ -232,7 +302,8 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             5,  # spline_n_knots default
             5,  # spline_fit_outlier_sd default
             Int64(rt_params.sigma_tolerance),
-            prec_estimation
+            prec_estimation,
+            iteration_settings
         )
     end
 end
@@ -244,6 +315,7 @@ getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
 getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile
+getIterationSettings(params::ParameterTuningSearchParameters) = params.iteration_settings
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation
