@@ -358,8 +358,8 @@ function process_file!(
             @info "Strategy 2: Expanding mass tolerance" 
             current_left_tol = getLeftTol(getMassErrorModel(search_context, ms_file_idx))
             current_right_tol = getRightTol(getMassErrorModel(search_context, ms_file_idx))
-            new_left_tol = current_left_tol * 1.5f0
-            new_right_tol = current_right_tol * 1.5f0
+            new_left_tol = current_left_tol * 2.0f0
+            new_right_tol = current_right_tol * 2.0f0
             
             setMassErrorModel!(search_context, ms_file_idx, create_capped_mass_model(
                 getMassOffset(getMassErrorModel(search_context, ms_file_idx)),
