@@ -745,7 +745,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     try
         rt_plots_folder = getRtAlignPlotFolder(search_context)
         mass_error_plots_folder = getMassErrPlotFolder(search_context)
-        qc_plots_folder = getQcPlotsFolder(search_context)
+        qc_plots_folder = getQcPlotsFolder(results)  # Fixed: use results instead of search_context
         
         # Merge RT alignment plots
         rt_merged_path = joinpath(qc_plots_folder, "rt_alignment_combined.pdf")
@@ -766,9 +766,11 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     
     # Log diagnostic summary
     diagnostics = getDiagnostics(results)
-    converged_count = sum(s.converged for s in diagnostics.file_status)
-    fallback_count = sum(s.used_fallback for s in diagnostics.file_status)
-    total_files = length(diagnostics.file_status)
+    # Fixed: use values() to iterate over dictionary values
+    file_statuses = values(diagnostics.file_statuses)
+    converged_count = sum(s.converged for s in file_statuses)
+    fallback_count = sum(s.used_fallback for s in file_statuses)
+    total_files = length(file_statuses)
     
     @info "Parameter Tuning Summary:"
     @info "  - Total files: $total_files"
@@ -776,7 +778,7 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     @info "  - Used fallback: $fallback_count"
     
     # Log any warnings
-    for status in diagnostics.file_status
+    for status in file_statuses
         if !isempty(status.warnings)
             @warn "File $(status.file_name) warnings:" warnings=status.warnings
         end
