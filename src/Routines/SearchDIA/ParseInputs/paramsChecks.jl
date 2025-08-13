@@ -73,6 +73,15 @@ function checkParams(json_path::String)
     check_param(frag_settings, "min_log2_ratio", Real)
     check_param(frag_settings, "min_top_n", Vector)
     check_param(frag_settings, "n_isotopes", Integer)
+    
+    # Check optional intensity filter quantile
+    if haskey(frag_settings, "intensity_filter_quantile")
+        check_param(frag_settings, "intensity_filter_quantile", Real)
+        # Validate it's between 0 and 1
+        if frag_settings["intensity_filter_quantile"] < 0 || frag_settings["intensity_filter_quantile"] >= 1
+            error("parameter_tuning.fragment_settings.intensity_filter_quantile must be between 0 and 1 (got $(frag_settings["intensity_filter_quantile"]))")
+        end
+    end
 
     check_param(tuning_params, "search_settings", Dict)
     search_settings = tuning_params["search_settings"]
@@ -99,6 +108,13 @@ function checkParams(json_path::String)
     end
     if haskey(search_settings, "max_frags_for_mass_err_estimation")
         check_param(search_settings, "max_frags_for_mass_err_estimation", Integer)
+    end
+    if haskey(search_settings, "max_q_value")
+        check_param(search_settings, "max_q_value", Real)
+        # Validate it's between 0 and 1
+        if search_settings["max_q_value"] <= 0 || search_settings["max_q_value"] > 1
+            error("parameter_tuning.search_settings.max_q_value must be between 0 and 1 (got $(search_settings["max_q_value"]))")
+        end
     end
 
     # Validate first search parameters
