@@ -60,6 +60,87 @@ results = execute_search(ParameterTuningSearch(), search_context, params)
 # Type definitions moved to types.jl
 
 #==========================================================
+Iteration State Management Functions
+==========================================================#
+
+"""
+    next_iteration!(state::IterationState, settings::IterationSettings)
+
+Advance to the next iteration, handling phase transitions.
+Returns false if all phases are exhausted.
+"""
+function next_iteration!(state::IterationState, settings::IterationSettings)
+    state.total_iterations += 1
+    state.current_iteration_in_phase += 1
+    
+    # Check if we need to transition to a new phase
+    if state.current_iteration_in_phase > settings.iterations_per_phase
+        state.current_phase += 1
+        state.current_iteration_in_phase = 1
+    end
+    
+    # Return whether we're still within allowed phases
+    return state.current_phase <= settings.max_phases
+end
+
+"""
+    calculate_phase_bias_shift(phase::Int64, settings::IterationSettings, params)
+
+Calculate the bias shift for a given phase based on the configured strategy.
+"""
+function calculate_phase_bias_shift(phase::Int64, settings::IterationSettings, params)::Float32
+    if phase == 1
+        return 0.0f0  # No shift in first phase
+    end
+    
+    # Determine magnitude
+    magnitude = if settings.bias_shift_magnitude == :max_tolerance
+        getMaxTolerancePpm(params)
+    else
+        Float32(settings.bias_shift_magnitude)
+    end
+    
+    # Determine direction based on strategy
+    if settings.bias_shift_strategy == :alternating
+        # Phase 2 = positive, Phase 3 = negative, Phase 4 = positive, etc.
+        return phase % 2 == 0 ? magnitude : -magnitude
+    elseif settings.bias_shift_strategy == :positive_first
+        # Phase 2 = positive, all others = negative
+        return phase == 2 ? magnitude : -magnitude
+    else  # :negative_first
+        # Phase 2 = negative, all others = positive
+        return phase == 2 ? -magnitude : magnitude
+    end
+end
+
+"""
+    reset_for_new_phase!(search_context, ms_file_idx, params, phase, iteration_state)
+
+Reset parameters for a new phase with appropriate bias shift.
+"""
+function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64, iteration_state::IterationState)
+    settings = getIterationSettings(params)
+    initial_tolerance = getFragTolPpm(params)
+    
+    # Calculate and store bias shift for this phase
+    bias_shift = calculate_phase_bias_shift(phase, settings, params)
+    push!(iteration_state.phase_bias_shifts, bias_shift)
+    
+    # Reset to initial tolerance with new bias
+    new_model = create_capped_mass_model(
+        bias_shift,
+        initial_tolerance,
+        initial_tolerance,
+        getMaxTolerancePpm(params)
+    )
+    
+    setMassErrorModel!(search_context, ms_file_idx, new_model)
+    
+    @info "Phase $phase: Reset to initial tolerance (±$(round(initial_tolerance, digits=1)) ppm) " *
+          "with bias shift $(round(bias_shift, digits=1)) ppm"
+end
+
+#==========================================================
 Results Access Methods
 ==========================================================#
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
@@ -324,17 +405,17 @@ function add_scans_for_iteration!(filtered_spectra, params, iteration::Int)
 end
 
 """
-    expand_mass_tolerance!(search_context, ms_file_idx, params)
+    expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
 
-Double the current mass tolerance up to maximum.
+Scale the current mass tolerance by the given factor up to maximum.
 """
-function expand_mass_tolerance!(search_context, ms_file_idx, params)
+function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_factor::Float32 = 2.0f0)
     current_model = getMassErrorModel(search_context, ms_file_idx)
     current_left = getLeftTol(current_model)
     current_right = getRightTol(current_model)
     
-    new_left = current_left * 2.0f0
-    new_right = current_right * 2.0f0
+    new_left = current_left * scale_factor
+    new_right = current_right * scale_factor
     
     new_model = create_capped_mass_model(
         getMassOffset(current_model),
@@ -347,7 +428,8 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params)
     
     actual_left = getLeftTol(new_model)
     actual_right = getRightTol(new_model)
-    @info "Expanded tolerance from ($(round(current_left, digits=1)), $(round(current_right, digits=1))) " *
+    @info "Scaled tolerance by factor $(scale_factor): " *
+          "from ($(round(current_left, digits=1)), $(round(current_right, digits=1))) " *
           "to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm"
 end
 
@@ -389,29 +471,28 @@ function execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_c
                                        params, ms_file_idx, "with current parameters")
     
     elseif strategy_num == 2
-        @info "Strategy 2: Expanding mass tolerance and adjusting bias"
+        @info "Strategy 2: Adjusting bias with current tolerance"
         
-        # First expand mass tolerance
-        expand_mass_tolerance!(search_context, ms_file_idx, params)
+        # Note: Tolerance expansion is now handled in the main loop before calling this
         
-        # Collect PSMs with expanded tolerance to estimate bias
+        # Collect PSMs with current tolerance to estimate bias
         psms_temp, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                           params, ms_file_idx, "with expanded tolerance for bias estimation")
+                                           params, ms_file_idx, "with current tolerance for bias estimation")
         
         # Fit mass error model to get bias estimate
         mass_err_temp, _, _ = fit_models_from_psms(psms_temp, spectra, search_context, 
                                                    params, ms_file_idx)
         
         if mass_err_temp === nothing
-            @info "No valid mass error model for bias adjustment, using expanded tolerance only"
+            @info "No valid mass error model for bias adjustment, using current tolerance only"
             psms = psms_temp  # Use the PSMs we already collected
         else
             # Adjust bias based on the fitted model
             adjust_mass_bias!(search_context, ms_file_idx, mass_err_temp, params)
             
-            # Collect final PSMs with expanded tolerance AND adjusted bias
+            # Collect final PSMs with current tolerance AND adjusted bias
             psms, _ = collect_and_log_psms(filtered_spectra, spectra, search_context,
-                                           params, ms_file_idx, "with expanded tolerance and adjusted bias")
+                                           params, ms_file_idx, "with current tolerance and adjusted bias")
         end
     
     else
@@ -620,12 +701,17 @@ function process_file!(
     
     converged = false
     parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    n_attempts = 0
     warnings = String[]
     final_psm_count = 0
     
+    # Initialize iteration state
+    iteration_state = IterationState()
+    settings = getIterationSettings(params)
+    
     try
         @info "Processing file: $parsed_fname (index: $ms_file_idx)"
+        @info "Iteration settings: scale_factor=$(settings.mass_tolerance_scale_factor), " *
+              "iterations_per_phase=$(settings.iterations_per_phase), max_phases=$(settings.max_phases)"
         
         # Initialize models
         initialize_models!(search_context, ms_file_idx, params)
@@ -634,13 +720,27 @@ function process_file!(
         filtered_spectra = initialize_filtered_spectra(spectra, params)
         
         # Main convergence loop
-        for iteration in 0:4  # Max 5 iterations
-            n_attempts = iteration + 1
+        while next_iteration!(iteration_state, settings)
+            # Check if we're starting a new phase
+            if iteration_state.current_iteration_in_phase == 1 && iteration_state.current_phase > 1
+                # Reset for new phase
+                reset_for_new_phase!(search_context, ms_file_idx, params, 
+                                   iteration_state.current_phase, iteration_state)
+                
+                # Reset filtered spectra for new phase
+                filtered_spectra = initialize_filtered_spectra(spectra, params)
+            end
             
             # Add scans for this iteration
-            if !add_scans_for_iteration!(filtered_spectra, params, iteration)
-                break  # Reached max scans
+            if !add_scans_for_iteration!(filtered_spectra, params, 
+                                        iteration_state.total_iterations - 1)
+                @info "Reached maximum scan count"
+                # Don't break - continue with current scans or move to next phase
             end
+            
+            @info "Phase $(iteration_state.current_phase), " *
+                  "Iteration $(iteration_state.current_iteration_in_phase) " *
+                  "(Total: $(iteration_state.total_iterations))"
             
             # Strategy 1: Try with current parameters
             psms, mass_err_model, ppm_errs = execute_strategy(
@@ -651,42 +751,66 @@ function process_file!(
             # Check convergence after Strategy 1
             if check_and_store_convergence!(
                 results, search_context, params, ms_file_idx,
-                psms, mass_err_model, ppm_errs, "Strategy 1"
+                psms, mass_err_model, ppm_errs, 
+                "Strategy 1 (Phase $(iteration_state.current_phase))"
             )
                 converged = true
+                iteration_state.converged = true
                 final_psm_count = psms !== nothing ? size(psms, 1) : 0
+                break
             else
-                # Strategy 2: Expand tolerance AND adjust bias (combined)
+                # Only expand tolerance if we're past the first iteration of the phase
+                if iteration_state.current_iteration_in_phase > 1
+                    expand_mass_tolerance!(search_context, ms_file_idx, params, 
+                                          settings.mass_tolerance_scale_factor)
+                end
+                
+                # Strategy 2: Adjust bias with current (possibly expanded) tolerance
                 psms, mass_err_model, ppm_errs = execute_strategy(
                     2, filtered_spectra, spectra,
                     search_context, params, ms_file_idx, results
                 )
                 
+                # Calculate cumulative scale for logging
+                cumulative_scale = settings.mass_tolerance_scale_factor ^ 
+                                  (iteration_state.current_iteration_in_phase - 1)
+                
                 # Check convergence after Strategy 2
                 if check_and_store_convergence!(
                     results, search_context, params, ms_file_idx,
-                    psms, mass_err_model, ppm_errs, "Strategy 2 (expanded tolerance + bias adjustment)"
+                    psms, mass_err_model, ppm_errs, 
+                    "Strategy 2 (Phase $(iteration_state.current_phase), " *
+                    "scale=$(round(cumulative_scale, digits=2))x)"
                 )
                     converged = true
+                    iteration_state.converged = true
                     final_psm_count = psms !== nothing ? size(psms, 1) : 0
+                    break
                 end
             end
             
-            if converged
-                break
-            end
-            
-            @info "Iteration $n_attempts complete. Moving to next iteration..."
+            @info "Phase $(iteration_state.current_phase), " *
+                  "Iteration $(iteration_state.current_iteration_in_phase) complete"
+        end
+        
+        # Log phase summary
+        @info "Completed $(iteration_state.total_iterations) total iterations across " *
+              "$(iteration_state.current_phase) phases. Converged: $converged"
+        
+        if !isempty(iteration_state.phase_bias_shifts)
+            @info "Phase bias shifts attempted: $(iteration_state.phase_bias_shifts)"
         end
         
         # Store results
         store_final_results!(results, search_context, params, ms_file_idx, 
-                           converged, n_attempts, final_psm_count, warnings)
+                           converged, iteration_state.total_iterations, 
+                           final_psm_count, warnings)
         
         # Handle non-convergence
         if !converged
+            push!(warnings, "Failed after $(iteration_state.current_phase) phases")
             handle_non_convergence!(results, search_context, ms_file_idx, 
-                                   n_attempts, warnings)
+                                   iteration_state.total_iterations, warnings)
         end
         
     catch e
