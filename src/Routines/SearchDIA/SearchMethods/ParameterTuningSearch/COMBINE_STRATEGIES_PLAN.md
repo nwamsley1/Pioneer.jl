@@ -1,5 +1,7 @@
 # Plan to Combine Strategies 2 and 3
 
+## Status: ✅ IMPLEMENTED (2025-01-13)
+
 ## Current Structure
 Currently we have three separate strategies:
 1. **Strategy 1**: Collect PSMs with current parameters → CHECK CONVERGENCE
@@ -201,8 +203,19 @@ end
 
 ## Implementation Steps
 
-1. Modify `execute_strategy` to handle only strategies 1 and 2
-2. Update the main loop in `process_file!` to call only strategies 1 and 2
-3. Update logging messages to be clear about the combined operation
-4. Test the changes with sample data
-5. Update any documentation that references the three-strategy approach
+1. ✅ Modify `execute_strategy` to handle only strategies 1 and 2
+2. ✅ Update the main loop in `process_file!` to call only strategies 1 and 2
+3. ✅ Update logging messages to be clear about the combined operation
+4. 🔄 Test the changes with sample data
+5. ✅ Update any documentation that references the three-strategy approach
+
+## Implementation Summary
+
+Successfully combined strategies 2 and 3 into a single strategy that:
+1. Expands mass tolerance first
+2. Collects PSMs with expanded tolerance for bias estimation
+3. Fits mass error model to determine bias
+4. If bias model is valid, adjusts bias and collects final PSMs
+5. If bias model is invalid, uses PSMs from expanded tolerance only
+
+This maintains the same behavior but with cleaner, more efficient code.
