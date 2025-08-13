@@ -294,17 +294,24 @@ function process_file!(
         while n < N
             # Reset to initial parameters at start of each iteration (except first)
             #1) First collect/sample more psms 
-            # Calculate additional scans to add
+            # Calculate scans for this iteration using doubling strategy
             if n == 0
-                # First iteration: add initial scan count
-                additional_scans = params.initial_scan_count
+                # First iteration: use initial scan count
+                additional_scans = getInitialScanCount(params)
             else
-                # Subsequent iterations: expand up to expanded_scan_count limit
+                # Subsequent iterations: double the current count up to max
                 current_scans = length(filtered_spectra)
-                additional_scans = min(params.expanded_scan_count - current_scans, 2500)
+                target_scans = min(current_scans * 2, getMaxParameterTuningScans(params))
+                additional_scans = target_scans - current_scans
+                
+                # Stop if we've reached the maximum
+                if additional_scans <= 0
+                    @info "Reached maximum scan count of $(getMaxParameterTuningScans(params))"
+                    break  # Exit the convergence loop
+                end
             end
             
-            @info "Iteration $(n+1): Adding $additional_scans scans (currently $(length(filtered_spectra)) scans)"
+            @info "Iteration $(n+1): Adding $additional_scans scans (total will be $(length(filtered_spectra) + additional_scans))"
             append!(filtered_spectra; max_additional_scans = additional_scans)
             @info "Strategy 1: Collecting PSMs with current parameters"
             psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
