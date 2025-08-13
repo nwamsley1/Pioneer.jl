@@ -224,3 +224,8 @@ getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_sc
 getExpandedScanCount(params::ParameterTuningSearchParameters) = params.expanded_scan_count
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
+
+# Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
+# This is for PSM filtering in LibrarySearch, not mass error estimation
+import Pioneer: getMaxBestRank
+getMaxBestRank(params::ParameterTuningSearchParameters) = UInt8(1)  # Default value for PSM filtering
