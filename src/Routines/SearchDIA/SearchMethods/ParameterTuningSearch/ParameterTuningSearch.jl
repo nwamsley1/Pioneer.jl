@@ -766,11 +766,12 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     try
         rt_plots_folder = getRtAlignPlotFolder(search_context)
         mass_error_plots_folder = getMassErrPlotFolder(search_context)
-        qc_plots_folder = getQcPlotsFolder(results)  # Fixed: use results instead of search_context
         
-        # Merge RT alignment plots
-        rt_merged_path = joinpath(qc_plots_folder, "rt_alignment_combined.pdf")
+        # Merge RT alignment plots into their subdirectory
+        rt_merged_path = joinpath(rt_plots_folder, "rt_alignment_combined.pdf")
         rt_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(rt_plots_folder, join=true))
+        # Filter out any existing combined file to avoid including it in merge
+        rt_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), rt_pdf_files)
         if !isempty(rt_pdf_files)
             merge_pdfs(rt_pdf_files, rt_merged_path)
             @info "Merged $(length(rt_pdf_files)) RT alignment plots to $rt_merged_path"
@@ -778,9 +779,11 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
             @info "No RT alignment plots to merge"
         end
         
-        # Merge mass error plots
-        mass_merged_path = joinpath(qc_plots_folder, "mass_error_combined.pdf")
+        # Merge mass error plots into their subdirectory
+        mass_merged_path = joinpath(mass_error_plots_folder, "mass_error_combined.pdf")
         mass_pdf_files = filter(f -> endswith(f, ".pdf"), readdir(mass_error_plots_folder, join=true))
+        # Filter out any existing combined file to avoid including it in merge
+        mass_pdf_files = filter(f -> !endswith(f, "_combined.pdf"), mass_pdf_files)
         if !isempty(mass_pdf_files)
             merge_pdfs(mass_pdf_files, mass_merged_path)
             @info "Merged $(length(mass_pdf_files)) mass error plots to $mass_merged_path"
