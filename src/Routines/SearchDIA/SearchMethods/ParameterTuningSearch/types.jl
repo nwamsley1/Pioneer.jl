@@ -185,7 +185,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     topn_peaks::Union{Nothing, Int64}
     initial_scan_count::Int64
     max_parameter_tuning_scans::Int64
-    max_tolerance_ppm::Float32
+    max_tol_ppm::Float32  # Maximum allowed mass tolerance (moved to fragment_settings)
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -230,8 +230,9 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Int64(8000)  # Updated default from 10000 to 8000
         end
         
-        # Extract max tolerance parameter
-        max_tolerance_ppm = hasproperty(search_params, :max_tolerance_ppm) ? Float32(search_params.max_tolerance_ppm) : Float32(50.0)
+        # Extract max tolerance parameter (now from fragment_settings)
+        max_tol_ppm = hasproperty(frag_params, :max_tol_ppm) ? 
+            Float32(frag_params.max_tol_ppm) : Float32(50.0)
         
         # Extract max fragments for mass error estimation
         max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
@@ -280,7 +281,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             topn_peaks,
             initial_scan_count,
             max_parameter_tuning_scans,
-            max_tolerance_ppm,
+            max_tol_ppm,
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
@@ -295,7 +296,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
 end
 
 # Accessor functions for ParameterTuningSearchParameters
-getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_tolerance_ppm
+getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_tol_ppm
 getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
 getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
