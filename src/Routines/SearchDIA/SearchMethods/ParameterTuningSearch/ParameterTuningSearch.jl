@@ -116,11 +116,9 @@ function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64,
     push!(iteration_state.phase_bias_shifts, bias_shift)
     
     # Reset to initial tolerance with new bias
-    new_model = create_capped_mass_model(
+    new_model = MassErrorModel(
         bias_shift,
-        initial_tolerance,
-        initial_tolerance,
-        getMaxTolerancePpm(params)
+        (initial_tolerance, initial_tolerance)
     )
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
@@ -406,20 +404,16 @@ function expand_mass_tolerance!(search_context, ms_file_idx, params, scale_facto
     new_left = current_left * scale_factor
     new_right = current_right * scale_factor
     
-    new_model = create_capped_mass_model(
+    new_model = MassErrorModel(
         getMassOffset(current_model),
-        new_left,
-        new_right,
-        getMaxTolerancePpm(params)
+        (new_left, new_right)
     )
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
     
-    actual_left = getLeftTol(new_model)
-    actual_right = getRightTol(new_model)
     @info "Scaled tolerance by factor $(scale_factor): " *
           "from ($(round(current_left, digits=1)), $(round(current_right, digits=1))) " *
-          "to ($(round(actual_left, digits=1)), $(round(actual_right, digits=1))) ppm"
+          "to ($(round(new_left, digits=1)), $(round(new_right, digits=1))) ppm"
 end
 
 """
@@ -434,11 +428,9 @@ function adjust_mass_bias!(search_context, ms_file_idx, new_mass_err_model, para
     
     @info "Adjusting mass bias from $(round(old_bias, digits=2)) to $(round(new_bias, digits=2)) ppm"
     
-    new_model = create_capped_mass_model(
+    new_model = MassErrorModel(
         new_bias,
-        getLeftTol(current_model),
-        getRightTol(current_model),
-        getMaxTolerancePpm(params)
+        (getLeftTol(current_model), getRightTol(current_model))
     )
     
     setMassErrorModel!(search_context, ms_file_idx, new_model)
@@ -504,14 +496,11 @@ function initialize_models!(search_context, ms_file_idx, params)
     # Use fixed initial parameters from JSON configuration
     initial_bias = 0.0f0  # Always start with zero bias
     initial_tolerance = getFragTolPpm(params)
-    max_tolerance = getMaxTolerancePpm(params)
     
     # Set initial mass error model
-    setMassErrorModel!(search_context, ms_file_idx, create_capped_mass_model(
+    setMassErrorModel!(search_context, ms_file_idx, MassErrorModel(
         initial_bias,
-        initial_tolerance,
-        initial_tolerance,
-        max_tolerance
+        (initial_tolerance, initial_tolerance)
     ))
     
     # Set initial quad transmission model

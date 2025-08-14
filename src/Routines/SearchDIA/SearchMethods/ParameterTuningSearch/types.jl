@@ -106,21 +106,24 @@ end
     IterationSettings
 
 Configuration for iteration behavior in parameter tuning.
-Controls how mass tolerance scales and iterations per phase.
+Controls initial mass tolerance, how it scales, and iterations per phase.
 Always uses 3 phases: zero bias, positive shift, negative shift.
 """
 struct IterationSettings
+    init_mass_tol_ppm::Float32               # Initial mass tolerance (moved from fragment_settings)
     mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
     iterations_per_phase::Int64              # Iterations before phase reset
     
     function IterationSettings(
+        init_tol::Float32 = 20.0f0,
         scale_factor::Float32 = 2.0f0,
         iterations_per_phase::Int64 = 3
     )
+        @assert init_tol > 0.0f0 "Initial tolerance must be positive"
         @assert scale_factor > 1.0f0 "Scale factor must be greater than 1"
         @assert iterations_per_phase > 0 "Iterations per phase must be positive"
         
-        new(scale_factor, iterations_per_phase)
+        new(init_tol, scale_factor, iterations_per_phase)
     end
 end
 
@@ -167,7 +170,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     # Core parameters from the original struct
     isotope_err_bounds::Tuple{UInt8, UInt8}
     min_fraction_transmitted::Float32
-    frag_tol_ppm::Float32
+    # frag_tol_ppm moved to iteration_settings as init_mass_tol_ppm
     frag_err_quantile::Float32
     min_psms::Int64
     max_q_val::Float32
@@ -185,7 +188,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
     topn_peaks::Union{Nothing, Int64}
     initial_scan_count::Int64
     max_parameter_tuning_scans::Int64
-    max_tol_ppm::Float32  # Maximum allowed mass tolerance (moved to fragment_settings)
+    # max_tol_ppm removed - calculated dynamically from iteration settings
     irt_tol::Float32
     spec_order::Set{Int64}
     relative_improvement_threshold::Float32
@@ -230,10 +233,6 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Int64(8000)  # Updated default from 10000 to 8000
         end
         
-        # Extract max tolerance parameter (now from fragment_settings)
-        max_tol_ppm = hasproperty(frag_params, :max_tol_ppm) ? 
-            Float32(frag_params.max_tol_ppm) : Float32(50.0)
-        
         # Extract max fragments for mass error estimation
         max_frags_for_mass_err_estimation = hasproperty(search_params, :max_frags_for_mass_err_estimation) ? 
             UInt8(search_params.max_frags_for_mass_err_estimation) : UInt8(5)
@@ -243,19 +242,24 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.max_q_value) : 
             Float32(global_params.scoring.q_value_threshold)
         
-        # Extract iteration settings (simplified - ignores deprecated parameters)
+        # Extract iteration settings (now includes init_mass_tol_ppm)
+        # Get initial tolerance from fragment_settings for backward compatibility
+        init_tol_from_frag = hasproperty(frag_params, :tol_ppm) ? 
+            Float32(frag_params.tol_ppm) : 20.0f0
+            
         iteration_settings = if hasproperty(search_params, :iteration_settings)
             iter = search_params.iteration_settings
             IterationSettings(
+                hasproperty(iter, :init_mass_tol_ppm) ? 
+                    Float32(iter.init_mass_tol_ppm) : init_tol_from_frag,
                 hasproperty(iter, :mass_tolerance_scale_factor) ? 
                     Float32(iter.mass_tolerance_scale_factor) : 2.0f0,
                 hasproperty(iter, :iterations_per_phase) ? 
                     Int64(iter.iterations_per_phase) : 3
             )
-            # Note: max_phases, bias_shift_strategy, and bias_shift_magnitude are ignored if present
         else
             # Use defaults for backward compatibility
-            IterationSettings()
+            IterationSettings(init_tol_from_frag, 2.0f0, 3)
         end
         
         # Construct with appropriate type conversions
@@ -263,7 +267,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             # Core parameters
             (UInt8(first(isotope_bounds)), UInt8(last(isotope_bounds))),
             Float32(global_params.isotope_settings.min_fraction_transmitted),
-            Float32(frag_params.tol_ppm),
+            # frag_tol_ppm removed - now in iteration_settings
             Float32(search_params.frag_err_quantile),
             Int64(search_params.min_samples),
             max_q_value,  # Use extracted parameter-tuning-specific q-value
@@ -281,7 +285,7 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             topn_peaks,
             initial_scan_count,
             max_parameter_tuning_scans,
-            max_tol_ppm,
+            # max_tol_ppm removed - calculated dynamically
             typemax(Float32), # irt_tol default
             Set{Int64}([2]), # spec_order default
             Float32(frag_params.relative_improvement_threshold),
@@ -296,13 +300,20 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
 end
 
 # Accessor functions for ParameterTuningSearchParameters
-getMaxTolerancePpm(params::ParameterTuningSearchParameters) = params.max_tol_ppm
+# Calculate max tolerance dynamically based on iteration settings
+function getMaxTolerancePpm(params::ParameterTuningSearchParameters)
+    settings = params.iteration_settings
+    # Max tolerance is reached at the end of a phase
+    return settings.init_mass_tol_ppm * (settings.mass_tolerance_scale_factor ^ settings.iterations_per_phase)
+end
 getInitialScanCount(params::ParameterTuningSearchParameters) = params.initial_scan_count
 getMaxParameterTuningScans(params::ParameterTuningSearchParameters) = params.max_parameter_tuning_scans
 getTopNPeaks(params::ParameterTuningSearchParameters) = params.topn_peaks
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
 getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile
 getIterationSettings(params::ParameterTuningSearchParameters) = params.iteration_settings
+# Get initial mass tolerance from iteration settings
+getFragTolPpm(params::ParameterTuningSearchParameters) = params.iteration_settings.init_mass_tol_ppm
 
 # Override getMaxBestRank for ParameterTuningSearchParameters since it doesn't have max_best_rank field
 # This is for PSM filtering in LibrarySearch, not mass error estimation
