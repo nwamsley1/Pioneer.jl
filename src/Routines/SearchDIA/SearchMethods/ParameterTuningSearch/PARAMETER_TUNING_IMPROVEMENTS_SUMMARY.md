@@ -38,13 +38,11 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "max_q_value": 0.01,                 // NEW: Q-value threshold for parameter tuning
       "max_frags_for_mass_err_estimation": 5, // RENAMED from max_best_rank
       
-      // NEW: Iteration configuration
+      // NEW: Iteration configuration (SIMPLIFIED 2025-01-14)
       "iteration_settings": {
-        "mass_tolerance_scale_factor": 1.5,
-        "iterations_per_phase": 3,
-        "max_phases": 3,
-        "bias_shift_strategy": "alternating",
-        "bias_shift_magnitude": "max_tolerance"
+        "mass_tolerance_scale_factor": 1.5,  // Still configurable
+        "iterations_per_phase": 3            // Still configurable
+        // Fixed 3-phase system with alternating ±max_tolerance shifts
       }
     }
   }
@@ -108,7 +106,7 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
 - **Impact**: More fragments provide better statistics but may include noise
 - **Clarity**: Renamed for better understanding of its purpose
 
-### Iteration Settings (NEW SECTION)
+### Iteration Settings (SIMPLIFIED 2025-01-14)
 
 #### `mass_tolerance_scale_factor`
 - **Type**: Float (must be > 1.0)
@@ -127,38 +125,13 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
 - **Impact**: More iterations explore current bias region more thoroughly
 - **Recommendation**: 2-4 iterations per phase is typically optimal
 
-#### `max_phases`
-- **Type**: Integer
-- **Default**: 3
-- **Purpose**: Maximum number of phases to attempt
-- **Impact**: More phases explore more bias regions but increase computation time
-- **Typical Usage**:
-  - Phase 1: Zero bias
-  - Phase 2: Positive bias shift
-  - Phase 3: Negative bias shift
+#### Fixed 3-Phase System (Not Configurable)
+The system always uses exactly 3 phases with fixed bias shifts:
+- **Phase 1**: Zero bias (explores around 0 ppm)
+- **Phase 2**: Positive shift (+max_tolerance_ppm)
+- **Phase 3**: Negative shift (-max_tolerance_ppm)
 
-#### `bias_shift_strategy`
-- **Type**: String (enum)
-- **Default**: "alternating"
-- **Options**:
-  - `"alternating"`: Phase 2 = positive, Phase 3 = negative, Phase 4 = positive, etc.
-  - `"positive_first"`: Phase 2 = positive, all others = negative
-  - `"negative_first"`: Phase 2 = negative, all others = positive
-- **Purpose**: Determines the order of bias exploration
-- **Use Cases**:
-  - `"alternating"`: General purpose, no prior knowledge
-  - `"positive_first"`: When positive bias is more likely
-  - `"negative_first"`: When negative bias is more likely
-
-#### `bias_shift_magnitude`
-- **Type**: Float or String
-- **Default**: "max_tolerance"
-- **Options**:
-  - `"max_tolerance"`: Uses the `max_tolerance_ppm` value
-  - Numeric value: Specific bias shift in ppm (e.g., 30.0)
-- **Purpose**: Amount to shift bias when starting a new phase
-- **Impact**: Larger shifts explore more extreme biases but may miss optimal region
-- **Example**: If set to 40.0, Phase 2 starts with +40 ppm bias
+This fixed pattern ensures comprehensive parameter space coverage while maintaining simplicity.
 
 ## Configuration Examples
 
@@ -172,16 +145,14 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "max_tolerance_ppm": 30.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 1.2,
-        "iterations_per_phase": 4,
-        "max_phases": 2,
-        "bias_shift_strategy": "alternating",
-        "bias_shift_magnitude": 20.0
+        "iterations_per_phase": 4
       }
     }
   }
 }
 ```
 **Use Case**: Modern Orbitrap instruments with stable calibration
+**Note**: Will explore ±30 ppm bias regions with slow scaling
 
 ### Balanced Configuration (Default)
 ```json
@@ -193,16 +164,14 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "max_tolerance_ppm": 50.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 2.0,
-        "iterations_per_phase": 3,
-        "max_phases": 3,
-        "bias_shift_strategy": "alternating",
-        "bias_shift_magnitude": "max_tolerance"
+        "iterations_per_phase": 3
       }
     }
   }
 }
 ```
 **Use Case**: General purpose, works well for most datasets
+**Note**: Will explore ±50 ppm bias regions with standard scaling
 
 ### Aggressive Configuration (Challenging Datasets)
 ```json
@@ -214,16 +183,14 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "max_tolerance_ppm": 75.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 2.5,
-        "iterations_per_phase": 2,
-        "max_phases": 4,
-        "bias_shift_strategy": "alternating",
-        "bias_shift_magnitude": "max_tolerance"
+        "iterations_per_phase": 2
       }
     }
   }
 }
 ```
 **Use Case**: Older instruments, poorly calibrated data, or unknown sample characteristics
+**Note**: Will explore ±75 ppm bias regions with fast scaling
 
 ### Fast Configuration (Quick Processing)
 ```json
@@ -235,16 +202,14 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "topn_peaks": 150,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 3.0,
-        "iterations_per_phase": 2,
-        "max_phases": 2,
-        "bias_shift_strategy": "alternating",
-        "bias_shift_magnitude": 30.0
+        "iterations_per_phase": 2
       }
     }
   }
 }
 ```
 **Use Case**: Large-scale processing where speed is prioritized
+**Note**: Fewer iterations per phase for faster convergence
 
 ## Backward Compatibility
 
