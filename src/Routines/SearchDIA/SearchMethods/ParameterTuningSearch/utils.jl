@@ -1103,7 +1103,7 @@ function test_tolerance_expansion!(
     ms_file_idx::Int64,
     current_psms::DataFrame,
     current_model::MassErrorModel,
-    current_ppm_errs::Vector{Float32},
+    current_ppm_errs::Vector{<:AbstractFloat},
     collection_tolerance::Float32,
     filtered_spectra::FilteredMassSpecData,
     spectra::MassSpecData
