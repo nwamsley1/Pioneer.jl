@@ -330,12 +330,16 @@ function fit_models_from_psms(psms, spectra, search_context, params, ms_file_idx
 end
 
 """
-    check_and_store_convergence!(results, search_context, params, ms_file_idx, psms, mass_err_model, ppm_errs, strategy_name)
+    check_and_store_convergence!(results, search_context, params, ms_file_idx, 
+                                 psms, mass_err_model, ppm_errs, strategy_name::String,
+                                 iteration_state::IterationState, filtered_spectra, spectra)
 
 Check convergence criteria and store results if converged.
+Optionally tests tolerance expansion if enabled.
 """
 function check_and_store_convergence!(results, search_context, params, ms_file_idx, 
-                                      psms, mass_err_model, ppm_errs, strategy_name::String)
+                                      psms, mass_err_model, ppm_errs, strategy_name::String,
+                                      iteration_state::IterationState, filtered_spectra, spectra)
     if mass_err_model === nothing || psms === nothing
         return false
     end
@@ -348,18 +352,40 @@ function check_and_store_convergence!(results, search_context, params, ms_file_i
     
     @info "Converged after $strategy_name"
     
-    # Store mass error model
-    setMassErrorModel!(search_context, ms_file_idx, mass_err_model)
+    # Test tolerance expansion (always enabled)
+    final_psms = psms
+    final_model = mass_err_model
+    final_ppm_errs = ppm_errs
+    was_expanded = false
     
-    # Store ppm errors for plotting
-    if ppm_errs !== nothing && length(ppm_errs) > 0
+    collection_tol = iteration_state.collection_tolerance
+    
+    if collection_tol > 0.0f0
+        final_psms, final_model, final_ppm_errs, was_expanded = test_tolerance_expansion!(
+            search_context, params, ms_file_idx,
+            psms, mass_err_model, ppm_errs,
+            collection_tol, filtered_spectra, spectra
+        )
+        
+        if was_expanded
+            @info "Using expanded tolerance results for final model"
+        end
+    else
+        @warn "Invalid collection tolerance, skipping expansion test"
+    end
+    
+    # Store final mass error model (original or expanded)
+    setMassErrorModel!(search_context, ms_file_idx, final_model)
+    
+    # Store final ppm errors for plotting
+    if final_ppm_errs !== nothing && length(final_ppm_errs) > 0
         resize!(results.ppm_errs, 0)
-        append!(results.ppm_errs, ppm_errs)
+        append!(results.ppm_errs, final_ppm_errs)
         @info "Stored $(length(results.ppm_errs)) ppm errors for plotting"
     end
     
-    # Store RT model
-    rt_model_data = fit_irt_model(params, psms)
+    # Store RT model from final PSMs
+    rt_model_data = fit_irt_model(params, final_psms)
     set_rt_to_irt_model!(results, search_context, params, ms_file_idx, rt_model_data)
     @info "Stored $(length(results.rt)) RT points and $(length(results.irt)) iRT points"
     
@@ -437,14 +463,18 @@ function adjust_mass_bias!(search_context, ms_file_idx, new_mass_err_model, para
 end
 
 """
-    execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, params, ms_file_idx, results)
+    execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, params, ms_file_idx, iteration_state)
 
 Execute one of two convergence strategies:
 - Strategy 1: Try with current parameters
 - Strategy 2: Expand mass tolerance AND adjust bias
 """
 function execute_strategy(strategy_num::Int, filtered_spectra, spectra, search_context, 
-                         params, ms_file_idx, results)
+                         params, ms_file_idx, iteration_state::IterationState)
+    
+    # Track the actual collection tolerance being used
+    current_model = getMassErrorModel(search_context, ms_file_idx)
+    iteration_state.collection_tolerance = (getLeftTol(current_model) + getRightTol(current_model)) / 2.0f0
     
     if strategy_num == 1
         @info "Strategy 1: Collecting PSMs with current parameters"
@@ -723,14 +753,15 @@ function process_file!(
             # Strategy 1: Try with current parameters
             psms, mass_err_model, ppm_errs = execute_strategy(
                 1, filtered_spectra, spectra, 
-                search_context, params, ms_file_idx, results
+                search_context, params, ms_file_idx, iteration_state
             )
             
             # Check convergence after Strategy 1
             if check_and_store_convergence!(
                 results, search_context, params, ms_file_idx,
                 psms, mass_err_model, ppm_errs, 
-                "Strategy 1 (Phase $(iteration_state.current_phase))"
+                "Strategy 1 (Phase $(iteration_state.current_phase))",
+                iteration_state, filtered_spectra, spectra
             )
                 converged = true
                 iteration_state.converged = true
@@ -746,7 +777,7 @@ function process_file!(
                 # Strategy 2: Adjust bias with current (possibly expanded) tolerance
                 psms, mass_err_model, ppm_errs = execute_strategy(
                     2, filtered_spectra, spectra,
-                    search_context, params, ms_file_idx, results
+                    search_context, params, ms_file_idx, iteration_state
                 )
                 
                 # Calculate cumulative scale for logging
@@ -758,7 +789,8 @@ function process_file!(
                     results, search_context, params, ms_file_idx,
                     psms, mass_err_model, ppm_errs, 
                     "Strategy 2 (Phase $(iteration_state.current_phase), " *
-                    "scale=$(round(cumulative_scale, digits=2))x)"
+                    "scale=$(round(cumulative_scale, digits=2))x)",
+                    iteration_state, filtered_spectra, spectra
                 )
                     converged = true
                     iteration_state.converged = true

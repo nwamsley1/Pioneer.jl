@@ -1083,4 +1083,107 @@ function check_convergence(
     return true
 end
 
+"""
+    test_tolerance_expansion!(search_context, params, ms_file_idx,
+                             current_psms, current_model, current_ppm_errs,
+                             collection_tolerance, filtered_spectra, spectra)
+
+After convergence, test if expanding the collection tolerance yields more PSMs.
+If successful, returns the expanded PSM set and refitted model.
+
+# Returns
+- `(final_psms, final_model, final_ppm_errs, was_expanded::Bool)`
+"""
+function test_tolerance_expansion!(
+    search_context::SearchContext,
+    params::ParameterTuningSearchParameters,
+    ms_file_idx::Int64,
+    current_psms::DataFrame,
+    current_model::MassErrorModel,
+    current_ppm_errs::Vector{Float32},
+    collection_tolerance::Float32,
+    filtered_spectra::FilteredMassSpecData,
+    spectra::MassSpecData
+)
+    # Hardcoded expansion factor
+    expansion_factor = 1.5f0
+    
+    current_psm_count = size(current_psms, 1)
+    
+    # Calculate expanded tolerance
+    expanded_tolerance = collection_tolerance * expansion_factor
+    
+    # Create expanded model for collection
+    # Keep the same bias, just expand the window
+    expanded_model = MassErrorModel(
+        getMassOffset(current_model),
+        (expanded_tolerance, expanded_tolerance)
+    )
+    
+    @info "Testing tolerance expansion for PSM collection:" *
+          "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
+          "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
+          "\n  Current PSM count: $current_psm_count"
+    
+    # Store original model
+    original_model = getMassErrorModel(search_context, ms_file_idx)
+    
+    # Set expanded model for collection
+    setMassErrorModel!(search_context, ms_file_idx, expanded_model)
+    
+    # Collect PSMs with expanded tolerance
+    expanded_psms = collect_psms(filtered_spectra, spectra, search_context, params, ms_file_idx)
+    expanded_psm_count = size(expanded_psms, 1)
+    
+    # Calculate improvement
+    psm_increase = expanded_psm_count - current_psm_count
+    improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
+    
+    @info "Expansion results:" *
+          "\n  Expanded PSM count: $expanded_psm_count" *
+          "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+    
+    # Check if expansion was beneficial (any improvement)
+    if expanded_psm_count <= current_psm_count
+        # No improvement, restore original and return
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        @info "No improvement found, keeping original results"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Significant improvement found - refit model with expanded PSM set
+    @info "Improvement found, refitting model with expanded PSM set"
+    
+    # Get matched fragments for the expanded PSM set
+    fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
+    
+    if length(fragments) == 0
+        # Failed to get fragments, restore original
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        @warn "Failed to extract fragments from expanded PSM set, keeping original"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Fit new mass error model from expanded PSM set
+    refitted_model, refitted_ppm_errs = fit_mass_err_model(params, fragments)
+    
+    if refitted_model === nothing
+        # Failed to fit model, restore original
+        setMassErrorModel!(search_context, ms_file_idx, original_model)
+        @warn "Failed to fit mass error model from expanded PSM set, keeping original"
+        return current_psms, current_model, current_ppm_errs, false
+    end
+    
+    # Success! Use the expanded results
+    @info "Successfully expanded tolerance:" *
+          "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
+          "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
+          "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
+    
+    # Update the model in search context
+    setMassErrorModel!(search_context, ms_file_idx, refitted_model)
+    
+    return expanded_psms, refitted_model, refitted_ppm_errs, true
+end
+
 
