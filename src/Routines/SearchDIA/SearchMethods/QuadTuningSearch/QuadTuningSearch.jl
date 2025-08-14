@@ -129,11 +129,19 @@ struct QuadTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearchParam
         # Always use partial capture for quad tuning
         prec_estimation = PartialPrecCapture()
         
+        # Get initial tolerance from iteration_settings if available, otherwise use default
+        init_tol = if hasproperty(tuning_params, :iteration_settings) && 
+                     hasproperty(tuning_params.iteration_settings, :init_mass_tol_ppm)
+            Float32(tuning_params.iteration_settings.init_mass_tol_ppm)
+        else
+            20.0f0  # Default value
+        end
+        
         new{typeof(prec_estimation)}(
             # Search parameters
             params.acquisition.quad_transmission.fit_from_data,
             (UInt8(0), UInt8(0)),  # Fixed isotope bounds for quad tuning
-            Float32(frag_params.tol_ppm),
+            init_tol,
             UInt8(frag_params.min_score),
             typemin(Float32),  # Minimum possible value for min_log2_matched_ratio
             Int64(frag_params.min_count),
