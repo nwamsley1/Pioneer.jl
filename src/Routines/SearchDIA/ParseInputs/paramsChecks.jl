@@ -66,7 +66,7 @@ function checkParams(json_path::String)
     frag_settings = tuning_params["fragment_settings"]
     check_param(frag_settings, "min_count", Integer)
     check_param(frag_settings, "max_rank", Integer)
-    check_param(frag_settings, "tol_ppm", Real)
+    # tol_ppm moved to iteration_settings as init_mass_tol_ppm
     check_param(frag_settings, "min_score", Integer)
     check_param(frag_settings, "min_spectral_contrast", Real)
     check_param(frag_settings, "relative_improvement_threshold", Real)
@@ -94,8 +94,18 @@ function checkParams(json_path::String)
     if haskey(search_settings, "topn_peaks")
         check_param(search_settings, "topn_peaks", Integer)
     end
-    if haskey(search_settings, "max_tolerance_ppm")
-        check_param(search_settings, "max_tolerance_ppm", Real)
+    # max_tolerance_ppm removed - calculated dynamically from iteration_settings
+    
+    # Check iteration_settings if present (contains init_mass_tol_ppm)
+    if haskey(tuning_params, "iteration_settings")
+        iter_settings = tuning_params["iteration_settings"]
+        check_param(iter_settings, "init_mass_tol_ppm", Real)
+        if haskey(iter_settings, "mass_tolerance_scale_factor")
+            check_param(iter_settings, "mass_tolerance_scale_factor", Real)
+        end
+        if haskey(iter_settings, "iterations_per_phase")
+            check_param(iter_settings, "iterations_per_phase", Integer)
+        end
     end
     if haskey(search_settings, "initial_scan_count")
         check_param(search_settings, "initial_scan_count", Integer)

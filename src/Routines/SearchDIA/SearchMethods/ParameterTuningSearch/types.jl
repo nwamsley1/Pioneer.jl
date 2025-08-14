@@ -242,24 +242,19 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.max_q_value) : 
             Float32(global_params.scoring.q_value_threshold)
         
-        # Extract iteration settings (now includes init_mass_tol_ppm)
-        # Get initial tolerance from fragment_settings for backward compatibility
-        init_tol_from_frag = hasproperty(frag_params, :tol_ppm) ? 
-            Float32(frag_params.tol_ppm) : 20.0f0
-            
+        # Extract iteration settings (requires init_mass_tol_ppm)
         iteration_settings = if hasproperty(search_params, :iteration_settings)
             iter = search_params.iteration_settings
             IterationSettings(
-                hasproperty(iter, :init_mass_tol_ppm) ? 
-                    Float32(iter.init_mass_tol_ppm) : init_tol_from_frag,
+                Float32(iter.init_mass_tol_ppm),  # Required parameter
                 hasproperty(iter, :mass_tolerance_scale_factor) ? 
                     Float32(iter.mass_tolerance_scale_factor) : 2.0f0,
                 hasproperty(iter, :iterations_per_phase) ? 
                     Int64(iter.iterations_per_phase) : 3
             )
         else
-            # Use defaults for backward compatibility
-            IterationSettings(init_tol_from_frag, 2.0f0, 3)
+            # Use defaults if iteration_settings not provided
+            IterationSettings(20.0f0, 2.0f0, 3)
         end
         
         # Construct with appropriate type conversions
