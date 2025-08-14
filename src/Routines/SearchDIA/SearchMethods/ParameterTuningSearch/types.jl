@@ -106,28 +106,21 @@ end
     IterationSettings
 
 Configuration for iteration behavior in parameter tuning.
-Controls how mass tolerance scales, when to reset phases, and bias shift strategy.
+Controls how mass tolerance scales and iterations per phase.
+Always uses 3 phases: zero bias, positive shift, negative shift.
 """
 struct IterationSettings
     mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
     iterations_per_phase::Int64              # Iterations before phase reset
-    max_phases::Int64                         # Maximum number of phases
-    bias_shift_strategy::Symbol              # :alternating, :positive_first, :negative_first
-    bias_shift_magnitude::Union{Float32, Symbol}  # Specific value or :max_tolerance
     
     function IterationSettings(
         scale_factor::Float32 = 2.0f0,
-        iterations_per_phase::Int64 = 3,
-        max_phases::Int64 = 3,
-        bias_shift_strategy::Symbol = :alternating,
-        bias_shift_magnitude::Union{Float32, Symbol} = :max_tolerance
+        iterations_per_phase::Int64 = 3
     )
         @assert scale_factor > 1.0f0 "Scale factor must be greater than 1"
         @assert iterations_per_phase > 0 "Iterations per phase must be positive"
-        @assert max_phases > 0 "Max phases must be positive"
-        @assert bias_shift_strategy in [:alternating, :positive_first, :negative_first] "Invalid bias shift strategy"
         
-        new(scale_factor, iterations_per_phase, max_phases, bias_shift_strategy, bias_shift_magnitude)
+        new(scale_factor, iterations_per_phase)
     end
 end
 
@@ -249,23 +242,16 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.max_q_value) : 
             Float32(global_params.scoring.q_value_threshold)
         
-        # Extract iteration settings (with defaults for backward compatibility)
+        # Extract iteration settings (simplified - ignores deprecated parameters)
         iteration_settings = if hasproperty(search_params, :iteration_settings)
             iter = search_params.iteration_settings
             IterationSettings(
                 hasproperty(iter, :mass_tolerance_scale_factor) ? 
                     Float32(iter.mass_tolerance_scale_factor) : 2.0f0,
                 hasproperty(iter, :iterations_per_phase) ? 
-                    Int64(iter.iterations_per_phase) : 3,
-                hasproperty(iter, :max_phases) ? 
-                    Int64(iter.max_phases) : 3,
-                hasproperty(iter, :bias_shift_strategy) ? 
-                    Symbol(iter.bias_shift_strategy) : :alternating,
-                hasproperty(iter, :bias_shift_magnitude) ? 
-                    (iter.bias_shift_magnitude == "max_tolerance" ? 
-                        :max_tolerance : Float32(iter.bias_shift_magnitude)) : 
-                    :max_tolerance
+                    Int64(iter.iterations_per_phase) : 3
             )
+            # Note: max_phases, bias_shift_strategy, and bias_shift_magnitude are ignored if present
         else
             # Use defaults for backward compatibility
             IterationSettings()

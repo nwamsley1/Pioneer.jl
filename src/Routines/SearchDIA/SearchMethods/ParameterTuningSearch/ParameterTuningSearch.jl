@@ -67,7 +67,7 @@ Iteration State Management Functions
     next_iteration!(state::IterationState, settings::IterationSettings)
 
 Advance to the next iteration, handling phase transitions.
-Returns false if all phases are exhausted.
+Returns false if all 3 phases are exhausted.
 """
 function next_iteration!(state::IterationState, settings::IterationSettings)
     state.total_iterations += 1
@@ -79,37 +79,27 @@ function next_iteration!(state::IterationState, settings::IterationSettings)
         state.current_iteration_in_phase = 1
     end
     
-    # Return whether we're still within allowed phases
-    return state.current_phase <= settings.max_phases
+    # Always exactly 3 phases
+    return state.current_phase <= 3
 end
 
 """
-    calculate_phase_bias_shift(phase::Int64, settings::IterationSettings, params)
+    calculate_phase_bias_shift(phase::Int64, params)
 
-Calculate the bias shift for a given phase based on the configured strategy.
+Calculate the bias shift for a given phase.
+Phase 1: 0, Phase 2: +max_tolerance, Phase 3: -max_tolerance
 """
-function calculate_phase_bias_shift(phase::Int64, settings::IterationSettings, params)::Float32
+function calculate_phase_bias_shift(phase::Int64, params)::Float32
+    max_tol = getMaxTolerancePpm(params)
+    
     if phase == 1
         return 0.0f0  # No shift in first phase
-    end
-    
-    # Determine magnitude
-    magnitude = if settings.bias_shift_magnitude == :max_tolerance
-        getMaxTolerancePpm(params)
+    elseif phase == 2
+        return max_tol  # Positive shift in second phase
+    elseif phase == 3
+        return -max_tol  # Negative shift in third phase
     else
-        Float32(settings.bias_shift_magnitude)
-    end
-    
-    # Determine direction based on strategy
-    if settings.bias_shift_strategy == :alternating
-        # Phase 2 = positive, Phase 3 = negative, Phase 4 = positive, etc.
-        return phase % 2 == 0 ? magnitude : -magnitude
-    elseif settings.bias_shift_strategy == :positive_first
-        # Phase 2 = positive, all others = negative
-        return phase == 2 ? magnitude : -magnitude
-    else  # :negative_first
-        # Phase 2 = negative, all others = positive
-        return phase == 2 ? -magnitude : magnitude
+        error("Invalid phase: $phase. Only phases 1-3 are supported.")
     end
 end
 
@@ -119,11 +109,10 @@ end
 Reset parameters for a new phase with appropriate bias shift.
 """
 function reset_for_new_phase!(search_context, ms_file_idx, params, phase::Int64, iteration_state::IterationState)
-    settings = getIterationSettings(params)
     initial_tolerance = getFragTolPpm(params)
     
-    # Calculate and store bias shift for this phase
-    bias_shift = calculate_phase_bias_shift(phase, settings, params)
+    # Calculate and store bias shift for this phase (simplified - no settings needed)
+    bias_shift = calculate_phase_bias_shift(phase, params)
     push!(iteration_state.phase_bias_shifts, bias_shift)
     
     # Reset to initial tolerance with new bias
@@ -711,7 +700,7 @@ function process_file!(
     try
         @info "Processing file: $parsed_fname (index: $ms_file_idx)"
         @info "Iteration settings: scale_factor=$(settings.mass_tolerance_scale_factor), " *
-              "iterations_per_phase=$(settings.iterations_per_phase), max_phases=$(settings.max_phases)"
+              "iterations_per_phase=$(settings.iterations_per_phase) (3 phases fixed)"
         
         # Initialize models
         initialize_models!(search_context, ms_file_idx, params)
@@ -795,7 +784,7 @@ function process_file!(
         
         # Log phase summary
         @info "Completed $(iteration_state.total_iterations) total iterations across " *
-              "$(iteration_state.current_phase) phases. Converged: $converged"
+              "$(iteration_state.current_phase) of 3 phases. Converged: $converged"
         
         if !isempty(iteration_state.phase_bias_shifts)
             @info "Phase bias shifts attempted: $(iteration_state.phase_bias_shifts)"
