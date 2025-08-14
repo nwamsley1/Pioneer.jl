@@ -19,7 +19,6 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "tol_ppm": 20.0,
             "min_score": 22,
             "min_spectral_contrast": 0.9,
             "relative_improvement_threshold": 1.25,
@@ -31,7 +30,12 @@
             "sample_rate": 0.02,
             "min_samples": 3500,
             "max_presearch_iters": 10,
-            "frag_err_quantile": 0.01
+            "frag_err_quantile": 0.01,
+            "iteration_settings": {
+                "init_mass_tol_ppm": 20.0,
+                "mass_tolerance_scale_factor": 1.5,
+                "iterations_per_phase": 3
+            }
         }
     },
     "first_search": {
