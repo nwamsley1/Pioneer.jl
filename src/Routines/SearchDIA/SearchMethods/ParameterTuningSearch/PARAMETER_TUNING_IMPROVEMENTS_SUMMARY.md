@@ -27,6 +27,7 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
   "parameter_tuning": {
     "fragment_settings": {
       "intensity_filter_quantile": 0.25,  // NEW: Quantile for filtering fragments by intensity
+      "max_tol_ppm": 50.0,                // NEW: Maximum allowed mass tolerance (moved from search_settings)
       // ... other fragment settings ...
     },
     "search_settings": {
@@ -34,7 +35,6 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
       "initial_scan_count": 500,           // NEW: Starting number of scans
       "max_parameter_tuning_scans": 8000,  // RENAMED from expanded_scan_count
       "topn_peaks": 200,                   // NEW: Number of top peaks to consider
-      "max_tolerance_ppm": 50.0,           // NEW: Maximum allowed mass tolerance
       "max_q_value": 0.01,                 // NEW: Q-value threshold for parameter tuning
       "max_frags_for_mass_err_estimation": 5, // RENAMED from max_best_rank
       
@@ -60,6 +60,14 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
 - **Impact**: Lower values (e.g., 0.1) keep only high-intensity fragments, potentially more accurate but fewer data points
 - **Example**: 0.25 means only fragments above the 25th percentile intensity are used
 
+#### `max_tol_ppm` (NEW - Moved from search_settings)
+- **Type**: Float
+- **Default**: 50.0
+- **Purpose**: Maximum allowed mass tolerance regardless of scaling
+- **Impact**: Prevents tolerance from expanding beyond reasonable limits
+- **Safety**: Acts as a hard cap on tolerance expansion
+- **Phase Shifts**: Used as the bias shift magnitude in Phase 2 (+max_tol_ppm) and Phase 3 (-max_tol_ppm)
+
 ### Search Settings
 
 #### `initial_scan_count` (NEW)
@@ -83,13 +91,6 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
 - **Purpose**: Limits the number of peaks considered per spectrum
 - **Impact**: Reduces computation time and noise in spectra with many peaks
 - **Example**: 200 means only the 200 most intense peaks are considered
-
-#### `max_tolerance_ppm` (NEW)
-- **Type**: Float
-- **Default**: 50.0
-- **Purpose**: Maximum allowed mass tolerance regardless of scaling
-- **Impact**: Prevents tolerance from expanding beyond reasonable limits
-- **Safety**: Acts as a hard cap on tolerance expansion
 
 #### `max_q_value` (NEW)
 - **Type**: Float
@@ -128,8 +129,8 @@ Graceful fallback mechanisms ensure the pipeline continues even when parameter t
 #### Fixed 3-Phase System (Not Configurable)
 The system always uses exactly 3 phases with fixed bias shifts:
 - **Phase 1**: Zero bias (explores around 0 ppm)
-- **Phase 2**: Positive shift (+max_tolerance_ppm)
-- **Phase 3**: Negative shift (-max_tolerance_ppm)
+- **Phase 2**: Positive shift (+max_tol_ppm from fragment_settings)
+- **Phase 3**: Negative shift (-max_tol_ppm from fragment_settings)
 
 This fixed pattern ensures comprehensive parameter space coverage while maintaining simplicity.
 
@@ -139,10 +140,12 @@ This fixed pattern ensures comprehensive parameter space coverage while maintain
 ```json
 {
   "parameter_tuning": {
+    "fragment_settings": {
+      "max_tol_ppm": 30.0
+    },
     "search_settings": {
       "initial_scan_count": 1000,
       "max_parameter_tuning_scans": 5000,
-      "max_tolerance_ppm": 30.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 1.2,
         "iterations_per_phase": 4
@@ -158,10 +161,12 @@ This fixed pattern ensures comprehensive parameter space coverage while maintain
 ```json
 {
   "parameter_tuning": {
+    "fragment_settings": {
+      "max_tol_ppm": 50.0
+    },
     "search_settings": {
       "initial_scan_count": 500,
       "max_parameter_tuning_scans": 8000,
-      "max_tolerance_ppm": 50.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 2.0,
         "iterations_per_phase": 3
@@ -177,10 +182,12 @@ This fixed pattern ensures comprehensive parameter space coverage while maintain
 ```json
 {
   "parameter_tuning": {
+    "fragment_settings": {
+      "max_tol_ppm": 75.0
+    },
     "search_settings": {
       "initial_scan_count": 250,
       "max_parameter_tuning_scans": 10000,
-      "max_tolerance_ppm": 75.0,
       "iteration_settings": {
         "mass_tolerance_scale_factor": 2.5,
         "iterations_per_phase": 2
@@ -317,9 +324,9 @@ Iteration 9: tolerance = 45 ppm, bias = adjusted
 ### Problem: Files not converging even after all phases
 
 **Solutions**:
-1. Increase `max_phases` to explore more bias regions
-2. Increase `bias_shift_magnitude` to explore more extreme biases
-3. Increase `max_tolerance_ppm` to allow wider search windows
+1. Increase `max_tol_ppm` in fragment_settings to allow wider search windows and larger bias shifts
+2. Reduce `mass_tolerance_scale_factor` for finer exploration within each phase
+3. Increase `iterations_per_phase` for more thorough exploration
 4. Check data quality - may be inherently problematic
 
 ### Problem: Parameter tuning taking too long
