@@ -36,8 +36,8 @@ function plot_efdr_vs_qval(df::DataFrame, qval_col::Symbol, efdr_cols::Vector{Sy
                           ylabel="Empirical FDR",
                           labels=nothing,
                           colors=nothing,
-                          xlims=(0, 0.015),
-                          ylims=(0, 0.015),
+                          xlims=(0, 0.05),
+                          ylims=(0, 0.05),
                           legend=:bottomright,
                           diagonal=true)
     
