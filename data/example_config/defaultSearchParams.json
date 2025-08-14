@@ -45,12 +45,12 @@
             "topn_peaks": 200,
             "initial_scan_count": 500,
             "max_parameter_tuning_scans": 8000,
-            "max_frags_for_mass_err_estimation": 5,
-            "iteration_settings": {
-                "init_mass_tol_ppm": 20.0,
-                "mass_tolerance_scale_factor": 1.5,
-                "iterations_per_phase": 3
-            }
+            "max_frags_for_mass_err_estimation": 5
+        },
+        "iteration_settings": {
+            "init_mass_tol_ppm": 20.0,
+            "mass_tolerance_scale_factor": 1.5,
+            "iterations_per_phase": 3
         }
     },
     "first_search": {

@@ -243,8 +243,8 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(global_params.scoring.q_value_threshold)
         
         # Extract iteration settings (requires init_mass_tol_ppm)
-        iteration_settings = if hasproperty(search_params, :iteration_settings)
-            iter = search_params.iteration_settings
+        iteration_settings = if hasproperty(tuning_params, :iteration_settings)
+            iter = tuning_params.iteration_settings
             IterationSettings(
                 Float32(iter.init_mass_tol_ppm),  # Required parameter
                 hasproperty(iter, :mass_tolerance_scale_factor) ? 
