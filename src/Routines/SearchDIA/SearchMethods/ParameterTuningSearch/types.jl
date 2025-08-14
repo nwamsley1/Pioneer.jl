@@ -138,9 +138,10 @@ mutable struct IterationState
     total_iterations::Int64
     phase_bias_shifts::Vector{Float32}  # Bias shift applied at start of each phase
     converged::Bool
+    collection_tolerance::Float32  # Track tolerance used for PSM collection
     
     function IterationState()
-        new(1, 0, 0, Float32[], false)
+        new(1, 0, 0, Float32[], false, 0.0f0)
     end
 end
 
