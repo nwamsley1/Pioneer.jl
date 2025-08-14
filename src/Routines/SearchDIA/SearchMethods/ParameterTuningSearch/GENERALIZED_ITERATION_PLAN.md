@@ -1,13 +1,15 @@
 # Plan: Generalized Iteration Strategy with Configurable Scaling and Reset
 
-## Status: ✅ IMPLEMENTED (2025-01-14)
+## Status: ✅ IMPLEMENTED (2025-01-14) → ✅ SIMPLIFIED (2025-01-14)
 
 ## Overview
 
-This plan generalizes the parameter tuning iteration strategy to support:
-1. **Configurable mass tolerance scaling** - User-defined factor for tolerance expansion (not just doubling)
-2. **Phase-based reset mechanism** - After N iterations, reset to initial tolerance with bias shift
-3. **Bias shift exploration** - Try positive and negative bias offsets to handle extreme mass errors
+~~This plan generalizes the parameter tuning iteration strategy to support:~~
+**UPDATE: Simplified to fixed 3-phase system**
+
+1. **Configurable mass tolerance scaling** - User-defined factor for tolerance expansion ✅ KEPT
+2. **Fixed 3-phase system** - Always uses exactly 3 phases (simplified from configurable)
+3. **Fixed bias shifts** - Phase 1: 0, Phase 2: +max_tolerance, Phase 3: -max_tolerance
 
 ## Current Behavior
 
