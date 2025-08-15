@@ -94,7 +94,8 @@ function compute_rt_bins(spectra::MassSpecData, n_bins::Int = 15)
     # Assign each scan to a bin
     rt_bin_assignments = Vector{Int8}(undef, length(rt_values))
     for (idx, rt) in enumerate(rt_values)
-        bin_idx = min(ceil(Int, (rt - rt_min) / bin_width), n_bins)
+        # Ensure bin_idx is 1-based (ceil(0.0) returns 0, so we need max(1, ...))
+        bin_idx = min(max(1, ceil(Int, (rt - rt_min) / bin_width)), n_bins)
         rt_bin_assignments[idx] = Int8(bin_idx)
     end
     

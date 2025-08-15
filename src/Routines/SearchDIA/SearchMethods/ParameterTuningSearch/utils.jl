@@ -1202,7 +1202,7 @@ function get_fallback_parameters(
     warnings::Vector{String}
 )
     # Try to borrow from another successful file
-    n_files = length(getMSData(search_context))
+    n_files = length(getMSData(search_context).file_paths)
     borrowed_from = nothing
     
     for other_idx in 1:n_files
