@@ -113,17 +113,20 @@ struct IterationSettings
     init_mass_tol_ppm::Float32               # Initial mass tolerance (moved from fragment_settings)
     mass_tolerance_scale_factor::Float32     # Factor to scale tolerance each iteration
     iterations_per_phase::Int64              # Iterations before phase reset
+    scan_scale_factor::Float32               # Factor to scale scan count between attempts
     
     function IterationSettings(
-        init_tol::Float32 = 20.0f0,
-        scale_factor::Float32 = 2.0f0,
-        iterations_per_phase::Int64 = 3
+        init_tol::Float32,
+        mass_scale_factor::Float32,
+        iterations_per_phase::Int64,
+        scan_scale_factor::Float32
     )
         @assert init_tol > 0.0f0 "Initial tolerance must be positive"
-        @assert scale_factor > 1.0f0 "Scale factor must be greater than 1"
+        @assert mass_scale_factor > 1.0f0 "Mass scale factor must be greater than 1"
         @assert iterations_per_phase > 0 "Iterations per phase must be positive"
+        @assert scan_scale_factor > 1.0f0 "Scan scale factor must be greater than 1"
         
-        new(init_tol, scale_factor, iterations_per_phase)
+        new(init_tol, mass_scale_factor, iterations_per_phase, scan_scale_factor)
     end
 end
 
@@ -139,9 +142,13 @@ mutable struct IterationState
     phase_bias_shifts::Vector{Float32}  # Bias shift applied at start of each phase
     converged::Bool
     collection_tolerance::Float32  # Track tolerance used for PSM collection
+    # Scan scaling tracking
+    scan_attempt::Int64              # Which attempt (1, 2, 3, ...)
+    current_scan_count::Int64        # Scan count for current attempt
+    max_scan_count_reached::Bool     # Flag when we hit the maximum
     
     function IterationState()
-        new(1, 0, 0, Float32[], false, 0.0f0)
+        new(1, 0, 0, Float32[], false, 0.0f0, 1, 0, false)
     end
 end
 
@@ -243,20 +250,15 @@ struct ParameterTuningSearchParameters{P<:PrecEstimation} <: FragmentIndexSearch
             Float32(search_params.max_q_value) : 
             Float32(global_params.scoring.q_value_threshold)
         
-        # Extract iteration settings (requires init_mass_tol_ppm)
-        iteration_settings = if hasproperty(tuning_params, :iteration_settings)
-            iter = tuning_params.iteration_settings
-            IterationSettings(
-                Float32(iter.init_mass_tol_ppm),  # Required parameter
-                hasproperty(iter, :mass_tolerance_scale_factor) ? 
-                    Float32(iter.mass_tolerance_scale_factor) : 2.0f0,
-                hasproperty(iter, :iterations_per_phase) ? 
-                    Int64(iter.iterations_per_phase) : 3
-            )
-        else
-            # Use defaults if iteration_settings not provided
-            IterationSettings(20.0f0, 2.0f0, 3)
-        end
+        # Extract iteration settings (all fields required)
+        @assert hasproperty(tuning_params, :iteration_settings) "iteration_settings is required"
+        iter = tuning_params.iteration_settings
+        iteration_settings = IterationSettings(
+            Float32(iter.init_mass_tol_ppm),
+            Float32(iter.mass_tolerance_scale_factor),
+            Int64(iter.iterations_per_phase),
+            Float32(iter.scan_scale_factor)
+        )
         
         # Construct with appropriate type conversions
         new{typeof(prec_estimation)}(

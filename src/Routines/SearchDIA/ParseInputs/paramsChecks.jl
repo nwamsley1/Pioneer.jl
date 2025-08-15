@@ -96,16 +96,31 @@ function checkParams(json_path::String)
     end
     # max_tolerance_ppm removed - calculated dynamically from iteration_settings
     
-    # Check iteration_settings if present (contains init_mass_tol_ppm)
+    # Check iteration_settings (all fields are now required)
     if haskey(tuning_params, "iteration_settings")
         iter_settings = tuning_params["iteration_settings"]
+        
+        # All iteration_settings fields are required
         check_param(iter_settings, "init_mass_tol_ppm", Real)
-        if haskey(iter_settings, "mass_tolerance_scale_factor")
-            check_param(iter_settings, "mass_tolerance_scale_factor", Real)
+        check_param(iter_settings, "mass_tolerance_scale_factor", Real)
+        check_param(iter_settings, "iterations_per_phase", Integer)
+        check_param(iter_settings, "scan_scale_factor", Real)
+        
+        # Validate ranges
+        if iter_settings["mass_tolerance_scale_factor"] <= 1.0
+            error("iteration_settings.mass_tolerance_scale_factor must be greater than 1.0")
         end
-        if haskey(iter_settings, "iterations_per_phase")
-            check_param(iter_settings, "iterations_per_phase", Integer)
+        if iter_settings["scan_scale_factor"] <= 1.0
+            error("iteration_settings.scan_scale_factor must be greater than 1.0")
         end
+        if iter_settings["init_mass_tol_ppm"] <= 0.0
+            error("iteration_settings.init_mass_tol_ppm must be positive")
+        end
+        if iter_settings["iterations_per_phase"] <= 0
+            error("iteration_settings.iterations_per_phase must be positive")
+        end
+    else
+        error("parameter_tuning.iteration_settings is required")
     end
     if haskey(search_settings, "initial_scan_count")
         check_param(search_settings, "initial_scan_count", Integer)

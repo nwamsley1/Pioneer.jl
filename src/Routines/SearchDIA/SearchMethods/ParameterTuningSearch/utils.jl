@@ -685,7 +685,7 @@ function fit_mass_err_model(
             intensities = [fragment.intensity for fragment in fragments]
             min_intensity = quantile(intensities, intensity_threshold)
             fragments = filter(f -> f.intensity > min_intensity, fragments)
-            @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
+            # @info "Filtered to $(length(fragments)) fragments above $(round(intensity_threshold*100, digits=1))th percentile intensity"
         end
     end
     
@@ -706,10 +706,10 @@ function fit_mass_err_model(
     r_bound = quantile(ppm_errs, 1 - frag_err_quantile)
     
     # Diagnostic logging
-    @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
-          "tolerance=(-$(round(abs(l_bound), digits=1)), +$(round(abs(r_bound), digits=1))) ppm, " *
-          "MAD=$(round(mad(ppm_errs, normalize=false)*4, digits=1)) ppm, " *
-          "error_quantile=$frag_err_quantile"
+    # @info "Mass error model: offset=$(round(mass_err, digits=2)) ppm, " *
+    #       "tolerance=(-$(round(abs(l_bound), digits=1)), +$(round(abs(r_bound), digits=1))) ppm, " *
+    #       "MAD=$(round(mad(ppm_errs, normalize=false)*4, digits=1)) ppm, " *
+    #       "error_quantile=$frag_err_quantile"
     
     return MassErrorModel(
         Float32(mass_err),
@@ -1069,15 +1069,15 @@ function check_convergence(
     min_psms::Int64
 )
     if size(psms, 1) < min_psms
-        @info "size(psms, 1) < $min_psms, skipping convergence check"
+        # @info "size(psms, 1) < $min_psms, skipping convergence check"
         return false 
     end
     if (getLeftTol(old_mass_err_model) - getLeftTol(new_mass_err_model))/(getLeftTol(new_mass_err_model)) < 0.05
-        @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        # @info "Left tolerance failed to converge getLeftTol(old_mass_err_model) $(getLeftTol(old_mass_err_model)) getLeftTol(new_mass_err_model) $(getLeftTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     if (getRightTol(old_mass_err_model) - getRightTol(new_mass_err_model))/(getRightTol(new_mass_err_model)) < 0.05
-        @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
+        # @info "Right tolerance failed to converge getRightTol(old_mass_err_model) $(getRightTol(old_mass_err_model)) getRightTol(new_mass_err_model) $(getRightTol(new_mass_err_model)) describe(ppms) $(describe(ppms))"
         return false 
     end
     return true
@@ -1120,10 +1120,10 @@ function test_tolerance_expansion!(
         (expanded_tolerance, expanded_tolerance)
     )
     
-    @info "Testing tolerance expansion for PSM collection:" *
-          "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
-          "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
-          "\n  Current PSM count: $current_psm_count"
+    # @info "Testing tolerance expansion for PSM collection:" *
+    #       "\n  Original collection tolerance: ±$(round(collection_tolerance, digits=1)) ppm" *
+    #       "\n  Expanded collection tolerance: ±$(round(expanded_tolerance, digits=1)) ppm" *
+    #       "\n  Current PSM count: $current_psm_count"
     
     # Store original model
     original_model = getMassErrorModel(search_context, ms_file_idx)
@@ -1139,20 +1139,20 @@ function test_tolerance_expansion!(
     psm_increase = expanded_psm_count - current_psm_count
     improvement_ratio = current_psm_count > 0 ? psm_increase / current_psm_count : 0.0
     
-    @info "Expansion results:" *
-          "\n  Expanded PSM count: $expanded_psm_count" *
-          "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
+    # @info "Expansion results:" *
+    #       "\n  Expanded PSM count: $expanded_psm_count" *
+    #       "\n  PSM increase: $psm_increase ($(round(100*improvement_ratio, digits=1))%)"
     
     # Check if expansion was beneficial (any improvement)
     if expanded_psm_count <= current_psm_count
         # No improvement, restore original and return
         setMassErrorModel!(search_context, ms_file_idx, original_model)
-        @info "No improvement found, keeping original results"
+        # @info "No improvement found, keeping original results"
         return current_psms, current_model, current_ppm_errs, false
     end
     
     # Significant improvement found - refit model with expanded PSM set
-    @info "Improvement found, refitting model with expanded PSM set"
+    # @info "Improvement found, refitting model with expanded PSM set"
     
     # Get matched fragments for the expanded PSM set
     fragments = get_matched_fragments(spectra, expanded_psms, search_context, params, ms_file_idx)
@@ -1175,15 +1175,91 @@ function test_tolerance_expansion!(
     end
     
     # Success! Use the expanded results
-    @info "Successfully expanded tolerance:" *
-          "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
-          "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
-          "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
+    # @info "Successfully expanded tolerance:" *
+    #       "\n  Original fitted: ±$(round((getLeftTol(current_model) + getRightTol(current_model))/2, digits=1)) ppm" *
+    #       "\n  Expanded fitted: ±$(round((getLeftTol(refitted_model) + getRightTol(refitted_model))/2, digits=1)) ppm" *
+    #       "\n  PSM improvement: $psm_increase PSMs ($(round(100*improvement_ratio, digits=1))%)"
     
     # Update the model in search context
     setMassErrorModel!(search_context, ms_file_idx, refitted_model)
     
     return expanded_psms, refitted_model, refitted_ppm_errs, true
+end
+
+"""
+    get_fallback_parameters(search_context, params, ms_file_idx, warnings)
+
+Get fallback parameters from another file or use defaults.
+Returns (mass_err_model, rt_model, borrowed_from_idx)
+"""
+function get_fallback_parameters(
+    search_context::SearchContext,
+    params::ParameterTuningSearchParameters,
+    ms_file_idx::Int64,
+    warnings::Vector{String}
+)
+    # Try to borrow from another successful file
+    n_files = length(getMSData(search_context))
+    borrowed_from = nothing
+    
+    for other_idx in 1:n_files
+        if other_idx != ms_file_idx && hasMassErrorModel(search_context, other_idx)
+            mass_err = getMassErrorModel(search_context, other_idx)
+            rt_model = getRtConversionModel(search_context, other_idx)
+            push!(warnings, "Borrowed parameters from file $other_idx")
+            return mass_err, rt_model, other_idx
+        end
+    end
+    
+    # Use default fallback
+    @warn "No successful files to borrow from, using default parameters"
+    push!(warnings, "Using default fallback parameters")
+    
+    # Default mass error model
+    mass_err = MassErrorModel(0.0f0, (20.0f0, 20.0f0))
+    
+    # Default RT model (identity)
+    rt_model = LinearRtConversionModel(1.0f0, 0.0f0)
+    
+    return mass_err, rt_model, nothing
+end
+
+"""
+    record_file_status!(diagnostics, ms_file_idx, file_name, converged, used_fallback, warnings, iteration_state)
+
+Record the parameter tuning status for a file.
+"""
+function record_file_status!(
+    diagnostics::ParameterTuningDiagnostics,
+    ms_file_idx::Int64,
+    file_name::String,
+    converged::Bool,
+    used_fallback::Bool,
+    warnings::Vector{String},
+    iteration_state::IterationState
+)
+    status = ParameterTuningStatus(
+        ms_file_idx,
+        file_name,
+        converged,
+        used_fallback,
+        used_fallback ? "Failed convergence" : "",
+        iteration_state.total_iterations,
+        0,  # PSM count - could be tracked if needed
+        0.0f0,  # Mass offset - could be extracted if needed
+        (0.0f0, 0.0f0),  # Tolerances - could be extracted if needed
+        warnings
+    )
+    
+    diagnostics.file_statuses[ms_file_idx] = status
+    
+    if converged && !used_fallback
+        diagnostics.n_successful += 1
+    elseif used_fallback
+        diagnostics.n_fallback += 1
+    else
+        diagnostics.n_failed += 1
+    end
 end
 
 

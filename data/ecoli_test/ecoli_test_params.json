@@ -26,7 +26,6 @@
         "fragment_settings": {
             "min_count": 7,
             "max_rank": 25,
-            "tol_ppm": 20.0,
             "min_score": 22,
             "min_spectral_contrast": 0.9,
             "relative_improvement_threshold": 1.25,
@@ -44,10 +43,15 @@
             "frag_err_quantile": 0.01,
             "max_q_value": 0.01,
             "topn_peaks": 200,
-            "max_tolerance_ppm": 50.0,
             "initial_scan_count": 500,
             "max_parameter_tuning_scans": 8000,
             "max_frags_for_mass_err_estimation": 5
+        },
+        "iteration_settings": {
+            "init_mass_tol_ppm": 5.0,
+            "mass_tolerance_scale_factor": 1.5,
+            "iterations_per_phase": 3,
+            "scan_scale_factor": 10.0
         }
     },
     "first_search": {
